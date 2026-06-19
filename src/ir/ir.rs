@@ -9,6 +9,35 @@ pub struct IrDesign {
     pub top: IrModule,
     pub modules: HashMap<String, IrModule>,
     pub classes: HashMap<String, IrClassDef>,
+    pub covergroups: Vec<IrCovergroup>,
+    pub dpi_imports: Vec<IrDpiImport>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IrDpiImport {
+    pub name: String,
+    pub return_width: usize,
+    pub arg_widths: Vec<usize>,
+    pub is_task: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IrCovergroup {
+    pub name: String,
+    pub coverpoints: Vec<IrCoverpoint>,
+    pub crosses: Vec<IrCross>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IrCoverpoint {
+    pub name: String,
+    pub expr: IrExpr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IrCross {
+    pub name: String,
+    pub coverpoints: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,11 +84,64 @@ pub struct IrModule {
     pub sub_instances: Vec<IrInstance>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NetType {
+    Wire,
+    Wand,
+    Wor,
+    Tri,
+    Tri0,
+    Tri1,
+    TriAnd,
+    TriOr,
+    Supply0,
+    Supply1,
+}
+
+impl NetType {
+    pub fn resolve_bit(&self, current: LogicVal, incoming: LogicVal) -> LogicVal {
+        match self {
+            NetType::Wand | NetType::TriAnd | NetType::Supply0 => {
+                // Wired-AND: Z = transparent, otherwise AND
+                match (current, incoming) {
+                    (LogicVal::X, _) | (_, LogicVal::X) => LogicVal::X,
+                    (LogicVal::Z, v) => v,
+                    (v, LogicVal::Z) => v,
+                    (LogicVal::Zero, _) | (_, LogicVal::Zero) => LogicVal::Zero,
+                    _ => LogicVal::One,
+                }
+            }
+            NetType::Wor | NetType::TriOr | NetType::Supply1 => {
+                // Wired-OR: Z = transparent, otherwise OR
+                match (current, incoming) {
+                    (LogicVal::X, _) | (_, LogicVal::X) => LogicVal::X,
+                    (LogicVal::Z, v) => v,
+                    (v, LogicVal::Z) => v,
+                    (LogicVal::One, _) | (_, LogicVal::One) => LogicVal::One,
+                    _ => LogicVal::Zero,
+                }
+            }
+            NetType::Tri | NetType::Tri0 | NetType::Tri1 | NetType::Wire => {
+                // Tri-state: exactly one non-Z driver wins; conflict = X
+                match (current, incoming) {
+                    (LogicVal::Z, v) => v,
+                    (v, LogicVal::Z) => v,
+                    (LogicVal::X, _) | (_, LogicVal::X) => LogicVal::X,
+                    (LogicVal::Zero, LogicVal::One) | (LogicVal::One, LogicVal::Zero) => LogicVal::X,
+                    _ => current, // same value
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SignalInfo {
     pub name: String,
     pub width: usize,
     pub kind: SignalKind,
+    pub net_type: NetType,
+    pub multi_driver: bool,
     pub init_val: LogicVec,
     pub array_depth: usize,
     pub elem_width: usize,
@@ -229,6 +311,20 @@ pub enum IrStmt {
         processes: Vec<Vec<IrStmt>>,
         join_type: IrJoinType,
     },
+    Assert {
+        cond: IrExpr,
+        pass_stmt: Vec<IrStmt>,
+        fail_stmt: Vec<IrStmt>,
+    },
+    Assume {
+        cond: IrExpr,
+        pass_stmt: Vec<IrStmt>,
+        fail_stmt: Vec<IrStmt>,
+    },
+    Cover {
+        cond: IrExpr,
+        pass_stmt: Vec<IrStmt>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -309,6 +405,11 @@ pub enum IrExpr {
     MemberAccess {
         obj: Box<IrExpr>,
         field: String,
+    },
+    DpiCall {
+        name: String,
+        args: Vec<IrExpr>,
+        return_width: usize,
     },
 }
 

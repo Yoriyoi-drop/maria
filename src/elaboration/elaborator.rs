@@ -110,6 +110,8 @@ impl Elaborator {
                             name: var.name.clone(),
                             width: if is_real { 64 } else { 0 },
                             kind: SignalKind::Wire,
+                            net_type: NetType::Wire,
+                            multi_driver: false,
                             init_val: LogicVec::new(if is_real { 64 } else { 0 }),
                             array_depth: 1,
                             elem_width: if is_real { 64 } else { 0 },
@@ -140,6 +142,8 @@ impl Elaborator {
                         name: var.name.clone(),
                         width: elem_width,
                         kind: SignalKind::Wire,
+                        net_type: NetType::Wire,
+                        multi_driver: false,
                         init_val: LogicVec::new(elem_width),
                         array_depth: 1,
                         elem_width,
@@ -185,10 +189,19 @@ impl Elaborator {
 
         let classes = self.elaborate_classes()?;
 
+        self.detect_multi_driver_signals(&mut top)?;
+
+        let top_signal_map: HashMap<String, SignalId> = top.signals.iter().enumerate()
+            .map(|(i, s)| (s.name.clone(), i)).collect();
+        let covergroups = self.elaborate_covergroups(&top_name, &top_signal_map, &top.signals)?;
+        let dpi_imports = self.elaborate_dpi_imports()?;
+
         Ok(IrDesign {
             top,
             modules: self.modules.clone(),
             classes,
+            covergroups,
+            dpi_imports,
         })
     }
 
@@ -306,6 +319,7 @@ impl Elaborator {
         let get_or_create_signal = |name: &str,
                                          width: usize,
                                          kind: SignalKind,
+                                         net_type: NetType,
                                          signals: &mut Vec<SignalInfo>,
                                          signal_map: &mut HashMap<String, SignalId>,
                                          id: &mut SignalId,
@@ -325,6 +339,8 @@ impl Elaborator {
                     name: name.to_string(),
                     width,
                     kind,
+                    net_type,
+                    multi_driver: false,
                     init_val: LogicVec::new(width),
                     array_depth,
                     elem_width,
@@ -362,7 +378,11 @@ impl Elaborator {
             } else {
                 (width - 1, 0)
             };
-            let sid = get_or_create_signal(&port.name, width, kind.clone(), &mut signals, &mut signal_map, &mut next_id, 1, width, p_msb, p_lsb, false);
+            let net_type = match port.direction {
+                PortDirection::Inout => NetType::Tri,
+                _ => NetType::Wire,
+            };
+            let sid = get_or_create_signal(&port.name, width, kind.clone(), net_type, &mut signals, &mut signal_map, &mut next_id, 1, width, p_msb, p_lsb, false);
             match port.direction {
                 PortDirection::Input => inputs.push(sid),
                 PortDirection::Output => outputs.push(sid),
@@ -387,6 +407,8 @@ impl Elaborator {
                         name: var.name.clone(),
                         width: if is_real { 64 } else { 0 },
                         kind: SignalKind::Reg,
+                        net_type: NetType::Wire,
+                        multi_driver: false,
                         init_val: LogicVec::new(if is_real { 64 } else { 0 }),
                         array_depth: 1,
                         elem_width: if is_real { 64 } else { 0 },
@@ -417,6 +439,8 @@ impl Elaborator {
                         name: var.name.clone(),
                         width: 0,
                         kind: SignalKind::Reg,
+                        net_type: NetType::Wire,
+                        multi_driver: false,
                         init_val: LogicVec::new(0),
                         array_depth: 0,
                         elem_width,
@@ -442,9 +466,18 @@ impl Elaborator {
                 ).max(
                     decl.kind.default_width()
                 );
-                let kind = match decl.kind {
-                    DeclKind::Wire => SignalKind::Wire,
-                    DeclKind::Reg | DeclKind::Logic | DeclKind::Int | DeclKind::Integer => SignalKind::Reg,
+                let (kind, net_type) = match decl.kind {
+                    DeclKind::Wire => (SignalKind::Wire, NetType::Wire),
+                    DeclKind::Wand => (SignalKind::Wire, NetType::Wand),
+                    DeclKind::Wor => (SignalKind::Wire, NetType::Wor),
+                    DeclKind::Tri => (SignalKind::Wire, NetType::Tri),
+                    DeclKind::Tri0 => (SignalKind::Wire, NetType::Tri0),
+                    DeclKind::Tri1 => (SignalKind::Wire, NetType::Tri1),
+                    DeclKind::TriAnd => (SignalKind::Wire, NetType::TriAnd),
+                    DeclKind::TriOr => (SignalKind::Wire, NetType::TriOr),
+                    DeclKind::Supply0 => (SignalKind::Wire, NetType::Supply0),
+                    DeclKind::Supply1 => (SignalKind::Wire, NetType::Supply1),
+                    DeclKind::Reg | DeclKind::Logic | DeclKind::Int | DeclKind::Integer => (SignalKind::Reg, NetType::Wire),
                 };
                 let (d_msb, d_lsb) = if let Some(r) = &var.range {
                     (r.msb, r.lsb)
@@ -460,7 +493,7 @@ impl Elaborator {
                 if let Some(ar) = &var.array_range {
                     let depth = if ar.msb >= ar.lsb { ar.msb - ar.lsb + 1 } else { ar.lsb - ar.msb + 1 };
                     let total_width = elem_width * depth;
-                    let _sid = get_or_create_signal(&var.name, total_width, kind, &mut signals, &mut signal_map, &mut next_id, depth, elem_width, total_width - 1, 0, decl_is_2state);
+                    let _sid = get_or_create_signal(&var.name, total_width, kind, net_type, &mut signals, &mut signal_map, &mut next_id, depth, elem_width, total_width - 1, 0, decl_is_2state);
                     if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
                         sig.is_2state = decl_is_2state;
                         let elem_init = LogicVec::new(elem_width);
@@ -478,7 +511,7 @@ impl Elaborator {
                         }
                     }
                 } else {
-                    let _sid = get_or_create_signal(&var.name, elem_width, kind, &mut signals, &mut signal_map, &mut next_id, 1, elem_width, d_msb, d_lsb, decl_is_2state);
+                    let _sid = get_or_create_signal(&var.name, elem_width, kind, net_type, &mut signals, &mut signal_map, &mut next_id, 1, elem_width, d_msb, d_lsb, decl_is_2state);
                     if let Some(class) = &class_name {
                         if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
                             sig.class_name = Some(class.clone());
@@ -711,6 +744,114 @@ impl Elaborator {
         Ok(classes)
     }
 
+    fn elaborate_covergroups(&self, top_name: &str, signal_map: &HashMap<String, SignalId>,
+                              signals: &[SignalInfo]) -> Result<Vec<IrCovergroup>, String> {
+        let mut covergroups = Vec::new();
+        let top_module = if let Some(m) = self.design.modules.iter().find(|m| m.name == top_name) {
+            m
+        } else {
+            return Ok(covergroups);
+        };
+        for item in &top_module.items {
+            if let ModuleItem::Covergroup(cg) = item {
+                let mut ir_cps = Vec::new();
+                for cp in &cg.coverpoints {
+                    let ir_expr = self.elaborate_expr(&cp.expr, signal_map, signals)?;
+                    ir_cps.push(IrCoverpoint { name: cp.name.clone(), expr: ir_expr });
+                }
+                let ir_crosses = cg.crosses.iter().map(|c| {
+                    IrCross { name: c.name.clone(), coverpoints: c.coverpoints.clone() }
+                }).collect();
+                covergroups.push(IrCovergroup { name: cg.name.clone(), coverpoints: ir_cps, crosses: ir_crosses });
+            }
+        }
+        Ok(covergroups)
+    }
+
+    fn elaborate_dpi_imports(&self) -> Result<Vec<IrDpiImport>, String> {
+        let mut dpi_imports = Vec::new();
+        for module in &self.design.modules {
+            for item in &module.items {
+                if let ModuleItem::DpiImport(dpi) = item {
+                    let return_width = dpi.return_type.as_ref()
+                        .map(|dt| dt.width()).unwrap_or(1);
+                    let arg_widths: Vec<usize> = dpi.args.iter()
+                        .map(|a| a.dtype.width()).collect();
+                    dpi_imports.push(IrDpiImport {
+                        name: dpi.name.clone(),
+                        return_width,
+                        arg_widths,
+                        is_task: dpi.is_task,
+                    });
+                }
+            }
+        }
+        Ok(dpi_imports)
+    }
+
+    fn detect_multi_driver_signals(&self, top: &mut IrModule) -> Result<(), String> {
+        let mut driver_count: Vec<usize> = vec![0; top.signals.len()];
+        for process in &top.processes {
+            match process {
+                Process::Combinational { body, .. } | Process::CombReactive { body, .. }
+                    | Process::Sequential { body, .. } => {
+                    Self::count_drivers_in_stmts(body, &mut driver_count);
+                }
+                _ => {}
+            }
+        }
+        for (id, count) in driver_count.iter().enumerate() {
+            if *count > 1 {
+                if let Some(sig) = top.signals.get_mut(id) {
+                    if sig.kind == SignalKind::Wire || sig.kind == SignalKind::Reg || sig.kind == SignalKind::Inout {
+                        sig.multi_driver = true;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn count_drivers_in_stmts(stmts: &[IrStmt], counts: &mut Vec<usize>) {
+        for stmt in stmts {
+            match stmt {
+                IrStmt::BlockingAssign { lhs, .. } | IrStmt::NonBlockingAssign { lhs, .. } => {
+                    if let IrLValue::Signal(id, _) = lhs {
+                        if *id < counts.len() {
+                            counts[*id] += 1;
+                        }
+                    }
+                }
+                IrStmt::Block { stmts: body } | IrStmt::NamedBlock { stmts: body, .. } => {
+                    Self::count_drivers_in_stmts(body, counts);
+                }
+                IrStmt::If { true_branch, false_branch, .. } => {
+                    Self::count_drivers_in_stmts(true_branch, counts);
+                    Self::count_drivers_in_stmts(false_branch, counts);
+                }
+                IrStmt::Case { items, default, .. } => {
+                    for item in items {
+                        Self::count_drivers_in_stmts(&item.body, counts);
+                    }
+                    Self::count_drivers_in_stmts(default, counts);
+                }
+                IrStmt::LoopFor { init, body, cond: _, step: _ } => {
+                    if let Some(init) = init {
+                        Self::count_drivers_in_stmts(&[init.as_ref().clone()], counts);
+                    }
+                    Self::count_drivers_in_stmts(body, counts);
+                }
+                IrStmt::LoopWhile { body, .. } | IrStmt::LoopDoWhile { body, .. } => {
+                    Self::count_drivers_in_stmts(body, counts);
+                }
+                IrStmt::Delay { body, .. } | IrStmt::Wait { body, .. } => {
+                    Self::count_drivers_in_stmts(body, counts);
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn flatten_instances(&mut self, top: &mut IrModule) -> Result<(), String> {
         let instances = std::mem::take(&mut top.sub_instances);
         for inst in &instances {
@@ -767,6 +908,8 @@ impl Elaborator {
                         name: format!("{}.{}", inst.instance_name, sig.name),
                         width: sig.width,
                         kind: sig.kind.clone(),
+                        net_type: sig.net_type,
+                        multi_driver: sig.multi_driver,
                         init_val: sig.init_val.clone(),
                         array_depth: sig.array_depth,
                         elem_width: sig.elem_width,
@@ -934,6 +1077,23 @@ impl Elaborator {
                 let new_proc = processes.iter().map(|p| self.translate_stmts(p, map_sig)).collect::<Result<Vec<_>, String>>()?;
                 Ok(IrStmt::Fork { processes: new_proc, join_type: join_type.clone() })
             }
+            IrStmt::Assert { cond, pass_stmt, fail_stmt } => {
+                let new_cond = self.translate_expr(cond, map_sig);
+                let new_pass = self.translate_stmts(pass_stmt, map_sig)?;
+                let new_fail = self.translate_stmts(fail_stmt, map_sig)?;
+                Ok(IrStmt::Assert { cond: new_cond, pass_stmt: new_pass, fail_stmt: new_fail })
+            }
+            IrStmt::Assume { cond, pass_stmt, fail_stmt } => {
+                let new_cond = self.translate_expr(cond, map_sig);
+                let new_pass = self.translate_stmts(pass_stmt, map_sig)?;
+                let new_fail = self.translate_stmts(fail_stmt, map_sig)?;
+                Ok(IrStmt::Assume { cond: new_cond, pass_stmt: new_pass, fail_stmt: new_fail })
+            }
+            IrStmt::Cover { cond, pass_stmt } => {
+                let new_cond = self.translate_expr(cond, map_sig);
+                let new_pass = self.translate_stmts(pass_stmt, map_sig)?;
+                Ok(IrStmt::Cover { cond: new_cond, pass_stmt: new_pass })
+            }
         }
     }
 
@@ -1023,6 +1183,11 @@ impl Elaborator {
                 Box::new(self.translate_expr(base_expr, map_sig)),
                 Box::new(self.translate_expr(width_expr, map_sig)),
             ),
+            IrExpr::DpiCall { name, args, return_width } => IrExpr::DpiCall {
+                name: name.clone(),
+                args: args.iter().map(|a| self.translate_expr(a, map_sig)).collect(),
+                return_width: *return_width,
+            },
         }
     }
 
@@ -1256,6 +1421,18 @@ impl Elaborator {
                     Expr::FuncCall { name, .. } if name.starts_with('$') => {
                         let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
                         Ok(IrStmt::SysCall { name: String::new(), args: vec![ir_expr] })
+                    }
+                    Expr::FuncCall { name, .. } => {
+                        // Check if this is a DPI function call used as a statement
+                        let is_dpi = self.design.modules.iter().flat_map(|m| m.items.iter())
+                            .any(|item| matches!(item, ModuleItem::DpiImport(d) if d.name == *name));
+                        if is_dpi {
+                            let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                            Ok(IrStmt::SysCall { name: "__dpi_stmt".to_string(), args: vec![ir_expr] })
+                        } else {
+                            // Side-effect-free expression statement — eliminate it
+                            Ok(IrStmt::Block { stmts: vec![] })
+                        }
                     }
                     _ => {
                         // Side-effect-free expression statement — eliminate it
@@ -1495,8 +1672,39 @@ impl Elaborator {
             Stmt::PriorityIf { cond, true_branch, false_branch } => {
                 self.elaborate_stmt(&Stmt::IfElse { cond: cond.clone(), true_branch: true_branch.clone(), false_branch: false_branch.clone() }, signal_map, known_modules, signals)
             }
-            Stmt::Assert { .. } | Stmt::Assume { .. } | Stmt::Cover { .. }
-            | Stmt::Expect { .. } | Stmt::WaitOrder { .. } => {
+            Stmt::Assert { cond, pass_stmt, fail_stmt } => {
+                let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
+                let pass = match pass_stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                let fail = match fail_stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                Ok(IrStmt::Assert { cond: ir_cond, pass_stmt: pass, fail_stmt: fail })
+            }
+            Stmt::Assume { cond, pass_stmt, fail_stmt } => {
+                let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
+                let pass = match pass_stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                let fail = match fail_stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                Ok(IrStmt::Assume { cond: ir_cond, pass_stmt: pass, fail_stmt: fail })
+            }
+            Stmt::Cover { cond, pass_stmt } => {
+                let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
+                let pass = match pass_stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                Ok(IrStmt::Cover { cond: ir_cond, pass_stmt: pass })
+            }
+            Stmt::Expect { .. } | Stmt::WaitOrder { .. } => {
                 Ok(IrStmt::Null)
             }
             Stmt::Fork { processes, join_type } => {
@@ -1865,6 +2073,24 @@ impl Elaborator {
                 // Cast is a pass-through during elaboration
                 self.elaborate_expr(inner, signal_map, signals)
             }
+            Expr::FuncCall { name, args } if name != "new" => {
+                let is_dpi = self.design.modules.iter().flat_map(|m| m.items.iter())
+                    .any(|item| matches!(item, ModuleItem::DpiImport(d) if d.name == *name));
+                if is_dpi {
+                    let ir_args: Result<Vec<IrExpr>, String> = args.iter()
+                        .map(|a| self.elaborate_expr(a, signal_map, signals))
+                        .collect();
+                    let return_width = self.design.modules.iter().flat_map(|m| m.items.iter())
+                        .filter_map(|item| if let ModuleItem::DpiImport(d) = item { Some(d) } else { None })
+                        .find(|d| d.name == *name)
+                        .and_then(|d| d.return_type.as_ref())
+                        .map(|dt| dt.width())
+                        .unwrap_or(32);
+                    Ok(IrExpr::DpiCall { name: name.clone(), args: ir_args?, return_width })
+                } else {
+                    Err(format!("function '{}' not found (not a DPI import)", name))
+                }
+            }
             _ => Err(format!("expression type not yet supported")),
         }
     }
@@ -2094,7 +2320,8 @@ fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, value
                 substitute_genvar_in_generate_item(gi, var_name, value);
             }
         }
-        ModuleItem::Func(_) | ModuleItem::Typedef(_) | ModuleItem::Import { .. } => {}
+        ModuleItem::Func(_) | ModuleItem::Typedef(_) | ModuleItem::Import { .. }
+        | ModuleItem::Covergroup(_) | ModuleItem::DpiImport(_) => {}
     }
 }
 
@@ -2566,6 +2793,11 @@ fn collect_read_signals_expr(expr: &IrExpr, out: &mut Vec<SignalId>) {
             collect_read_signals_expr(base_expr, out);
             collect_read_signals_expr(width_expr, out);
         }
+        IrExpr::DpiCall { args, .. } => {
+            for arg in args {
+                collect_read_signals_expr(arg, out);
+            }
+        }
     }
 }
 
@@ -2821,7 +3053,9 @@ impl DataType {
 impl DeclKind {
     fn default_width(&self) -> usize {
         match self {
-            DeclKind::Wire | DeclKind::Reg | DeclKind::Logic => 1,
+            DeclKind::Wire | DeclKind::Reg | DeclKind::Logic | DeclKind::Wand | DeclKind::Wor
+                | DeclKind::Tri | DeclKind::Tri0 | DeclKind::Tri1 | DeclKind::TriAnd | DeclKind::TriOr
+                | DeclKind::Supply0 | DeclKind::Supply1 => 1,
             DeclKind::Int | DeclKind::Integer => 32,
         }
     }

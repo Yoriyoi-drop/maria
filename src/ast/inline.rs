@@ -305,6 +305,7 @@ fn inline_funcs_in_stmt(
                                 super::types::DeclKind::Wire | super::types::DeclKind::Reg
                                     | super::types::DeclKind::Logic => 1,
                                 super::types::DeclKind::Int | super::types::DeclKind::Integer => 32,
+                                _ => 1,
                             };
                             let width = if let Some(r) = &var.range { r.width() }
                                 else { dtype_width.max(decl_width) };
@@ -520,6 +521,7 @@ fn replace_func_calls_in_expr(
                             super::types::DeclKind::Wire | super::types::DeclKind::Reg
                                 | super::types::DeclKind::Logic => 1,
                             super::types::DeclKind::Int | super::types::DeclKind::Integer => 32,
+                            _ => 1,
                         };
                         let width = if let Some(r) = &var.range {
                             r.width()

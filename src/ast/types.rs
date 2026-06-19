@@ -273,10 +273,28 @@ pub struct Decl {
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeclKind {
     Wire,
+    Wand,
+    Wor,
+    Tri,
+    Tri0,
+    Tri1,
+    TriAnd,
+    TriOr,
+    Supply0,
+    Supply1,
     Reg,
     Logic,
     Int,
     Integer,
+}
+
+impl DeclKind {
+    pub fn is_net(&self) -> bool {
+        matches!(self, DeclKind::Wire | DeclKind::Wand | DeclKind::Wor
+            | DeclKind::Tri | DeclKind::Tri0 | DeclKind::Tri1
+            | DeclKind::TriAnd | DeclKind::TriOr
+            | DeclKind::Supply0 | DeclKind::Supply1)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -355,6 +373,56 @@ pub struct GatePrimitive {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct CovergroupDecl {
+    pub name: String,
+    pub clocking_event: Option<Expr>,
+    pub coverpoints: Vec<CoverpointDef>,
+    pub crosses: Vec<CrossDef>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CoverpointDef {
+    pub name: String,
+    pub expr: Expr,
+    pub bins: Vec<BinDef>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CrossDef {
+    pub name: String,
+    pub coverpoints: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinDef {
+    pub name: String,
+    pub range_list: Vec<Expr>,
+    pub bin_type: BinType,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BinType {
+    Normal,
+    Illegal,
+    Ignore,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DpiImport {
+    pub name: String,
+    pub return_type: Option<Box<DataType>>,
+    pub args: Vec<DpiArg>,
+    pub is_task: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DpiArg {
+    pub direction: PortDirection,
+    pub dtype: DataType,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ModuleItem {
     Always(AlwaysBlock),
     Initial(InitialBlock),
@@ -365,8 +433,10 @@ pub enum ModuleItem {
     Func(FunctionDecl),
     Generate(GenerateBlock),
     Typedef(TypedefDecl),
+    Covergroup(CovergroupDecl),
     // Imported items from packages
     Import { package: String, item: String },
+    DpiImport(DpiImport),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -483,14 +553,6 @@ pub struct Delay {
     pub rise: Option<Expr>,
     pub fall: Option<Expr>,
     pub turnoff: Option<Expr>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum NetType {
-    Wire,
-    Wand,
-    Wor,
-    Tri,
 }
 
 #[derive(Debug, Clone, PartialEq)]

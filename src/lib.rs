@@ -3556,4 +3556,360 @@ endmodule
             .map(|(_, v)| v.to_u64()).unwrap_or(0);
         assert_eq!(v, 50, "if(1) no else should execute true branch");
     }
+
+    #[test]
+    fn test_assert_pass() {
+        let source = r#"
+module tb;
+    reg [31:0] x;
+    initial begin
+        x = 1;
+        assert (x == 1);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let v = sigs.iter().find(|(n, _)| n == "x")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(v, 1, "assert with true condition should not fail");
+    }
+
+    #[test]
+    fn test_assert_fail() {
+        let source = r#"
+module tb;
+    reg [31:0] x;
+    initial begin
+        x = 0;
+        assert (x == 1);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let v = sigs.iter().find(|(n, _)| n == "x")
+            .map(|(_, v)| v.to_u64()).unwrap_or(1);
+        assert_eq!(v, 0, "assert with false condition should continue");
+    }
+
+    #[test]
+    fn test_assert_else_stmt() {
+        let source = r#"
+module tb;
+    reg [31:0] x;
+    initial begin
+        x = 0;
+        assert (x == 1) else x = 99;
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let v = sigs.iter().find(|(n, _)| n == "x")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(v, 99, "assert else stmt should execute on failure");
+    }
+
+    #[test]
+    fn test_cover_pass() {
+        let source = r#"
+module tb;
+    reg [31:0] x;
+    initial begin
+        x = 1;
+        cover (x == 1);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let v = sigs.iter().find(|(n, _)| n == "x")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(v, 1, "cover should not affect execution");
+    }
+
+    #[test]
+    fn test_assert_property_parse() {
+        let source = r#"
+module tb;
+    reg clk;
+    reg [31:0] x;
+    initial begin
+        clk = 0;
+        x = 1;
+        assert property (@(posedge clk) x == 1);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let v = sigs.iter().find(|(n, _)| n == "x")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(v, 1, "concurrent assert property should parse and execute");
+    }
+
+    #[test]
+    fn test_assume_fail() {
+        let source = r#"
+module tb;
+    reg [31:0] x;
+    initial begin
+        x = 0;
+        assume (x == 1);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let v = sigs.iter().find(|(n, _)| n == "x")
+            .map(|(_, v)| v.to_u64()).unwrap_or(1);
+        assert_eq!(v, 0, "assume with false condition should not crash");
+    }
+
+    #[test]
+    fn test_covergroup_parse() {
+        let source = r#"
+module tb;
+    reg [31:0] a;
+    covergroup cg @(posedge clk);
+        cp_a: coverpoint a;
+    endgroup
+    initial begin
+        a = 42;
+        #1 $finish;
+    end
+endmodule
+"#;
+        let result = compile_str(source);
+        assert!(result.is_ok(), "covergroup should parse without error: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_covergroup_with_bins() {
+        let source = r#"
+module tb;
+    reg [31:0] a;
+    covergroup cg;
+        cp_a: coverpoint a {
+            bins low = {[0:10]};
+            bins high = {[11:20]};
+        }
+    endgroup
+    initial begin
+        a = 42;
+        #1 $finish;
+    end
+endmodule
+"#;
+        let result = compile_str(source);
+        assert!(result.is_ok(), "covergroup with bins should parse without error: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_wand_resolution() {
+        let source = r#"
+module tb;
+    wand w;
+    reg a, b;
+    assign w = a;
+    assign w = b;
+    initial begin
+        a = 0; b = 1;
+        #1;
+        // wand: AND of drivers → 0 & 1 = 0
+        if (w !== 0) $display("FAIL: wand expected 0 got %b", w);
+        a = 1; b = 1;
+        #1;
+        if (w !== 1) $display("FAIL: wand expected 1 got %b", w);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let result = simulate_signals(source, 10);
+        assert!(result.is_ok(), "wand resolution failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_wor_resolution() {
+        let source = r#"
+module tb;
+    wor w;
+    reg a, b;
+    assign w = a;
+    assign w = b;
+    initial begin
+        a = 0; b = 1;
+        #1;
+        // wor: OR of drivers → 0 | 1 = 1
+        if (w !== 1) $display("FAIL: wor expected 1 got %b", w);
+        a = 0; b = 0;
+        #1;
+        if (w !== 0) $display("FAIL: wor expected 0 got %b", w);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let result = simulate_signals(source, 10);
+        assert!(result.is_ok(), "wor resolution failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_tri_resolution() {
+        let source = r#"
+module tb;
+    tri t;
+    reg a, en;
+    assign t = en ? a : 1'bz;
+    assign t = 1'b1;  // pullup
+    initial begin
+        en = 0; a = 0;
+        #1;
+        // tri: driver2 = Z, driver1 = 1 → 1
+        if (t !== 1) $display("FAIL: tri expected 1 got %b", t);
+        en = 1; a = 0;
+        #1;
+        // tri: driver2 = 0, driver1 = 1 → X (conflict)
+        if (t !== 1'bx) $display("FAIL: tri expected X got %b", t);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let result = simulate_signals(source, 10);
+        assert!(result.is_ok(), "tri resolution failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_wand_keyword_parse() {
+        let source = r#"
+module tb;
+    wand w;
+    initial #1 $finish;
+endmodule
+"#;
+        let result = compile_str(source);
+        assert!(result.is_ok(), "wand keyword should parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_dpi_import_function() {
+        let source = r#"
+module tb;
+    import "DPI-C" function int my_add(input int a, input int b);
+    int result;
+    initial begin
+        result = my_add(3, 4);
+    end
+endmodule
+"#;
+        let design = compile_str(source);
+        assert!(design.is_ok(), "DPI function import should compile: {:?}", design.err());
+    }
+
+    #[test]
+    fn test_dpi_import_task() {
+        let source = r#"
+module tb;
+    import "DPI-C" task my_task(input int x);
+    initial begin
+        my_task(42);
+    end
+endmodule
+"#;
+        let design = compile_str(source);
+        assert!(design.is_ok(), "DPI task import should compile: {:?}", design.err());
+    }
+
+    #[test]
+    fn test_dpi_import_void() {
+        let source = r#"
+module tb;
+    import "DPI-C" function void dpi_void(input int x);
+    initial begin
+        dpi_void(42);
+    end
+endmodule
+"#;
+        let design = compile_str(source);
+        assert!(design.is_ok(), "DPI void function import should compile: {:?}", design.err());
+    }
+
+    #[test]
+    fn test_dpi_import_multi_arg() {
+        let source = r#"
+module tb;
+    import "DPI-C" function int dpi_mul(input byte a, input shortint b, input int c);
+    int result;
+    initial begin
+        result = dpi_mul(1, 2, 3);
+    end
+endmodule
+"#;
+        let design = compile_str(source);
+        assert!(design.is_ok(), "DPI multi-arg import should compile: {:?}", design.err());
+    }
+
+    #[test]
+    fn test_inout_basic_parse() {
+        let source = r#"
+module top;
+    wire w;
+    driver u1(.port(w));
+    initial #1 $finish;
+endmodule
+module driver(inout port);
+    assign port = 1'b1;
+endmodule
+"#;
+        let result = compile_str(source);
+        assert!(result.is_ok(), "inout port should parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_inout_tri_resolution() {
+        let source = r#"
+module top;
+    tri t;
+    driver u1(.port(t));
+    driver u2(.port(t));
+    initial begin
+        #1;
+        if (t !== 1'bx) $display("FAIL: inout conflict expected X got %b", t);
+        #1 $finish;
+    end
+endmodule
+module driver(inout port);
+    assign port = 1'b1;
+endmodule
+"#;
+        let result = simulate_signals(source, 10);
+        assert!(result.is_ok(), "inout tri resolution failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_inout_bidirectional() {
+        let source = r#"
+module top;
+    reg [1:0] drv_val;
+    wire w;
+    bus_driver u1(.val(drv_val), .bus(w));
+    initial begin
+        drv_val = 0;
+        #1;
+        if (w !== 1'b0) $display("FAIL: expected 0 at time 1 got %b", w);
+        drv_val = 1;
+        #1;
+        if (w !== 1'b1) $display("FAIL: expected 1 at time 2 got %b", w);
+        #1 $finish;
+    end
+endmodule
+module bus_driver(inout bus, input [1:0] val);
+    reg oe;
+    assign bus = oe ? val[0] : 1'bz;
+    initial oe = 1;
+endmodule
+"#;
+        let result = simulate_signals(source, 10);
+        assert!(result.is_ok(), "inout bidirectional failed: {:?}", result.err());
+    }
 }

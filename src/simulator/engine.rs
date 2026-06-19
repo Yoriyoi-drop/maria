@@ -16,11 +16,34 @@ pub enum EventKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EventRegion {
-    Active,
-    Inactive,
-    Nba,
-    Reactive,
+    Preponed    = 1,
+    PreActive   = 2,
+    Active      = 3,
+    Inactive    = 4,
+    PreNba      = 5,
+    Nba         = 6,
+    PostNba     = 7,
+    PreObserved = 8,
+    Observed    = 9,
+    PostObserved = 10,
+    Reactive    = 11,
+    PostReactive = 12,
 }
+
+const IEEE_REGIONS: [EventRegion; 12] = [
+    EventRegion::Preponed,
+    EventRegion::PreActive,
+    EventRegion::Active,
+    EventRegion::Inactive,
+    EventRegion::PreNba,
+    EventRegion::Nba,
+    EventRegion::PostNba,
+    EventRegion::PreObserved,
+    EventRegion::Observed,
+    EventRegion::PostObserved,
+    EventRegion::Reactive,
+    EventRegion::PostReactive,
+];
 
 #[derive(Debug, Clone)]
 pub struct RegionEvent {
@@ -70,11 +93,14 @@ pub struct SimulationEngine {
     pending_waits: Vec<(Vec<SignalId>, Vec<IrStmt>)>,
     current_time: usize,
     fork_groups: Vec<ForkGroup>,
-    nba_pending_events: Vec<EventKind>,
     reactive_events: Vec<EventKind>,
     strobe_events: Vec<Vec<IrExpr>>,
     mailbox_queues: HashMap<SignalId, Vec<LogicVec>>,
     semaphore_counts: HashMap<SignalId, u32>,
+    // Coverage tracking
+    cover_hits: HashMap<String, u64>,
+    cover_total: HashMap<String, u64>,
+    cover_bins: HashMap<String, HashMap<String, u64>>,
 }
 
 impl SimulationEngine {
@@ -104,11 +130,13 @@ impl SimulationEngine {
             pending_waits: Vec::new(),
             current_time: 0,
             fork_groups: Vec::new(),
-            nba_pending_events: Vec::new(),
             reactive_events: Vec::new(),
             strobe_events: Vec::new(),
             mailbox_queues: HashMap::new(),
             semaphore_counts: HashMap::new(),
+            cover_hits: HashMap::new(),
+            cover_total: HashMap::new(),
+            cover_bins: HashMap::new(),
         }
     }
 
@@ -124,7 +152,7 @@ impl SimulationEngine {
         while self.running && self.state.time <= self.max_time {
             let t = self.state.time as usize;
 
-            // Save signal snapshot for edge detection in this time slot
+            // ── Preponed region: snapshot all signals (once per time slot) ──
             let num_sigs = self.state.signals.len();
             let mut snapshot = Vec::with_capacity(num_sigs);
             for i in 0..num_sigs {
@@ -134,81 +162,126 @@ impl SimulationEngine {
 
             self.dump_vcd_time()?;
 
-            // Process events by region in order: Active → Inactive → Nba → Reactive
-            if t < self.events.len() {
-                // Process Active region
-                let active_events: Vec<RegionEvent> = self.events[t].drain(..)
-                    .filter(|re| re.region == EventRegion::Active)
-                    .collect();
-                for re in active_events {
-                    self.process_event(re.event, t)?;
-                }
-
-                // Process Inactive region (#0 delays) - re-drain to catch events added during Active
-                loop {
-                    let inactive_events: Vec<RegionEvent> = self.events[t].drain(..)
-                        .filter(|re| re.region == EventRegion::Inactive)
-                        .collect();
-                    if inactive_events.is_empty() { break; }
-                    for re in inactive_events {
-                        self.process_event(re.event, t)?;
-                    }
-                }
-
-                // Process any remaining events (NBA/Reactive pushed during processing)
-                let remaining: Vec<RegionEvent> = self.events[t].drain(..).collect();
-                for re in remaining {
-                    match re.region {
-                        EventRegion::Nba => self.nba_pending_events.push(re.event),
-                        EventRegion::Reactive => self.reactive_events.push(re.event),
-                        _ => {}
-                    }
-                }
-            }
-
-            // Delta loop: NBA → commit → Reactive
+            // ── IEEE 1800 stratified event loop ──
+            // Iterate through all 12 regions in order; if any region generates
+            // new events, the loop re-circulates from Active (Pre-Active).
             loop {
+                let mut activity = false;
                 let mut deltas: Vec<SignalId> = Vec::new();
-                'delta: loop {
-                    // NBA region: commit non-blocking assignments
-                    self.commit_nba();
-                    
-                    // Process any NBA events that were scheduled
-                    let nba_events: Vec<EventKind> = self.nba_pending_events.drain(..).collect();
-                    for event in nba_events {
-                        self.process_event(event, t)?;
-                    }
 
-                    let changed = self.state.commit_changes();
-                    if changed.is_empty() { break 'delta; }
-                    for (id, _, _) in &changed {
-                        if !deltas.contains(id) {
-                            deltas.push(*id);
+                for &region in &IEEE_REGIONS[..] {
+                    match region {
+                        EventRegion::Preponed => {
+                            // Already handled above — skip during re-circulation
+                        }
+                        EventRegion::PreActive
+                        | EventRegion::PreNba
+                        | EventRegion::PostNba
+                        | EventRegion::PreObserved
+                        | EventRegion::PostObserved
+                        | EventRegion::PostReactive => {
+                            // PLI callback regions — currently non-functional
+                        }
+                        EventRegion::Active | EventRegion::Inactive => {
+                            if t < self.events.len() {
+                                loop {
+                                    let events: Vec<RegionEvent> = self.events[t].drain(..)
+                                        .filter(|re| re.region == region)
+                                        .collect();
+                                    if events.is_empty() { break; }
+                                    activity = true;
+                                    for re in events {
+                                        self.process_event(re.event, t)?;
+                                    }
+                                    // Inactive re-drains; Active drains once (outer loop
+                                    // re-circulates if new events appear later)
+                                    if region == EventRegion::Active { break; }
+                                }
+                            }
+                        }
+                        EventRegion::Nba => {
+                            // NBA region: commit pending non-blocking assignments
+                            self.commit_nba();
+                            if t < self.events.len() {
+                                let events: Vec<RegionEvent> = self.events[t].drain(..)
+                                    .filter(|re| re.region == EventRegion::Nba)
+                                    .collect();
+                                if !events.is_empty() {
+                                    activity = true;
+                                    for re in events {
+                                        self.process_event(re.event, t)?;
+                                    }
+                                }
+                            }
+                        }
+                        EventRegion::Observed => {
+                            // Future: SVA assertion evaluation
+                        }
+                        EventRegion::Reactive => {
+                            // Commit changes and trigger sensitive processes
+                            let changed = self.state.commit_changes();
+                            if !changed.is_empty() {
+                                activity = true;
+                                for (id, _, _) in &changed {
+                                    if !deltas.contains(id) {
+                                        deltas.push(*id);
+                                    }
+                                }
+                                self.trigger_sensitive_processes(&changed, t)?;
+                            }
+                            // Process Reactive events (from events[t] and reactive_events buffer)
+                            if t < self.events.len() {
+                                let events: Vec<RegionEvent> = self.events[t].drain(..)
+                                    .filter(|re| re.region == EventRegion::Reactive)
+                                    .collect();
+                                if !events.is_empty() {
+                                    activity = true;
+                                    for re in events {
+                                        self.process_event(re.event, t)?;
+                                    }
+                                }
+                            }
+                            let buffered: Vec<EventKind> = self.reactive_events.drain(..).collect();
+                            if !buffered.is_empty() {
+                                activity = true;
+                                for event in buffered {
+                                    self.process_event(event, t)?;
+                                }
+                            }
                         }
                     }
-                    
-                    // Reactive region: re-evaluate sensitive processes
-                    self.trigger_sensitive_processes(&changed, t)?;
-                    
-                    // Process any reactive events that were scheduled
-                    let reactive_events: Vec<EventKind> = self.reactive_events.drain(..).collect();
-                    for event in reactive_events {
-                        self.process_event(event, t)?;
-                    }
-
-                    iter_count += 1;
-                    if iter_count > 1_000_000 {
-                        return Err("simulation exceeded max iterations".to_string());
-                    }
                 }
+
+                iter_count += 1;
+                if iter_count > 1_000_000 {
+                    return Err("simulation exceeded max iterations".to_string());
+                }
+
+                // Check pending $wait conditions
                 if !self.pending_waits.is_empty() && !deltas.is_empty() {
                     if self.process_pending_waits(&deltas)? {
-                        continue;
+                        activity = true;
                     }
                 }
-                break;
+
+                // Re-circulate if any events remain or NBA is pending
+                let has_remaining = t < self.events.len()
+                    && self.events[t].iter().any(|re| {
+                        matches!(re.region, EventRegion::Active | EventRegion::Inactive
+                            | EventRegion::Nba | EventRegion::Reactive)
+                    })
+                    || !self.nba_pending.is_empty();
+
+                if has_remaining {
+                    activity = true;
+                }
+
+                if !activity {
+                    break;
+                }
             }
 
+            // ── Postponed region: $strobe, $monitor, VCD ──
             self.process_strobe()?;
             self.dump_vcd_state()?;
             self.check_monitor()?;
@@ -222,6 +295,8 @@ impl SimulationEngine {
                 self.events.push(Vec::new());
             }
         }
+
+        self.report_coverage();
 
         Ok(())
     }
@@ -287,7 +362,61 @@ impl SimulationEngine {
                 Process::Sequential { .. } => {}
             }
         }
+        // Initialize coverage tracking
+        for cg in &self.design.covergroups {
+            for cp in &cg.coverpoints {
+                let key = format!("{}.{}", cg.name, cp.name);
+                self.cover_total.insert(key.clone(), 0);
+                self.cover_hits.insert(key.clone(), 0);
+                self.cover_bins.insert(key, HashMap::new());
+            }
+        }
         Ok(())
+    }
+
+    fn sample_covergroup(&mut self, cg_name: &str) -> Result<(), String> {
+        // Clone covergroup data to avoid borrow conflict with evaluate_expr
+        let cg = self.design.covergroups.iter()
+            .find(|c| c.name == cg_name)
+            .cloned();
+        if let Some(cg) = cg {
+            for cp in &cg.coverpoints {
+                let key = format!("{}.{}", cg.name, cp.name);
+                let total = self.cover_total.entry(key.clone()).or_insert(0);
+                *total += 1;
+                let val = self.evaluate_expr(&cp.expr).unwrap_or(LogicVec::from_u64(0, 32));
+                let bin_key = format!("{}={}", cp.name, val.to_u64());
+                let bins = self.cover_bins.entry(key.clone()).or_insert_with(HashMap::new);
+                let entry = bins.entry(bin_key).or_insert(0);
+                *entry += 1;
+                let hits = self.cover_hits.entry(key).or_insert(0);
+                *hits += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn report_coverage(&self) {
+        if self.design.covergroups.is_empty() {
+            return;
+        }
+        eprintln!("\n=== Coverage Report ===");
+        for cg in &self.design.covergroups {
+            eprintln!("Covergroup: {}", cg.name);
+            for cp in &cg.coverpoints {
+                let key = format!("{}.{}", cg.name, cp.name);
+                let total = self.cover_total.get(&key).copied().unwrap_or(0);
+                let hits = self.cover_hits.get(&key).copied().unwrap_or(0);
+                let bins = self.cover_bins.get(&key);
+                let pct = if total > 0 { (hits as f64 / total as f64) * 100.0 } else { 0.0 };
+                eprintln!("  {}: {} hits / {} samples ({:.1}%)", cp.name, hits, total, pct);
+                if let Some(bins) = bins {
+                    for (bin_key, count) in bins.iter() {
+                        eprintln!("    - {}: {} hits", bin_key, count);
+                    }
+                }
+            }
+        }
     }
 
     fn process_event(&mut self, event: EventKind, t: usize) -> Result<(), String> {
@@ -678,6 +807,10 @@ impl SimulationEngine {
                         if let Some(h) = handle {
                             self.file_handles.remove(&h);
                         }
+                    } else if name == "__dpi_stmt" {
+                        if let Some(arg) = ir_args.first() {
+                            self.evaluate_expr(arg)?;
+                        }
                     } else {
                         eprintln!("warning: unknown system call '{}' ignored", name);
                     }
@@ -687,6 +820,41 @@ impl SimulationEngine {
                     return Ok(true);
                 }
                 IrStmt::Null => {}
+                IrStmt::Assert { cond, pass_stmt, fail_stmt } => {
+                    let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                    if ok {
+                        if !pass_stmt.is_empty() {
+                            self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
+                        }
+                    } else {
+                        eprintln!("assertion failed");
+                        if !fail_stmt.is_empty() {
+                            self.evaluate_block_with_delay_fork(fail_stmt, fork_id)?;
+                        }
+                    }
+                }
+                IrStmt::Assume { cond, pass_stmt, fail_stmt } => {
+                    let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                    if ok {
+                        if !pass_stmt.is_empty() {
+                            self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
+                        }
+                    } else {
+                        eprintln!("assumption violated");
+                        if !fail_stmt.is_empty() {
+                            self.evaluate_block_with_delay_fork(fail_stmt, fork_id)?;
+                        }
+                    }
+                }
+                IrStmt::Cover { cond, pass_stmt } => {
+                    let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                    if ok {
+                        eprintln!("cover point hit");
+                        if !pass_stmt.is_empty() {
+                            self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
+                        }
+                    }
+                }
                 IrStmt::Break => {
                     self.control_flow = Some(FlowControl::Break);
                     return Ok(true);
@@ -750,6 +918,28 @@ impl SimulationEngine {
                             if sig.is_dynamic || sig.is_queue {
                                 let _ = self.evaluate_array_method(*id, sig, method, args)?;
                                 continue;
+                            }
+                            // Auto-create object for class/covergroup variables
+                            if let Some(ref cn) = sig.class_name {
+                                let is_cg = self.design.covergroups.iter().any(|c| c.name == *cn);
+                                if is_cg || self.design.classes.contains_key(cn) {
+                                    let obj_val = self.state.read_signal(*id);
+                                    let obj_id = obj_val.to_u64() as ObjId;
+                                    if obj_id == 0 && self.state.objects.len() > 0 && self.state.objects[0].class_name.is_empty() {
+                                        let class_for_obj = if is_cg {
+                                            format!("__covergroup_{}", cn)
+                                        } else {
+                                            cn.clone()
+                                        };
+                                        let new_id = self.state.alloc_object(&class_for_obj);
+                                        self.state.write_signal(*id, LogicVec::from_u64(new_id as u64, 64));
+                                        let arg_vals: Vec<LogicVec> = args.iter()
+                                            .map(|a| self.evaluate_expr(a))
+                                            .collect::<Result<_, _>>()?;
+                                        self.execute_method(new_id, method, &arg_vals)?;
+                                        continue;
+                                    }
+                                }
                             }
                         }
                     }
@@ -1002,6 +1192,10 @@ impl SimulationEngine {
                         if let Some(h) = handle {
                             self.file_handles.remove(&h);
                         }
+                    } else if name == "__dpi_stmt" {
+                        if let Some(arg) = ir_args.first() {
+                            self.evaluate_expr(arg)?;
+                        }
                     } else {
                         eprintln!("warning: unknown system call '{}' ignored", name);
                     }
@@ -1037,6 +1231,41 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::Null => {}
+                IrStmt::Assert { cond, pass_stmt, fail_stmt } => {
+                    let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                    if ok {
+                        if !pass_stmt.is_empty() {
+                            self.evaluate_stmt_block(pass_stmt)?;
+                        }
+                    } else {
+                        eprintln!("assertion failed");
+                        if !fail_stmt.is_empty() {
+                            self.evaluate_stmt_block(fail_stmt)?;
+                        }
+                    }
+                }
+                IrStmt::Assume { cond, pass_stmt, fail_stmt } => {
+                    let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                    if ok {
+                        if !pass_stmt.is_empty() {
+                            self.evaluate_stmt_block(pass_stmt)?;
+                        }
+                    } else {
+                        eprintln!("assumption violated");
+                        if !fail_stmt.is_empty() {
+                            self.evaluate_stmt_block(fail_stmt)?;
+                        }
+                    }
+                }
+                IrStmt::Cover { cond, pass_stmt } => {
+                    let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                    if ok {
+                        eprintln!("cover point hit");
+                        if !pass_stmt.is_empty() {
+                            self.evaluate_stmt_block(pass_stmt)?;
+                        }
+                    }
+                }
                 IrStmt::Break => {
                     self.control_flow = Some(FlowControl::Break);
                     return Ok(());
@@ -1100,6 +1329,27 @@ impl SimulationEngine {
                         if sig.is_dynamic || sig.is_queue {
                             let _ = self.evaluate_array_method(*id, sig, method, args)?;
                             continue;
+                        }
+                        if let Some(ref cn) = sig.class_name {
+                            let is_cg = self.design.covergroups.iter().any(|c| c.name == *cn);
+                            if is_cg || self.design.classes.contains_key(cn) {
+                                let obj_val = self.state.read_signal(*id);
+                                let obj_id = obj_val.to_u64() as ObjId;
+                                if obj_id == 0 && self.state.objects.len() > 0 && self.state.objects[0].class_name.is_empty() {
+                                    let class_for_obj = if is_cg {
+                                        format!("__covergroup_{}", cn)
+                                    } else {
+                                        cn.clone()
+                                    };
+                                    let new_id = self.state.alloc_object(&class_for_obj);
+                                    self.state.write_signal(*id, LogicVec::from_u64(new_id as u64, 64));
+                                    let arg_vals: Vec<LogicVec> = args.iter()
+                                        .map(|a| self.evaluate_expr(a))
+                                        .collect::<Result<_, _>>()?;
+                                    self.execute_method(new_id, method, &arg_vals)?;
+                                    continue;
+                                }
+                            }
                         }
                     }
                 }
@@ -1611,12 +1861,22 @@ impl SimulationEngine {
                 let arg_vals: Vec<LogicVec> = args.iter()
                     .map(|a| self.evaluate_expr(a))
                     .collect::<Result<_, _>>()?;
-                let obj_id = self.state.alloc_object(&class_name);
+                // Check if this is a covergroup instantiation
+                let is_cg = self.design.covergroups.iter().any(|c| c.name == *class_name);
+                let effective_name = if is_cg {
+                    format!("__covergroup_{}", class_name)
+                } else {
+                    class_name.clone()
+                };
+                let obj_id = self.state.alloc_object(&effective_name);
                 if class_name == "__mailbox" {
                     self.mailbox_queues.insert(obj_id, Vec::new());
                 } else if class_name == "__semaphore" {
                     let init = if !arg_vals.is_empty() { arg_vals[0].to_u64() as u32 } else { 0 };
                     self.semaphore_counts.insert(obj_id, init);
+                } else if is_cg {
+                    // Auto-sample covergroup immediately on new()
+                    self.sample_covergroup(&class_name)?;
                 } else if !class_name.is_empty() {
                     if let Some(cls) = self.design.classes.get(class_name.as_str()) {
                         if let Some(obj) = self.state.get_object_mut(obj_id) {
@@ -1658,6 +1918,33 @@ impl SimulationEngine {
                             return Ok(result);
                         }
                     }
+                    if let Some(sig) = self.design.top.signals.get(*id) {
+                        if let Some(ref cn) = sig.class_name {
+                            let is_arr = sig.is_dynamic || sig.is_queue;
+                            if !is_arr && !sig.is_string {
+                                // Check if this class_name matches a covergroup or class
+                                let is_cg = self.design.covergroups.iter().any(|c| c.name == *cn);
+                                if is_cg || self.design.classes.contains_key(cn)
+                                {
+                                    let obj_val = self.state.read_signal(*id);
+                                    let obj_id = obj_val.to_u64() as ObjId;
+                                    if obj_id == 0 && self.state.objects.len() > 0 && self.state.objects[0].class_name.is_empty() {
+                                        let class_for_obj = if is_cg {
+                                            format!("__covergroup_{}", cn)
+                                        } else {
+                                            cn.clone()
+                                        };
+                                        let new_id = self.state.alloc_object(&class_for_obj);
+                                        self.state.write_signal(*id, LogicVec::from_u64(new_id as u64, 64));
+                                        let arg_vals: Vec<LogicVec> = args.iter()
+                                            .map(|a| self.evaluate_expr(a))
+                                            .collect::<Result<_, _>>()?;
+                                        return self.execute_method(new_id, method, &arg_vals);
+                                    }
+                                }
+                            }
+                        }
+                    }
                     let is_arr = self.design.top.signals.get(*id).map(|s| s.is_dynamic || s.is_queue).unwrap_or(false);
                     if is_arr {
                         let sig_info = self.design.top.signals[*id].clone();
@@ -1682,6 +1969,9 @@ impl SimulationEngine {
                     .unwrap_or_else(|| LogicVec::new(1));
                 Ok(val)
             }
+            IrExpr::DpiCall { name, args, return_width } => {
+                self.evaluate_dpi_call(name, args, *return_width)
+            }
         }
     }
 
@@ -1690,6 +1980,7 @@ impl SimulationEngine {
             IrLValue::Signal(id, _) => {
                 sanitize_for_2state(&self.design.top.signals, *id, &mut val);
                 let is_str = self.design.top.signals.get(*id).map(|s| s.is_string).unwrap_or(false);
+                let sig_info = self.design.top.signals.get(*id).cloned();
                 let resized = if is_str {
                     val
                 } else {
@@ -1700,6 +1991,15 @@ impl SimulationEngine {
                         val
                     }
                 };
+                // Apply resolution for multi-driver nets
+                if let Some(ref info) = sig_info {
+                    if info.multi_driver && info.net_type != NetType::Wire {
+                        let current = self.state.read_signal(*id).clone();
+                        let resolved = resolve_net_values(info.net_type, &current, &resized);
+                        self.state.write_signal(*id, resolved);
+                        return Ok(());
+                    }
+                }
                 self.state.write_signal(*id, resized);
             }
             IrLValue::RangeSelect(sig_id, msb, lsb) => {
@@ -1785,6 +2085,67 @@ impl SimulationEngine {
             }
         }
         Ok(())
+    }
+
+    fn evaluate_dpi_call(&mut self, name: &str, args: &[IrExpr], return_width: usize) -> Result<LogicVec, String> {
+        // Check if we have a matching DPI import
+        let dpi = self.design.dpi_imports.iter()
+            .find(|d| d.name == name)
+            .ok_or_else(|| format!("DPI function '{}' not found in imports", name))?;
+        if dpi.is_task {
+            return Ok(LogicVec::new(0));
+        }
+        let arg_vals: Vec<LogicVec> = args.iter()
+            .map(|a| self.evaluate_expr(a))
+            .collect::<Result<_, _>>()?;
+        // Known DPI functions
+        match name {
+            "svBitToInt" | "svToInt" => {
+                if let Some(val) = arg_vals.first() {
+                    return Ok(LogicVec::from_u64(val.to_u64(), return_width));
+                }
+                return Ok(LogicVec::from_u64(0, return_width));
+            }
+            "svBitToLong" | "svToLong" => {
+                if let Some(val) = arg_vals.first() {
+                    return Ok(LogicVec::from_u64(val.to_u64(), return_width));
+                }
+                return Ok(LogicVec::from_u64(0, return_width));
+            }
+            "svToShortReal" | "svToReal" => {
+                if let Some(val) = arg_vals.first() {
+                    return Ok(val.clone());
+                }
+                return Ok(LogicVec::from_u64(0, return_width));
+            }
+            "svIntToBit" | "svToBit" | "svToLogic" => {
+                if let Some(val) = arg_vals.first() {
+                    return Ok(val.clone());
+                }
+                return Ok(LogicVec::from_u64(0, return_width));
+            }
+            "svBitToBitVal" | "svBitToLogicVal" => {
+                if let Some(val) = arg_vals.first() {
+                    return Ok(val.clone());
+                }
+                return Ok(LogicVec::from_u64(0, return_width));
+            }
+            "svRandomize" | "sv$random" | "svUrandom" | "svUrandomRange" => {
+                let r: u64 = self.rng.gen();
+                Ok(LogicVec::from_u64(r, return_width))
+            }
+            "$test$plusargs" | "svTestPlusArgs" => {
+                // Plusargs not supported — return 0
+                Ok(LogicVec::from_u64(0, return_width))
+            }
+            "$value$plusargs" | "svValuePlusArgs" => {
+                Ok(LogicVec::from_u64(0, return_width))
+            }
+            _ => {
+                // Unknown DPI — return 0
+                Ok(LogicVec::from_u64(0, return_width))
+            }
+        }
     }
 
     fn evaluate_combinational(&mut self, pid: usize, _t: usize) -> Result<(), String> {
@@ -2489,6 +2850,13 @@ impl SimulationEngine {
         if class_name == "__semaphore" {
             return self.execute_semaphore_method(obj_id, method, args);
         }
+        // Covergroup support: sample() records coverage data
+        if method == "sample" && class_name.starts_with("__covergroup_") {
+            let cg_name = &class_name["__covergroup_".len()..];
+            if self.design.covergroups.iter().any(|c| c.name == cg_name) {
+                return self.sample_covergroup(cg_name).map(|_| LogicVec::from_u64(1, 1));
+            }
+        }
         // Check for built-in randomize() — only if no user-defined override exists
         if method == "randomize" {
             let has_user_method = self.find_method_in_hierarchy(&class_name, method).is_ok();
@@ -2926,6 +3294,17 @@ fn sanitize_for_2state(signals: &[SignalInfo], id: SignalId, val: &mut LogicVec)
 }
 
 
+fn resolve_net_values(net_type: NetType, current: &LogicVec, incoming: &LogicVec) -> LogicVec {
+    let width = current.width.max(incoming.width);
+    let mut bits = Vec::with_capacity(width);
+    for i in 0..width {
+        let cur = current.bits.get(i).copied().unwrap_or(LogicVal::Z);
+        let inc = incoming.bits.get(i).copied().unwrap_or(LogicVal::Z);
+        bits.push(net_type.resolve_bit(cur, inc));
+    }
+    LogicVec { bits, width }
+}
+
 fn read_hex_file(filename: &str, elem_width: usize, array_depth: usize, start: Option<usize>, end: Option<usize>) -> Result<Vec<LogicVec>, String> {
     let content = std::fs::read_to_string(filename).map_err(|e| format!("cannot read {}: {}", filename, e))?;
     let start_addr = start.unwrap_or(0);
@@ -3233,6 +3612,11 @@ fn extract_signal_deps_inner(expr: &IrExpr, deps: &mut Vec<SignalId>) {
             }
         }
         IrExpr::SysFunc { args, .. } => {
+            for a in args {
+                extract_signal_deps_inner(a, deps);
+            }
+        }
+        IrExpr::DpiCall { args, .. } => {
             for a in args {
                 extract_signal_deps_inner(a, deps);
             }
