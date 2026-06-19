@@ -467,6 +467,8 @@ impl SimulationEngine {
                         if let Some(h) = handle {
                             self.file_handles.remove(&h);
                         }
+                    } else {
+                        eprintln!("warning: unknown system call '{}' ignored", name);
                     }
                 }
                 IrStmt::SysFinish => {
@@ -645,6 +647,8 @@ impl SimulationEngine {
                         if let Some(h) = handle {
                             self.file_handles.remove(&h);
                         }
+                    } else {
+                        eprintln!("warning: unknown system call '{}' ignored", name);
                     }
                 }
                 IrStmt::SysFinish => {
@@ -869,6 +873,36 @@ impl SimulationEngine {
                 let bit = val.bits.get(*idx).copied().unwrap_or(LogicVal::X);
                 Ok(LogicVec { bits: vec![bit], width: 1 })
             }
+            IrExpr::ExprRangeSelect(inner, msb, lsb) => {
+                let val = self.evaluate_expr(inner)?;
+                let (start, end) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
+                if end >= val.width {
+                    return Err(format!("range select out of bounds: {}:{} on width {}", msb, lsb, val.width));
+                }
+                let mut bits = val.bits[start..=end].to_vec();
+                if *msb > *lsb { bits.reverse(); }
+                Ok(LogicVec { width: bits.len(), bits })
+            }
+            IrExpr::ExprBitSelect(inner, idx) => {
+                let val = self.evaluate_expr(inner)?;
+                let bit = val.bits.get(*idx).copied().unwrap_or(LogicVal::X);
+                Ok(LogicVec { bits: vec![bit], width: 1 })
+            }
+            IrExpr::ExprPartSelect(inner, base_expr, width_expr) => {
+                let val = self.evaluate_expr(inner)?;
+                let base = self.evaluate_expr(base_expr)?;
+                let width = self.evaluate_expr(width_expr)?;
+                let base = base.to_u64() as usize;
+                let width = width.to_u64() as usize;
+                if width == 0 || base >= val.width {
+                    return Ok(LogicVec::new(1));
+                }
+                let end = (base + width - 1).min(val.width - 1);
+                let mut bits = val.bits[base..=end].to_vec();
+                // PartSelect is always [high:low] with high >= low, so reverse
+                bits.reverse();
+                Ok(LogicVec { width: bits.len(), bits })
+            }
             IrExpr::ArrayIndex { sig_id, index, elem_width } => {
                 let array_val = self.state.read_signal(*sig_id).clone();
                 let idx_val = self.evaluate_expr(index)?;
@@ -994,8 +1028,12 @@ impl SimulationEngine {
                             Ok(LogicVec::from_u64(0, 32))
                         }
                     }
+                    "$time" => {
+                        Ok(LogicVec::from_u64(self.state.time as u64, 64))
+                    }
                     _ => {
-                        Err(format!("unsupported system function '{}'", name))
+                        eprintln!("warning: unsupported system function '{}'", name);
+                        Ok(LogicVec::from_u64(0, 32))
                     }
                 }
             }
@@ -1096,6 +1134,32 @@ impl SimulationEngine {
                 }
                 self.state.write_signal(*sig_id, existing);
             }
+            IrLValue::ArrayRangeSelect { sig_id, index, elem_width, msb, lsb } => {
+                let mut existing = self.state.read_signal(*sig_id).clone();
+                let idx_val = self.evaluate_expr(index)?;
+                let idx = idx_val.to_u64() as usize;
+                let base = idx * elem_width;
+                let (start, end) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
+                let abs_start = base + start;
+                for (i, b) in val.bits.iter().enumerate() {
+                    if abs_start + i <= base + end {
+                        existing.bits[abs_start + i] = *b;
+                    }
+                }
+                self.state.write_signal(*sig_id, existing);
+            }
+            IrLValue::ArrayBitSelect { sig_id, index, elem_width, bit } => {
+                let mut existing = self.state.read_signal(*sig_id).clone();
+                let idx_val = self.evaluate_expr(index)?;
+                let idx = idx_val.to_u64() as usize;
+                let abs_idx = idx * elem_width + bit;
+                if let Some(b) = val.bits.first() {
+                    if abs_idx < existing.bits.len() {
+                        existing.bits[abs_idx] = *b;
+                    }
+                }
+                self.state.write_signal(*sig_id, existing);
+            }
             IrLValue::Concat(parts) => {
                 let mut offset = 0;
                 for part in parts {
@@ -1135,6 +1199,10 @@ impl SimulationEngine {
             }
             IrLValue::BitSelect(_, _) => 1,
             IrLValue::ArrayIndex { elem_width, .. } => *elem_width,
+            IrLValue::ArrayRangeSelect { msb, lsb, .. } => {
+                if *msb > *lsb { msb - lsb + 1 } else { lsb - msb + 1 }
+            }
+            IrLValue::ArrayBitSelect { .. } => 1,
             IrLValue::Concat(parts) => parts.iter().map(|p| self.get_lvalue_width(p)).sum(),
         }
     }
@@ -1425,6 +1493,34 @@ impl SimulationEngine {
                             Ok(())
                         }
                     }
+                    Expr::RangeSelect { expr: inner, msb, lsb } => {
+                        let lhs_val = self.evaluate_ast_expr(inner)?;
+                        let msb_val = self.evaluate_ast_expr(msb)?;
+                        let lsb_val = self.evaluate_ast_expr(lsb)?;
+                        let m = msb_val.to_u64() as usize;
+                        let l = lsb_val.to_u64() as usize;
+                        let (start, end) = if m > l { (l, m) } else { (m, l) };
+                        let range_len = end - start + 1;
+                        let mut bits = lhs_val.bits.clone();
+                        for j in 0..val.width.min(range_len) {
+                            if start + j < bits.len() {
+                                bits[start + j] = val.bits[j];
+                            }
+                        }
+                        let new_val = LogicVec { width: bits.len(), bits };
+                        match inner.as_ref() {
+                            Expr::Ident(name) => { self.write_local_or_field(name, new_val)?; }
+                            Expr::MemberAccess { obj, field } => {
+                                let ov = self.evaluate_ast_expr(obj)?;
+                                let oid = ov.to_u64() as ObjId;
+                                if let Some(o) = self.state.get_object_mut(oid) {
+                                    o.fields.insert(field.clone(), new_val);
+                                }
+                            }
+                            _ => {}
+                        }
+                        Ok(())
+                    }
                     _ => Err(format!("unsupported LHS in method: {:?}", lhs)),
                 }
             }
@@ -1491,6 +1587,34 @@ impl SimulationEngine {
                             }
                             Ok(())
                         }
+                    }
+                    Expr::RangeSelect { expr: inner, msb, lsb } => {
+                        let lhs_val = self.evaluate_ast_expr(inner)?;
+                        let msb_val = self.evaluate_ast_expr(msb)?;
+                        let lsb_val = self.evaluate_ast_expr(lsb)?;
+                        let m = msb_val.to_u64() as usize;
+                        let l = lsb_val.to_u64() as usize;
+                        let (start, end) = if m > l { (l, m) } else { (m, l) };
+                        let range_len = end - start + 1;
+                        let mut bits = lhs_val.bits.clone();
+                        for j in 0..val.width.min(range_len) {
+                            if start + j < bits.len() {
+                                bits[start + j] = val.bits[j];
+                            }
+                        }
+                        let new_val = LogicVec { width: bits.len(), bits };
+                        match inner.as_ref() {
+                            Expr::Ident(name) => { self.write_local_or_field(name, new_val)?; }
+                            Expr::MemberAccess { obj, field } => {
+                                let ov = self.evaluate_ast_expr(obj)?;
+                                let oid = ov.to_u64() as ObjId;
+                                if let Some(o) = self.state.get_object_mut(oid) {
+                                    o.fields.insert(field.clone(), new_val);
+                                }
+                            }
+                            _ => {}
+                        }
+                        Ok(())
                     }
                     _ => Err(format!("unsupported LHS in method: {:?}", lhs)),
                 }
@@ -1669,6 +1793,16 @@ impl SimulationEngine {
                 match lhs {
                     Expr::Ident(name) => {
                         self.write_local_or_field(name, val)
+                    }
+                    Expr::MemberAccess { obj, field } => {
+                        let obj_val = self.evaluate_ast_expr(obj)?;
+                        let obj_id = obj_val.to_u64() as ObjId;
+                        if let Some(obj) = self.state.get_object_mut(obj_id) {
+                            obj.fields.insert(field.clone(), val);
+                            Ok(())
+                        } else {
+                            Err(format!("object {} not found for field write", obj_id))
+                        }
                     }
                     _ => Err(format!("unsupported LHS in StmtAssign: {:?}", lhs)),
                 }
@@ -1952,6 +2086,35 @@ fn eval_display_arg(state: &SimulationState, arg: &IrExpr) -> Result<LogicVec, S
                     let val = state.read_signal(*sig_id);
                     let bit = val.bits.get(*idx).copied().unwrap_or(LogicVal::X);
                     Ok(LogicVec { bits: vec![bit], width: 1 })
+                }
+                IrExpr::ExprRangeSelect(inner, msb, lsb) => {
+                    let val = eval_display_arg(state, inner)?;
+                    let (start, end) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
+                    if end < val.width {
+                        let mut bits = val.bits[start..=end].to_vec();
+                        if *msb > *lsb { bits.reverse(); }
+                        Ok(LogicVec { width: bits.len(), bits })
+                    } else {
+                        Ok(LogicVec::new(1))
+                    }
+                }
+                IrExpr::ExprBitSelect(inner, idx) => {
+                    let val = eval_display_arg(state, inner)?;
+                    let bit = val.bits.get(*idx).copied().unwrap_or(LogicVal::X);
+                    Ok(LogicVec { bits: vec![bit], width: 1 })
+                }
+                IrExpr::ExprPartSelect(inner, base_expr, width_expr) => {
+                    let val = eval_display_arg(state, inner)?;
+                    let base = eval_display_arg(state, base_expr).ok().map(|v| v.to_u64() as usize).unwrap_or(0);
+                    let width = eval_display_arg(state, width_expr).ok().map(|v| v.to_u64() as usize).unwrap_or(0);
+                    if width == 0 || base >= val.width {
+                        Ok(LogicVec::new(1))
+                    } else {
+                        let end = (base + width - 1).min(val.width - 1);
+                        let mut bits = val.bits[base..=end].to_vec();
+                        bits.reverse();
+                        Ok(LogicVec { width: bits.len(), bits })
+                    }
                 }
                 IrExpr::Signed(inner) => eval_display_arg(state, inner),
                 IrExpr::ArrayIndex { sig_id, index, elem_width } => {

@@ -202,6 +202,14 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
             let eq = lhs_ext.bits == rhs_ext.bits;
             LogicVec::from_u64(if eq { 0 } else { 1 }, 1)
         }
+        BinaryIrOp::EqWild => {
+            let eq = lhs_ext.casex_eq(&rhs_ext);
+            LogicVec::from_u64(if eq { 1 } else { 0 }, 1)
+        }
+        BinaryIrOp::NeqWild => {
+            let eq = lhs_ext.casex_eq(&rhs_ext);
+            LogicVec::from_u64(if eq { 0 } else { 1 }, 1)
+        }
         BinaryIrOp::Lt => {
             let l = lhs_ext.to_u64();
             let r = rhs_ext.to_u64();

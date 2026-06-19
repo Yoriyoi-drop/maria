@@ -2000,4 +2000,203 @@ endmodule
         let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
         assert_eq!(val.to_u64(), 8, "$bits(reg [7:0]) should be 8");
     }
+
+    #[test]
+    fn test_wildcard_equality_eq() {
+        let source = r#"
+module tb;
+    reg [3:0] a, b;
+    reg result;
+    initial begin
+        a = 4'b1010;
+        b = 4'b10x0;
+        result = (a ==? b);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
+        assert_eq!(val.to_u64(), 1, "==? should treat X as don't-care");
+    }
+
+    #[test]
+    fn test_wildcard_equality_neq() {
+        let source = r#"
+module tb;
+    reg [3:0] a, b;
+    reg result;
+    initial begin
+        a = 4'b1010;
+        b = 4'b1011;
+        result = (a !=? b);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
+        assert_eq!(val.to_u64(), 1, "!=? should be 1 when not equal");
+    }
+
+    #[test]
+    fn test_dollar_time() {
+        let source = r#"
+module tb;
+    reg [63:0] t;
+    initial begin
+        #5;
+        t = $time;
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 10).unwrap();
+        let (_, val) = sigs.iter().find(|(n, _)| n == "t").unwrap();
+        assert_eq!(val.to_u64(), 5, "$time should return 5 at time 5");
+    }
+
+    #[test]
+    fn test_range_select_signal() {
+        let source = r#"
+module tb;
+    reg [7:0] a;
+    reg [3:0] result;
+    initial begin
+        a = 8'b11001100;
+        result = a[5:2];
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
+        // bits 5:2 of 11001100 are 0011; stored LSB-first as [0,0,1,1] → 12
+        assert_eq!(val.to_u64(), 12, "a[5:2] of 11001100 should give 12");
+    }
+
+    #[test]
+    fn test_generate_if_active() {
+        let source = r#"
+module tb;
+    generate
+        if (1) begin
+            reg [7:0] data;
+        end else begin
+            reg [15:0] data;
+        end
+    endgenerate
+    initial begin
+        data = 8'hAB;
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let (_, val) = sigs.iter().find(|(n, _)| n == "data").unwrap();
+        assert_eq!(val.to_u64(), 0xAB, "generate if should select true branch");
+    }
+
+    #[test]
+    fn test_dynamic_part_select() {
+        let source = r#"
+module tb;
+    reg [7:0] a;
+    reg [3:0] result;
+    integer sel;
+    initial begin
+        a = 8'b11001100;
+        sel = 5;
+        // dynamic part-select: a[sel -: 4] → a[5:2]
+        result = a[sel -: 4];
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
+        // bits 5:2 of 11001100 are 0011; LSB-first → value 12
+        assert_eq!(val.to_u64(), 12, "dynamic part-select a[sel-:4] should give 12");
+    }
+
+    #[test]
+    fn test_dynamic_part_select_plus() {
+        let source = r#"
+module tb;
+    reg [7:0] a;
+    reg [3:0] result;
+    integer sel;
+    initial begin
+        a = 8'b11001100;
+        sel = 2;
+        result = a[sel +: 4];
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
+        assert_eq!(val.to_u64(), 12, "dynamic part-select a[sel+:4] should give 12");
+    }
+
+    #[test]
+    fn test_unknown_syscall_no_crash() {
+        let source = r#"
+module tb;
+    reg [31:0] x;
+    initial begin
+        x = 42;
+        $foobar(x);
+        #1 $finish;
+    end
+endmodule
+"#;
+        // Should not crash or error, just warn
+        let result = simulate_signals(source, 5);
+        assert!(result.is_ok(), "unknown syscall should not cause crash: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_array_range_select_lvalue() {
+        let source = r#"
+module tb;
+    reg [7:0] arr [0:3];
+    reg [3:0] result;
+    integer i;
+    initial begin
+        arr[0] = 8'hA5;
+        arr[1] = 8'h5A;
+        i = 1;
+        result = arr[i][3:0];
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
+        // arr[1] = 8'h5A = 01011010; [3:0] = a[3]*1 + a[2]*2 + a[1]*4 + a[0]*8 = 1+0+4+0 = 5
+        assert_eq!(val.to_u64(), 5, "arr[i][3:0] should select low nibble");
+    }
+
+    #[test]
+    fn test_array_bit_select_lvalue() {
+        let source = r#"
+module tb;
+    reg [7:0] arr [0:3];
+    reg result;
+    integer i;
+    initial begin
+        arr[0] = 8'hA5;
+        arr[1] = 8'h5A;
+        i = 0;
+        result = arr[i][0];
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
+        // arr[0] = 8'hA5 = 10100101; bit 0 = 1
+        assert_eq!(val.to_u64(), 1, "arr[i][0] should select bit 0");
+    }
 }

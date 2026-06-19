@@ -102,6 +102,7 @@ impl Parser {
         self.class_names.clear();
         let mut modules = Vec::new();
         let mut classes = Vec::new();
+        let mut packages = Vec::new();
         // First pass: collect all class names
         let saved_pos = self.pos;
         while self.peek() != &Token::Eof {
@@ -117,6 +118,10 @@ impl Parser {
             } else if matches!(self.peek(), Token::Module | Token::Interface) {
                 let m = self.parse_module()?;
                 modules.push(m);
+            } else if self.peek() == &Token::Package {
+                // consume 'package' keyword token if we defined one
+                // For now, we'll handle in second pass
+                self.parse_package_decl()?;
             } else {
                 let line = self.peek_line();
                 return Err(format!("line {}: expected module or class, found {}", line, self.peek()));
@@ -136,13 +141,65 @@ impl Parser {
                     let c = self.parse_class()?;
                     classes.push(c);
                 }
+                Token::Package => {
+                    let p = self.parse_package_decl()?;
+                    packages.push(p);
+                }
                 _ => {
                     let line = self.peek_line();
-                    return Err(format!("line {}: expected module or class, found {}", line, self.peek()));
+                    return Err(format!("line {}: expected module, class, or package, found {}", line, self.peek()));
                 }
             }
         }
-        Ok(Design { modules, classes, top_module: None })
+        Ok(Design { modules, classes, packages, top_module: None })
+    }
+
+    fn parse_package_decl(&mut self) -> Result<PackageDecl, String> {
+        self.advance(); // consume 'package'
+        let name = self.expect_ident()?;
+        self.skip_semi();
+        let mut items = Vec::new();
+        loop {
+            match self.peek() {
+                Token::EndPackage => { self.advance(); break; }
+                Token::Eof => return Err("unexpected EOF in package".to_string()),
+                _ => {
+                    match self.peek() {
+                        Token::Param | Token::Parameter | Token::LocalParam => {
+                            let tok = self.peek().clone();
+                            self.advance();
+                            let name_tok = self.peek().clone();
+                            let pname = match &name_tok {
+                                Token::Ident(s) => { self.advance(); s.clone() }
+                                _ => return Err("expected parameter name".to_string()),
+                            };
+                            let default = if self.peek() == &Token::BlockingAssign {
+                                self.advance();
+                                Some(self.parse_expr(0)?)
+                            } else { None };
+                            self.skip_semi();
+                            items.push(PackageItem::Param(ParamDecl { name: pname, dtype: None, default }));
+                        }
+                        Token::Function => {
+                            items.push(PackageItem::Function(self.parse_function(false)?));
+                        }
+                        Token::Task => {
+                            items.push(PackageItem::Task(self.parse_task(false)?));
+                        }
+                        Token::Typedef => {
+                            let td = self.parse_typedef()?;
+                            self.typedef_names.push(td.name.clone());
+                            items.push(PackageItem::Typedef(td));
+                        }
+                        _ => {
+                            let decl = self.parse_decl()?;
+                            items.push(PackageItem::Decl(decl));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(PackageDecl { name, items })
     }
 
     fn parse_class(&mut self) -> Result<ClassDecl, String> {
@@ -448,8 +505,17 @@ impl Parser {
                 Ok(Some(ModuleItem::Func(func)))
             }
             Token::Task => {
-                self.skip_until_semi_or_end()?;
-                Ok(None)
+                let task = self.parse_task(false)?;
+                // Treat tasks as functions for now (the engine can handle them)
+                Ok(Some(ModuleItem::Func(FunctionDecl {
+                    name: task.name,
+                    range: None,
+                    return_type: None,
+                    ports: task.ports,
+                    decls: task.decls,
+                    stmts: task.stmts,
+                    virtual_flag: task.virtual_flag,
+                })))
             }
             Token::And | Token::Or | Token::Nand | Token::Nor | Token::Xor | Token::Xnor => {
                 let gate = self.parse_gate_primitive()?;
@@ -463,6 +529,22 @@ impl Parser {
                 let td = self.parse_typedef()?;
                 self.typedef_names.push(td.name.clone());
                 Ok(Some(ModuleItem::Typedef(td)))
+            }
+            Token::Import => {
+                self.advance();
+                let pkg = self.expect_ident()?;
+                self.expect(Token::Scope)?;
+                let item = if self.peek() == &Token::Star {
+                    self.advance();
+                    "*".to_string()
+                } else {
+                    self.expect_ident()?
+                };
+                self.skip_semi();
+                Ok(Some(ModuleItem::Import { package: pkg, item }))
+            }
+            Token::Assert | Token::Assume | Token::Cover | Token::Expect => {
+                self.parse_immediate_assertion().map(Some)
             }
             _ => Ok(None),
         }
@@ -1025,10 +1107,20 @@ impl Parser {
 
     fn parse_function(&mut self, virtual_flag: bool) -> Result<FunctionDecl, String> {
         self.advance(); // consume 'function'
-        // Skip optional return type keywords (void, int, integer, string, etc.)
-        if matches!(self.peek(), Token::Void | Token::Int | Token::Integer | Token::String) {
-            self.advance();
-        }
+        // Parse optional return type
+        let return_type = match self.peek() {
+            Token::Void => { self.advance(); Some(Box::new(DataType::Bit)) } // void -> bit placeholder
+            Token::Int => { self.advance(); Some(Box::new(DataType::Int)) }
+            Token::Integer => { self.advance(); Some(Box::new(DataType::Integer)) }
+            Token::String => { self.advance(); Some(Box::new(DataType::UserDefined("string".into()))) }
+            Token::Byte => { self.advance(); Some(Box::new(DataType::Byte)) }
+            Token::Shortint => { self.advance(); Some(Box::new(DataType::Shortint)) }
+            Token::Longint => { self.advance(); Some(Box::new(DataType::Longint)) }
+            Token::Bit => { self.advance(); Some(Box::new(DataType::Bit)) }
+            Token::Logic => { self.advance(); Some(Box::new(DataType::Logic)) }
+            Token::Signed => { self.advance(); Some(Box::new(DataType::Signed(Box::new(DataType::Logic)))) }
+            _ => None,
+        };
         let range = if self.peek() == &Token::LBrack {
             self.parse_range()?
         } else {
@@ -1139,10 +1231,10 @@ impl Parser {
                 Token::Begin => {
                     let stmts = self.parse_stmt_block()?;
                     self.expect(Token::EndFunction)?;
-                    return Ok(FunctionDecl { name, range, ports, decls, stmts, virtual_flag });
+                    return Ok(FunctionDecl { name, range, return_type, ports, decls, stmts, virtual_flag });
                 }
                 Token::EndFunction => {
-                    return Ok(FunctionDecl { name, range, ports, decls, stmts: vec![], virtual_flag });
+                    return Ok(FunctionDecl { name, range, return_type, ports, decls, stmts: vec![], virtual_flag });
                 }
                 _ => break,
             }
@@ -1156,7 +1248,7 @@ impl Parser {
             stmts.push(self.parse_stmt()?);
         }
         self.expect(Token::EndFunction)?;
-        Ok(FunctionDecl { name, range, ports, decls, stmts, virtual_flag })
+        Ok(FunctionDecl { name, range, return_type, ports, decls, stmts, virtual_flag })
     }
 
     fn parse_task(&mut self, virtual_flag: bool) -> Result<TaskDecl, String> {
@@ -1493,8 +1585,132 @@ impl Parser {
         }
     }
 
+    fn parse_immediate_assertion(&mut self) -> Result<Stmt, String> {
+        let kind = match self.peek() {
+            Token::Assert => { self.advance(); "assert" }
+            Token::Assume => { self.advance(); "assume" }
+            Token::Cover => { self.advance(); "cover" }
+            Token::Expect => { self.advance(); "expect" }
+            _ => return Err("expected assert/assume/cover/expect".to_string()),
+        };
+        // Handle "assert property (...)" / "cover property (...)" — skip property for now
+        if self.peek() == &Token::Property {
+            self.advance();
+            // Parse the property expression
+            self.expect(Token::LParen)?;
+            let _expr = self.parse_expr(0)?;
+            self.expect(Token::RParen)?;
+            // Parse optional action block
+            let _pass_stmt = if self.peek() == &Token::Else {
+                self.advance();
+                Some(Box::new(self.parse_stmt()?))
+            } else {
+                None
+            };
+            self.skip_semi();
+            // For now, treat property assertions as no-ops
+            return Ok(Stmt::Null);
+        }
+        // Immediate assertions: assert (expr) [else stmt]
+        self.expect(Token::LParen)?;
+        let cond = self.parse_expr(0)?;
+        self.expect(Token::RParen)?;
+        let pass_stmt = if kind == "cover" {
+            None
+        } else if self.peek() != &Token::Semi && self.peek() != &Token::Else {
+            let stmt = self.parse_stmt()?;
+            Some(Box::new(stmt))
+        } else {
+            None
+        };
+        let fail_stmt = if self.peek() == &Token::Else {
+            self.advance();
+            Some(Box::new(self.parse_stmt()?))
+        } else {
+            None
+        };
+        self.skip_semi();
+        match kind {
+            "assert" => Ok(Stmt::Assert { cond, pass_stmt, fail_stmt }),
+            "assume" => Ok(Stmt::Assume { cond, pass_stmt, fail_stmt }),
+            "cover" => Ok(Stmt::Cover { cond, pass_stmt }),
+            "expect" => Ok(Stmt::Expect { cond, pass_stmt, fail_stmt }),
+            _ => unreachable!(),
+        }
+    }
+
+    fn parse_wait_order(&mut self) -> Result<Stmt, String> {
+        self.advance(); // consume 'wait_order'
+        self.expect(Token::LParen)?;
+        let mut events = Vec::new();
+        if self.peek() != &Token::RParen {
+            loop {
+                events.push(self.expect_ident()?);
+                if self.peek() == &Token::Comma {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+        self.expect(Token::RParen)?;
+        self.skip_semi();
+        Ok(Stmt::WaitOrder { events })
+    }
+
     fn parse_stmt(&mut self) -> Result<Stmt, String> {
         match self.peek() {
+            Token::Assert | Token::Assume | Token::Cover | Token::Expect => {
+                self.parse_immediate_assertion()
+            }
+            Token::Unique | Token::Priority | Token::Unique0 => {
+                let qualifier = self.peek().clone();
+                self.advance();
+                match self.peek() {
+                    Token::Case | Token::CaseX | Token::CaseZ => {
+                        let stmt = self.parse_case_stmt()?;
+                        // Wrap with qualifier
+                        match stmt {
+                            Stmt::Case { expr, items, default } => {
+                                if qualifier == Token::Unique {
+                                    Ok(Stmt::UniqueCase { expr, items, default })
+                                } else {
+                                    Ok(Stmt::PriorityCase { expr, items, default })
+                                }
+                            }
+                            Stmt::CaseX { expr, items, default } => {
+                                if qualifier == Token::Unique {
+                                    Ok(Stmt::UniqueCase { expr, items, default })
+                                } else {
+                                    Ok(Stmt::PriorityCase { expr, items, default })
+                                }
+                            }
+                            Stmt::CaseZ { expr, items, default } => {
+                                if qualifier == Token::Unique {
+                                    Ok(Stmt::UniqueCase { expr, items, default })
+                                } else {
+                                    Ok(Stmt::PriorityCase { expr, items, default })
+                                }
+                            }
+                            _ => Ok(stmt),
+                        }
+                    }
+                    Token::If => {
+                        let stmt = self.parse_if_stmt()?;
+                        match stmt {
+                            Stmt::IfElse { cond, true_branch, false_branch } => {
+                                if qualifier == Token::Unique {
+                                    Ok(Stmt::UniqueIf { cond, true_branch, false_branch })
+                                } else {
+                                    Ok(Stmt::PriorityIf { cond, true_branch, false_branch })
+                                }
+                            }
+                            _ => Ok(stmt),
+                        }
+                    }
+                    _ => Err(format!("line {}: expected case or if after unique/priority/unique0", self.peek_line())),
+                }
+            }
             Token::Begin => {
                 self.advance();
                 let mut block_name = String::new();
@@ -1536,6 +1752,7 @@ impl Parser {
                 self.skip_semi();
                 Ok(Stmt::Continue)
             }
+            Token::WaitOrder => self.parse_wait_order(),
             Token::Do => {
                 self.advance();
                 let stmts = self.parse_stmt_block()?;
@@ -1673,7 +1890,7 @@ impl Parser {
                                         op: BinaryOp::Sub,
                                         lhs: Box::new(first.clone()),
                                         rhs: Box::new(Expr::BinaryOp {
-                                            op: BinaryOp::Add,
+                                            op: BinaryOp::Sub,
                                             lhs: Box::new(width.clone()),
                                             rhs: Box::new(Expr::Value(Value::Decimal(1))),
                                         }),
@@ -1782,7 +1999,22 @@ impl Parser {
     fn parse_case_stmt(&mut self) -> Result<Stmt, String> {
         let is_casex = self.peek() == &Token::CaseX;
         let is_casez = self.peek() == &Token::CaseZ;
-        self.advance();
+        let is_case_inside = if self.peek() == &Token::Case {
+            // Check if "inside" follows "case"
+            let saved = self.pos;
+            self.advance();
+            let is_inside = self.peek() == &Token::Inside;
+            self.pos = saved; // backtrack
+            is_inside
+        } else {
+            false
+        };
+        if is_case_inside {
+            self.advance(); // consume 'case'
+            self.advance(); // consume 'inside'
+        } else {
+            self.advance(); // consume 'case'/'casex'/'casez'
+        }
         self.expect(Token::LParen)?;
         let expr = self.parse_expr(0)?;
         self.expect(Token::RParen)?;
@@ -1822,7 +2054,9 @@ impl Parser {
 
         self.expect(Token::Endcase)?;
 
-        if is_casex {
+        if is_case_inside {
+            Ok(Stmt::CaseInside { expr, items, default })
+        } else if is_casex {
             Ok(Stmt::CaseX { expr, items, default })
         } else if is_casez {
             Ok(Stmt::CaseZ { expr, items, default })
@@ -1972,22 +2206,22 @@ impl Parser {
                 Token::Slash => Some((10, BinaryOp::Div)),
                 Token::Percent => Some((10, BinaryOp::Mod)),
                 Token::StarStar => Some((11, BinaryOp::Power)),
-                Token::Eq => Some((7, BinaryOp::Eq)),
-                Token::Neq => Some((7, BinaryOp::Neq)),
-                Token::Equiv => Some((7, BinaryOp::CaseEq)),
-                Token::NotEquiv => Some((7, BinaryOp::CaseNeq)),
-                Token::CaseEq => Some((7, BinaryOp::CaseEq)),
-                Token::CaseNeq => Some((7, BinaryOp::CaseNeq)),
-                Token::WildcardEq => Some((7, BinaryOp::EqWild)),
-                Token::WildcardNeq => Some((7, BinaryOp::NeqWild)),
-                Token::Lt => Some((8, BinaryOp::Lt)),
-                Token::Le | Token::NonBlockingAssign => Some((8, BinaryOp::Le)),
-                Token::Gt => Some((8, BinaryOp::Gt)),
-                Token::Ge => Some((8, BinaryOp::Ge)),
-                Token::Shl => Some((6, BinaryOp::Shl)),
-                Token::Shr => Some((6, BinaryOp::Shr)),
-                Token::Sshl => Some((6, BinaryOp::Sshl)),
-                Token::Sshr => Some((6, BinaryOp::Sshr)),
+                Token::Eq => Some((6, BinaryOp::Eq)),
+                Token::Neq => Some((6, BinaryOp::Neq)),
+                Token::Equiv => Some((6, BinaryOp::CaseEq)),
+                Token::NotEquiv => Some((6, BinaryOp::CaseNeq)),
+                Token::CaseEq => Some((6, BinaryOp::EqWild)),
+                Token::CaseNeq => Some((6, BinaryOp::NeqWild)),
+                Token::WildcardEq => Some((6, BinaryOp::EqWild)),
+                Token::WildcardNeq => Some((6, BinaryOp::NeqWild)),
+                Token::Lt => Some((7, BinaryOp::Lt)),
+                Token::Le | Token::NonBlockingAssign => Some((7, BinaryOp::Le)),
+                Token::Gt => Some((7, BinaryOp::Gt)),
+                Token::Ge => Some((7, BinaryOp::Ge)),
+                Token::Shl => Some((8, BinaryOp::Shl)),
+                Token::Shr => Some((8, BinaryOp::Shr)),
+                Token::Sshl => Some((8, BinaryOp::Sshl)),
+                Token::Sshr => Some((8, BinaryOp::Sshr)),
                 Token::Amp => Some((5, BinaryOp::BitAnd)),
                 Token::Pipe => Some((3, BinaryOp::BitOr)),
                 Token::Caret => Some((4, BinaryOp::BitXor)),
@@ -2040,7 +2274,7 @@ impl Parser {
                                 op: BinaryOp::Sub,
                                 lhs: Box::new(first.clone()),
                                 rhs: Box::new(Expr::BinaryOp {
-                                    op: BinaryOp::Add,
+                                    op: BinaryOp::Sub,
                                     lhs: Box::new(width.clone()),
                                     rhs: Box::new(Expr::Value(Value::Decimal(1))),
                                 }),
@@ -2054,16 +2288,6 @@ impl Parser {
                             index: Box::new(first),
                         };
                     }
-                    continue;
-                }
-                Token::PlusColon => {
-                    self.advance();
-                    let width = self.parse_expr(0)?;
-                    lhs = Expr::PartSelect {
-                        expr: Box::new(lhs.clone()),
-                        base: Box::new(lhs.clone()),
-                        width: Box::new(width),
-                    };
                     continue;
                 }
                 Token::Dot => {
@@ -2128,6 +2352,9 @@ impl Parser {
                 let name_tok = self.peek().clone();
                 let name = match &name_tok {
                     Token::Ident(n) => { self.advance(); n.clone() }
+                    Token::Time => { self.advance(); "time".to_string() }
+                    Token::Real => { self.advance(); "real".to_string() }
+                    Token::RealTime => { self.advance(); "realtime".to_string() }
                     _ => return Err(format!("line {}: expected system function name", self.peek_line())),
                 };
                 let full_name = format!("${}", name);

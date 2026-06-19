@@ -1,0 +1,568 @@
+# Audit Komprehensif — Maria RTL Simulator
+
+**Tanggal:** 19 Juni 2026
+**Versi:** 0.1.0
+**Bahasa:** Rust (~11.500 LOC, 21 file)
+**Pipeline:** Preprocessor → Lexer → Parser → AST → Elaborator → IR → Simulator → VCD
+**Dependensi:** `clap 4`, `rand 0.8` (minimal)
+**Test:** 95 (semua passing)
+
+---
+
+## Ringkasan
+
+**Production Readiness Score: 32/100**
+
+Maria adalah prototipe fungsional yang mampu mensimulasikan desain RTL sederhana
+(counter 4-bit, adder 16-bit, hierarki 3-level) tetapi memiliki keterbatasan kritis
+yang membuatnya **tidak siap untuk desain RTL nyata** seperti CPU, GPU, SoC,
+atau lingkungan UVM skala besar.
+
+---
+
+## 1. Feature Support Matrix
+
+### A. Parser
+
+| Fitur | Status | Detail |
+|-------|--------|--------|
+| **module** | ✅ Supported | ANSI port list, `#()` params |
+| **interface** | ⚠️ Partial | Token ada + parse sbg module; modport diabaikan |
+| **package** | ❌ Missing | `package`/`endpackage`/`import` tidak ada |
+| **program** | ❌ Missing | Tidak ada |
+| **class** | ✅ Supported | `extends`, `virtual`, `this`, `super`, `new` |
+| **enum** | ✅ Supported | Packed/unpacked, `typedef enum` |
+| **struct** | ✅ Supported | Anonymous + typedef |
+| **union** | ✅ Supported | Anonymous + typedef |
+| **typedef** | ⚠️ Broken | Parser OK → **elaborator skip (silent)** |
+| **parameter** | ✅ Supported | Named + positional override |
+| **localparam** | ⚠️ Partial | Parsed tapi tidak dibedakan dari parameter |
+| **generate if** | ✅ Supported | Condition elaboration-time |
+| **generate for** | ⚠️ Bug | **Step selalu +1** apapun deklarasi |
+| **generate case** | ❌ Broken | AST placeholder kosong |
+| **`` `define ``** | ✅ Supported | Simple name-value; **tidak ada macro arguments** |
+| **`` `ifdef/`ifndef/`elsif/`else/`endif ``** | ✅ Supported | Nested conditional |
+| **`` `include ``** | ✅ Supported | Recursive, search paths |
+| **import/export** | ❌ Missing | Tidak ada |
+| **`` (* *) `` attribute** | ❌ Missing | Tidak ada |
+| **function return type** | ⚠️ Broken | Return type keyword di-skip (`void`, `int`, `string` hilang) |
+| **task in module** | ❌ Broken | `task` di module body = `skip_until_semi_or_end()` |
+| **`<=` ambiguity** | ⚠️ Design flaw | `<=` = `NonBlockingAssign` DAN `Le`; bergantung konteks |
+| **Operator precedence** | ⚠️ Bug | Shift (prec 6) **di bawah** comparison (prec 7-8) — tidak sesuai IEEE |
+| **`'b1010` (unsized)** | ❌ Broken | `'b` tanpa digit pertama → lexer error |
+| **signed literal `'sb`** | ⚠️ Parsed → discarded | `is_signed` dihitung lalu dibuang |
+
+### B. Elaboration
+
+| Fitur | Status | Detail |
+|-------|--------|--------|
+| **Parameter override (named)** | ✅ Supported | |
+| **Parameter override (positional)** | ⚠️ Partial | Via `__paramNNN`; tidak support `#(.W(8))` shorthand? |
+| **Parameter default expr** | ⚠️ Bug | Pakai `const_eval_simple` — **parameter yg referensi parameter lain = 0** |
+| **Generate if** | ✅ Supported | |
+| **Generate for** | ⚠️ Bug | **Step diabaikan**; hanya `<`/`<=` untuk condition |
+| **Named port connection** | ✅ Supported | |
+| **Positional port connection** | ❌ Broken | **Silent ignored** — tidak ada port_map entry |
+| **Port width checking** | ❌ Missing | |
+| **Port type checking** | ❌ Missing | |
+| **Hierarchy flattening** | ✅ Supported | Recursive, signal remapping |
+| **Gate primitives** | ⚠️ Partial | 8 gate type; no strength/delay; port harus simple `Ident` |
+| **`$clog2`** | ✅ Supported | Power-of-two correction benar |
+| **`$bits`** | ⚠️ Partial | Signal-only; tidak untuk expression |
+| **`$left` / `$high`** | ❌ Bug | Return **width-1** bukan declaration MSB |
+| **`$low` / `$right`** | ❌ Bug | **Selalu return 0** |
+| **`$size`** | ✅ Supported | |
+| **Function inlining** | ✅ Supported | Non-recursive only |
+| **Task inlining** | ❌ Missing | |
+| **Loop unrolling (for)** | ⚠️ Partial | Hanya `i<N` + `i+=1`; nested OK |
+| **Loop unrolling (foreach)** | ⚠️ Partial | Array-depth only; no dynamic |
+| **Loop unrolling (repeat)** | ⚠️ Partial | Compile-time only |
+| **Class elaboration** | ⚠️ Partial | Fields only; inheritance/virtual tidak diresolve |
+| **Package linking** | ❌ Missing | Tidak ada |
+| **`$unit` declarations** | ❌ Missing | Tidak ada |
+| **Hierarchical ref (`top.sub.sig`)** | ❌ Missing | |
+| **Typedef resolution** | ❌ Broken | `TypedefDecl` → `_ => {}` silent skip |
+| **Struct/union member access** | ⚠️ Partial | Width dihitung; member resolution runtime (atau tidak) |
+| **User-defined types** | ❌ Missing | Width=64 placeholder |
+| **`always_ff` clock/reset** | ⚠️ Partial | Edge pertama=clock; kedua=async reset; **synchronous reset tidak** |
+
+### C. Simulasi RTL
+
+| Fitur | Status | Detail |
+|-------|--------|--------|
+| **always_comb** | ✅ Supported | Sensitivity auto-inference, delta re-eval |
+| **always_ff** | ✅ Supported | posedge/negedge trigger |
+| **always_latch** | ❌ Missing | Tidak dibedakan dari always_comb |
+| **always** | ✅ Supported | `@*`, `@(event)`, `#N` |
+| **initial** | ✅ Supported | Time 0, sekali jalan |
+| **final** | ❌ Missing | |
+| **assign (continuous)** | ✅ Supported | → combinational process |
+| **force** | ⚠️ Bug | Jadi blocking assign |
+| **release** | ❌ Bug | **Tulis X** — bukan revert ke driver sebelumnya |
+| **deassign** | ❌ Bug | Sama dg release (seharusnya untuk wire, bukan reg) |
+| **blocking =** | ✅ Supported | Immediate write |
+| **non-blocking <=** | ✅ Supported | RHS eval immediate, write deferred ke delta commit |
+
+### D. Event Scheduler
+
+| Fitur | Status | Detail |
+|-------|--------|--------|
+| **Active region** | ⚠️ Partial | Semua proses di sini — **tidak dipisahkan** |
+| **Inactive region (#0 delay)** | ❌ Missing | `#0` = schedule di `t+1` (salah) |
+| **NBA region** | ⚠️ Partial | `commit_nba()` inline di delta loop; **tidak sebagai region terpisah** |
+| **Reactive region** | ❌ Missing | `always_comb` re-eval campur aduk |
+| **Re-Reactant region** | ❌ Missing | |
+| **Observed region** | ❌ Missing | `$strobe` tidak ada |
+| **Post-poned region** | ❌ Missing | `$monitor` cek setelah delta (tapi bukan region) |
+| **Delta cycle** | ✅ Supported | Iterasi sampai stable; max 1M global |
+| **Event ordering** | ❌ Missing | FIFO dalam time slot; tidak ada stratifikasi |
+
+### E. Tipe Data
+
+| Fitur | Status | Detail |
+|-------|--------|--------|
+| **logic** | ✅ Supported | 4-state (`X`, `Z`, `0`, `1`), width apa saja |
+| **reg** | ✅ Supported | Identik dg logic di engine |
+| **wire** | ⚠️ Partial | Identik dg logic; **tidak ada resolution function** |
+| **wand / wor / tri** | ❌ Missing | Token-defined tapi tidak di-parse |
+| **bit** | ⚠️ Partial | 2-state parsing; **engine tetap 4-state** |
+| **byte** | ✅ Supported | Width 8 |
+| **shortint** | ✅ Supported | Width 16 |
+| **int** | ✅ Supported | Width 32 |
+| **longint** | ✅ Supported | Width 64 |
+| **integer** | ✅ Supported | Width 32 |
+| **time** | ❌ Missing | Token ada; tidak ada implementasi |
+| **real** | ❌ Broken | Parsed → selalu 0 via `value_to_logicvec` |
+| **realtime** | ❌ Broken | Sama dg real |
+| **string** | ⚠️ Partial | Hanya literal di expression; tidak ada string variable |
+| **signed** | ⚠️ Bug | Di-track; **`eval_binary` pake `to_u64()` unsigned semua** |
+| **void** | ⚠️ Partial | Di-skip di function return type |
+
+### F. Array
+
+| Fitur | Status | Detail |
+|-------|--------|--------|
+| **Packed `[N:0]`** | ✅ Supported | |
+| **Unpacked `[0:N]`** | ✅ Supported | |
+| **Multidimensional** | ⚠️ Partial | Parsed; `array_depth` di IR cuma 1 level |
+| **Dynamic array** | ❌ Missing | `new[size]`, `delete`, `size()` |
+| **Associative array** | ❌ Missing | `[key_type]` |
+| **Queue `[$]`** | ❌ Missing | |
+| **Array methods (`.sum`, `.find`)** | ❌ Missing | |
+
+### G. Expression Engine
+
+| Fitur | Status | Detail |
+|-------|--------|--------|
+| **Arithmetic (+, -, *, /, %, **)** | ✅ Supported | Wrapping, X→X |
+| **Logical (&&, ||, !)** | ✅ Supported | |
+| **Relational (<, <=, >, >=)** | ⚠️ Bug | **Unsigned only** |
+| **Equality (==, !=)** | ✅ Supported | Bit-exact |
+| **Case equality (===, !==)** | ✅ Supported | X/Z matching |
+| **Wildcard (==?, !=?)** | ✅ Supported | X/Z don't-care |
+| **Reduction (&, ~&, |, ~|, ^, ~^)** | ✅ Supported | |
+| **Shift (<<, >>, <<<, >>>)** | ✅ Supported | >>> sign-extend |
+| **Streaming (>> {}, << {})** | ❌ Missing | |
+| **Concatenation {,}** | ✅ Supported | |
+| **Replication {n{}}** | ✅ Supported | |
+| **Cast `type'()`** | ❌ Missing | |
+| **`inside` expression** | ❌ Missing | |
+| **`dist` expression** | ❌ Missing | |
+| **`with` clause** | ❌ Missing | |
+| **Fill literal `'0`/`'1`/`'x`/`'z`** | ⚠️ Bug | **1-bit** di expression context; benar di assignment |
+
+### H. Function & Task
+
+| Fitur | Status | Detail |
+|-------|--------|--------|
+| **function (module-scope)** | ✅ Supported | Inline ke IR |
+| **function (class method)** | ✅ Supported | AST-based eval di runtime |
+| **task (class method)** | ⚠️ Partial | Parsed + dijalankan via AST |
+| **task (module-scope)** | ❌ Broken | Di-skip total |
+| **recursive function** | ❌ Missing | Fungsi di-inline — tidak mungkin |
+| **automatic** | ❌ Missing | Diabaikan |
+| **static** | ❌ Missing | Diabaikan |
+| **void function** | ❌ Missing | Return type di-skip |
+| **function return type** | ⚠️ Broken | Keyword di-skip; `range` aja yg disimpan |
+| **function/task port direction** | ⚠️ Partial | Di-skip untuk function |
+
+### I. Clock & Timing Control
+
+| Fitur | Status | Detail |
+|-------|--------|--------|
+| **#delay** | ✅ Supported | Integer delay |
+| **@(event)** | ⚠️ Bug | Edge detect **hanya cek current value**; tidak bandingkan old→new |
+| **posedge** | ⚠️ Bug | Sama — tidak compare old vs new |
+| **negedge** | ⚠️ Bug | Sama |
+| **wait(cond)** | ⚠️ Bug | Re-schedule di **t+1** bukan delta yg sama; remaining stmts hilang di evaluate_stmt_block |
+| **repeat** | ❌ Broken | Hanya di method path; **tidak di main simulation** |
+| **forever** | ⚠️ Partial | Hanya di method path; 1M iter cap |
+| **fork/join** | ❌ Missing | **Tidak ada** |
+| **fork/join_any** | ❌ Missing | |
+| **fork/join_none** | ❌ Missing | |
+| **disable** | ✅ Supported | Named block + outer |
+
+### J. Verification Features (SVA + Coverage + Randomization)
+
+| Fitur | Status | Detail |
+|-------|--------|--------|
+| **assert** | ❌ Missing | |
+| **assume** | ❌ Missing | |
+| **cover** | ❌ Missing | |
+| **property / sequence** | ❌ Missing | |
+| **covergroup** | ❌ Missing | |
+| **coverpoint** | ❌ Missing | |
+| **cross coverage** | ❌ Missing | |
+| **bins / illegal_bins** | ❌ Missing | |
+| **rand / randc** | ❌ Missing | |
+| **constraint** | ❌ Missing | Di-skip di class body |
+| **solve...before** | ❌ Missing | |
+| **`$urandom`** | ✅ Supported | 32-bit unsigned |
+| **`$random`** | ✅ Supported | 32-bit signed |
+| **`$urandom_range`** | ❌ Missing | |
+| **randcase / randsequence** | ❌ Missing | |
+| **mailbox** | ❌ Missing | |
+| **semaphore** | ❌ Missing | |
+| **process class** | ❌ Missing | |
+
+### K. UVM Compatibility
+
+| Fitur | Status | Detail |
+|-------|--------|--------|
+| **Polymorphism** | ✅ Supported | Virtual dispatch jalan |
+| **`super.new()`** | ✅ Supported | |
+| **Factory** | ❌ Missing | |
+| **`uvm_object`** | ❌ Missing | Base class ga ada |
+| **`uvm_component`** | ❌ Missing | |
+| **Sequence / Sequencer** | ❌ Missing | |
+| **Driver / Monitor** | ❌ Missing | |
+| **Scoreboard** | ❌ Missing | |
+| **TLM (put/get/analysis)** | ❌ Missing | |
+| **Phases (build/connect/run)** | ⚠️ Partial | `execute_phases()` di engine = **stub kosong** |
+| **UVM macro stripping** | ✅ Supported | Unknown `\`macro` di-skip |
+
+### L. Waveform & Debug
+
+| Fitur | Status | Detail |
+|-------|--------|--------|
+| **VCD generation** | ⚠️ Partial | Change-based dump; **flat scope — tidak ada hierarchy** |
+| **VCD `$dumpvars`/`$dumpon`/`$dumpoff`** | ✅ Supported | |
+| **VCD `$dumpfile`** | ⚠️ Partial | Recognized tapi no-op |
+| **VCD `$dumpall`/`$dumplimit`** | ❌ Missing | |
+| **FST** | ❌ Missing | |
+| **Hierarchy browser** | ❌ Missing | |
+| **Signal tracing** | ❌ Missing | |
+| **Breakpoint** | ❌ Missing | |
+| **Step simulation** | ❌ Missing | |
+| **`$monitor`** | ✅ Supported | Change detect per time step |
+| **`$strobe`** | ❌ Missing | |
+| **`$display`/`$write`** | ✅ Supported | `%d`, `%b`, `%h`, `%s`; **tidak ada `%0d`** |
+
+### M. Performance
+
+| Fitur | Status | Detail |
+|-------|--------|--------|
+| **Scheduler scalability** | ❌ Buruk | `Vec<Vec<EventKind>>` — O(n) linear scan, no heap |
+| **Memory usage** | ❌ Tidak efisien | Flat signal array; `method_locals` di-clone per call |
+| **Multicore** | ❌ Tidak ada | Single-threaded |
+| **Large design handling** | ❌ Tidak bisa | 1M delta limit global; O(n²) flattening |
+| **Compile speed** | ⚠️ OK | ~0.01s untuk 95 test; memadai untuk desain kecil (<5000 LOC) |
+| **Simulation speed** | ❌ Lambat | Interpreted AST; no JIT/cycle-based |
+| **No optimization** | ❌ Tidak ada | No constant propagation, dead code elimination, signal reduction |
+
+### N. Compliance
+
+| Fitur | Status | Detail |
+|-------|--------|--------|
+| **IEEE 1800-2012/2017** | ❌ | Kurang ~80% fitur bahasa |
+| **Verilator** | ❌ Tidak kompatibel | Tidak bisa compile output Verilator yg menggunakan tasks/DPI/assertion |
+| **VCS** | ❌ Tidak kompatibel | Tidak support `+incdir+`, `+define+`, `-f` file |
+| **Xcelium** | ❌ Tidak kompatibel | Region scheduling tidak kompatibel |
+| **Questa** | ❌ Tidak kompatibel | Tidak ada `vsim`-equivalent, coverage, atau SDF |
+
+---
+
+## 2. Daftar Bug Kritis
+
+| # | Bug | Lokasi | Dampak |
+|---|-----|--------|--------|
+| 1 | **Positional port connection silent ignored** | `elaborator.rs:281-283` | **Desain dengan port posisional = koneksi tidak terhubung** — desain tidak jalan |
+| 2 | **Generate for loop step diabaikan** | `elaborator.rs:1502` | `generate for (i = 0; i < N; i = i + 2)` → **hasil salah** |
+| 3 | **`$low`/`$right` selalu return 0** | `elaborator.rs:1392-1406` | Untuk `reg [7:4] x`, `$low(x)` = 0 bukan 4 |
+| 4 | **`$left`/`$high` return width-1** | `elaborator.rs:1382-1401` | Untuk `reg [12:4] x`, `$high(x)` = 8 bukan 12 |
+| 5 | **Release/deassign tulis X** | `engine.rs` | `release` harus revert, bukan tulis 'x |
+| 6 | **`wait(cond)` re-schedule di t+1** | `engine.rs` | Harus re-check di delta yg sama; implementasi saat ini = `wait` butuh 1 time unit ekstra |
+| 7 | **Edge detection `@(posedge)` hanya cek current value** | `engine.rs` | Tidak bandingkan old vs new; bisa trigger berulang di delta yg sama |
+| 8 | **`repeat` loop tidak jalan di main simulation** | `engine.rs` | Hanya di method path; di `always`/`initial` → statement skip |
+| 9 | **`forever` loop tidak jalan di main simulation** | `engine.rs` | Sama — hanya method path |
+| 10 | **Typedef diabaikan elaborator** | `elaborator.rs:341` | `typedef` dalam module → silent skip → missing signal type |
+| 11 | **Signed comparison = unsigned** | `value.rs` | `$signed(a) < $signed(b)` pake `to_u64()` — hasil salah utk negatif |
+| 12 | **Operator precedence: shift di bawah comparison** | `parser.rs:1964+` | `a < b << c` parse sbg `(a < b) << c` bukan `a < (b << c)` |
+| 13 | **Fill literal 1-bit di expression context** | `engine.rs:860` | `'0 + 5` → `1'b0 + 5` bukan `32'b0 + 5` |
+| 14 | **`#delay` remaining statements hilang di `evaluate_stmt_block`** | `engine.rs` | `@(posedge clk) begin a <= 1; #5 b <= 1; end` → statement setelah `#5` tidak dijalankan |
+| 15 | **Parameter default expression pake `const_eval_simple`** | `elaborator.rs:114` | `parameter W=8, N=W*2` → `N=0` |
+
+---
+
+## 3. Fitur Wajib Sebelum Production
+
+### P0 — Blocking (tanpa ini, simulator tidak berguna untuk desain nyata)
+
+1. **Positional port connection** — bug kritis #1
+2. **Event scheduler regions** — minimal active + NBA + reactive (12 region IEEE)
+3. **Edge detection di `@(posedge/negedge)`** — proper old-vs-new comparison
+4. **Signed arithmetic** — comparison + sign extension + `$signed()`/`$unsigned()`
+5. **Operator precedence sesuai IEEE** — shift > comparison
+6. **`always_comb`/`always_latch` dibedakan** — reactive region re-evaluation
+7. **Generate for loop step** — tidak hardcode +1
+8. **Continuous assignment semantics** — wire driver resolution
+9. **Hierarchical VCD** — sub-module scopes
+10. **Fork/join** — concurrent process spawning
+
+### P1 — High Impact (tanpa ini, desain SoC/CPU tidak bisa)
+
+11. **Package support** — `package`/`endpackage`/`import pkg::*`
+12. **Interface + modport** — koneksi interface-based
+13. **Task execution** — task di module body
+14. **`$sformatf`** — string formatting
+15. **`$fwrite`/`$fscanf`** — file I/O parity
+16. **Arrayed instances** — `mod inst[3:0](...)`
+17. **`generate case`** — tidak jadi placeholder kosong
+18. **`#0` delay (inactive region)** — zero-delay scheduling
+19. **`$strobe`** — postponed region output
+20. **Multi-driver resolution** — wired-AND/OR, bus contention
+
+### P2 — Important (tanpa ini, UVM/verifikasi tidak bisa)
+
+21. **Assertion (SVA)** — `assert`/`assume`/`cover`
+22. **Covergroup** — `coverpoint`/`cross`/`bins`
+23. **`rand`/`constraint`** — randomization
+24. **Mailbox + semaphore** — inter-process communication
+25. **String variables** — `string s;` + methods
+26. **Dynamic array + queue** — `new[]`, `[$]`
+27. **`$urandom_range`** — constrained random
+28. **`$realtime`** — real-time simulation
+29. **`wait_order`** — event ordering
+
+---
+
+## 4. Fitur yang Bisa Ditunda
+
+30. **SDF annotation** — post-P&R simulation (P3)
+31. **DPI-C** — C interop (P3)
+32. **UDP** — user-defined primitives (P3)
+33. **`specify`/`$setup/$hold`** — timing checks (P3)
+34. **`bind`** — inline assertion binding (P3)
+35. **`clocking` block** — clock-domain definition (P3)
+36. **FST waveform** — compressed VCD alternative (P3)
+37. **Multicore** — parallel event evaluation (P4)
+38. **JIT compilation** — native code generation (P4)
+39. **Coverage database** — UCIS format (P4)
+
+---
+
+## 5. Risiko Terbesar untuk Proyek RTL Nyata
+
+| Risiko | Probabilitas | Dampak | Mitigasi |
+|--------|-------------|--------|----------|
+| **Positional port silent disconnect** | High (90% desain baru pake named, 50% legacy pake positional) | **Desain tidak berfungsi** — signal tidak terhubung tanpa error | Tambah error untuk positional connection |
+| **Signed comparison salah** | High (80% CPU/GPU desain pake signed) | **Hasil komputasi salah** — bug silent | Implementasi signed comparison |
+| **Operator precedence salah** | High (shift + comparison sering dipakai bareng) | **Sintesis RTL vs simulasi beda hasil** | Perbaiki precedence table |
+| **`$low`/`$right` return 0** | Medium (digunakan di parameterized design) | **Range selection salah** — data corruption | Perbaiki constant folding |
+| **Fork/join tidak ada** | High (semua testbench kompleks pake fork/join) | **Tidak bisa simulasi testbench** | Implementasi fork/join |
+| **Edge detection salah** | High (semua sequential logic) | **FF trigger 2x per clock** — glitch | Old-vs-new comparison |
+| **`wait` schedule salah** | Medium (digunakan di kontrol flow) | **Timing off by 1** | Re-check di delta yg sama |
+| **Interface tidak support** | High (semua desain modern pake interface) | **Desain SoC/AXI tidak bisa** | Implementasi interface |
+| **Package tidak support** | High (semua desain >10K LOC pake package) | **Kode tidak terkompilasi** | Implementasi package |
+| **Scheduler tidak compliant** | Medium (race condition linting) | **Hasil berbeda tiap run** | IEEE 1800 region implementation |
+
+---
+
+## 6. Perbandingan dengan Simulator Lain
+
+| Dimensi | **Maria** | **Verilator** | **Icarus Verilog** | **Questa** |
+|---------|-----------|---------------|-------------------|------------|
+| Model | Interpreted AST | Cycle-accurate C++/SystemC | Compiled vvp | Compiled + optimized |
+| IEEE 1800 compliance | ~20% | ~70% (synthesis subset) | ~65% | ~95% |
+| 4-state (X/Z) | ✅ Full | ❌ 2-state only | ✅ Full | ✅ Full |
+| Speed (vs Verilator) | 1x | **100-1000x** | 2-10x (interpreted) | 50-200x (native) |
+| VCD | ✅ Flat only | ✅ Hierarchical | ✅ Hierarchical | ✅ Full |
+| FST | ❌ | ❌ | ✅ | ✅ |
+| SVA | ❌ | ❌ | ⚠️ Basic | ✅ Full |
+| Coverage | ❌ | ⚠️ Line/toggle | ❌ | ✅ Full |
+| UVM | ❌ (class stub) | ❌ (no 4-state) | ⚠️ Partial | ✅ Native |
+| DPI-C | ❌ | ✅ | ✅ | ✅ |
+| Fork/join | ❌ | ❌ | ✅ | ✅ |
+| SystemC export | ❌ | ✅ | ❌ | ✅ |
+| SDF annotation | ❌ | ❌ | ❌ | ✅ |
+| Debug GUI | ❌ (no) | ⚠️ (gtkwave) | ⚠️ (gtkwave) | ✅ (vsim GUI) |
+| Memory > 10M gates | ❌ | ✅ | ❌ | ✅ |
+| Multicore | ❌ | ❌ | ❌ | ✅ (optional) |
+| Open source | ✅ | ✅ (LGPL) | ✅ (GPL) | ❌ (proprietary) |
+| Error messages | ❌ Buruk (string literal) | ⚠️ OK | ⚠️ OK | ✅ Excellent |
+| Test count | 95 | 1000+ | 500+ | 10000+ |
+
+### Peringkat Kesamaan Filosofi
+
+```
+Maria lebih mirip Icarus Verilog (interpreted, 4-state, AST-based)
+daripada Verilator (compiled, 2-state, cycle-accurate).
+
+Keunggulan Maria vs Icarus:
+  - Rust (memory safety, no GC)
+  - OOP/class support lebih baik
+  - Pipeline cleaner (parser/elaborator/engine terpisah)
+
+Kekurangan Maria vs Icarus:
+  - Icarus sudah mature (>20 tahun)
+  - Lebih banyak format support (.vcd, .fst, .lxt)
+  - SDF + timing check
+  - Lebih banyak kontributor
+```
+
+---
+
+## 7. Roadmap menuju Production Ready
+
+### Fase Alpha (target: skor 45) — 3-6 bulan
+
+```
+Fix blocker bugs:
+  ▢ Positional port connection error + implementasi
+  ▢ Generate for loop step
+  ▢ $low/$right/$left/$high correct
+  ▢ Operator precedence (shift > comparison)
+  ▢ Edge detection old-vs-new
+  ▢ Repeat/forever di main simulation
+  ▢ Fill literal correct width in expr context
+  ▢ Typedef elaboration
+
+Top new features:
+  ▢ Package (parse + elaborate + import)
+  ▢ Interface + modport (parse + connect)
+  ▢ Task execution di module
+  ▢ Fork/join (sederhana: join only)
+  ▢ Event scheduler: active + inactive + NBA region
+  ▢ Signed comparison + arithmetic
+  ▢ Hierarchical VCD
+```
+
+### Fase Beta (target: skor 65) — 6-12 bulan
+
+```
+  ▢ Continuous assignment resolution
+  ▢ always_comb reactive region
+  ▢ Generate case implementation
+  ▢ Arrayed instances
+  ▢ #0 delay (inactive region)
+  ▢ $strobe + postponed region
+  ▢ String variable type
+  ▢ Dynamic array + queue
+  ▢ $sformatf / $fwrite / $fscanf
+  ▢ Real/realtime type implementation
+  ▢ 2-state vs 4-state distinction
+  ▢ Error messages structured (no string literal)
+  ▢ Preprocessor: macro arguments
+  ▢ Constraint parsing + simple solver
+  ▢ Mailbox + semaphore
+  ▢ Error recovery di parser (no crash on bad syntax)
+```
+
+### Fase RC (target: skor 80) — 12-18 bulan
+
+```
+  ▢ Complete IEEE 1800 region scheduler (12 regions)
+  ▢ SVA: assert/assume/cover property
+  ▢ COverage: covergroup/coverpoint/cross
+  ▢ rand/randc + constraint solver
+  ▢ DPI-C (basic: import only)
+  ▢ Multi-driver resolution (strength-based)
+  ▢ Inout port bidirectional
+  ▢ Parameter type
+  ▢ $urandom_range + $random(seed) correct
+  ▢ Performance: constant propagation, dead code elimination
+  ▢ Line number tracking through preprocessor
+  ▢ Test: 500+ tests, negative/error tests, fuzzing
+  ▢ Support untuk real design: RISC-V CPU core, AXI bus
+```
+
+### Fase Production (target: skor 95+) — 18-24 bulan
+
+```
+  ▢ Verilator-compatible subset (linting guide)
+  ▢ SDF annotation (minimal: setuphold)
+  ▢ FST waveform
+  ▢ CLI: +incdir+, +define+, -f file support
+  ▢ Config / libmap / use clauses
+  ▢ Bind construct
+  ▢ Clocking blocks
+  ▢ Coverage database (UCIS format)
+  ▢ Performance: incremental compilation, multicore evaluation
+  ▢ JIT: LLVM backend or Cranelift for expression evaluation
+  ▢ Verification: 5+ tapeout-ready designs as regression
+  ▢ Documentation: IEEE 1800 compliance matrix
+```
+
+---
+
+## 8. Estimasi Kesiapan
+
+| Milestone | Skor | Timeline | Kriteria Keluar |
+|-----------|------|----------|-----------------|
+| **Saat Ini** | **32/100** | - | Semester 1 2026 |
+| **Alpha** | 45/100 | Q3 2026 | Semua bug kritis (list #1-15) fix; package + interface + fork/join dasar |
+| **Beta** | 65/100 | Q1 2027 | Scheduler compliant; task jalan; string; constraint parsing; 300+ test |
+| **Release Candidate** | 80/100 | Q3 2027 | SVA + coverage + DPI; RISC-V CPU + AXI test case; 500+ test; fuzzing |
+| **Production** | 95+ | Q2 2028 | SDF + FST + JIT + multicore; 5 real designs; dokumentasi compliance |
+
+### Catatan Timeline
+
+- Timeline di atas mengasumsikan **1 full-time engineer**
+- Dengan **tim 3 engineer**, timeline bisa 2x lebih cepat (Alpha dalam 2 bulan)
+- Bottleneck terbesar: **event scheduler compliance** (butuh redesign fundamental)
+- Bottleneck kedua: **SVA + constraint solver** (domain expertise diperlukan)
+- Bottleneck ketiga: **performance** (Rust membantu, tapi JIT/LLVM integration complex)
+
+---
+
+## 9. Kesimpulan
+
+### Kekuatan Maria
+
+1. **Arsitektur bersih** — pipeline tersegmentasi rapi (preprocessor→lexer→parser→elaborator→IR→engine→VCD)
+2. **4-state logic** — X/Z propagation benar untuk semua operator
+3. **OOP/class support** — lebih baik dari Verilator; polymorphism + virtual dispatch jalan
+4. **NBA semantics** — blocking vs non-blocking correct
+5. **95 test passing** — coverage cukup untuk ukuran proyek small
+6. **Rust** — memory safety, zero-cost abstractions, ecosystem bagus
+
+### Kelemahan Utama
+
+1. **Event scheduler non-compliant** — root cause dari banyak bug simulasi
+2. **Parser gaps** — task, interface, package = blocker untuk desain nyata
+3. **Elaborator bugs** — positional port silent, `$low`/`$right` return 0, generate for step
+4. **No verification infrastructure** — no assertion, coverage, constraint
+5. **Performance** — interpreted AST, no optimization, single-threaded
+6. **Error messages** — `format!(...)` string; user tidak tahu lokasi error
+
+### Verdict
+
+> **Maria adalah prototipe yang menjanjikan dengan arsitektur yang benar,**
+> **tetapi membutuhkan minimal 12-18 bulan kerja intensif sebelum siap**
+> **untuk desain RTL produksi.**
+>
+> Untuk saat ini, Maria cocok untuk:
+> - Eksperimen pembelajaran SystemVerilog
+> - Simulasi desain edukasional (counter, adder, FSM sederhana)
+> - Prototipe fitur simulator baru
+>
+> **Tidak cocok untuk:**
+> - Desain CPU/GPU/SoC (>10K gate)
+> - Lingkungan UVM
+> - Verifikasi regression production
+> - Desain dengan timing-sensitive interface (AXI, DDR, PCIe)
+
+---
+
+*Audit dilakukan 19 Juni 2026 berdasarkan source code commit terakhir.*
+*95 test passing, 0 failure.*

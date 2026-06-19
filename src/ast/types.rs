@@ -7,6 +7,7 @@ use super::stmt::{AlwaysBlock, InitialBlock, Stmt};
 pub struct Design {
     pub modules: Vec<Module>,
     pub classes: Vec<ClassDecl>,
+    pub packages: Vec<PackageDecl>,
     pub top_module: Option<String>,
 }
 
@@ -178,6 +179,55 @@ pub fn const_eval_with_params(expr: &Expr, param_vals: &HashMap<String, i64>) ->
         Expr::BinaryOp { op: BinaryOp::Mod, lhs, rhs } => {
             Ok(const_eval_with_params(lhs, param_vals)? % const_eval_with_params(rhs, param_vals)?)
         }
+        Expr::BinaryOp { op: BinaryOp::Eq, lhs, rhs } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(if l == r { 1 } else { 0 })
+        }
+        Expr::BinaryOp { op: BinaryOp::Neq, lhs, rhs } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(if l != r { 1 } else { 0 })
+        }
+        Expr::BinaryOp { op: BinaryOp::Lt, lhs, rhs } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(if l < r { 1 } else { 0 })
+        }
+        Expr::BinaryOp { op: BinaryOp::Le, lhs, rhs } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(if l <= r { 1 } else { 0 })
+        }
+        Expr::BinaryOp { op: BinaryOp::Gt, lhs, rhs } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(if l > r { 1 } else { 0 })
+        }
+        Expr::BinaryOp { op: BinaryOp::Ge, lhs, rhs } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(if l >= r { 1 } else { 0 })
+        }
+        Expr::BinaryOp { op: BinaryOp::LogicalAnd, lhs, rhs } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(if l != 0 && r != 0 { 1 } else { 0 })
+        }
+        Expr::BinaryOp { op: BinaryOp::LogicalOr, lhs, rhs } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(if l != 0 || r != 0 { 1 } else { 0 })
+        }
+        Expr::BinaryOp { op: BinaryOp::BitAnd, lhs, rhs } => {
+            Ok(const_eval_with_params(lhs, param_vals)? & const_eval_with_params(rhs, param_vals)?)
+        }
+        Expr::BinaryOp { op: BinaryOp::BitOr, lhs, rhs } => {
+            Ok(const_eval_with_params(lhs, param_vals)? | const_eval_with_params(rhs, param_vals)?)
+        }
+        Expr::BinaryOp { op: BinaryOp::BitXor, lhs, rhs } => {
+            Ok(const_eval_with_params(lhs, param_vals)? ^ const_eval_with_params(rhs, param_vals)?)
+        }
         Expr::Paren(inner) => const_eval_with_params(inner, param_vals),
         Expr::MethodCall { .. } => Err("method calls not allowed in constant expression".to_string()),
         Expr::MemberAccess { .. } => Err("member access not allowed in constant expression".to_string()),
@@ -288,6 +338,8 @@ pub enum ModuleItem {
     Func(FunctionDecl),
     Generate(GenerateBlock),
     Typedef(TypedefDecl),
+    // Imported items from packages
+    Import { package: String, item: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -316,10 +368,26 @@ pub enum GenerateItem {
 pub struct FunctionDecl {
     pub name: String,
     pub range: Option<ExprRange>,
+    pub return_type: Option<Box<DataType>>,
     pub ports: Vec<FunctionPort>,
     pub decls: Vec<Decl>,
     pub stmts: Vec<Stmt>,
     pub virtual_flag: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PackageDecl {
+    pub name: String,
+    pub items: Vec<PackageItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PackageItem {
+    Decl(Decl),
+    Function(FunctionDecl),
+    Task(TaskDecl),
+    Typedef(TypedefDecl),
+    Param(ParamDecl),
 }
 
 #[derive(Debug, Clone, PartialEq)]

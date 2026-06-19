@@ -52,6 +52,18 @@ pub enum Expr {
         field: String,
     },
     Null,
+    Inside {
+        expr: Box<Expr>,
+        range_list: Vec<Expr>,
+    },
+    StreamingConcat {
+        op: String,     // ">>" or "<<"
+        slices: Vec<Expr>,
+    },
+    Cast {
+        dtype: String,
+        expr: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

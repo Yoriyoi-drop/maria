@@ -47,6 +47,15 @@ impl Elaborator {
             }
         }
 
+        // Expand generates in all modules (with resolved params)
+        // Use index-based iteration to avoid borrow conflicts
+        for i in 0..self.design.modules.len() {
+            let param_vals = resolve_param_values_fn(&self.design.modules[i], &HashMap::new())?;
+            if let Some(module) = self.design.modules.get_mut(i) {
+                expand_all_generates(module, &param_vals)?;
+            }
+        }
+
         // First pass: elaborate all modules
         let module_names: Vec<String> = self.design.modules.iter().map(|m| m.name.clone()).collect();
 
@@ -82,36 +91,42 @@ impl Elaborator {
     }
 
     fn resolve_param_values(&self, module: &Module, instance_overrides: &HashMap<String, i64>) -> Result<HashMap<String, i64>, String> {
-        let mut vals = HashMap::new();
-        // First, collect positional overrides indexed by position in module's param list
-        let mut positional_overrides: Vec<i64> = Vec::new();
-        for (name, val) in instance_overrides {
-            if name.starts_with("__param") {
-                let idx: usize = name.trim_start_matches("__param").parse().unwrap_or(0);
-                if idx >= positional_overrides.len() {
-                    positional_overrides.resize(idx + 1, 0);
-                }
-                positional_overrides[idx] = *val;
-            }
-        }
+        resolve_param_values_fn(module, instance_overrides)
+    }
+}
 
-        for (i, param) in module.params.iter().enumerate() {
-            let default_val = match &param.default {
-                Some(e) => const_eval_simple(e).unwrap_or(0),
-                None => 0,
-            };
-            let val = if i < positional_overrides.len() {
-                positional_overrides[i]
-            } else if let Some(override_val) = instance_overrides.get(&param.name) {
-                *override_val
-            } else {
-                default_val
-            };
-            vals.insert(param.name.clone(), val);
+fn resolve_param_values_fn(module: &Module, instance_overrides: &HashMap<String, i64>) -> Result<HashMap<String, i64>, String> {
+    let mut vals = HashMap::new();
+    // First, collect positional overrides indexed by position in module's param list
+    let mut positional_overrides: Vec<i64> = Vec::new();
+    for (name, val) in instance_overrides {
+        if name.starts_with("__param") {
+            let idx: usize = name.trim_start_matches("__param").parse().unwrap_or(0);
+            if idx >= positional_overrides.len() {
+                positional_overrides.resize(idx + 1, 0);
+            }
+            positional_overrides[idx] = *val;
         }
-        Ok(vals)
     }
 
+    for (i, param) in module.params.iter().enumerate() {
+        let default_val = match &param.default {
+            Some(e) => const_eval_simple(e).unwrap_or(0),
+            None => 0,
+        };
+        let val = if i < positional_overrides.len() {
+            positional_overrides[i]
+        } else if let Some(override_val) = instance_overrides.get(&param.name) {
+            *override_val
+        } else {
+            default_val
+        };
+        vals.insert(param.name.clone(), val);
+    }
+    Ok(vals)
+}
+
+impl Elaborator {
     fn elaborate_module(&mut self, module: &Module, known_modules: &[String]) -> Result<IrModule, String> {
         let param_vals = self.resolve_param_values(module, &HashMap::new())?;
         self.elaborate_module_with_params(module, known_modules, &param_vals)
@@ -600,6 +615,19 @@ impl Elaborator {
                 index: Box::new(self.translate_expr(index, map_sig)),
                 elem_width: *elem_width,
             },
+            IrLValue::ArrayRangeSelect { sig_id, index, elem_width, msb, lsb } => IrLValue::ArrayRangeSelect {
+                sig_id: map_sig(*sig_id),
+                index: Box::new(self.translate_expr(index, map_sig)),
+                elem_width: *elem_width,
+                msb: *msb,
+                lsb: *lsb,
+            },
+            IrLValue::ArrayBitSelect { sig_id, index, elem_width, bit } => IrLValue::ArrayBitSelect {
+                sig_id: map_sig(*sig_id),
+                index: Box::new(self.translate_expr(index, map_sig)),
+                elem_width: *elem_width,
+                bit: *bit,
+            },
             IrLValue::Concat(parts) => IrLValue::Concat(parts.iter().map(|p| self.translate_lvalue(p, map_sig)).collect()),
         }
     }
@@ -649,6 +677,20 @@ impl Elaborator {
                 obj: Box::new(self.translate_expr(obj, map_sig)),
                 field: field.clone(),
             },
+            IrExpr::ExprRangeSelect(inner, msb, lsb) => IrExpr::ExprRangeSelect(
+                Box::new(self.translate_expr(inner, map_sig)),
+                *msb,
+                *lsb,
+            ),
+            IrExpr::ExprBitSelect(inner, idx) => IrExpr::ExprBitSelect(
+                Box::new(self.translate_expr(inner, map_sig)),
+                *idx,
+            ),
+            IrExpr::ExprPartSelect(inner, base_expr, width_expr) => IrExpr::ExprPartSelect(
+                Box::new(self.translate_expr(inner, map_sig)),
+                Box::new(self.translate_expr(base_expr, map_sig)),
+                Box::new(self.translate_expr(width_expr, map_sig)),
+            ),
         }
     }
 
@@ -1114,41 +1156,76 @@ impl Elaborator {
             }
             Expr::RangeSelect { expr: inner, msb, lsb } => {
                 let inner_lv = self.elaborate_lvalue(inner, signal_map, signals)?;
-                let msb_c = const_eval(msb)?;
-                let lsb_c = const_eval(lsb)?;
-                if let IrLValue::Signal(sid, _) = inner_lv {
-                    Ok(IrLValue::RangeSelect(sid, msb_c as usize, lsb_c as usize))
-                } else {
-                    Err("nested range select not supported".to_string())
+                let msb_c = const_eval(msb)? as usize;
+                let lsb_c = const_eval(lsb)? as usize;
+                match inner_lv {
+                    IrLValue::Signal(sid, _) => {
+                        Ok(IrLValue::RangeSelect(sid, msb_c, lsb_c))
+                    }
+                    IrLValue::RangeSelect(sid, outer_msb, outer_lsb) => {
+                        let outer_start = if outer_msb > outer_lsb { outer_lsb } else { outer_msb };
+                        let inner_start = outer_start + if msb_c > lsb_c { lsb_c } else { msb_c };
+                        let inner_end = outer_start + if msb_c > lsb_c { msb_c } else { lsb_c };
+                        Ok(IrLValue::RangeSelect(sid, inner_end, inner_start))
+                    }
+                    IrLValue::ArrayIndex { sig_id, index, elem_width } => {
+                        Ok(IrLValue::ArrayRangeSelect { sig_id, index, elem_width, msb: msb_c, lsb: lsb_c })
+                    }
+                    _ => Err("nested range select not supported".to_string()),
                 }
             }
             Expr::BitSelect { expr: inner, index } => {
                 let inner_lv = self.elaborate_lvalue(inner, signal_map, signals)?;
-                if let IrLValue::Signal(sid, _) = inner_lv {
-                    let (array_depth, elem_width) = get_array_info(signals, sid);
-                    if array_depth > 1 {
-                        let index_expr = self.elaborate_expr(index, signal_map, signals)?;
-                        Ok(IrLValue::ArrayIndex { sig_id: sid, index: Box::new(index_expr), elem_width })
-                    } else {
-                        let idx = const_eval(index)?;
-                        Ok(IrLValue::BitSelect(sid, idx as usize))
+                let idx = const_eval(index)? as usize;
+                match inner_lv {
+                    IrLValue::Signal(sid, _) => {
+                        let (array_depth, elem_width) = get_array_info(signals, sid);
+                        if array_depth > 1 {
+                            let index_expr = self.elaborate_expr(index, signal_map, signals)?;
+                            Ok(IrLValue::ArrayIndex { sig_id: sid, index: Box::new(index_expr), elem_width })
+                        } else {
+                            Ok(IrLValue::BitSelect(sid, idx))
+                        }
                     }
-                } else {
-                    Err("nested bit select not supported".to_string())
+                    IrLValue::RangeSelect(sid, outer_msb, outer_lsb) => {
+                        let base = if outer_msb > outer_lsb { outer_lsb } else { outer_msb };
+                        Ok(IrLValue::BitSelect(sid, base + idx))
+                    }
+                    IrLValue::ArrayIndex { sig_id, index, elem_width } => {
+                        Ok(IrLValue::ArrayBitSelect { sig_id, index, elem_width, bit: idx })
+                    }
+                    _ => Err("nested bit select not supported".to_string()),
                 }
             }
             Expr::PartSelect { expr: inner, base, width } => {
                 let inner_lv = self.elaborate_lvalue(inner, signal_map, signals)?;
-                if let IrLValue::Signal(sid, _) = inner_lv {
-                    let base_c = const_eval(base)? as usize;
-                    let width_c = const_eval(width)? as usize;
-                    if width_c > 0 {
-                        Ok(IrLValue::RangeSelect(sid, base_c + width_c - 1, base_c))
-                    } else {
-                        Ok(IrLValue::RangeSelect(sid, base_c, base_c))
+                let base_c = const_eval(base)? as usize;
+                let width_c = const_eval(width)? as usize;
+                match inner_lv {
+                    IrLValue::Signal(sid, _) => {
+                        if width_c > 0 {
+                            Ok(IrLValue::RangeSelect(sid, base_c + width_c - 1, base_c))
+                        } else {
+                            Ok(IrLValue::RangeSelect(sid, base_c, base_c))
+                        }
                     }
-                } else {
-                    Err("nested part-select in lvalue not supported".to_string())
+                    IrLValue::RangeSelect(sid, outer_msb, outer_lsb) => {
+                        let outer_base = if outer_msb > outer_lsb { outer_lsb } else { outer_msb };
+                        let new_base = outer_base + base_c;
+                        if width_c > 0 {
+                            Ok(IrLValue::RangeSelect(sid, new_base + width_c - 1, new_base))
+                        } else {
+                            Ok(IrLValue::RangeSelect(sid, new_base, new_base))
+                        }
+                    }
+                    IrLValue::ArrayIndex { sig_id, index, elem_width } => {
+                        if width_c > 0 {
+                            Ok(IrLValue::ArrayRangeSelect { sig_id, index, elem_width, msb: base_c + width_c - 1, lsb: base_c })
+                        } else {
+                            Ok(IrLValue::ArrayRangeSelect { sig_id, index, elem_width, msb: base_c, lsb: base_c })
+                        }
+                    }
+                    _ => Err("nested part-select in lvalue not supported".to_string()),
                 }
             }
             Expr::Concat(exprs) => {
@@ -1172,6 +1249,9 @@ impl Elaborator {
             }
             Expr::FillLit(val) => Ok(IrExpr::FillLit(*val)),
             Expr::Ident(name) => {
+                if name.starts_with("$") {
+                    return Ok(IrExpr::SysFunc { name: name.clone(), args: vec![] });
+                }
                 let sig_id = signal_map.get(name)
                     .ok_or_else(|| format!("signal '{}' not found", name))?;
                 Ok(IrExpr::Signal(*sig_id, 0))
@@ -1180,25 +1260,26 @@ impl Elaborator {
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
                 let msb_c = const_eval(msb)? as usize;
                 let lsb_c = const_eval(lsb)? as usize;
-                if let IrExpr::Signal(sid, _) = inner_expr {
-                    Ok(IrExpr::RangeSelect(sid, msb_c, lsb_c))
+                if let IrExpr::Signal(sid, _) = &inner_expr {
+                    Ok(IrExpr::RangeSelect(*sid, msb_c, lsb_c))
                 } else {
-                    Err("nested range select in expression not supported".to_string())
+                    Ok(IrExpr::ExprRangeSelect(Box::new(inner_expr), msb_c, lsb_c))
                 }
             }
             Expr::BitSelect { expr: inner, index } => {
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
-                if let IrExpr::Signal(sid, _) = inner_expr {
-                    let (array_depth, elem_width) = get_array_info(signals, sid);
+                if let IrExpr::Signal(sid, _) = &inner_expr {
+                    let (array_depth, elem_width) = get_array_info(signals, *sid);
                     if array_depth > 1 {
                         let index_expr = self.elaborate_expr(index, signal_map, signals)?;
-                        Ok(IrExpr::ArrayIndex { sig_id: sid, index: Box::new(index_expr), elem_width })
+                        Ok(IrExpr::ArrayIndex { sig_id: *sid, index: Box::new(index_expr), elem_width })
                     } else {
                         let idx = const_eval(index)? as usize;
-                        Ok(IrExpr::BitSelect(sid, idx))
+                        Ok(IrExpr::BitSelect(*sid, idx))
                     }
                 } else {
-                    Err("nested bit select in expression not supported".to_string())
+                    let idx = const_eval(index)? as usize;
+                    Ok(IrExpr::ExprBitSelect(Box::new(inner_expr), idx))
                 }
             }
             Expr::Concat(exprs) => {
@@ -1231,20 +1312,32 @@ impl Elaborator {
             }
             Expr::PartSelect { expr: inner, base, width } => {
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
-                if let IrExpr::Signal(sid, _) = inner_expr {
+                if let IrExpr::Signal(sid, _) = &inner_expr {
                     if let (Ok(base_c), Ok(width_c)) = (const_eval(base), const_eval(width)) {
                         let base = base_c as usize;
                         let width = width_c as usize;
                         if width > 0 {
-                            Ok(IrExpr::RangeSelect(sid, base + width - 1, base))
+                            Ok(IrExpr::RangeSelect(*sid, base + width - 1, base))
                         } else {
-                            Ok(IrExpr::RangeSelect(sid, base, base))
+                            Ok(IrExpr::RangeSelect(*sid, base, base))
                         }
                     } else {
-                        Err("dynamic part-select not yet supported".to_string())
+                        let base_expr = self.elaborate_expr(base, signal_map, signals)?;
+                        let width_expr = self.elaborate_expr(width, signal_map, signals)?;
+                        Ok(IrExpr::ExprPartSelect(Box::new(inner_expr), Box::new(base_expr), Box::new(width_expr)))
+                    }
+                } else if let (Ok(base_c), Ok(width_c)) = (const_eval(base), const_eval(width)) {
+                    let base = base_c as usize;
+                    let width = width_c as usize;
+                    if width > 0 {
+                        Ok(IrExpr::ExprRangeSelect(Box::new(inner_expr), base + width - 1, base))
+                    } else {
+                        Ok(IrExpr::ExprRangeSelect(Box::new(inner_expr), base, base))
                     }
                 } else {
-                    Err("nested part-select in expression not supported".to_string())
+                    let base_expr = self.elaborate_expr(base, signal_map, signals)?;
+                    let width_expr = self.elaborate_expr(width, signal_map, signals)?;
+                    Ok(IrExpr::ExprPartSelect(Box::new(inner_expr), Box::new(base_expr), Box::new(width_expr)))
                 }
             }
             Expr::Paren(inner) => self.elaborate_expr(inner, signal_map, signals),
@@ -1376,12 +1469,16 @@ impl Elaborator {
     }
 }
 
-#[allow(dead_code)]
 fn expand_all_generates(module: &mut Module, param_vals: &HashMap<String, i64>) -> Result<(), String> {
     let mut i = 0;
     while i < module.items.len() {
         if let ModuleItem::Generate(gen) = &module.items[i] {
             let expanded = expand_generate_block(gen, param_vals)?;
+            for item in &expanded {
+                if let ModuleItem::Decl(d) = item {
+                    module.decls.push(d.clone());
+                }
+            }
             module.items.splice(i..=i, expanded);
         } else {
             i += 1;
@@ -1899,6 +1996,17 @@ fn collect_read_signals_expr(expr: &IrExpr, out: &mut Vec<SignalId>) {
         IrExpr::MemberAccess { obj, .. } => {
             collect_read_signals_expr(obj, out);
         }
+        IrExpr::ExprRangeSelect(inner, _, _) => {
+            collect_read_signals_expr(inner, out);
+        }
+        IrExpr::ExprBitSelect(inner, _) => {
+            collect_read_signals_expr(inner, out);
+        }
+        IrExpr::ExprPartSelect(inner, base_expr, width_expr) => {
+            collect_read_signals_expr(inner, out);
+            collect_read_signals_expr(base_expr, out);
+            collect_read_signals_expr(width_expr, out);
+        }
     }
 }
 
@@ -2074,6 +2182,8 @@ fn map_binary_op(op: &BinaryOp) -> Result<BinaryIrOp, String> {
         BinaryOp::Neq => Ok(BinaryIrOp::Neq),
         BinaryOp::CaseEq => Ok(BinaryIrOp::CaseEq),
         BinaryOp::CaseNeq => Ok(BinaryIrOp::CaseNeq),
+        BinaryOp::EqWild => Ok(BinaryIrOp::EqWild),
+        BinaryOp::NeqWild => Ok(BinaryIrOp::NeqWild),
         BinaryOp::Lt => Ok(BinaryIrOp::Lt),
         BinaryOp::Le => Ok(BinaryIrOp::Le),
         BinaryOp::Gt => Ok(BinaryIrOp::Gt),
@@ -2088,7 +2198,6 @@ fn map_binary_op(op: &BinaryOp) -> Result<BinaryIrOp, String> {
         BinaryOp::Sshr => Ok(BinaryIrOp::Sshr),
         BinaryOp::LogicalAnd => Ok(BinaryIrOp::LogicalAnd),
         BinaryOp::LogicalOr => Ok(BinaryIrOp::LogicalOr),
-        _ => Err("operator not supported".to_string()),
     }
 }
 

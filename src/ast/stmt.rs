@@ -148,6 +148,56 @@ pub enum Stmt {
         index_var: String,
         stmts: Vec<Stmt>,
     },
+    // Unique/Priority case qualifiers
+    UniqueCase {
+        expr: Expr,
+        items: Vec<CaseItem>,
+        default: Option<Box<Stmt>>,
+    },
+    PriorityCase {
+        expr: Expr,
+        items: Vec<CaseItem>,
+        default: Option<Box<Stmt>>,
+    },
+    CaseInside {
+        expr: Expr,
+        items: Vec<CaseItem>,
+        default: Option<Box<Stmt>>,
+    },
+    // Immediate assertions
+    Assert {
+        cond: Expr,
+        pass_stmt: Option<Box<Stmt>>,
+        fail_stmt: Option<Box<Stmt>>,
+    },
+    Assume {
+        cond: Expr,
+        pass_stmt: Option<Box<Stmt>>,
+        fail_stmt: Option<Box<Stmt>>,
+    },
+    Cover {
+        cond: Expr,
+        pass_stmt: Option<Box<Stmt>>,
+    },
+    Expect {
+        cond: Expr,
+        pass_stmt: Option<Box<Stmt>>,
+        fail_stmt: Option<Box<Stmt>>,
+    },
+    WaitOrder {
+        events: Vec<String>,
+    },
+    /// Unique/priority if
+    UniqueIf {
+        cond: Expr,
+        true_branch: Box<Stmt>,
+        false_branch: Option<Box<Stmt>>,
+    },
+    PriorityIf {
+        cond: Expr,
+        true_branch: Box<Stmt>,
+        false_branch: Option<Box<Stmt>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

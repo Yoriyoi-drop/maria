@@ -227,6 +227,19 @@ pub enum IrLValue {
         index: Box<IrExpr>,
         elem_width: usize,
     },
+    ArrayRangeSelect {
+        sig_id: SignalId,
+        index: Box<IrExpr>,
+        elem_width: usize,
+        msb: usize,
+        lsb: usize,
+    },
+    ArrayBitSelect {
+        sig_id: SignalId,
+        index: Box<IrExpr>,
+        elem_width: usize,
+        bit: usize,
+    },
     Concat(Vec<IrLValue>),
 }
 
@@ -237,6 +250,9 @@ pub enum IrExpr {
     Signal(SignalId, usize),
     RangeSelect(SignalId, usize, usize),
     BitSelect(SignalId, usize),
+    ExprRangeSelect(Box<IrExpr>, usize, usize),
+    ExprBitSelect(Box<IrExpr>, usize),
+    ExprPartSelect(Box<IrExpr>, Box<IrExpr>, Box<IrExpr>),
     ArrayIndex {
         sig_id: SignalId,
         index: Box<IrExpr>,
@@ -278,7 +294,7 @@ pub enum UnaryIrOp {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinaryIrOp {
     Add, Sub, Mul, Div, Mod, Power,
-    Eq, Neq, CaseEq, CaseNeq,
+    Eq, Neq, CaseEq, CaseNeq, EqWild, NeqWild,
     Lt, Le, Gt, Ge,
     BitAnd, BitOr, BitXor, BitXnor,
     Shl, Shr, Sshl, Sshr,
