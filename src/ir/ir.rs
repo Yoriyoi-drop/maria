@@ -173,6 +173,7 @@ pub struct IrInstance {
     pub instance_name: String,
     pub port_map: HashMap<String, SignalId>,
     pub param_map: HashMap<String, i64>,
+    pub type_param_map: HashMap<String, usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

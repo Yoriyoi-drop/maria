@@ -5,13 +5,13 @@
 **Bahasa:** Rust (~11.800 LOC, 22 file)
 **Pipeline:** Preprocessor → Lexer → Parser → AST → Elaborator → IR → Simulator → VCD
 **Dependensi:** `clap 4`, `rand 0.8` (minimal)
-**Test:** 179 (semua passing, +4 DPI-C import, +4 multi-driver resolution, +3 inout port)
+**Test:** 180 (semua passing, +4 DPI-C import, +4 multi-driver resolution, +3 inout port, +1 parameter type)
 
 ---
 
 ## Ringkasan
 
-**Production Readiness Score: 86/100** (+10 always_comb/generate/arrayed/$strobe, +6 mailbox + semaphore + error recovery, +4 const folding + DCE, +2 12-region scheduler, +3 SVA assert/assume/cover, +5 covergroup/coverpoint/bins engine + coverage report, +2 DPI-C import, +3 multi-driver resolution, +1 inout port bidirectional)
+**Production Readiness Score: 87/100** (+10 always_comb/generate/arrayed/$strobe, +6 mailbox + semaphore + error recovery, +4 const folding + DCE, +2 12-region scheduler, +3 SVA assert/assume/cover, +5 covergroup/coverpoint/bins engine + coverage report, +2 DPI-C import, +3 multi-driver resolution, +1 inout port bidirectional, +1 parameter type)
 
 Maria adalah prototipe fungsional yang mampu mensimulasikan desain RTL sederhana
 (counter 4-bit, adder 16-bit, hierarki 3-level) tetapi memiliki keterbatasan kritis
@@ -20,7 +20,7 @@ atau lingkungan UVM skala besar.
 
 **Perubahan pada audit ini:** 12 dari 15 bug kritis telah diperbaiki atau sudah berfungsi
 dengan benar. Bug #6 fixed via dependency-based signal tracking (`pending_waits` + `extract_signal_deps`).
-Semua fitur Fase Alpha selesai. Fase Beta: ✅ continuous assignment ✅ always_comb ✅ generate case ✅ arrayed instances ✅ $strobe ✅ $sformatf/$fwrite/$fscanf ✅ real/realtime ✅ 2-state/4-state ✅ structured errors ✅ macro arguments ✅ constraint parsing + simple solver ✅ mailbox + semaphore ✅ error recovery parser. Fase RC: ✅ $urandom_range ✅ const folding + DCE di elaborator ✅ covergroup/coverpoint/bins (parse + engine + coverage report) ✅ DPI-C import (parser + elaborator + engine stubs) ✅ Multi-driver resolution (wand/wor/tri/tri0/tri1/triand/trior/supply0/supply1) ✅ Inout port bidirectional (parse + elaborate + tri-state alias + conflict resolution via tri)
+Semua fitur Fase Alpha selesai. Fase Beta: ✅ continuous assignment ✅ always_comb ✅ generate case ✅ arrayed instances ✅ $strobe ✅ $sformatf/$fwrite/$fscanf ✅ real/realtime ✅ 2-state/4-state ✅ structured errors ✅ macro arguments ✅ constraint parsing + simple solver ✅ mailbox + semaphore ✅ error recovery parser. Fase RC: ✅ $urandom_range ✅ const folding + DCE di elaborator ✅ covergroup/coverpoint/bins (parse + engine + coverage report) ✅ DPI-C import (parser + elaborator + engine stubs) ✅ Multi-driver resolution (wand/wor/tri/tri0/tri1/triand/trior/supply0/supply1) ✅ Inout port bidirectional (parse + elaborate + tri-state alias + conflict resolution via tri) ✅ Parameter type (MVP: parse + port elaboration)
 
 ---
 
@@ -490,7 +490,7 @@ Top new features:
   ✅ DPI-C (basic: import + parser + elaborator + engine stubs)
   ✅ Multi-driver resolution (wand/wor/tri/tri0/tri1/triand/trior/supply0/supply1 + engine resolve)
   ✅ Inout port bidirectional (parse + elaborator tri net_type + alias + tri-state via tri)
-  ▢ Parameter type
+  ✅ Parameter type (MVP: parse + port elaboration)
   ✅ $urandom_range + $random(seed) basic
   ✅ Constant propagation + DCE di elaborator
   ▢ Line number tracking through preprocessor

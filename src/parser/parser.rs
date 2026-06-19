@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::ast::*;
 use crate::ast::types::const_eval_simple;
 use crate::parser::lexer::*;
@@ -161,7 +163,7 @@ impl Parser {
                                 Some(self.parse_expr(0)?)
                             } else { None };
                             self.skip_semi();
-                            items.push(PackageItem::Param(ParamDecl { name: pname, dtype: None, default }));
+                            items.push(PackageItem::Param(ParamDecl { name: pname, dtype: None, default, is_type_param: false, type_default: None }));
                         }
                         Token::Function => {
                             items.push(PackageItem::Function(self.parse_function(false)?));
@@ -445,8 +447,13 @@ impl Parser {
 
             let tok = self.peek().clone();
             match tok {
-                Token::Ident(_) | Token::Int | Token::Integer => {}
+                Token::Ident(_) | Token::Int | Token::Integer | Token::Type => {}
                 _ => break,
+            }
+
+            let is_type_param = self.peek() == &Token::Type;
+            if is_type_param {
+                self.advance(); // consume 'type'
             }
 
             let name_tok = self.peek().clone();
@@ -468,12 +475,21 @@ impl Parser {
 
             let default = if self.peek() == &Token::BlockingAssign {
                 self.advance();
-                Some(self.parse_expr(0)?)
+                if is_type_param {
+                    // Parse default type expression: logic [7:0], bit, int, etc.
+                    let _ = self.parse_type_expr()?;
+                    // For MVP, store dummy expression; width resolved in elaborator
+                    Some(Expr::Value(Value::Decimal(0)))
+                } else {
+                    Some(self.parse_expr(0)?)
+                }
             } else {
                 None
             };
 
-            params.push(ParamDecl { name, dtype, default });
+            let type_default = None; // Type default parsing TBD for full feature
+
+            params.push(ParamDecl { name, dtype, default, is_type_param, type_default });
 
             if self.peek() == &Token::Comma {
                 self.advance();
@@ -482,6 +498,34 @@ impl Parser {
             }
         }
         Ok(())
+    }
+
+    fn parse_type_expr(&mut self) -> Result<DataType, String> {
+        let dt = match self.peek() {
+            Token::Bit => DataType::Bit,
+            Token::Logic => DataType::Logic,
+            Token::Int => DataType::Int,
+            Token::Integer => DataType::Integer,
+            Token::Byte => DataType::Byte,
+            Token::Shortint => DataType::Shortint,
+            Token::Longint => DataType::Longint,
+            Token::Reg => DataType::Logic,
+            Token::Real => DataType::Real,
+            Token::RealTime => DataType::Realtime,
+            Token::String => DataType::String,
+            Token::Ident(_) => {
+                let name = self.expect_ident()?;
+                DataType::UserDefined(name)
+            }
+            _ => return Err(format!("expected type")),
+        };
+        self.advance();
+        if self.peek() == &Token::Signed {
+            self.advance();
+            Ok(DataType::Signed(Box::new(dt)))
+        } else {
+            Ok(dt)
+        }
     }
 
     fn parse_port_list(&mut self, ports: &mut Vec<Port>) -> Result<(), String> {
@@ -516,6 +560,18 @@ impl Parser {
                         self.advance();
                     }
 
+                    // Check for type parameter reference (identifier before port name)
+                    let dtype_name = if let Token::Ident(_) = self.peek() {
+                        if let Token::Ident(_) = self.peek_ahead(1) {
+                            let name = self.expect_ident()?;
+                            Some(name)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
                     if self.peek() == &Token::Signed {
                         self.advance();
                     }
@@ -543,6 +599,7 @@ impl Parser {
                                     direction: dir.clone(),
                                     range: range.clone(),
                                     expr_range: expr_range.clone(),
+                                    dtype_name: dtype_name.clone(),
                                 });
                             }
                             _ => break,
@@ -1753,6 +1810,7 @@ impl Parser {
         };
 
         let mut param_assigns = std::collections::HashMap::new();
+        let mut type_param_assigns = std::collections::HashMap::new();
 
         if self.peek() == &Token::Hash {
             self.advance();
@@ -1767,9 +1825,15 @@ impl Parser {
                             _ => return Err(format!("line {}: expected parameter name", self.peek_line())),
                         };
                         self.expect(Token::LParen)?;
-                        let val = self.parse_expr(0)?;
-                        self.expect(Token::RParen)?;
-                        param_assigns.insert(pname, val);
+                        if self.is_type_token() {
+                            let dt = self.parse_type_expr()?;
+                            self.expect(Token::RParen)?;
+                            type_param_assigns.insert(pname, dt);
+                        } else {
+                            let val = self.parse_expr(0)?;
+                            self.expect(Token::RParen)?;
+                            param_assigns.insert(pname, val);
+                        }
                     } else {
                         let val = self.parse_expr(0)?;
                         param_assigns.insert(format!("__param{}", param_assigns.len()), val);
@@ -1857,7 +1921,14 @@ impl Parser {
             self.advance();
         }
 
-        Ok(ModuleInstance { module_name, instance_name, range, param_assigns, port_conns })
+        Ok(ModuleInstance { module_name, instance_name, range, param_assigns, type_param_assigns, port_conns })
+    }
+
+    fn is_type_token(&self) -> bool {
+        matches!(self.peek(), Token::Bit | Token::Logic | Token::Int | Token::Integer
+            | Token::Byte | Token::Shortint | Token::Longint | Token::Reg
+            | Token::Real | Token::RealTime | Token::String
+            | Token::Struct | Token::Union | Token::Enum)
     }
 
     fn parse_gate_primitive(&mut self) -> Result<GatePrimitive, String> {

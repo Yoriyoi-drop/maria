@@ -3912,4 +3912,25 @@ endmodule
         let result = simulate_signals(source, 10);
         assert!(result.is_ok(), "inout bidirectional failed: {:?}", result.err());
     }
+
+    #[test]
+    fn test_parameter_type_default() {
+        let source = r#"
+module my_mux #(parameter type T = logic) (input T a, output T y);
+    assign y = a;
+endmodule
+module tb;
+    wire a, y;
+    my_mux u1(.a(a), .y(y));
+    initial begin
+        a = 1;
+        #1;
+        if (y !== 1) $display("FAIL: expected 1 got %b", y);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let result = simulate_signals(source, 10);
+        assert!(result.is_ok(), "parameter type parse failed: {:?}", result.err());
+    }
 }

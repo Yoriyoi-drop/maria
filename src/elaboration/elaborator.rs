@@ -248,6 +248,12 @@ impl Elaborator {
 
     fn elaborate_module_with_params(&mut self, module: &Module, known_modules: &[String],
                                     param_vals: &HashMap<String, i64>) -> Result<IrModule, String> {
+        self.elaborate_module_with_params_and_type(module, known_modules, param_vals, &HashMap::new())
+    }
+
+    fn elaborate_module_with_params_and_type(&mut self, module: &Module, known_modules: &[String],
+                                    param_vals: &HashMap<String, i64>,
+                                    type_param_overrides: &HashMap<String, DataType>) -> Result<IrModule, String> {
         let mut effective_params = param_vals.clone();
 
         // Process package imports: add package parameters to effective_params
@@ -276,6 +282,22 @@ impl Elaborator {
             }
         }
         self.param_vals = effective_params.clone();
+
+        // Resolve type parameter widths from module's param declarations and overrides
+        let mut type_param_widths: HashMap<String, usize> = HashMap::new();
+        for param in &module.params {
+            if param.is_type_param {
+                let width = if let Some(dt) = type_param_overrides.get(&param.name) {
+                    dt.width()
+                } else {
+                    match &param.default {
+                        Some(_) => 8,
+                        None => 1,
+                    }
+                };
+                type_param_widths.insert(param.name.clone(), width);
+            }
+        }
 
         // Pre-pass: collect in-module typedefs before declaration processing
         for item in &module.items {
@@ -361,7 +383,19 @@ impl Elaborator {
 
         // Process ports with parameter-aware width resolution
         for port in &module.ports {
-            let width = port.resolved_width(&effective_params)?;
+            let width = if let Some(tn) = &port.dtype_name {
+                if let Some(tw) = type_param_widths.get(tn) {
+                    if port.expr_range.is_some() || port.range.is_some() {
+                        port.resolved_width(&effective_params)?
+                    } else {
+                        *tw
+                    }
+                } else {
+                    port.resolved_width(&effective_params)?
+                }
+            } else {
+                port.resolved_width(&effective_params)?
+            };
             let kind = match port.direction {
                 PortDirection::Input => SignalKind::Input,
                 PortDirection::Output => SignalKind::Output,
@@ -599,6 +633,10 @@ impl Elaborator {
                         let val = const_eval_with_params(pexpr, &effective_params).unwrap_or(0);
                         param_map.insert(pname.clone(), val);
                     }
+                    let mut type_param_map = HashMap::new();
+                    for (pname, dt) in &inst.type_param_assigns {
+                        type_param_map.insert(pname.clone(), dt.width());
+                    }
 
                     if let Some(range) = &inst.range {
                         let msb = const_eval_with_params(&range.msb, &effective_params)?;
@@ -611,6 +649,7 @@ impl Elaborator {
                                 instance_name: inst_name,
                                 port_map: port_map.clone(),
                                 param_map: param_map.clone(),
+                                type_param_map: type_param_map.clone(),
                             });
                         }
                     } else {
@@ -619,6 +658,7 @@ impl Elaborator {
                             instance_name: inst.instance_name.clone(),
                             port_map,
                             param_map,
+                            type_param_map,
                         });
                     }
                 }

@@ -79,6 +79,7 @@ pub struct Port {
     pub direction: PortDirection,
     pub range: Option<Range>,
     pub expr_range: Option<ExprRange>,
+    pub dtype_name: Option<String>,
 }
 
 impl Port {
@@ -261,6 +262,8 @@ pub struct ParamDecl {
     pub name: String,
     pub dtype: Option<DataType>,
     pub default: Option<Expr>,
+    pub is_type_param: bool,
+    pub type_default: Option<DataType>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -539,6 +542,7 @@ pub struct ModuleInstance {
     pub instance_name: String,
     pub range: Option<ExprRange>,
     pub param_assigns: HashMap<String, Expr>,
+    pub type_param_assigns: HashMap<String, DataType>,
     pub port_conns: Vec<PortConnection>,
 }
 

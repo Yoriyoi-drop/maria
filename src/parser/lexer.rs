@@ -84,6 +84,8 @@ pub enum Token {
     Mailbox, Semaphore,
     // Coverage
     Covergroup, EndGroup, Coverpoint, Cross, Bins, IllegalBins, IgnoreBins, Option_,
+    // Parameter type
+    Type,
     // Special
     FillLit(crate::ir::LogicVal),
     Quote,  // bare ' (for type casts: int'(x))
@@ -183,6 +185,7 @@ impl fmt::Display for Token {
             Token::IllegalBins => write!(f, "illegal_bins"),
             Token::IgnoreBins => write!(f, "ignore_bins"),
             Token::Option_ => write!(f, "option"),
+            Token::Type => write!(f, "type"),
             Token::Eof => write!(f, "<eof>"),
             Token::Error(s) => write!(f, "<error: {}>", s),
             _ => write!(f, "{:?}", self),
@@ -430,6 +433,7 @@ impl Lexer {
             "void" => Token::Void,
             "return" => Token::Return,
             "enum" => Token::Enum,
+            "type" => Token::Type,
             "typedef" => Token::Typedef,
             "bit" => Token::Bit,
             "byte" => Token::Byte,
