@@ -17,6 +17,8 @@ pub struct IrClassDef {
     pub extends: Option<String>,
     pub fields: Vec<IrClassField>,
     pub methods: Vec<IrClassMethod>,
+    pub constraints: Vec<(String, Vec<crate::ast::types::ConstraintItem>)>,
+    pub rand_fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -62,6 +64,15 @@ pub struct SignalInfo {
     pub array_depth: usize,
     pub elem_width: usize,
     pub class_name: Option<String>,
+    pub is_string: bool,
+    pub is_real: bool,
+    pub is_mailbox: bool,
+    pub is_semaphore: bool,
+    pub is_2state: bool,
+    pub is_dynamic: bool,
+    pub is_queue: bool,
+    pub msb: usize,
+    pub lsb: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,6 +96,11 @@ pub struct IrInstance {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Process {
     Combinational {
+        name: String,
+        sensitivity: Vec<SignalId>,
+        body: Vec<IrStmt>,
+    },
+    CombReactive {
         name: String,
         sensitivity: Vec<SignalId>,
         body: Vec<IrStmt>,
@@ -209,6 +225,17 @@ pub enum IrStmt {
     Deassign {
         lvalue: IrLValue,
     },
+    Fork {
+        processes: Vec<Vec<IrStmt>>,
+        join_type: IrJoinType,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum IrJoinType {
+    Join,
+    JoinAny,
+    JoinNone,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -307,6 +334,10 @@ pub struct LogicVec {
     pub width: usize,
 }
 
+impl Default for LogicVec {
+    fn default() -> Self { LogicVec::new(1) }
+}
+
 impl LogicVec {
     pub fn new(width: usize) -> Self {
         LogicVec {
@@ -339,6 +370,20 @@ impl LogicVec {
             }
         }
         result
+    }
+
+    pub fn to_i64(&self) -> i64 {
+        let uval = self.to_u64();
+        if self.width < 64 {
+            let mask = 1u64 << (self.width - 1);
+            if uval & mask != 0 {
+                (uval | (!0u64 << self.width)) as i64
+            } else {
+                uval as i64
+            }
+        } else {
+            uval as i64
+        }
     }
 
     pub fn to_bool(&self) -> Option<bool> {

@@ -124,6 +124,35 @@ pub fn eval_unary(op: UnaryIrOp, val: &LogicVec) -> LogicVec {
 }
 
 /// Evaluate a binary operation on logic vectors
+pub fn eval_binary_signed(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
+    let max_width = lhs.width.max(rhs.width);
+    let lhs_ext = extend_to(lhs, max_width);
+    let rhs_ext = extend_to(rhs, max_width);
+    match op {
+        BinaryIrOp::Lt => {
+            let l = lhs_ext.to_i64();
+            let r = rhs_ext.to_i64();
+            LogicVec::from_u64(if l < r { 1 } else { 0 }, 1)
+        }
+        BinaryIrOp::Le => {
+            let l = lhs_ext.to_i64();
+            let r = rhs_ext.to_i64();
+            LogicVec::from_u64(if l <= r { 1 } else { 0 }, 1)
+        }
+        BinaryIrOp::Gt => {
+            let l = lhs_ext.to_i64();
+            let r = rhs_ext.to_i64();
+            LogicVec::from_u64(if l > r { 1 } else { 0 }, 1)
+        }
+        BinaryIrOp::Ge => {
+            let l = lhs_ext.to_i64();
+            let r = rhs_ext.to_i64();
+            LogicVec::from_u64(if l >= r { 1 } else { 0 }, 1)
+        }
+        _ => eval_binary(op, lhs, rhs),
+    }
+}
+
 pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
     let max_width = lhs.width.max(rhs.width);
     let lhs_ext = extend_to(lhs, max_width);

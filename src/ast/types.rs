@@ -8,6 +8,7 @@ pub struct Design {
     pub modules: Vec<Module>,
     pub classes: Vec<ClassDecl>,
     pub packages: Vec<PackageDecl>,
+    pub interfaces: Vec<Interface>,
     pub top_module: Option<String>,
 }
 
@@ -50,6 +51,26 @@ pub struct Module {
     pub params: Vec<ParamDecl>,
     pub decls: Vec<Decl>,
     pub items: Vec<ModuleItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModportItem {
+    pub name: String,
+    pub direction: PortDirection,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Modport {
+    pub name: String,
+    pub items: Vec<ModportItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Interface {
+    pub name: String,
+    pub params: Vec<ParamDecl>,
+    pub decls: Vec<Decl>,
+    pub modports: Vec<Modport>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -264,6 +285,9 @@ pub struct DeclVar {
     pub range: Option<Range>,
     pub expr_range: Option<ExprRange>,
     pub array_range: Option<Range>,
+    pub is_dynamic: bool,
+    pub is_queue: bool,
+    pub is_rand: bool,
 }
 
 impl DeclVar {
@@ -295,6 +319,9 @@ pub enum DataType {
     Byte,
     Shortint,
     Longint,
+    Real,
+    Realtime,
+    String,
     Signed(Box<DataType>),
     UserDefined(String),
     EnumType {
@@ -361,7 +388,26 @@ pub enum GenerateItem {
         step: Option<Stmt>,
         body_items: Vec<ModuleItem>,
     },
+    Case {
+        case_type: GenerateCaseType,
+        expr: Expr,
+        items: Vec<CaseGenerateItem>,
+        default: Option<Vec<ModuleItem>>,
+    },
     Items(Vec<ModuleItem>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GenerateCaseType {
+    Normal,
+    CaseX,
+    CaseZ,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaseGenerateItem {
+    pub labels: Vec<Expr>,
+    pub body: Vec<ModuleItem>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -421,6 +467,7 @@ pub struct ContinuousAssign {
 pub struct ModuleInstance {
     pub module_name: String,
     pub instance_name: String,
+    pub range: Option<ExprRange>,
     pub param_assigns: HashMap<String, Expr>,
     pub port_conns: Vec<PortConnection>,
 }

@@ -24,6 +24,7 @@ pub enum Token {
     None, Some_,
     And, Xor, Nand, Nor, Xnor, Buf, NotGate,
     Module_, Interface, EndInterface, ModPort,
+    Fork, Join, JoinAny, JoinNone,
     Bit, Enum, Typedef, Byte, Shortint, Longint, Struct, Union, EndEnum,
     // Multi-character operators
     Arrow, // ->
@@ -74,11 +75,14 @@ pub enum Token {
 
     // SystemVerilog keywords
     Inside, Unique, Priority, Unique0,
+    Rand, RandC, Constraint, Solve,
     Assert, Assume, Cover, Expect, WaitOrder,
     // Package
     Package, EndPackage, Import,
+    Mailbox, Semaphore,
     // Special
     FillLit(crate::ir::LogicVal),
+    Quote,  // bare ' (for type casts: int'(x))
     Error(String),
     Eof,
 }
@@ -117,6 +121,10 @@ impl fmt::Display for Token {
             Token::Do => write!(f, "do"),
             Token::Repeat => write!(f, "repeat"),
             Token::Forever => write!(f, "forever"),
+            Token::Fork => write!(f, "fork"),
+            Token::Join => write!(f, "join"),
+            Token::JoinAny => write!(f, "join_any"),
+            Token::JoinNone => write!(f, "join_none"),
             Token::PosEdge => write!(f, "posedge"),
             Token::NegEdge => write!(f, "negedge"),
             Token::Or => write!(f, "or"),
@@ -134,9 +142,14 @@ impl fmt::Display for Token {
             Token::Return => write!(f, "return"),
             Token::Wait => write!(f, "wait"),
             Token::Scope => write!(f, "::"),
+            Token::Quote => write!(f, "'"),
             Token::Increment => write!(f, "++"),
             Token::Decrement => write!(f, "--"),
             Token::Inside => write!(f, "inside"),
+            Token::Rand => write!(f, "rand"),
+            Token::RandC => write!(f, "randc"),
+            Token::Constraint => write!(f, "constraint"),
+            Token::Solve => write!(f, "solve"),
             Token::Unique => write!(f, "unique"),
             Token::Priority => write!(f, "priority"),
             Token::Unique0 => write!(f, "unique0"),
@@ -334,6 +347,10 @@ impl Lexer {
             "do" => Token::Do,
             "repeat" => Token::Repeat,
             "forever" => Token::Forever,
+            "fork" => Token::Fork,
+            "join" => Token::Join,
+            "join_any" => Token::JoinAny,
+            "join_none" => Token::JoinNone,
             "posedge" => Token::PosEdge,
             "negedge" => Token::NegEdge,
             "or" => Token::Or,
@@ -353,6 +370,8 @@ impl Lexer {
             "wait" => Token::Wait,
             "null" => Token::Null,
             "string" => Token::String,
+            "mailbox" => Token::Mailbox,
+            "semaphore" => Token::Semaphore,
             "function" => Token::Function,
             "endfunction" => Token::EndFunction,
             "task" => Token::Task,
@@ -391,6 +410,10 @@ impl Lexer {
             "modport" => Token::ModPort,
             "interface" => Token::Interface,
             "endinterface" => Token::EndInterface,
+            "rand" => Token::Rand,
+            "randc" => Token::RandC,
+            "constraint" => Token::Constraint,
+            "solve" => Token::Solve,
             "inside" => Token::Inside,
             "unique" => Token::Unique,
             "priority" => Token::Priority,
@@ -688,7 +711,7 @@ impl Lexer {
                             _ => Token::Error(format!("expected base after 's in literal")),
                         }
                     }
-                    _ => Token::Error(format!("unexpected character '''")),
+                    _ => Token::Quote,
                 }
             }
             _ => Token::Error(format!("unexpected character '{}'", c)),

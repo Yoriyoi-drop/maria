@@ -198,6 +198,17 @@ pub enum Stmt {
         true_branch: Box<Stmt>,
         false_branch: Option<Box<Stmt>>,
     },
+    Fork {
+        processes: Vec<Stmt>,
+        join_type: JoinType,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum JoinType {
+    Join,
+    JoinAny,
+    JoinNone,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -249,12 +249,105 @@ fn inline_funcs_in_stmt(
             if preamble.is_empty() { main } else { preamble.push(main); Stmt::Block { stmts: preamble } }
         }
         Stmt::StmtAssign { lhs, rhs } => {
-            let mut preamble = Vec::new();
-            let new_rhs = replace_func_calls_in_expr(
-                rhs, funcs, prefix, counter, &mut preamble, temp_signals
-            );
-            let main = Stmt::StmtAssign { lhs, rhs: new_rhs };
-            if preamble.is_empty() { main } else { preamble.push(main); Stmt::Block { stmts: preamble } }
+            // Check if LHS is a function/task call (task statement like `my_task(a, b)`)
+            if let Expr::FuncCall { name, args } = &lhs {
+                if let Some(func) = funcs.get(name) {
+                    let c = *counter;
+                    *counter += 1;
+
+                    let mut preamble = Vec::new();
+
+                    let new_args: Vec<Expr> = args.iter()
+                        .map(|a| replace_func_calls_in_expr(a.clone(), funcs, prefix, counter, &mut preamble, temp_signals))
+                        .collect();
+
+                    let mut rename_map: HashMap<String, String> = HashMap::new();
+
+                    for (i, arg) in new_args.into_iter().enumerate() {
+                        let port = func.ports.get(i)
+                            .cloned()
+                            .unwrap_or_else(|| super::types::FunctionPort {
+                                name: format!("_arg{}", i), range: None, expr_range: None,
+                            });
+                        let temp_arg_name = format!("__func_{}_{}_{}_{}", prefix, name, c, port.name);
+                        let port_width = func_port_width(func, &port.name);
+                        temp_signals.push((temp_arg_name.clone(), port_width));
+                        rename_map.insert(port.name.clone(), temp_arg_name.clone());
+                        preamble.push(Stmt::BlockingAssign {
+                            lhs: Expr::Ident(temp_arg_name),
+                            rhs: arg,
+                            delay: None,
+                        });
+                    }
+
+                    // Add internal declarations (non-port variables)
+                    for decl in &func.decls {
+                        for var in &decl.names {
+                            if rename_map.contains_key(&var.name) { continue; }
+                            let new_name = format!("__func_{}_{}_{}_{}", prefix, name, c, var.name);
+                            let dtype_width = match &decl.dtype {
+                                super::types::DataType::Bit | super::types::DataType::Logic => 1,
+                                super::types::DataType::Byte => 8,
+                                super::types::DataType::Shortint => 16,
+                                super::types::DataType::Int | super::types::DataType::Integer => 32,
+                                super::types::DataType::Longint => 64,
+                                super::types::DataType::Signed(inner) => match inner.as_ref() {
+                                    super::types::DataType::Bit | super::types::DataType::Logic => 1,
+                                    super::types::DataType::Byte => 8,
+                                    super::types::DataType::Shortint => 16,
+                                    super::types::DataType::Int | super::types::DataType::Integer => 32,
+                                    super::types::DataType::Longint => 64,
+                                    _ => 32,
+                                },
+                                _ => 1,
+                            };
+                            let decl_width = match &decl.kind {
+                                super::types::DeclKind::Wire | super::types::DeclKind::Reg
+                                    | super::types::DeclKind::Logic => 1,
+                                super::types::DeclKind::Int | super::types::DeclKind::Integer => 32,
+                            };
+                            let width = if let Some(r) = &var.range { r.width() }
+                                else { dtype_width.max(decl_width) };
+                            temp_signals.push((new_name.clone(), width));
+                            rename_map.insert(var.name.clone(), new_name);
+                        }
+                    }
+
+                    // Insert renamed body statements
+                    for func_stmt in &func.stmts {
+                        let mut renamed = rename_in_stmt(func_stmt, &rename_map);
+                        renamed = rename_func_decls_in_stmt(renamed, &rename_map);
+                        preamble.push(renamed);
+                    }
+
+                    // Also process the RHS normally (may contain function calls)
+                    let preamble2 = &mut Vec::new();
+                    let _new_rhs = replace_func_calls_in_expr(
+                        rhs, funcs, prefix, counter, preamble2, temp_signals
+                    );
+                    preamble.extend(preamble2.drain(..));
+
+                    if preamble.len() == 1 {
+                        preamble.into_iter().next().unwrap()
+                    } else {
+                        Stmt::Block { stmts: preamble }
+                    }
+                } else {
+                    let mut preamble = Vec::new();
+                    let new_rhs = replace_func_calls_in_expr(
+                        rhs, funcs, prefix, counter, &mut preamble, temp_signals
+                    );
+                    let main = Stmt::StmtAssign { lhs, rhs: new_rhs };
+                    if preamble.is_empty() { main } else { preamble.push(main); Stmt::Block { stmts: preamble } }
+                }
+            } else {
+                let mut preamble = Vec::new();
+                let new_rhs = replace_func_calls_in_expr(
+                    rhs, funcs, prefix, counter, &mut preamble, temp_signals
+                );
+                let main = Stmt::StmtAssign { lhs, rhs: new_rhs };
+                if preamble.is_empty() { main } else { preamble.push(main); Stmt::Block { stmts: preamble } }
+            }
         }
         Stmt::StmtCase { expr, items, default } => {
             let mut preamble = Vec::new();
@@ -336,6 +429,25 @@ fn inline_funcs_in_stmt(
             );
             Stmt::DoWhile { cond: new_cond, stmts: new_stmts }
         }
+        Stmt::Fork { processes, join_type } => {
+            Stmt::Fork {
+                processes: processes.into_iter().map(|s|
+                    inline_funcs_in_stmt(s, funcs, prefix, counter, temp_signals)
+                ).collect(),
+                join_type,
+            }
+        }
+        // New variants: pass through unchanged (no function call rewriting needed yet)
+        other @ Stmt::UniqueCase { .. }
+        | other @ Stmt::PriorityCase { .. }
+        | other @ Stmt::CaseInside { .. }
+        | other @ Stmt::Assert { .. }
+        | other @ Stmt::Assume { .. }
+        | other @ Stmt::Cover { .. }
+        | other @ Stmt::Expect { .. }
+        | other @ Stmt::WaitOrder { .. }
+        | other @ Stmt::UniqueIf { .. }
+        | other @ Stmt::PriorityIf { .. } => other,
     }
 }
 
@@ -606,6 +718,21 @@ fn rename_in_stmt(stmt: &Stmt, rename_map: &HashMap<String, String>) -> Stmt {
         Stmt::DoWhile { cond, stmts } => Stmt::DoWhile {
             cond: rename_in_expr(cond, rename_map),
             stmts: stmts.into_iter().map(|s| rename_in_stmt(&s, rename_map)).collect(),
+        },
+        // New variants: pass through unchanged
+        other @ Stmt::UniqueCase { .. }
+        | other @ Stmt::PriorityCase { .. }
+        | other @ Stmt::CaseInside { .. }
+        | other @ Stmt::Assert { .. }
+        | other @ Stmt::Assume { .. }
+        | other @ Stmt::Cover { .. }
+        | other @ Stmt::Expect { .. }
+        | other @ Stmt::WaitOrder { .. }
+        | other @ Stmt::UniqueIf { .. }
+        | other @ Stmt::PriorityIf { .. } => other,
+        Stmt::Fork { processes, join_type } => Stmt::Fork {
+            processes: processes.into_iter().map(|s| rename_in_stmt(&s, rename_map)).collect(),
+            join_type,
         },
     }
 }

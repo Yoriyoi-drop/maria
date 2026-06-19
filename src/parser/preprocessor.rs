@@ -7,9 +7,14 @@ struct CondFrame {
     branch_taken: bool,
 }
 
+struct MacroDef {
+    value: String,
+    params: Vec<String>,
+}
+
 #[derive(Default)]
 pub struct Preprocessor {
-    defines: HashMap<String, String>,
+    defines: HashMap<String, MacroDef>,
     search_paths: Vec<PathBuf>,
 }
 
@@ -19,7 +24,10 @@ impl Preprocessor {
     }
 
     pub fn define(&mut self, name: &str, value: &str) {
-        self.defines.insert(name.to_string(), value.to_string());
+        self.defines.insert(name.to_string(), MacroDef {
+            value: value.to_string(),
+            params: Vec::new(),
+        });
     }
 
     pub fn add_search_path(&mut self, path: &str) {
@@ -74,9 +82,8 @@ impl Preprocessor {
                     }
                 }
                 "define" => {
-                    let (name, value) = self.parse_define(rest);
                     if self.is_emitting(&cond_stack) {
-                        self.defines.insert(name, value);
+                        self.parse_define(rest);
                     }
                 }
                 "undef" => {
@@ -194,15 +201,30 @@ impl Preprocessor {
         Err(format!("include file '{}' not found", inc_path))
     }
 
-    fn parse_define(&self, rest: &str) -> (String, String) {
+    fn parse_define(&mut self, rest: &str) {
         let s = rest.trim();
-        if s.is_empty() {
-            return (String::new(), String::new());
-        }
-        let end = s.find(|c: char| c.is_whitespace()).unwrap_or(s.len());
-        let name = s[..end].to_string();
-        let value = s[end..].trim().to_string();
-        (name, value)
+        if s.is_empty() { return; }
+
+        let (name, params, value) = if let Some(open_paren) = s.find('(') {
+            let name = s[..open_paren].trim().to_string();
+            let close_paren = s[open_paren..].find(')')
+                .map(|p| open_paren + p)
+                .unwrap_or(s.len());
+            let params_str = &s[open_paren + 1..close_paren];
+            let params: Vec<String> = params_str.split(',')
+                .map(|p| p.trim().to_string())
+                .filter(|p| !p.is_empty())
+                .collect();
+            let value = s[close_paren + 1..].trim().to_string();
+            (name, params, value)
+        } else {
+            let end = s.find(|c: char| c.is_whitespace()).unwrap_or(s.len());
+            let name = s[..end].to_string();
+            let value = s[end..].trim().to_string();
+            (name, Vec::new(), value)
+        };
+
+        self.defines.insert(name, MacroDef { value, params });
     }
 
     fn expand_inline_macros(&self, line: &str) -> String {
@@ -217,8 +239,31 @@ impl Preprocessor {
                     i += 1;
                 }
                 let name: String = chars[start..i].iter().collect();
-                if let Some(value) = self.defines.get(&name) {
-                    result.push_str(value);
+                if let Some(mdef) = self.defines.get(&name) {
+                    if mdef.params.is_empty() {
+                        result.push_str(&mdef.value);
+                    } else {
+                        let args = if i < chars.len() && chars[i] == '(' {
+                            let args_start = i + 1;
+                            let mut depth = 1;
+                            let mut args_end = args_start;
+                            while args_end < chars.len() && depth > 0 {
+                                if chars[args_end] == '(' { depth += 1; }
+                                else if chars[args_end] == ')' { depth -= 1; }
+                                args_end += 1;
+                            }
+                            let args_str: String = chars[args_start..args_end - 1].iter().collect();
+                            i = args_end;
+                            self.split_macro_args(&args_str, mdef.params.len())
+                        } else {
+                            Vec::new()
+                        };
+                        let mut expanded = mdef.value.clone();
+                        for (param, arg) in mdef.params.iter().zip(args.iter()) {
+                            expanded = expanded.replace(param, arg);
+                        }
+                        result.push_str(&expanded);
+                    }
                 } else {
                     result.push('`');
                     result.push_str(&name);
@@ -229,5 +274,27 @@ impl Preprocessor {
             }
         }
         result
+    }
+
+    fn split_macro_args(&self, args_str: &str, expected_count: usize) -> Vec<String> {
+        let mut args = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0usize;
+        for c in args_str.chars() {
+            match c {
+                '(' => { depth += 1; current.push(c); }
+                ')' => { depth = depth.saturating_sub(1); current.push(c); }
+                ',' if depth == 0 => {
+                    args.push(current.trim().to_string());
+                    current.clear();
+                }
+                _ => { current.push(c); }
+            }
+        }
+        let last = current.trim().to_string();
+        if !last.is_empty() || args.len() < expected_count {
+            args.push(last);
+        }
+        args
     }
 }

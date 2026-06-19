@@ -11,7 +11,7 @@ cargo test --lib              # same, excludes main.rs
 cargo test <test_name>        # single test (no --lib needed if unique)
 ```
 
-No CI, no lint, no typecheck shortcuts. Just `cargo test`. All ~85 tests pass.
+No CI, no lint, no typecheck shortcuts. Just `cargo test`. All 142 tests pass.
 
 ## Pipeline architecture
 
@@ -44,11 +44,24 @@ Diexpand di `eval_assign_rhs()` (assignment level), bukan di `evaluate_expr()`, 
 ### Test pattern
 Test menggunakan `simulate_signals(source, max_time)` yang mengembalikan `Vec<(String, LogicVec)>`. Cari signal dengan `.iter().find(|(n,_)| n == "name")`. Semua test ada di `src/lib.rs` di `mod tests`. Tidak ada test integration terpisah.
 
-### `.maria` project file
+### Package support
+`package`/`endpackage` + `import pkg::*` / `import pkg::item` di module body. Supports: `Typedef` (enum, struct, union, base) and `Param` (parameter/localparam with optional type keyword). Function/Task imports not yet supported.
+
+### Fork/join support
+`fork...join` / `join_any` / `join_none` untuk concurrent execution. Tiap branch berjalan independen, masing-masing dengan delay sendiri. Engine menggunakan `ForkGroup` untuk melacak branch aktif via `Continuation.fork_id`. `join` menunggu semua branch selesai; `join_any` lanjut saat branch pertama selesai; `join_none` lanjut segera. Branch yang berisi delay akan menjadwalkan kerja di masa depan, dan decrement `ForkGroup.remaining` saat semua statement branch habis dikonsumsi (tidak ada lagi delay).
+
+### Constraint & randomize support
+`rand`/`randc` modifier in class fields. `constraint name { expr; … }` blocks with relational/equality constraints.
+`randomize()` uses rejection sampling (max 100 attempts) — generates random values for `rand` fields,
+writes them into the object, and evaluates each constraint expression via `evaluate_ast_expr`.
+User-defined `randomize()` methods override the built-in. `rand_fields` and `constraints` stored in
+`IrClassDef` (cloned into `execute_randomize` to avoid borrow conflicts).
+
+`.maria` project file
 File proyek mendaftar file `.sv` (satu per baris, `#` untuk komentar). Dibaca via `--start` flag. Path relatif terhadap direktori `.maria`.
 
 ## Files
-- `src/simulator/engine.rs:2160` — largest file. Event loop, all statement handlers, loop unrolling, `$display`/`$fopen`/`$urandom`.
+- `src/simulator/engine.rs:2610` — largest file. Event loop, all statement handlers, loop unrolling, `$display`/`$fopen`/`$urandom`, fork/join tracking, `execute_randomize`.
 - `src/parser/parser.rs:2311` — second largest. Operator precedence table at line ~1968.
 - `src/elaboration/elaborator.rs:2143` — AST→IR translation, constant folding, signal resolution.
 

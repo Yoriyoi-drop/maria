@@ -1,4 +1,5 @@
 use std::fs;
+use std::process;
 use clap::Parser as ClapParser;
 
 use maria::parser::lexer::Lexer;
@@ -6,6 +7,7 @@ use maria::parser::parser::Parser;
 use maria::elaboration::Elaborator;
 use maria::simulator::SimulationEngine;
 use maria::waveform::VcdWriter;
+use maria::error::SimError;
 use maria::read_project_file;
 
 #[derive(ClapParser)]
@@ -44,9 +46,17 @@ struct Cli {
     print_ast: bool,
 }
 
-fn main() -> Result<(), String> {
+fn main() {
     let cli = Cli::parse();
 
+    let result = run(cli);
+    if let Err(e) = result {
+        eprintln!("Error: {}", e);
+        process::exit(1);
+    }
+}
+
+fn run(cli: Cli) -> Result<(), SimError> {
     let sources: Vec<String> = if cli.start {
         read_project_file(".maria")?
     } else {
@@ -57,7 +67,7 @@ fn main() -> Result<(), String> {
     let mut combined = String::new();
     for path in &sources {
         let src = fs::read_to_string(path)
-            .map_err(|e| format!("cannot read '{}': {}", path, e))?;
+            .map_err(|e| SimError::new(None, format!("cannot read '{}': {}", path, e)))?;
         combined.push_str(&src);
         combined.push('\n');
     }
@@ -76,7 +86,7 @@ fn main() -> Result<(), String> {
     }
 
     if tokens.is_empty() {
-        return Err("no tokens found (empty source?)".to_string());
+        return Err(SimError::new(None, "no tokens found (empty source?)"));
     }
 
     let mut parser = Parser::new(tokens);
@@ -87,7 +97,7 @@ fn main() -> Result<(), String> {
     }
 
     if design.modules.is_empty() {
-        return Err("no modules found in design".to_string());
+        return Err(SimError::new(None, "no modules found in design"));
     }
 
     let top_name = cli.top.as_deref();
@@ -104,7 +114,8 @@ fn main() -> Result<(), String> {
     let vcd_path = cli.output
         .unwrap_or_else(|| format!("{}.vcd", engine.design.top.name));
 
-    let vcd = VcdWriter::new(&vcd_path, &engine.design)?;
+    let vcd = VcdWriter::new(&vcd_path, &engine.design)
+        .map_err(|e| SimError::new(None, format!("VCD creation failed: {}", e)))?;
     engine.set_vcd(vcd);
 
     println!("\nStarting simulation (max time={}, vcd={})", cli.max_time, vcd_path);

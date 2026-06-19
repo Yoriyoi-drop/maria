@@ -9,18 +9,43 @@ fn get_array_info(signals: &[SignalInfo], sig_id: SignalId) -> (usize, usize) {
     signals.get(sig_id).map(|s| (s.array_depth, s.elem_width)).unwrap_or((1, 0))
 }
 
+fn is_2state_type(dtype: &DataType) -> bool {
+    matches!(dtype, DataType::Bit | DataType::Byte | DataType::Shortint | DataType::Int | DataType::Longint)
+}
+
 pub struct Elaborator {
     pub design: Design,
     pub modules: HashMap<String, IrModule>,
     pub param_vals: HashMap<String, i64>,
+    pub typedef_map: HashMap<String, usize>,
+    pub package_symbols: HashMap<String, HashMap<String, PackageItem>>,
 }
 
 impl Elaborator {
     pub fn new(design: Design) -> Self {
+        let mut package_symbols = HashMap::new();
+        for pkg in &design.packages {
+            let mut items = HashMap::new();
+            for item in &pkg.items {
+                let name = match item {
+                    PackageItem::Param(p) => p.name.clone(),
+                    PackageItem::Typedef(t) => t.name.clone(),
+                    PackageItem::Function(f) => f.name.clone(),
+                    PackageItem::Task(t) => t.name.clone(),
+                    PackageItem::Decl(d) => {
+                        d.names.first().map(|v| v.name.clone()).unwrap_or_default()
+                    }
+                };
+                items.insert(name, item.clone());
+            }
+            package_symbols.insert(pkg.name.clone(), items);
+        }
         Elaborator {
             design,
             modules: HashMap::new(),
             param_vals: HashMap::new(),
+            typedef_map: HashMap::new(),
+            package_symbols,
         }
     }
 
@@ -42,6 +67,9 @@ impl Elaborator {
                             })
                         } else { None },
                         array_range: None,
+                        is_dynamic: false,
+                        is_queue: false,
+                        is_rand: false,
                     }],
                 });
             }
@@ -63,6 +91,80 @@ impl Elaborator {
         for module in &modules_snapshot {
             let ir = self.elaborate_module(module, &module_names)?;
             self.modules.insert(module.name.clone(), ir);
+        }
+
+        // Elaborate interfaces as signal-only modules
+        for iface in &self.design.interfaces {
+            let mut signals = Vec::new();
+            let mut signal_map: HashMap<String, SignalId> = HashMap::new();
+            let mut next_id = 0usize;
+            for decl in &iface.decls {
+                let decl_is_2state = is_2state_type(&decl.dtype);
+                for var in &decl.names {
+                    let is_real = decl.dtype == DataType::Real || decl.dtype == DataType::Realtime;
+                    if is_real || decl.dtype == DataType::String {
+                        let sid = next_id;
+                        next_id += 1;
+                        signal_map.insert(var.name.clone(), sid);
+                        signals.push(SignalInfo {
+                            name: var.name.clone(),
+                            width: if is_real { 64 } else { 0 },
+                            kind: SignalKind::Wire,
+                            init_val: LogicVec::new(if is_real { 64 } else { 0 }),
+                            array_depth: 1,
+                            elem_width: if is_real { 64 } else { 0 },
+                            class_name: None,
+                            is_string: decl.dtype == DataType::String,
+                            is_mailbox: false,
+                            is_semaphore: false,
+                            is_real,
+                            is_2state: false,
+                            is_dynamic: false,
+                            is_queue: false,
+                            msb: if is_real { 63 } else { 0 },
+                            lsb: 0,
+                        });
+                        continue;
+                    }
+                    let width = match &decl.dtype {
+                        DataType::UserDefined(name) => self.typedef_map.get(name).copied().unwrap_or(64),
+                        _ => decl.dtype.width(),
+                    };
+                    let elem_width = width.max(
+                        var.resolved_width(&HashMap::new()).unwrap_or(width)
+                    ).max(decl.kind.default_width());
+                    let sid = next_id;
+                    next_id += 1;
+                    signal_map.insert(var.name.clone(), sid);
+                    signals.push(SignalInfo {
+                        name: var.name.clone(),
+                        width: elem_width,
+                        kind: SignalKind::Wire,
+                        init_val: LogicVec::new(elem_width),
+                        array_depth: 1,
+                        elem_width,
+                        class_name: None,
+                        is_string: false,
+                        is_mailbox: false,
+                        is_semaphore: false,
+                        is_real: false,
+                        is_2state: decl_is_2state,
+                        is_dynamic: false,
+                        is_queue: false,
+                        msb: if elem_width > 0 { elem_width - 1 } else { 0 },
+                        lsb: 0,
+                    });
+                }
+            }
+            self.modules.insert(iface.name.clone(), IrModule {
+                name: iface.name.clone(),
+                signals,
+                inputs: vec![],
+                outputs: vec![],
+                inouts: vec![],
+                processes: vec![],
+                sub_instances: vec![],
+            });
         }
 
         // Find top module
@@ -110,16 +212,15 @@ fn resolve_param_values_fn(module: &Module, instance_overrides: &HashMap<String,
     }
 
     for (i, param) in module.params.iter().enumerate() {
-        let default_val = match &param.default {
-            Some(e) => const_eval_simple(e).unwrap_or(0),
-            None => 0,
-        };
         let val = if i < positional_overrides.len() {
             positional_overrides[i]
         } else if let Some(override_val) = instance_overrides.get(&param.name) {
             *override_val
         } else {
-            default_val
+            match &param.default {
+                Some(e) => const_eval_with_params(e, &vals).unwrap_or(0),
+                None => 0,
+            }
         };
         vals.insert(param.name.clone(), val);
     }
@@ -134,7 +235,64 @@ impl Elaborator {
 
     fn elaborate_module_with_params(&mut self, module: &Module, known_modules: &[String],
                                     param_vals: &HashMap<String, i64>) -> Result<IrModule, String> {
-        self.param_vals = param_vals.clone();
+        let mut effective_params = param_vals.clone();
+
+        // Process package imports: add package parameters to effective_params
+        for item in &module.items {
+            if let ModuleItem::Import { package, item: import_item } = item {
+                if let Some(pkg_items) = self.package_symbols.get(package) {
+                    let names: Vec<&str> = if import_item == "*" {
+                        pkg_items.keys().map(|s| s.as_str()).collect()
+                    } else {
+                        vec![import_item.as_str()]
+                    };
+                    for name in names {
+                        if let Some(pkg_item) = pkg_items.get(name) {
+                            if let PackageItem::Param(p) = pkg_item {
+                                if !effective_params.contains_key(&p.name) {
+                                    if let Some(expr) = &p.default {
+                                        if let Ok(val) = const_eval_with_params(expr, &effective_params) {
+                                            effective_params.insert(p.name.clone(), val);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.param_vals = effective_params.clone();
+
+        // Pre-pass: collect in-module typedefs before declaration processing
+        for item in &module.items {
+            if let ModuleItem::Typedef(td) = item {
+                let width = self.resolve_typedef_width(&td.dtype);
+                self.typedef_map.insert(td.name.clone(), width);
+            }
+        }
+
+        // Pre-pass: process package imports for typedefs before declaration processing
+        for item in &module.items {
+            if let ModuleItem::Import { package, item: import_item } = item {
+                if let Some(pkg_items) = self.package_symbols.get(package) {
+                    let names: Vec<&str> = if import_item == "*" {
+                        pkg_items.keys().map(|s| s.as_str()).collect()
+                    } else {
+                        vec![import_item.as_str()]
+                    };
+                    for name in names {
+                        if let Some(pkg_item) = pkg_items.get(name) {
+                            if let PackageItem::Typedef(td) = pkg_item {
+                                let width = self.resolve_typedef_width(&td.dtype);
+                                self.typedef_map.entry(td.name.clone()).or_insert(width);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let mut signals = Vec::new();
         let mut signal_map: HashMap<String, SignalId> = HashMap::new();
         let mut inputs = Vec::new();
@@ -152,7 +310,10 @@ impl Elaborator {
                                          signal_map: &mut HashMap<String, SignalId>,
                                          id: &mut SignalId,
                                          array_depth: usize,
-                                         elem_width: usize|
+                                         elem_width: usize,
+                                         msb: usize,
+                                         lsb: usize,
+                                         is_2state: bool|
          -> SignalId {
             if let Some(&sid) = signal_map.get(name) {
                 sid
@@ -168,6 +329,15 @@ impl Elaborator {
                     array_depth,
                     elem_width,
                     class_name: None,
+                    is_string: false,
+                    is_mailbox: false,
+                    is_semaphore: false,
+                    is_real: false,
+                    is_2state,
+                    is_dynamic: false,
+                    is_queue: false,
+                    msb,
+                    lsb,
                 });
                 sid
             }
@@ -175,13 +345,24 @@ impl Elaborator {
 
         // Process ports with parameter-aware width resolution
         for port in &module.ports {
-            let width = port.resolved_width(param_vals)?;
+            let width = port.resolved_width(&effective_params)?;
             let kind = match port.direction {
                 PortDirection::Input => SignalKind::Input,
                 PortDirection::Output => SignalKind::Output,
                 PortDirection::Inout => SignalKind::Inout,
             };
-            let sid = get_or_create_signal(&port.name, width, kind.clone(), &mut signals, &mut signal_map, &mut next_id, 1, width);
+            let (p_msb, p_lsb) = if let Some(r) = &port.range {
+                (r.msb, r.lsb)
+            } else if let Some(er) = &port.expr_range {
+                if let Ok(r) = resolve_expr_range(er, &effective_params) {
+                    (r.msb, r.lsb)
+                } else {
+                    (width - 1, 0)
+                }
+            } else {
+                (width - 1, 0)
+            };
+            let sid = get_or_create_signal(&port.name, width, kind.clone(), &mut signals, &mut signal_map, &mut next_id, 1, width, p_msb, p_lsb, false);
             match port.direction {
                 PortDirection::Input => inputs.push(sid),
                 PortDirection::Output => outputs.push(sid),
@@ -195,9 +376,69 @@ impl Elaborator {
                 DataType::UserDefined(cn) => Some(cn.clone()),
                 _ => None,
             };
+            let decl_is_2state = is_2state_type(&decl.dtype);
             for var in &decl.names {
-                let elem_width = decl.dtype.width().max(
-                    var.resolved_width(param_vals)?
+                let is_real = decl.dtype == DataType::Real || decl.dtype == DataType::Realtime;
+                if is_real || decl.dtype == DataType::String {
+                    let sid = next_id;
+                    next_id += 1;
+                    signal_map.insert(var.name.clone(), sid);
+                    signals.push(SignalInfo {
+                        name: var.name.clone(),
+                        width: if is_real { 64 } else { 0 },
+                        kind: SignalKind::Reg,
+                        init_val: LogicVec::new(if is_real { 64 } else { 0 }),
+                        array_depth: 1,
+                        elem_width: if is_real { 64 } else { 0 },
+                        class_name: None,
+                        is_string: decl.dtype == DataType::String,
+                        is_mailbox: false,
+                        is_semaphore: false,
+                        is_real,
+                        is_2state: false,
+                        is_dynamic: false,
+                        is_queue: false,
+                        msb: if is_real { 63 } else { 0 },
+                        lsb: 0,
+                    });
+                    continue;
+                }
+                if var.is_dynamic || var.is_queue {
+                    let elem_width = match &decl.dtype {
+                        DataType::UserDefined(name) => self.typedef_map.get(name).copied().unwrap_or(64),
+                        _ => decl.dtype.width(),
+                    }.max(
+                        var.resolved_width(&effective_params)?
+                    ).max(decl.kind.default_width());
+                    let sid = next_id;
+                    next_id += 1;
+                    signal_map.insert(var.name.clone(), sid);
+                    signals.push(SignalInfo {
+                        name: var.name.clone(),
+                        width: 0,
+                        kind: SignalKind::Reg,
+                        init_val: LogicVec::new(0),
+                        array_depth: 0,
+                        elem_width,
+                        class_name: None,
+                        is_string: false,
+                        is_mailbox: false,
+                        is_semaphore: false,
+                        is_real: false,
+                        is_2state: decl_is_2state,
+                        is_dynamic: var.is_dynamic,
+                        is_queue: var.is_queue,
+                        msb: 0,
+                        lsb: 0,
+                    });
+                    continue;
+                }
+                let dtype_width = match &decl.dtype {
+                    DataType::UserDefined(name) => self.typedef_map.get(name).copied().unwrap_or(64),
+                    _ => decl.dtype.width(),
+                };
+                let elem_width = dtype_width.max(
+                    var.resolved_width(&effective_params)?
                 ).max(
                     decl.kind.default_width()
                 );
@@ -205,11 +446,23 @@ impl Elaborator {
                     DeclKind::Wire => SignalKind::Wire,
                     DeclKind::Reg | DeclKind::Logic | DeclKind::Int | DeclKind::Integer => SignalKind::Reg,
                 };
+                let (d_msb, d_lsb) = if let Some(r) = &var.range {
+                    (r.msb, r.lsb)
+                } else if let Some(er) = &var.expr_range {
+                    if let Ok(r) = resolve_expr_range(er, &effective_params) {
+                        (r.msb, r.lsb)
+                    } else {
+                        (elem_width - 1, 0)
+                    }
+                } else {
+                    (elem_width - 1, 0)
+                };
                 if let Some(ar) = &var.array_range {
                     let depth = if ar.msb >= ar.lsb { ar.msb - ar.lsb + 1 } else { ar.lsb - ar.msb + 1 };
                     let total_width = elem_width * depth;
-                    let _sid = get_or_create_signal(&var.name, total_width, kind, &mut signals, &mut signal_map, &mut next_id, depth, elem_width);
+                    let _sid = get_or_create_signal(&var.name, total_width, kind, &mut signals, &mut signal_map, &mut next_id, depth, elem_width, total_width - 1, 0, decl_is_2state);
                     if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
+                        sig.is_2state = decl_is_2state;
                         let elem_init = LogicVec::new(elem_width);
                         let mut full_init = LogicVec::new(total_width);
                         for i in 0..depth {
@@ -218,16 +471,23 @@ impl Elaborator {
                             }
                         }
                         sig.init_val = full_init;
-                        if class_name.is_some() {
-                            sig.class_name = class_name.clone();
+                        if let Some(ref class) = class_name {
+                            sig.class_name = Some(class.clone());
+                            if class == "__mailbox" { sig.is_mailbox = true; }
+                            if class == "__semaphore" { sig.is_semaphore = true; }
                         }
                     }
                 } else {
-                    let _sid = get_or_create_signal(&var.name, elem_width, kind, &mut signals, &mut signal_map, &mut next_id, 1, elem_width);
+                    let _sid = get_or_create_signal(&var.name, elem_width, kind, &mut signals, &mut signal_map, &mut next_id, 1, elem_width, d_msb, d_lsb, decl_is_2state);
                     if let Some(class) = &class_name {
                         if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
                             sig.class_name = Some(class.clone());
+                            if class == "__mailbox" { sig.is_mailbox = true; }
+                            if class == "__semaphore" { sig.is_semaphore = true; }
                         }
+                    }
+                    if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
+                        sig.is_2state = decl_is_2state;
                     }
                 }
             }
@@ -239,7 +499,7 @@ impl Elaborator {
             for item in &module.items {
                 match item {
                     ModuleItem::Generate(gen) => {
-                        let expanded = expand_generate_block(gen, param_vals)?;
+                        let expanded = expand_generate_block(gen, &effective_params)?;
                         items.extend(expanded);
                     }
                     other => items.push(other.clone()),
@@ -274,12 +534,25 @@ impl Elaborator {
                         body: stmts,
                     });
                 }
+                ModuleItem::Typedef(td) => {
+                    // Already collected in pre-pass; register for UserDefined resolution
+                    let width = self.typedef_map.get(&td.name).copied().unwrap_or_else(|| self.resolve_typedef_width(&td.dtype));
+                    self.typedef_map.insert(td.name.clone(), width);
+                }
                 ModuleItem::Instance(inst) => {
                     let mut port_map = HashMap::new();
-                    for conn in &inst.port_conns {
+                    // Look up target module to get port order for positional connections
+                    let target_module: Option<&Module> = self.design.modules.iter()
+                        .find(|m| m.name == inst.module_name);
+                    for (i, conn) in inst.port_conns.iter().enumerate() {
                         match conn {
-                            PortConnection::Positional(_) => {
-                                // Positional requires knowing module port order
+                            PortConnection::Positional(expr) => {
+                                if let Some(tm) = target_module {
+                                    if let Some(port) = tm.ports.get(i) {
+                                        let sig_id = self.elaborate_expr_to_signal(expr, &signal_map)?;
+                                        port_map.insert(port.name.clone(), sig_id);
+                                    }
+                                }
                             }
                             PortConnection::Named { port, expr } => {
                                 let sig_id = self.elaborate_expr_to_signal(expr, &signal_map)?;
@@ -290,15 +563,31 @@ impl Elaborator {
                     // Resolve parameter overrides to integer values
                     let mut param_map = HashMap::new();
                     for (pname, pexpr) in &inst.param_assigns {
-                        let val = const_eval_with_params(pexpr, param_vals).unwrap_or(0);
+                        let val = const_eval_with_params(pexpr, &effective_params).unwrap_or(0);
                         param_map.insert(pname.clone(), val);
                     }
-                    sub_instances.push(IrInstance {
-                        module_name: inst.module_name.clone(),
-                        instance_name: inst.instance_name.clone(),
-                        port_map,
-                        param_map,
-                    });
+
+                    if let Some(range) = &inst.range {
+                        let msb = const_eval_with_params(&range.msb, &effective_params)?;
+                        let lsb = const_eval_with_params(&range.lsb, &effective_params)?;
+                        let (start, end) = if msb >= lsb { (lsb, msb) } else { (msb, lsb) };
+                        for idx in start..=end {
+                            let inst_name = format!("{}[{}]", inst.instance_name, idx);
+                            sub_instances.push(IrInstance {
+                                module_name: inst.module_name.clone(),
+                                instance_name: inst_name,
+                                port_map: port_map.clone(),
+                                param_map: param_map.clone(),
+                            });
+                        }
+                    } else {
+                        sub_instances.push(IrInstance {
+                            module_name: inst.module_name.clone(),
+                            instance_name: inst.instance_name.clone(),
+                            port_map,
+                            param_map,
+                        });
+                    }
                 }
                 ModuleItem::Gate(gate) => {
                     let mut sig_ids = Vec::new();
@@ -398,11 +687,25 @@ impl Elaborator {
                     _ => None,
                 }
             }).collect();
+            let constraints: Vec<(String, Vec<crate::ast::types::ConstraintItem>)> = cd.members.iter()
+                .filter_map(|m| {
+                    if let ClassMember::Constraint { name, body } = m {
+                        Some((name.clone(), body.clone()))
+                    } else { None }
+                }).collect();
+            let rand_fields: Vec<String> = cd.members.iter()
+                .flat_map(|m| {
+                    if let ClassMember::Decl(decl) = m {
+                        decl.names.iter().filter(|dv| dv.is_rand).map(|dv| dv.name.clone()).collect::<Vec<_>>()
+                    } else { vec![] }
+                }).collect();
             classes.insert(cd.name.clone(), IrClassDef {
                 name: cd.name.clone(),
                 extends: cd.extends.clone(),
                 fields,
                 methods,
+                constraints,
+                rand_fields,
             });
         }
         Ok(classes)
@@ -411,11 +714,22 @@ impl Elaborator {
     fn flatten_instances(&mut self, top: &mut IrModule) -> Result<(), String> {
         let instances = std::mem::take(&mut top.sub_instances);
         for inst in &instances {
-            let ast_module_clone = self.design.modules.iter()
-                .find(|m| m.name == inst.module_name)
-                .ok_or_else(|| format!("module '{}' not found for instance '{}'",
-                    inst.module_name, inst.instance_name))?
-                .clone();
+            let ast_module_clone: Module = if let Some(m) = self.design.modules.iter()
+                .find(|m| m.name == inst.module_name) {
+                m.clone()
+            } else if let Some(iface) = self.design.interfaces.iter()
+                .find(|i| i.name == inst.module_name) {
+                Module {
+                    name: iface.name.clone(),
+                    ports: vec![],
+                    params: vec![],
+                    decls: iface.decls.clone(),
+                    items: vec![],
+                }
+            } else {
+                return Err(format!("module or interface '{}' not found for instance '{}'",
+                    inst.module_name, inst.instance_name));
+            };
 
             let needs_custom_params = !ast_module_clone.params.is_empty() && !inst.param_map.is_empty();
             let mut child = if needs_custom_params {
@@ -457,6 +771,15 @@ impl Elaborator {
                         array_depth: sig.array_depth,
                         elem_width: sig.elem_width,
                         class_name: sig.class_name.clone(),
+                        is_string: sig.is_string,
+                        is_mailbox: sig.is_mailbox,
+                        is_semaphore: sig.is_semaphore,
+                        is_real: sig.is_real,
+                        is_2state: sig.is_2state,
+                        is_dynamic: sig.is_dynamic,
+                        is_queue: sig.is_queue,
+                        msb: sig.msb,
+                        lsb: sig.lsb,
                     });
                 }
             }
@@ -479,6 +802,11 @@ impl Elaborator {
                 let new_sens = sensitivity.iter().map(|s| map_sig(*s)).collect();
                 let new_body = self.translate_stmts(body, map_sig)?;
                 Ok(Process::Combinational { name: name.clone(), sensitivity: new_sens, body: new_body })
+            }
+            Process::CombReactive { name, sensitivity, body } => {
+                let new_sens = sensitivity.iter().map(|s| map_sig(*s)).collect();
+                let new_body = self.translate_stmts(body, map_sig)?;
+                Ok(Process::CombReactive { name: name.clone(), sensitivity: new_sens, body: new_body })
             }
             Process::Sequential { name, clock, reset, body } => {
                 let new_clock = match clock {
@@ -602,6 +930,10 @@ impl Elaborator {
             IrStmt::Deassign { lvalue } => {
                 Ok(IrStmt::Deassign { lvalue: self.translate_lvalue(lvalue, map_sig) })
             }
+            IrStmt::Fork { processes, join_type } => {
+                let new_proc = processes.iter().map(|p| self.translate_stmts(p, map_sig)).collect::<Result<Vec<_>, String>>()?;
+                Ok(IrStmt::Fork { processes: new_proc, join_type: join_type.clone() })
+            }
         }
     }
 
@@ -703,20 +1035,8 @@ impl Elaborator {
         match always.kind {
             AlwaysKind::AlwaysComb => {
                 let body = self.elaborate_stmt_block(&always.stmts, signal_map, &[], signals)?;
-                let sensitivity = match &always.sensitivity {
-                    Some(sl) => {
-                        sl.events.iter().filter_map(|e| match e {
-                            SensitivityEvent::Level(expr) => {
-                                resolve_expr_signal(expr, signal_map)
-                            }
-                            _ => None,
-                        }).collect()
-                    }
-                    None => {
-                        infer_comb_sensitivity(&body)
-                    }
-                };
-                Ok(Process::Combinational { name, sensitivity, body })
+                let sensitivity = infer_comb_sensitivity(&body);
+                Ok(Process::CombReactive { name, sensitivity, body })
             }
             AlwaysKind::AlwaysFF => {
                 let (clock, reset) = self.extract_clock_reset(&always.sensitivity, signal_map)?;
@@ -871,13 +1191,27 @@ impl Elaborator {
                 Ok(IrStmt::NonBlockingAssign { lhs: ir_lhs, rhs: ir_rhs, delay: None })
             }
             Stmt::IfElse { cond, true_branch, false_branch } => {
-                let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
-                let true_stmt = vec![self.elaborate_stmt(true_branch, signal_map, known_modules, signals)?];
-                let false_stmt = match false_branch {
-                    Some(fb) => vec![self.elaborate_stmt(fb, signal_map, known_modules, signals)?],
-                    None => vec![],
-                };
-                Ok(IrStmt::If { cond: ir_cond, true_branch: true_stmt, false_branch: false_stmt })
+                // Constant-fold condition — if known at compile time, eliminate dead branch
+                if let Ok(val) = const_eval_with_params(cond, &self.param_vals) {
+                    if val != 0 {
+                        // Condition is always true — keep only true branch
+                        Ok(self.elaborate_stmt(true_branch, signal_map, known_modules, signals)?)
+                    } else {
+                        // Condition is always false — keep only false branch
+                        match false_branch {
+                            Some(fb) => self.elaborate_stmt(fb, signal_map, known_modules, signals),
+                            None => Ok(IrStmt::Block { stmts: vec![] }),
+                        }
+                    }
+                } else {
+                    let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
+                    let true_stmt = vec![self.elaborate_stmt(true_branch, signal_map, known_modules, signals)?];
+                    let false_stmt = match false_branch {
+                        Some(fb) => vec![self.elaborate_stmt(fb, signal_map, known_modules, signals)?],
+                        None => vec![],
+                    };
+                    Ok(IrStmt::If { cond: ir_cond, true_branch: true_stmt, false_branch: false_stmt })
+                }
             }
             Stmt::Case { expr, items, default } => {
                 let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
@@ -919,10 +1253,13 @@ impl Elaborator {
                             args: ir_args,
                         })
                     }
-                    _ => {
+                    Expr::FuncCall { name, .. } if name.starts_with('$') => {
                         let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
-                        // Evaluate expr for side effects, discard result
                         Ok(IrStmt::SysCall { name: String::new(), args: vec![ir_expr] })
+                    }
+                    _ => {
+                        // Side-effect-free expression statement — eliminate it
+                        Ok(IrStmt::Block { stmts: vec![] })
                     }
                 }
             }
@@ -1144,6 +1481,37 @@ impl Elaborator {
                 }
                 Ok(IrStmt::Block { stmts: all })
             }
+            // New variants: elaborate as comparable constructs
+            Stmt::UniqueCase { expr, items, default }
+            | Stmt::PriorityCase { expr, items, default } => {
+                self.elaborate_stmt(&Stmt::Case { expr: expr.clone(), items: items.clone(), default: default.clone() }, signal_map, known_modules, signals)
+            }
+            Stmt::CaseInside { expr, items, default } => {
+                self.elaborate_stmt(&Stmt::Case { expr: expr.clone(), items: items.clone(), default: default.clone() }, signal_map, known_modules, signals)
+            }
+            Stmt::UniqueIf { cond, true_branch, false_branch } => {
+                self.elaborate_stmt(&Stmt::IfElse { cond: cond.clone(), true_branch: true_branch.clone(), false_branch: false_branch.clone() }, signal_map, known_modules, signals)
+            }
+            Stmt::PriorityIf { cond, true_branch, false_branch } => {
+                self.elaborate_stmt(&Stmt::IfElse { cond: cond.clone(), true_branch: true_branch.clone(), false_branch: false_branch.clone() }, signal_map, known_modules, signals)
+            }
+            Stmt::Assert { .. } | Stmt::Assume { .. } | Stmt::Cover { .. }
+            | Stmt::Expect { .. } | Stmt::WaitOrder { .. } => {
+                Ok(IrStmt::Null)
+            }
+            Stmt::Fork { processes, join_type } => {
+                let mut ir_processes = Vec::new();
+                for proc_stmt in processes {
+                    let ir = self.elaborate_stmt(proc_stmt, signal_map, known_modules, signals)?;
+                    ir_processes.push(vec![ir]);
+                }
+                let ir_join = match join_type {
+                    JoinType::Join => IrJoinType::Join,
+                    JoinType::JoinAny => IrJoinType::JoinAny,
+                    JoinType::JoinNone => IrJoinType::JoinNone,
+                };
+                Ok(IrStmt::Fork { processes: ir_processes, join_type: ir_join })
+            }
         }
     }
 
@@ -1174,24 +1542,26 @@ impl Elaborator {
                     _ => Err("nested range select not supported".to_string()),
                 }
             }
-            Expr::BitSelect { expr: inner, index } => {
+            Expr::BitSelect { expr: inner, index: bs_index } => {
                 let inner_lv = self.elaborate_lvalue(inner, signal_map, signals)?;
-                let idx = const_eval(index)? as usize;
                 match inner_lv {
                     IrLValue::Signal(sid, _) => {
-                        let (array_depth, elem_width) = get_array_info(signals, sid);
-                        if array_depth > 1 {
-                            let index_expr = self.elaborate_expr(index, signal_map, signals)?;
-                            Ok(IrLValue::ArrayIndex { sig_id: sid, index: Box::new(index_expr), elem_width })
+                        let sig = &signals[sid];
+                        if sig.array_depth > 1 || sig.is_dynamic || sig.is_queue {
+                            let index_expr = self.elaborate_expr(bs_index, signal_map, signals)?;
+                            Ok(IrLValue::ArrayIndex { sig_id: sid, index: Box::new(index_expr), elem_width: sig.elem_width })
                         } else {
+                            let idx = const_eval(bs_index)? as usize;
                             Ok(IrLValue::BitSelect(sid, idx))
                         }
                     }
                     IrLValue::RangeSelect(sid, outer_msb, outer_lsb) => {
+                        let idx = const_eval(bs_index)? as usize;
                         let base = if outer_msb > outer_lsb { outer_lsb } else { outer_msb };
                         Ok(IrLValue::BitSelect(sid, base + idx))
                     }
                     IrLValue::ArrayIndex { sig_id, index, elem_width } => {
+                        let idx = const_eval(bs_index)? as usize;
                         Ok(IrLValue::ArrayBitSelect { sig_id, index, elem_width, bit: idx })
                     }
                     _ => Err("nested bit select not supported".to_string()),
@@ -1269,10 +1639,10 @@ impl Elaborator {
             Expr::BitSelect { expr: inner, index } => {
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
                 if let IrExpr::Signal(sid, _) = &inner_expr {
-                    let (array_depth, elem_width) = get_array_info(signals, *sid);
-                    if array_depth > 1 {
+                    let sig = &signals[*sid];
+                    if sig.array_depth > 1 || sig.is_dynamic || sig.is_queue {
                         let index_expr = self.elaborate_expr(index, signal_map, signals)?;
-                        Ok(IrExpr::ArrayIndex { sig_id: *sid, index: Box::new(index_expr), elem_width })
+                        Ok(IrExpr::ArrayIndex { sig_id: *sid, index: Box::new(index_expr), elem_width: sig.elem_width })
                     } else {
                         let idx = const_eval(index)? as usize;
                         Ok(IrExpr::BitSelect(*sid, idx))
@@ -1283,28 +1653,43 @@ impl Elaborator {
                 }
             }
             Expr::Concat(exprs) => {
+                if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
+                    return Ok(folded);
+                }
                 let parts: Result<Vec<IrExpr>, String> = exprs.iter()
                     .map(|e| self.elaborate_expr(e, signal_map, signals))
                     .collect();
                 Ok(IrExpr::Concat(parts?))
             }
             Expr::Replicate { count, expr: inner } => {
+                if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
+                    return Ok(folded);
+                }
                 let c = const_eval_params(count, &self.param_vals)? as usize;
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
                 Ok(IrExpr::Replicate(c, Box::new(inner_expr)))
             }
             Expr::UnaryOp { op, expr: inner } => {
+                if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
+                    return Ok(folded);
+                }
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
                 let ir_op = map_unary_op(op)?;
                 Ok(IrExpr::UnaryOp(ir_op, Box::new(inner_expr)))
             }
             Expr::BinaryOp { op, lhs, rhs } => {
+                if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
+                    return Ok(folded);
+                }
                 let lhs_expr = self.elaborate_expr(lhs, signal_map, signals)?;
                 let rhs_expr = self.elaborate_expr(rhs, signal_map, signals)?;
                 let ir_op = map_binary_op(op)?;
                 Ok(IrExpr::BinaryOp(ir_op, Box::new(lhs_expr), Box::new(rhs_expr)))
             }
             Expr::TernaryOp { cond, true_expr, false_expr } => {
+                if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
+                    return Ok(folded);
+                }
                 let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
                 let ir_true = self.elaborate_expr(true_expr, signal_map, signals)?;
                 let ir_false = self.elaborate_expr(false_expr, signal_map, signals)?;
@@ -1384,26 +1769,42 @@ impl Elaborator {
                             let sig_id = resolve_expr_signal(arg, signal_map)
                                 .ok_or_else(|| "$high argument must resolve to a signal".to_string())?;
                             let info = &signals[sig_id];
-                            Ok(IrExpr::Const(LogicVec::from_u64((info.width - 1) as u64, 32)))
+                            let high = info.msb.max(info.lsb);
+                            Ok(IrExpr::Const(LogicVec::from_u64(high as u64, 32)))
                         } else {
                             Err("$high requires one argument".to_string())
                         }
                     }
                     "$low" => {
-                        Ok(IrExpr::Const(LogicVec::from_u64(0, 32)))
+                        if let Some(arg) = args.first() {
+                            let sig_id = resolve_expr_signal(arg, signal_map)
+                                .ok_or_else(|| "$low argument must resolve to a signal".to_string())?;
+                            let info = &signals[sig_id];
+                            let low = info.msb.min(info.lsb);
+                            Ok(IrExpr::Const(LogicVec::from_u64(low as u64, 32)))
+                        } else {
+                            Err("$low requires one argument".to_string())
+                        }
                     }
                     "$left" => {
                         if let Some(arg) = args.first() {
                             let sig_id = resolve_expr_signal(arg, signal_map)
                                 .ok_or_else(|| "$left argument must resolve to a signal".to_string())?;
                             let info = &signals[sig_id];
-                            Ok(IrExpr::Const(LogicVec::from_u64((info.width - 1) as u64, 32)))
+                            Ok(IrExpr::Const(LogicVec::from_u64(info.msb as u64, 32)))
                         } else {
                             Err("$left requires one argument".to_string())
                         }
                     }
                     "$right" => {
-                        Ok(IrExpr::Const(LogicVec::from_u64(0, 32)))
+                        if let Some(arg) = args.first() {
+                            let sig_id = resolve_expr_signal(arg, signal_map)
+                                .ok_or_else(|| "$right argument must resolve to a signal".to_string())?;
+                            let info = &signals[sig_id];
+                            Ok(IrExpr::Const(LogicVec::from_u64(info.lsb as u64, 32)))
+                        } else {
+                            Err("$right requires one argument".to_string())
+                        }
                     }
                     "$size" => {
                         if let Some(arg) = args.first() {
@@ -1449,6 +1850,21 @@ impl Elaborator {
                 })
             }
             Expr::Null => Ok(IrExpr::Const(LogicVec::from_u64(0, 64))),
+            Expr::Inside { expr: inner, .. } => {
+                // Inside expression - elaborate as case equality with first element
+                self.elaborate_expr(inner, signal_map, signals)
+            }
+            Expr::StreamingConcat { slices, .. } => {
+                if let Some(first) = slices.first() {
+                    self.elaborate_expr(first, signal_map, signals)
+                } else {
+                    Ok(IrExpr::Const(LogicVec::new(0)))
+                }
+            }
+            Expr::Cast { expr: inner, .. } => {
+                // Cast is a pass-through during elaboration
+                self.elaborate_expr(inner, signal_map, signals)
+            }
             _ => Err(format!("expression type not yet supported")),
         }
     }
@@ -1465,6 +1881,14 @@ impl Elaborator {
             Expr::MethodCall { .. } => Err("method calls cannot resolve to a signal".to_string()),
             Expr::MemberAccess { .. } => Err("member access cannot resolve to a signal".to_string()),
             _ => Err("expected simple signal identifier".to_string())
+        }
+    }
+
+    fn resolve_typedef_width(&self, dtype: &DataType) -> usize {
+        match dtype {
+            DataType::UserDefined(name) => self.typedef_map.get(name).copied().unwrap_or(64),
+            DataType::Signed(inner) => self.resolve_typedef_width(inner),
+            _ => dtype.width(),
         }
     }
 }
@@ -1487,6 +1911,19 @@ fn expand_all_generates(module: &mut Module, param_vals: &HashMap<String, i64>) 
     Ok(())
 }
 
+fn extract_generate_step(step: &Option<Stmt>, param_vals: &HashMap<String, i64>) -> i64 {
+    let Some(Stmt::BlockingAssign { rhs, .. }) = step else { return 1 };
+    match rhs {
+        Expr::BinaryOp { op: BinaryOp::Add, lhs: _, rhs } => {
+            const_eval_with_params(rhs, param_vals).unwrap_or(1)
+        }
+        Expr::BinaryOp { op: BinaryOp::Sub, lhs: _, rhs } => {
+            -const_eval_with_params(rhs, param_vals).unwrap_or(1)
+        }
+        _ => 1
+    }
+}
+
 fn expand_generate_block(gen: &GenerateBlock, param_vals: &HashMap<String, i64>) -> Result<Vec<ModuleItem>, String> {
     let mut result = Vec::new();
     for item in &gen.items {
@@ -1499,7 +1936,7 @@ fn expand_generate_block(gen: &GenerateBlock, param_vals: &HashMap<String, i64>)
                     result.push(item.clone());
                 }
             }
-            GenerateItem::For { var, init, cond, step: _, body_items } => {
+            GenerateItem::For { var, init, cond, step, body_items } => {
                 let start_val: i64 = match init {
                     Some(Stmt::BlockingAssign { rhs, .. }) => const_eval_with_params(rhs, param_vals)?,
                     _ => 0,
@@ -1516,10 +1953,49 @@ fn expand_generate_block(gen: &GenerateBlock, param_vals: &HashMap<String, i64>)
                     }
                     None => 0,
                 };
-                for cur in start_val..limit {
-                    for mut item in body_items.clone() {
-                        substitute_genvar_in_module_item(&mut item, var, cur);
-                        result.push(item);
+                let step_val = extract_generate_step(step, param_vals);
+                if step_val > 0 {
+                    let mut cur = start_val;
+                    while cur < limit {
+                        for mut item in body_items.clone() {
+                            substitute_genvar_in_module_item(&mut item, var, cur);
+                            result.push(item);
+                        }
+                        cur += step_val;
+                    }
+                } else if step_val < 0 {
+                    let mut cur = start_val;
+                    while cur > limit {
+                        for mut item in body_items.clone() {
+                            substitute_genvar_in_module_item(&mut item, var, cur);
+                            result.push(item);
+                        }
+                        cur += step_val;
+                    }
+                }
+            }
+            GenerateItem::Case { case_type: _case_type, expr, items, default } => {
+                let case_val = const_eval_with_params(expr, param_vals)
+                    .map_err(|_| format!("non-constant expression in generate case"))?;
+                let mut matched = false;
+                for ci in items {
+                    for label in &ci.labels {
+                        let label_val = const_eval_with_params(label, param_vals)?;
+                        if label_val == case_val {
+                            for item in &ci.body {
+                                result.push(item.clone());
+                            }
+                            matched = true;
+                            break;
+                        }
+                    }
+                    if matched { break; }
+                }
+                if !matched {
+                    if let Some(default_items) = default {
+                        for item in default_items {
+                            result.push(item.clone());
+                        }
                     }
                 }
             }
@@ -1558,6 +2034,16 @@ fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, value
             assign.rhs = substitute_loop_var_in_expr(&old_rhs, var_name, value);
         }
         ModuleItem::Instance(inst) => {
+            if let Some(range) = &mut inst.range {
+                let old_msb = std::mem::replace(
+                    &mut range.msb, Expr::Value(crate::ast::expr::Value::Decimal(0))
+                );
+                let old_lsb = std::mem::replace(
+                    &mut range.lsb, Expr::Value(crate::ast::expr::Value::Decimal(0))
+                );
+                range.msb = substitute_loop_var_in_expr(&old_msb, var_name, value);
+                range.lsb = substitute_loop_var_in_expr(&old_lsb, var_name, value);
+            }
             for (_, expr) in &mut inst.param_assigns {
                 let old = std::mem::replace(
                     expr, Expr::Value(crate::ast::expr::Value::Decimal(0))
@@ -1603,7 +2089,67 @@ fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, value
                 *port = substitute_loop_var_in_expr(&old, var_name, value);
             }
         }
-        ModuleItem::Func(_) | ModuleItem::Generate(_) | ModuleItem::Typedef(_) => {}
+        ModuleItem::Generate(gen) => {
+            for gi in &mut gen.items {
+                substitute_genvar_in_generate_item(gi, var_name, value);
+            }
+        }
+        ModuleItem::Func(_) | ModuleItem::Typedef(_) | ModuleItem::Import { .. } => {}
+    }
+}
+
+fn substitute_genvar_in_generate_item(item: &mut GenerateItem, var_name: &str, value: i64) {
+    match item {
+        GenerateItem::If { cond, true_items, false_items } => {
+            let old_cond = std::mem::replace(cond, Expr::Value(crate::ast::expr::Value::Decimal(0)));
+            *cond = substitute_loop_var_in_expr(&old_cond, var_name, value);
+            for item in true_items.iter_mut() {
+                substitute_genvar_in_module_item(item, var_name, value);
+            }
+            for item in false_items.iter_mut() {
+                substitute_genvar_in_module_item(item, var_name, value);
+            }
+        }
+        GenerateItem::For { var: _, init, cond, step, body_items } => {
+            if let Some(stmt) = init {
+                let old = std::mem::replace(stmt, Stmt::Null);
+                *stmt = substitute_loop_var_in_stmt(&old, var_name, value);
+            }
+            if let Some(expr) = cond {
+                let old = std::mem::replace(expr, Expr::Value(crate::ast::expr::Value::Decimal(0)));
+                *expr = substitute_loop_var_in_expr(&old, var_name, value);
+            }
+            if let Some(stmt) = step {
+                let old = std::mem::replace(stmt, Stmt::Null);
+                *stmt = substitute_loop_var_in_stmt(&old, var_name, value);
+            }
+            for item in body_items.iter_mut() {
+                substitute_genvar_in_module_item(item, var_name, value);
+            }
+        }
+        GenerateItem::Case { expr, items, default, .. } => {
+            let old_expr = std::mem::replace(expr, Expr::Value(crate::ast::expr::Value::Decimal(0)));
+            *expr = substitute_loop_var_in_expr(&old_expr, var_name, value);
+            for ci in items.iter_mut() {
+                for label in ci.labels.iter_mut() {
+                    let old = std::mem::replace(label, Expr::Value(crate::ast::expr::Value::Decimal(0)));
+                    *label = substitute_loop_var_in_expr(&old, var_name, value);
+                }
+                for item in ci.body.iter_mut() {
+                    substitute_genvar_in_module_item(item, var_name, value);
+                }
+            }
+            if let Some(default_items) = default {
+                for item in default_items.iter_mut() {
+                    substitute_genvar_in_module_item(item, var_name, value);
+                }
+            }
+        }
+        GenerateItem::Items(items) => {
+            for item in items.iter_mut() {
+                substitute_genvar_in_module_item(item, var_name, value);
+            }
+        }
     }
 }
 
@@ -1796,6 +2342,7 @@ fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> Stmt 
             cond: substitute_loop_var_in_expr(cond, var_name, value),
             stmts: substitute_loop_var_in_stmts(stmts, var_name, value),
         },
+        _ => stmt.clone(),
     }
 }
 
@@ -1863,6 +2410,18 @@ fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> Expr 
             field: field.clone(),
         },
         Expr::FillLit(val) => Expr::FillLit(*val),
+        Expr::Inside { expr: inner, range_list } => Expr::Inside {
+            expr: Box::new(substitute_loop_var_in_expr(inner, var_name, value)),
+            range_list: range_list.iter().map(|e| substitute_loop_var_in_expr(e, var_name, value)).collect(),
+        },
+        Expr::StreamingConcat { op, slices } => Expr::StreamingConcat {
+            op: op.clone(),
+            slices: slices.iter().map(|e| substitute_loop_var_in_expr(e, var_name, value)).collect(),
+        },
+        Expr::Cast { dtype, expr: inner } => Expr::Cast {
+            dtype: dtype.clone(),
+            expr: Box::new(substitute_loop_var_in_expr(inner, var_name, value)),
+        },
     }
 }
 
@@ -2070,12 +2629,27 @@ fn const_eval_params(expr: &Expr, params: &HashMap<String, i64>) -> Result<i64, 
     const_eval_with_params(expr, params)
 }
 
+/// Try to constant-fold an AST expression into an IrExpr::Const.
+/// Returns Ok(Some(IrExpr::Const(...))) if the expression is fully constant,
+/// Ok(None) if it cannot be folded, or Err on evaluation error.
+fn try_fold_const(expr: &Expr, params: &HashMap<String, i64>) -> Result<Option<IrExpr>, String> {
+    match const_eval_with_params(expr, params) {
+        Ok(val) => {
+            let abs = val.unsigned_abs();
+            let width = if val == 0 { 1 } else { 64 - (abs.leading_zeros() as usize) }.max(1);
+            Ok(Some(IrExpr::Const(LogicVec::from_u64(abs, width))))
+        }
+        Err(_) => Ok(None),
+    }
+}
+
 fn value_to_logicvec(val: &Value) -> LogicVec {
     match val {
         Value::Decimal(n) => {
             let abs = n.unsigned_abs();
-            let width = if *n == 0 { 1 } else { 64 - (abs.leading_zeros() as usize) };
-            let mut lv = LogicVec::from_u64(abs, width.max(1));
+            let min_width = if *n == 0 { 1 } else { 64 - (abs.leading_zeros() as usize) };
+            let width = min_width.max(32);
+            let mut lv = LogicVec::from_u64(abs, width);
             if *n < 0 {
                 // Two's complement
                 for b in lv.bits.iter_mut() {
@@ -2151,7 +2725,7 @@ fn value_to_logicvec(val: &Value) -> LogicVec {
             }
             vec
         }
-        Value::Real(_) => LogicVec::from_u64(0, 1),
+        Value::Real(r) => LogicVec::from_u64(r.to_bits(), 64),
     }
 }
 
@@ -2233,6 +2807,8 @@ impl DataType {
             DataType::Shortint => 16,
             DataType::Int | DataType::Integer => 32,
             DataType::Longint => 64,
+            DataType::Real | DataType::Realtime => 64,
+            DataType::String => 0,
             DataType::Signed(inner) => inner.width(),
             DataType::UserDefined(_) => 64,
             DataType::EnumType { base: _, members: _ } => 32,
