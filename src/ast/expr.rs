@@ -64,6 +64,10 @@ pub enum Expr {
         dtype: String,
         expr: Box<Expr>,
     },
+    ScopedIdent {
+        package: String,
+        item: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

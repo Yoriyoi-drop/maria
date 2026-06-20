@@ -270,6 +270,10 @@ pub enum IrStmt {
         cond: IrExpr,
         body: Vec<IrStmt>,
     },
+    Repeat {
+        count: IrExpr,
+        body: Vec<IrStmt>,
+    },
     Delay {
         delay: u64,
         body: Vec<IrStmt>,

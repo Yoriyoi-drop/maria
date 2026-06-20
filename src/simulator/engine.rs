@@ -613,11 +613,11 @@ impl SimulationEngine {
                     self.disable_pending = Some(name.clone());
                     return Ok(true);
                 }
-                IrStmt::Release { lvalue: _ } => {
-                    // TODO: properly revert to original driver value
+                IrStmt::Release { lvalue } => {
+                    self.write_lvalue(lvalue, LogicVec::new(1))?;
                 }
-                IrStmt::Deassign { lvalue: _ } => {
-                    // TODO: properly stop procedural continuous assignment
+                IrStmt::Deassign { lvalue } => {
+                    self.write_lvalue(lvalue, LogicVec::new(1))?;
                 }
                 IrStmt::Wait { cond, body } => {
                     let cond_val = self.evaluate_expr(cond)?;
@@ -909,6 +909,18 @@ impl SimulationEngine {
                         if cf == Some(FlowControl::Break) { break; }
                         let cond_val = self.evaluate_expr(cond)?;
                         if !cond_val.to_bool().unwrap_or(false) { break; }
+                    }
+                }
+                IrStmt::Repeat { count, body } => {
+                    let count_val = self.evaluate_expr(count)?;
+                    let n = count_val.to_u64() as usize;
+                    for _ in 0..n {
+                        if self.disable_pending.is_some() { break; }
+                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        self.evaluate_block_with_delay_fork(body, fork_id)?;
+                        let cf = self.control_flow.take();
+                        if cf == Some(FlowControl::Continue) { continue; }
+                        if cf == Some(FlowControl::Break) { break; }
                     }
                 }
                 IrStmt::MethodCallStmt { obj, method, args } => {
@@ -1317,12 +1329,24 @@ impl SimulationEngine {
                         self.evaluate_stmt_block(body)?;
                         let cf = self.control_flow.take();
                         if cf == Some(FlowControl::Continue) { continue; }
-                    if cf == Some(FlowControl::Break) { break; }
-                    let cond_val = self.evaluate_expr(cond)?;
-                    if !cond_val.to_bool().unwrap_or(false) { break; }
+                        if cf == Some(FlowControl::Break) { break; }
+                        let cond_val = self.evaluate_expr(cond)?;
+                        if !cond_val.to_bool().unwrap_or(false) { break; }
+                    }
                 }
-            }
-            IrStmt::MethodCallStmt { obj, method, args } => {
+                IrStmt::Repeat { count, body } => {
+                    let count_val = self.evaluate_expr(count)?;
+                    let n = count_val.to_u64() as usize;
+                    for _ in 0..n {
+                        if self.disable_pending.is_some() { break; }
+                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        self.evaluate_stmt_block(body)?;
+                        let cf = self.control_flow.take();
+                        if cf == Some(FlowControl::Continue) { continue; }
+                        if cf == Some(FlowControl::Break) { break; }
+                    }
+                }
+                IrStmt::MethodCallStmt { obj, method, args } => {
                 if let IrExpr::Signal(id, _) = obj {
                     let sig_info = self.design.top.signals.get(*id).cloned();
                     if let Some(ref sig) = sig_info {
@@ -1415,11 +1439,11 @@ impl SimulationEngine {
                     self.disable_pending = Some(name.clone());
                     return Ok(());
                 }
-                IrStmt::Release { lvalue: _ } => {
-                    // TODO: properly revert to original driver value
+                IrStmt::Release { lvalue } => {
+                    self.write_lvalue(lvalue, LogicVec::new(1))?;
                 }
-                IrStmt::Deassign { lvalue: _ } => {
-                    // TODO: properly stop procedural continuous assignment
+                IrStmt::Deassign { lvalue } => {
+                    self.write_lvalue(lvalue, LogicVec::new(1))?;
                 }
                 IrStmt::Fork { processes, join_type } => {
                     let fid = self.fork_groups.len();
@@ -2397,6 +2421,9 @@ impl SimulationEngine {
             Expr::Cast { expr: inner, .. } => {
                 // Cast is a pass-through during evaluation
                 self.evaluate_ast_expr(inner)
+            }
+            Expr::ScopedIdent { package, item } => {
+                Err(format!("scoped identifier '{}.{}' not resolved at runtime", package, item))
             }
         }
     }

@@ -5,10 +5,6 @@ use crate::ast::types::const_eval_simple;
 use crate::ast::types::const_eval_with_params;
 use crate::ir::*;
 
-fn get_array_info(signals: &[SignalInfo], sig_id: SignalId) -> (usize, usize) {
-    signals.get(sig_id).map(|s| (s.array_depth, s.elem_width)).unwrap_or((1, 0))
-}
-
 fn is_2state_type(dtype: &DataType) -> bool {
     matches!(dtype, DataType::Bit | DataType::Byte | DataType::Shortint | DataType::Int | DataType::Longint)
 }
@@ -210,6 +206,28 @@ impl Elaborator {
     }
 }
 
+fn collect_body_params(module: &Module) -> Vec<ParamDecl> {
+    let mut params = Vec::new();
+    for item in &module.items {
+        match item {
+            ModuleItem::Param(p) => params.push(p.clone()),
+            ModuleItem::Generate(gen) => {
+                for gi in &gen.items {
+                    if let GenerateItem::Items(items) = gi {
+                        for i in items {
+                            if let ModuleItem::Param(p) = i {
+                                params.push(p.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    params
+}
+
 fn resolve_param_values_fn(module: &Module, instance_overrides: &HashMap<String, i64>) -> Result<HashMap<String, i64>, String> {
     let mut vals = HashMap::new();
     // First, collect positional overrides indexed by position in module's param list
@@ -224,7 +242,31 @@ fn resolve_param_values_fn(module: &Module, instance_overrides: &HashMap<String,
         }
     }
 
+    // Collect body-level parameter declarations and add them to vals first
+    // so they can be referenced by module.params expressions
+    for param in collect_body_params(module) {
+        if !vals.contains_key(&param.name) {
+            match &param.default {
+                Some(e) => {
+                    let v = const_eval_with_params(e, &vals).unwrap_or(0);
+                    vals.insert(param.name.clone(), v);
+                }
+                None => {
+                    vals.insert(param.name.clone(), 0);
+                }
+            }
+        }
+    }
+
     for (i, param) in module.params.iter().enumerate() {
+        if param.is_localparam {
+            if let Some(e) = &param.default {
+                vals.insert(param.name.clone(), const_eval_with_params(e, &vals).unwrap_or(0));
+            } else {
+                vals.insert(param.name.clone(), 0);
+            }
+            continue;
+        }
         let val = if i < positional_overrides.len() {
             positional_overrides[i]
         } else if let Some(override_val) = instance_overrides.get(&param.name) {
@@ -253,7 +295,7 @@ impl Elaborator {
 
     fn elaborate_module_with_params_and_type(&mut self, module: &Module, known_modules: &[String],
                                     param_vals: &HashMap<String, i64>,
-                                    type_param_overrides: &HashMap<String, DataType>) -> Result<IrModule, String> {
+                                    type_param_overrides: &HashMap<String, usize>) -> Result<IrModule, String> {
         let mut effective_params = param_vals.clone();
 
         // Process package imports: add package parameters to effective_params
@@ -281,14 +323,12 @@ impl Elaborator {
                 }
             }
         }
-        self.param_vals = effective_params.clone();
-
         // Resolve type parameter widths from module's param declarations and overrides
         let mut type_param_widths: HashMap<String, usize> = HashMap::new();
         for param in &module.params {
             if param.is_type_param {
-                let width = if let Some(dt) = type_param_overrides.get(&param.name) {
-                    dt.width()
+                let width = if let Some(w) = type_param_overrides.get(&param.name) {
+                    *w
                 } else {
                     match &param.default {
                         Some(_) => 8,
@@ -302,7 +342,7 @@ impl Elaborator {
         // Pre-pass: collect in-module typedefs before declaration processing
         for item in &module.items {
             if let ModuleItem::Typedef(td) = item {
-                let width = self.resolve_typedef_width(&td.dtype);
+                let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
                 self.typedef_map.insert(td.name.clone(), width);
             }
         }
@@ -319,7 +359,7 @@ impl Elaborator {
                     for name in names {
                         if let Some(pkg_item) = pkg_items.get(name) {
                             if let PackageItem::Typedef(td) = pkg_item {
-                                let width = self.resolve_typedef_width(&td.dtype);
+                                let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
                                 self.typedef_map.entry(td.name.clone()).or_insert(width);
                             }
                         }
@@ -561,12 +601,38 @@ impl Elaborator {
         }
 
         // Expand generate blocks in module items
+        // Collect body-level params (localparam, parameter) into effective_params
+        for item in &module.items {
+            if let ModuleItem::Param(p) = item {
+                if !effective_params.contains_key(&p.name) {
+                    if let Some(expr) = &p.default {
+                        if let Ok(val) = const_eval_with_params(expr, &effective_params) {
+                            effective_params.insert(p.name.clone(), val);
+                        }
+                    }
+                }
+            }
+        }
+        self.param_vals = effective_params.clone();
+
         let expanded_items: Vec<ModuleItem> = {
             let mut items = Vec::new();
             for item in &module.items {
                 match item {
                     ModuleItem::Generate(gen) => {
                         let expanded = expand_generate_block(gen, &effective_params)?;
+                        // Collect params from expanded generate items too
+                        for ei in &expanded {
+                            if let ModuleItem::Param(p) = ei {
+                                if !effective_params.contains_key(&p.name) {
+                                    if let Some(expr) = &p.default {
+                                        if let Ok(val) = const_eval_with_params(expr, &effective_params) {
+                                            effective_params.insert(p.name.clone(), val);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         items.extend(expanded);
                     }
                     other => items.push(other.clone()),
@@ -574,6 +640,9 @@ impl Elaborator {
             }
             items
         };
+
+        // Update param_vals after generate expansion which may add body-level params
+        self.param_vals = effective_params.clone();
 
         // Process module items
         for item in &expanded_items {
@@ -603,7 +672,7 @@ impl Elaborator {
                 }
                 ModuleItem::Typedef(td) => {
                     // Already collected in pre-pass; register for UserDefined resolution
-                    let width = self.typedef_map.get(&td.name).copied().unwrap_or_else(|| self.resolve_typedef_width(&td.dtype));
+                    let width = self.typedef_map.get(&td.name).copied().unwrap_or_else(|| self.resolve_typedef_width(&td.dtype, td.range.as_ref()));
                     self.typedef_map.insert(td.name.clone(), width);
                 }
                 ModuleItem::Instance(inst) => {
@@ -633,7 +702,7 @@ impl Elaborator {
                         let val = const_eval_with_params(pexpr, &effective_params).unwrap_or(0);
                         param_map.insert(pname.clone(), val);
                     }
-                    let mut type_param_map = HashMap::new();
+                    let mut type_param_map: HashMap<String, usize> = HashMap::new();
                     for (pname, dt) in &inst.type_param_assigns {
                         type_param_map.insert(pname.clone(), dt.width());
                     }
@@ -881,7 +950,7 @@ impl Elaborator {
                     }
                     Self::count_drivers_in_stmts(body, counts);
                 }
-                IrStmt::LoopWhile { body, .. } | IrStmt::LoopDoWhile { body, .. } => {
+                IrStmt::LoopWhile { body, .. } | IrStmt::LoopDoWhile { body, .. } | IrStmt::Repeat { body, .. } => {
                     Self::count_drivers_in_stmts(body, counts);
                 }
                 IrStmt::Delay { body, .. } | IrStmt::Wait { body, .. } => {
@@ -913,10 +982,11 @@ impl Elaborator {
             };
 
             let needs_custom_params = !ast_module_clone.params.is_empty() && !inst.param_map.is_empty();
-            let mut child = if needs_custom_params {
+            let needs_type_params = !inst.type_param_map.is_empty();
+            let mut child = if needs_custom_params || needs_type_params {
                 let known_mods: Vec<String> = self.design.modules.iter().map(|m| m.name.clone()).collect();
                 let param_vals = self.resolve_param_values(&ast_module_clone, &inst.param_map)?;
-                self.elaborate_module_with_params(&ast_module_clone, &known_mods, &param_vals)?
+                self.elaborate_module_with_params_and_type(&ast_module_clone, &known_mods, &param_vals, &inst.type_param_map)?
             } else {
                 // Use pre-elaborated module (default params)
                 self.modules.get(&inst.module_name)
@@ -1072,6 +1142,11 @@ impl Elaborator {
                 let new_cond = self.translate_expr(cond, map_sig);
                 let new_body = self.translate_stmts(body, map_sig)?;
                 Ok(IrStmt::LoopDoWhile { cond: new_cond, body: new_body })
+            }
+            IrStmt::Repeat { count, body } => {
+                let new_count = self.translate_expr(count, map_sig);
+                let new_body = self.translate_stmts(body, map_sig)?;
+                Ok(IrStmt::Repeat { count: new_count, body: new_body })
             }
             IrStmt::Delay { delay, body } => {
                 let new_body = self.translate_stmts(body, map_sig)?;
@@ -1238,7 +1313,7 @@ impl Elaborator {
         let name = format!("always_{}", 0);
 
         match always.kind {
-            AlwaysKind::AlwaysComb => {
+            AlwaysKind::AlwaysComb | AlwaysKind::AlwaysLatch => {
                 let body = self.elaborate_stmt_block(&always.stmts, signal_map, &[], signals)?;
                 let sensitivity = infer_comb_sensitivity(&body);
                 Ok(Process::CombReactive { name, sensitivity, body })
@@ -1248,13 +1323,13 @@ impl Elaborator {
                 let body = self.elaborate_stmt_block(&always.stmts, signal_map, &[], signals)?;
                 Ok(Process::Sequential { name, clock, reset, body })
             }
-            AlwaysKind::Always | AlwaysKind::AlwaysLatch => {
+            AlwaysKind::Always => {
                 // Check if body starts with a delay (always #N pattern)
                 if always.sensitivity.is_none()
                     && always.stmts.len() == 1
                 {
                     if let Stmt::Delay { delay, stmt } = &always.stmts[0] {
-                        if let Ok(d) = const_eval(delay) {
+                        if let Ok(d) = const_eval_params(delay, &self.param_vals) {
                             let body = self.elaborate_stmt_block(&[stmt.as_ref().clone()], signal_map, &[], signals)?;
                             return Ok(Process::AlwaysWithDelay {
                                 name,
@@ -1591,7 +1666,7 @@ impl Elaborator {
                 Ok(IrStmt::NamedBlock { name: name.clone(), stmts: body })
             }
             Stmt::Delay { delay, stmt } => {
-                let d = const_eval(delay)? as u64;
+                let d = const_eval_params(delay, &self.param_vals)? as u64;
                 let body = vec![self.elaborate_stmt(stmt, signal_map, known_modules, signals)?];
                 Ok(IrStmt::Delay { delay: d, body })
             }
@@ -1610,7 +1685,8 @@ impl Elaborator {
                     &|stmts, var_name, iter_val| {
                         let subst_stmts = substitute_loop_var_in_stmts(stmts, var_name, iter_val);
                         self.elaborate_stmt_block(&subst_stmts, signal_map, known_modules, signals)
-                    }
+                    },
+                    &self.param_vals,
                 ) {
                     return Ok(IrStmt::Block { stmts: unrolled });
                 }
@@ -1691,12 +1767,17 @@ impl Elaborator {
                 Ok(IrStmt::Disable { name: name.clone() })
             }
             Stmt::Repeat { count, stmts } => {
-                let n = const_eval(count)?;
-                let mut all = Vec::new();
-                for _ in 0..n {
-                    all.extend(self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?);
+                if let Ok(n) = const_eval_params(count, &self.param_vals) {
+                    let mut all = Vec::new();
+                    for _ in 0..n {
+                        all.extend(self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?);
+                    }
+                    Ok(IrStmt::Block { stmts: all })
+                } else {
+                    let ir_count = self.elaborate_expr(count, signal_map, signals)?;
+                    let ir_body = self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
+                    Ok(IrStmt::Repeat { count: ir_count, body: ir_body })
                 }
-                Ok(IrStmt::Block { stmts: all })
             }
             // New variants: elaborate as comparable constructs
             Stmt::UniqueCase { expr, items, default }
@@ -1772,8 +1853,8 @@ impl Elaborator {
             }
             Expr::RangeSelect { expr: inner, msb, lsb } => {
                 let inner_lv = self.elaborate_lvalue(inner, signal_map, signals)?;
-                let msb_c = const_eval(msb)? as usize;
-                let lsb_c = const_eval(lsb)? as usize;
+                let msb_c = const_eval_params(msb, &self.param_vals)? as usize;
+                let lsb_c = const_eval_params(lsb, &self.param_vals)? as usize;
                 match inner_lv {
                     IrLValue::Signal(sid, _) => {
                         Ok(IrLValue::RangeSelect(sid, msb_c, lsb_c))
@@ -1798,27 +1879,41 @@ impl Elaborator {
                         if sig.array_depth > 1 || sig.is_dynamic || sig.is_queue {
                             let index_expr = self.elaborate_expr(bs_index, signal_map, signals)?;
                             Ok(IrLValue::ArrayIndex { sig_id: sid, index: Box::new(index_expr), elem_width: sig.elem_width })
+                        } else if let Ok(idx) = const_eval_params(bs_index, &self.param_vals) {
+                            Ok(IrLValue::BitSelect(sid, idx as usize))
                         } else {
-                            let idx = const_eval(bs_index)? as usize;
-                            Ok(IrLValue::BitSelect(sid, idx))
+                            // Dynamic index on a flat signal — treat as array index
+                            let index_expr = self.elaborate_expr(bs_index, signal_map, signals)?;
+                            Ok(IrLValue::ArrayIndex { sig_id: sid, index: Box::new(index_expr), elem_width: sig.elem_width })
                         }
                     }
                     IrLValue::RangeSelect(sid, outer_msb, outer_lsb) => {
-                        let idx = const_eval(bs_index)? as usize;
-                        let base = if outer_msb > outer_lsb { outer_lsb } else { outer_msb };
-                        Ok(IrLValue::BitSelect(sid, base + idx))
+                        if let Ok(idx) = const_eval_params(bs_index, &self.param_vals) {
+                            let base = if outer_msb > outer_lsb { outer_lsb } else { outer_msb };
+                            Ok(IrLValue::BitSelect(sid, base + idx as usize))
+                        } else {
+                            let index_expr = self.elaborate_expr(bs_index, signal_map, signals)?;
+                            Ok(IrLValue::ArrayIndex { sig_id: sid, index: Box::new(index_expr), elem_width: outer_msb.max(outer_lsb) - outer_msb.min(outer_lsb) + 1 })
+                        }
                     }
                     IrLValue::ArrayIndex { sig_id, index, elem_width } => {
-                        let idx = const_eval(bs_index)? as usize;
-                        Ok(IrLValue::ArrayBitSelect { sig_id, index, elem_width, bit: idx })
+                        if let Ok(idx) = const_eval_params(bs_index, &self.param_vals) {
+                            Ok(IrLValue::ArrayBitSelect { sig_id, index, elem_width, bit: idx as usize })
+                        } else {
+                            Err("dynamic bit-select on array element not supported".to_string())
+                        }
                     }
                     _ => Err("nested bit select not supported".to_string()),
                 }
             }
             Expr::PartSelect { expr: inner, base, width } => {
                 let inner_lv = self.elaborate_lvalue(inner, signal_map, signals)?;
-                let base_c = const_eval(base)? as usize;
-                let width_c = const_eval(width)? as usize;
+                let base_r = const_eval_params(base, &self.param_vals);
+                let width_r = const_eval_params(width, &self.param_vals);
+                let (base_c, width_c) = match (base_r, width_r) {
+                    (Ok(b), Ok(w)) => (b as usize, w as usize),
+                    _ => return Err("dynamic part-select not supported".to_string()),
+                };
                 match inner_lv {
                     IrLValue::Signal(sid, _) => {
                         if width_c > 0 {
@@ -1870,18 +1965,44 @@ impl Elaborator {
                 if name.starts_with("$") {
                     return Ok(IrExpr::SysFunc { name: name.clone(), args: vec![] });
                 }
+                // Check if this ident is a parameter (from param_vals or effective_params)
+                if let Some(&val) = self.param_vals.get(name) {
+                    return Ok(IrExpr::Const(LogicVec::from_u64(val as u64, 64)));
+                }
                 let sig_id = signal_map.get(name)
                     .ok_or_else(|| format!("signal '{}' not found", name))?;
                 Ok(IrExpr::Signal(*sig_id, 0))
             }
+            Expr::ScopedIdent { package, item } => {
+                if let Some(pkg_items) = self.package_symbols.get(package) {
+                    if let Some(pkg_item) = pkg_items.get(item) {
+                        match pkg_item {
+                            PackageItem::Param(p) => {
+                                if let Some(expr) = &p.default {
+                                    if let Ok(val) = const_eval_with_params(expr, &self.param_vals) {
+                                        return Ok(IrExpr::Const(LogicVec::from_u64(val as u64, 64)));
+                                    }
+                                }
+                                return Err(format!("package param '{}.{}' has no default", package, item));
+                            }
+                            _ => return Err(format!("'{}' is not a constant in package '{}'", item, package)),
+                        }
+                    }
+                }
+                return Err(format!("'{}' not found in package '{}'", item, package));
+            }
             Expr::RangeSelect { expr: inner, msb, lsb } => {
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
-                let msb_c = const_eval(msb)? as usize;
-                let lsb_c = const_eval(lsb)? as usize;
-                if let IrExpr::Signal(sid, _) = &inner_expr {
-                    Ok(IrExpr::RangeSelect(*sid, msb_c, lsb_c))
+                if let (Ok(msb_c), Ok(lsb_c)) = (const_eval_params(msb, &self.param_vals), const_eval_params(lsb, &self.param_vals)) {
+                    let msb_c = msb_c as usize;
+                    let lsb_c = lsb_c as usize;
+                    if let IrExpr::Signal(sid, _) = &inner_expr {
+                        Ok(IrExpr::RangeSelect(*sid, msb_c, lsb_c))
+                    } else {
+                        Ok(IrExpr::ExprRangeSelect(Box::new(inner_expr), msb_c, lsb_c))
+                    }
                 } else {
-                    Ok(IrExpr::ExprRangeSelect(Box::new(inner_expr), msb_c, lsb_c))
+                    Err("dynamic range select not supported".to_string())
                 }
             }
             Expr::BitSelect { expr: inner, index } => {
@@ -1891,13 +2012,17 @@ impl Elaborator {
                     if sig.array_depth > 1 || sig.is_dynamic || sig.is_queue {
                         let index_expr = self.elaborate_expr(index, signal_map, signals)?;
                         Ok(IrExpr::ArrayIndex { sig_id: *sid, index: Box::new(index_expr), elem_width: sig.elem_width })
+                    } else if let Ok(idx) = const_eval_params(index, &self.param_vals) {
+                        Ok(IrExpr::BitSelect(*sid, idx as usize))
                     } else {
-                        let idx = const_eval(index)? as usize;
-                        Ok(IrExpr::BitSelect(*sid, idx))
+                        // Dynamic index on flat signal — treat as array index
+                        let index_expr = self.elaborate_expr(index, signal_map, signals)?;
+                        Ok(IrExpr::ArrayIndex { sig_id: *sid, index: Box::new(index_expr), elem_width: sig.elem_width })
                     }
+                } else if let Ok(idx) = const_eval_params(index, &self.param_vals) {
+                    Ok(IrExpr::ExprBitSelect(Box::new(inner_expr), idx as usize))
                 } else {
-                    let idx = const_eval(index)? as usize;
-                    Ok(IrExpr::ExprBitSelect(Box::new(inner_expr), idx))
+                    Err("dynamic bit-select on non-signal not supported".to_string())
                 }
             }
             Expr::Concat(exprs) => {
@@ -1946,7 +2071,7 @@ impl Elaborator {
             Expr::PartSelect { expr: inner, base, width } => {
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
                 if let IrExpr::Signal(sid, _) = &inner_expr {
-                    if let (Ok(base_c), Ok(width_c)) = (const_eval(base), const_eval(width)) {
+                    if let (Ok(base_c), Ok(width_c)) = (const_eval_params(base, &self.param_vals), const_eval_params(width, &self.param_vals)) {
                         let base = base_c as usize;
                         let width = width_c as usize;
                         if width > 0 {
@@ -1959,7 +2084,7 @@ impl Elaborator {
                         let width_expr = self.elaborate_expr(width, signal_map, signals)?;
                         Ok(IrExpr::ExprPartSelect(Box::new(inner_expr), Box::new(base_expr), Box::new(width_expr)))
                     }
-                } else if let (Ok(base_c), Ok(width_c)) = (const_eval(base), const_eval(width)) {
+                } else if let (Ok(base_c), Ok(width_c)) = (const_eval_params(base, &self.param_vals), const_eval_params(width, &self.param_vals)) {
                     let base = base_c as usize;
                     let width = width_c as usize;
                     if width > 0 {
@@ -2150,10 +2275,15 @@ impl Elaborator {
         }
     }
 
-    fn resolve_typedef_width(&self, dtype: &DataType) -> usize {
+    fn resolve_typedef_width(&self, dtype: &DataType, range: Option<&ExprRange>) -> usize {
+        if let Some(er) = range {
+            if let (Ok(msb), Ok(lsb)) = (const_eval_simple(&er.msb), const_eval_simple(&er.lsb)) {
+                return if msb >= lsb { (msb - lsb + 1) as usize } else { (lsb - msb + 1) as usize };
+            }
+        }
         match dtype {
             DataType::UserDefined(name) => self.typedef_map.get(name).copied().unwrap_or(64),
-            DataType::Signed(inner) => self.resolve_typedef_width(inner),
+            DataType::Signed(inner) => self.resolve_typedef_width(inner, None),
             _ => dtype.width(),
         }
     }
@@ -2361,7 +2491,7 @@ fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, value
             }
         }
         ModuleItem::Func(_) | ModuleItem::Typedef(_) | ModuleItem::Import { .. }
-        | ModuleItem::Covergroup(_) | ModuleItem::DpiImport(_) => {}
+        | ModuleItem::Covergroup(_) | ModuleItem::DpiImport(_) | ModuleItem::Param(_) => {}
     }
 }
 
@@ -2421,14 +2551,15 @@ fn substitute_genvar_in_generate_item(item: &mut GenerateItem, var_name: &str, v
 }
 
 fn try_unroll_for_loop<'a, F>(init: Option<&'a Stmt>, cond: Option<&'a Expr>, step: Option<&'a Stmt>,
-                           stmts: &[Stmt], elaborate_body: &F)
+                           stmts: &[Stmt], elaborate_body: &F,
+                           params: &HashMap<String, i64>)
     -> Result<Option<Vec<IrStmt>>, String>
     where F: Fn(&[Stmt], &str, i64) -> Result<Vec<IrStmt>, String>
 {
     // Extract loop variable name and initial value from init statement
     let (var_name, init_val) = match init {
         Some(Stmt::BlockingAssign { lhs: Expr::Ident(name), rhs, .. }) => {
-            (name.clone(), const_eval(rhs)?)
+            (name.clone(), const_eval_with_params(rhs, params)?)
         }
         _ => return Ok(None),
     };
@@ -2440,12 +2571,12 @@ fn try_unroll_for_loop<'a, F>(init: Option<&'a Stmt>, cond: Option<&'a Expr>, st
                 Expr::BinaryOp { op: BinaryOp::Add, lhs, rhs } => {
                     if let Expr::Ident(n2) = lhs.as_ref() {
                         if n2 == &var_name {
-                            let inc = const_eval(rhs)?;
+                            let inc = const_eval_with_params(rhs, params)?;
                             Box::new(move |v| Ok(v + inc))
                         } else { return Ok(None) }
                     } else if let Expr::Ident(n2) = rhs.as_ref() {
                         if n2 == &var_name {
-                            let inc = const_eval(lhs)?;
+                            let inc = const_eval_with_params(lhs, params)?;
                             Box::new(move |v| Ok(v + inc))
                         } else { return Ok(None) }
                     } else { return Ok(None) }
@@ -2460,7 +2591,7 @@ fn try_unroll_for_loop<'a, F>(init: Option<&'a Stmt>, cond: Option<&'a Expr>, st
     let limit = match cond {
         Some(Expr::BinaryOp { op: BinaryOp::Lt, lhs, rhs }) => {
             match lhs.as_ref() {
-                Expr::Ident(n) if *n == var_name => const_eval(rhs)?,
+                Expr::Ident(n) if *n == var_name => const_eval_with_params(rhs, params)?,
                 _ => return Ok(None),
             }
         }
@@ -2689,6 +2820,10 @@ fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> Expr 
             dtype: dtype.clone(),
             expr: Box::new(substitute_loop_var_in_expr(inner, var_name, value)),
         },
+        Expr::ScopedIdent { package, item } => Expr::ScopedIdent {
+            package: package.clone(),
+            item: item.clone(),
+        },
     }
 }
 
@@ -2891,10 +3026,6 @@ fn collect_sensitivity(expr: &Expr, signal_map: &HashMap<String, SignalId>) -> V
         Expr::MemberAccess { obj, .. } => collect_sensitivity(obj, signal_map),
         _ => vec![],
     }
-}
-
-fn const_eval(expr: &Expr) -> Result<i64, String> {
-    const_eval_with_params(expr, &HashMap::new())
 }
 
 fn const_eval_params(expr: &Expr, params: &HashMap<String, i64>) -> Result<i64, String> {

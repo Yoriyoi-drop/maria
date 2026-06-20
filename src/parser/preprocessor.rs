@@ -7,12 +7,13 @@ struct CondFrame {
     branch_taken: bool,
 }
 
+#[derive(Clone)]
 struct MacroDef {
     value: String,
     params: Vec<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Preprocessor {
     defines: HashMap<String, MacroDef>,
     search_paths: Vec<PathBuf>,
@@ -74,6 +75,7 @@ impl Preprocessor {
                         let inc_source = fs::read_to_string(&resolved)
                             .map_err(|e| format!("cannot include '{}': {}", resolved.display(), e))?;
                         let inc_dir = resolved.parent().map(|p| p.to_path_buf());
+                        output.push_str(&format!("`line 1 \"{}\"\n", resolved.display()));
                         let processed = self.preprocess(&inc_source, inc_dir.as_ref())?;
                         output.push_str(&processed);
                         if !processed.ends_with('\n') {
@@ -141,8 +143,26 @@ impl Preprocessor {
                         format!("line {}: `endif without matching `ifdef/`ifndef", i + 1)
                     })?;
                 }
+                "line" => {
+                    if self.is_emitting(&cond_stack) {
+                        output.push_str(raw_line);
+                        output.push('\n');
+                    }
+                }
+                "timescale" | "celldefine" | "endcelldefine" | "unconnected_drive" |
+                "nounconnected_drive" | "default_nettype" | "pragma" | "assert" |
+                "debug" | "PICORV32_REGS" => {
+                    // Standard or tool-specific Verilog directives that we ignore
+                }
+                "FORMAL_KEEP" => {
+                    // Yosys formal attribute — emit the rest as Verilog declaration
+                    if self.is_emitting(&cond_stack) {
+                        output.push_str(rest);
+                        output.push('\n');
+                    }
+                }
                 _ => {
-                    // Unknown backtick directive — UVM macro or similar; skip silently
+                    // Unknown backtick directive — skip silently
                 }
             }
 
@@ -162,7 +182,7 @@ impl Preprocessor {
 
     fn split_directive<'a>(&self, directive: &'a str) -> (&'a str, &'a str) {
         let trimmed = directive.trim_start();
-        let end = trimmed.find(|c: char| c.is_whitespace()).unwrap_or(trimmed.len());
+        let end = trimmed.find(|c: char| c.is_whitespace() || c == '(' || c == '[').unwrap_or(trimmed.len());
         let cmd = &trimmed[..end];
         let rest = trimmed[end..].trim();
         (cmd, rest)

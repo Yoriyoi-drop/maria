@@ -250,6 +250,14 @@ pub fn const_eval_with_params(expr: &Expr, param_vals: &HashMap<String, i64>) ->
         Expr::BinaryOp { op: BinaryOp::BitXor, lhs, rhs } => {
             Ok(const_eval_with_params(lhs, param_vals)? ^ const_eval_with_params(rhs, param_vals)?)
         }
+        Expr::TernaryOp { cond, true_expr, false_expr } => {
+            let cond_val = const_eval_with_params(cond, param_vals)?;
+            if cond_val != 0 {
+                const_eval_with_params(true_expr, param_vals)
+            } else {
+                const_eval_with_params(false_expr, param_vals)
+            }
+        }
         Expr::Paren(inner) => const_eval_with_params(inner, param_vals),
         Expr::MethodCall { .. } => Err("method calls not allowed in constant expression".to_string()),
         Expr::MemberAccess { .. } => Err("member access not allowed in constant expression".to_string()),
@@ -261,7 +269,9 @@ pub fn const_eval_with_params(expr: &Expr, param_vals: &HashMap<String, i64>) ->
 pub struct ParamDecl {
     pub name: String,
     pub dtype: Option<DataType>,
+    pub range: Option<(Expr, Expr)>,
     pub default: Option<Expr>,
+    pub is_localparam: bool,
     pub is_type_param: bool,
     pub type_default: Option<DataType>,
 }
@@ -361,6 +371,7 @@ pub enum DataType {
 pub struct TypedefDecl {
     pub name: String,
     pub dtype: DataType,
+    pub range: Option<ExprRange>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -440,6 +451,7 @@ pub enum ModuleItem {
     // Imported items from packages
     Import { package: String, item: String },
     DpiImport(DpiImport),
+    Param(ParamDecl),
 }
 
 #[derive(Debug, Clone, PartialEq)]

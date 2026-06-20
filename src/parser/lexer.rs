@@ -4,7 +4,7 @@ use std::fmt;
 pub enum Token {
     // Keywords
     Module, Endmodule, Input, Output, Inout,
-    Wire, Reg, Logic, Int, Integer, Signed,
+    Wire, Reg, Logic, Int, Integer, Signed, Unsigned,
     Wand, Wor, Tri, Tri0, Tri1, TriAnd, TriOr,
     Supply0, Supply1,
     Always, AlwaysComb, AlwaysFF, AlwaysLatch,
@@ -26,6 +26,7 @@ pub enum Token {
     None, Some_,
     And, Xor, Nand, Nor, Xnor, Buf, NotGate,
     Module_, Interface, EndInterface, ModPort,
+    Program, EndProgram,
     Fork, Join, JoinAny, JoinNone,
     Bit, Enum, Typedef, Byte, Shortint, Longint, Struct, Union, EndEnum,
     // Multi-character operators
@@ -33,7 +34,7 @@ pub enum Token {
     BiDirArrow, // <->
     StarArrow, // *>
     // Literals
-    Number { value: String, base: Option<u8>, width: Option<usize> },
+    Number { value: String, base: Option<u8>, width: Option<usize>, is_signed: bool },
     RealNum(String),
     StringLit(String),
     Ident(String),
@@ -116,6 +117,7 @@ impl fmt::Display for Token {
             Token::Int => write!(f, "int"),
             Token::Integer => write!(f, "integer"),
             Token::Signed => write!(f, "signed"),
+            Token::Unsigned => write!(f, "unsigned"),
             Token::Always => write!(f, "always"),
             Token::AlwaysComb => write!(f, "always_comb"),
             Token::AlwaysFF => write!(f, "always_ff"),
@@ -186,6 +188,8 @@ impl fmt::Display for Token {
             Token::IgnoreBins => write!(f, "ignore_bins"),
             Token::Option_ => write!(f, "option"),
             Token::Type => write!(f, "type"),
+            Token::Program => write!(f, "program"),
+            Token::EndProgram => write!(f, "endprogram"),
             Token::Eof => write!(f, "<eof>"),
             Token::Error(s) => write!(f, "<error: {}>", s),
             _ => write!(f, "{:?}", self),
@@ -275,8 +279,50 @@ impl Lexer {
                 self.skip_multi_line_comment();
                 continue;
             }
+            // `line directive — update line counter
+            if self.peek() == Some('`') {
+                if self.handle_line_directive() {
+                    continue;
+                }
+                // Unknown backtick directive — skip line silently
+                while self.peek().is_some() && self.peek() != Some('\n') {
+                    self.advance();
+                }
+                if self.peek() == Some('\n') {
+                    self.advance();
+                }
+                continue;
+            }
             break;
         }
+    }
+
+    fn handle_line_directive(&mut self) -> bool {
+        let line_start = self.pos;
+        let mut line_end = self.pos;
+        while line_end < self.chars.len() && self.chars[line_end] != '\n' {
+            line_end += 1;
+        }
+        let line_content: String = self.chars[line_start..line_end].iter().collect();
+        if !line_content.trim_start().starts_with("`line") {
+            return false;
+        }
+        let after_cmd = line_content.trim_start()[5..].trim();
+        let num_str = if let Some(quote_pos) = after_cmd.find('"') {
+            after_cmd[..quote_pos].trim()
+        } else {
+            after_cmd.trim()
+        };
+        if let Ok(new_line) = num_str.parse::<usize>() {
+            self.line = new_line;
+            self.pos = line_end;
+            if self.pos < self.chars.len() && self.chars[self.pos] == '\n' {
+                self.pos += 1;
+            }
+            self.col = 1;
+            return true;
+        }
+        false
     }
 
     fn skip_whitespace(&mut self) {
@@ -361,6 +407,7 @@ impl Lexer {
             "int" => Token::Int,
             "integer" => Token::Integer,
             "signed" => Token::Signed,
+            "unsigned" => Token::Unsigned,
             "always" => Token::Always,
             "always_comb" => Token::AlwaysComb,
             "always_ff" => Token::AlwaysFF,
@@ -443,6 +490,8 @@ impl Lexer {
             "union" => Token::Union,
             "endenum" => Token::EndEnum,
             "modport" => Token::ModPort,
+            "program" => Token::Program,
+            "endprogram" => Token::EndProgram,
             "interface" => Token::Interface,
             "endinterface" => Token::EndInterface,
             "rand" => Token::Rand,
@@ -491,6 +540,14 @@ impl Lexer {
                 // Read base character
                 if self.peek().is_some() {
                     s.push(self.advance());
+                }
+                // Skip whitespace before value (e.g., 32'h 0000_0000)
+                while let Some(c) = self.peek() {
+                    if c.is_ascii_whitespace() {
+                        self.advance();
+                    } else {
+                        break;
+                    }
                 }
                 // Read the value part
                 while let Some(c) = self.peek() {
@@ -735,7 +792,7 @@ impl Lexer {
                                 value.push(self.advance());
                             } else { break; }
                         }
-                        Token::Number { value: value.replace('_', ""), base: Some(base), width: None }
+                        Token::Number { value: value.replace('_', ""), base: Some(base), width: None, is_signed: false }
                     }
                     // Unsized signed literals: 'sb, 'sd, 'sh, 'so
                     Some('s') | Some('S') => {
@@ -750,7 +807,7 @@ impl Lexer {
                                         value.push(self.advance());
                                     } else { break; }
                                 }
-                                Token::Number { value: value.replace('_', ""), base: Some(base), width: None }
+                                Token::Number { value: value.replace('_', ""), base: Some(base), width: None, is_signed: true }
                             }
                             _ => Token::Error(format!("expected base after 's in literal")),
                         }

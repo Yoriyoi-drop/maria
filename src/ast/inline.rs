@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::expr::Expr;
 use super::stmt::Stmt;
-use super::types::{Decl, FunctionDecl, Module, ModuleItem};
+use super::types::{DataType, Decl, FunctionDecl, Module, ModuleItem};
 
 fn func_port_width(func: &FunctionDecl, port_name: &str) -> usize {
     if let Some(port) = func.ports.iter().find(|p| p.name == port_name) {
@@ -29,7 +29,25 @@ fn func_return_width(func: &FunctionDecl) -> usize {
             return if msb >= lsb { msb - lsb + 1 } else { lsb - msb + 1 };
         }
     }
-    1
+    match &func.return_type {
+        Some(inner) => match inner.as_ref() {
+            DataType::Byte => 8,
+            DataType::Shortint => 16,
+            DataType::Int | DataType::Integer => 32,
+            DataType::Longint => 64,
+            DataType::Signed(s) => match s.as_ref() {
+                DataType::Bit => 1,
+                DataType::Logic => 1,
+                DataType::Byte => 8,
+                DataType::Shortint => 16,
+                DataType::Int | DataType::Integer => 32,
+                DataType::Longint => 64,
+                _ => 1,
+            },
+            _ => 1,
+        },
+        _ => 1,
+    }
 }
 
 pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(String, usize)>, String> {

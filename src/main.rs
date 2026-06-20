@@ -1,9 +1,9 @@
-use std::fs;
 use std::process;
 use clap::Parser as ClapParser;
 
 use maria::parser::lexer::Lexer;
 use maria::parser::parser::Parser;
+use maria::parser::preprocessor::Preprocessor;
 use maria::elaboration::Elaborator;
 use maria::simulator::SimulationEngine;
 use maria::waveform::VcdWriter;
@@ -14,7 +14,7 @@ use maria::read_project_file;
 #[command(name = "maria", about = "RTL Simulator untuk SystemVerilog")]
 struct Cli {
     /// Input SystemVerilog file(s) — last is top module
-    #[arg(required_unless_present = "start")]
+    #[arg(required_unless_present = "start", required_unless_present = "filelist")]
     files: Vec<String>,
 
     /// Top module name (default: first module)
@@ -32,6 +32,18 @@ struct Cli {
     /// Start from .maria project file (lists .sv files to compile)
     #[arg(long = "start")]
     start: bool,
+
+    /// Add include search path
+    #[arg(short = 'I', long = "incdir", num_args = 1)]
+    incdirs: Vec<String>,
+
+    /// Define preprocessor macro (NAME or NAME=VALUE)
+    #[arg(short = 'D', long = "define", num_args = 1)]
+    defines: Vec<String>,
+
+    /// Read file list from file
+    #[arg(short = 'f', long = "filelist")]
+    filelist: Option<String>,
 
     /// Dump all signal values at each timestep
     #[arg(long = "dump-all")]
@@ -57,21 +69,41 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), SimError> {
-    let sources: Vec<String> = if cli.start {
+    let mut sources: Vec<String> = if cli.start {
         read_project_file(".maria")?
     } else {
         cli.files.clone()
     };
 
+    // Read file list from -f
+    if let Some(ref fpath) = cli.filelist {
+        let flist = read_project_file(fpath)?;
+        sources.extend(flist);
+    }
+
+    // Create shared preprocessor with CLI config
+    let mut base_pp = Preprocessor::new();
+    for path in &cli.incdirs {
+        base_pp.add_search_path(path);
+    }
+    for def in &cli.defines {
+        if let Some((name, value)) = def.split_once('=') {
+            base_pp.define(name, value);
+        } else {
+            base_pp.define(def, "");
+        }
+    }
+
     // Combine all sources
     let mut combined = String::new();
     for path in &sources {
-        let src = fs::read_to_string(path)
-            .map_err(|e| SimError::new(None, format!("cannot read '{}': {}", path, e)))?;
-        combined.push_str(&src);
+        let mut pp = base_pp.clone();
+        let processed = pp.preprocess_file(path)
+            .map_err(|e| SimError::new(None, format!("preprocessor '{}': {}", path, e)))?;
+        combined.push_str(&format!("`line 1 \"{}\"\n", path));
+        combined.push_str(&processed);
         combined.push('\n');
     }
-
     let mut lexer = Lexer::new(&combined);
     let mut tokens = Vec::new();
     loop {
