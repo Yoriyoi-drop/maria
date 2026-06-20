@@ -75,15 +75,18 @@ pub enum Value {
     Binary {
         bits: String,
         width: Option<usize>,
+        is_signed: bool,
     },
     Decimal(i64),
     Hex {
         bits: String,
         width: Option<usize>,
+        is_signed: bool,
     },
     Octal {
         bits: String,
         width: Option<usize>,
+        is_signed: bool,
     },
     Real(f64),
 }

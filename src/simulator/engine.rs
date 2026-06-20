@@ -1585,6 +1585,15 @@ impl SimulationEngine {
         if let IrExpr::FillLit(v) = expr {
             let w = self.get_lvalue_width(lhs);
             Ok(LogicVec::fill(*v, w))
+        } else if let IrExpr::Signed(inner) = expr {
+            let mut val = self.evaluate_expr(inner)?;
+            let target_w = self.get_lvalue_width(lhs);
+            if val.width < target_w {
+                let msb = val.bits.last().copied().unwrap_or(LogicVal::Zero);
+                val.bits.resize(target_w, msb);
+                val.width = target_w;
+            }
+            Ok(val)
         } else {
             self.evaluate_expr(expr)
         }
@@ -2234,9 +2243,9 @@ impl SimulationEngine {
             Expr::Value(v) => {
                 match v {
                     Value::Decimal(i) => Ok(LogicVec::from_u64(*i as u64, 32)),
-                    Value::Binary { bits, width: _ } => LogicVec::from_bin(bits),
-                    Value::Hex { bits, width: _ } => LogicVec::from_hex(bits),
-                    Value::Octal { bits, width: _ } => LogicVec::from_hex(bits),
+                    Value::Binary { bits, .. } => LogicVec::from_bin(bits),
+                    Value::Hex { bits, .. } => LogicVec::from_hex(bits),
+                    Value::Octal { bits, .. } => LogicVec::from_hex(bits),
                     Value::Real(r) => Ok(LogicVec::from_u64(r.to_bits(), 64)),
                 }
             }

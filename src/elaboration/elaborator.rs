@@ -1958,7 +1958,15 @@ impl Elaborator {
             Expr::Ident(name) if name == "this" => Ok(IrExpr::This),
             Expr::Value(v) => {
                 let lv = value_to_logicvec(v);
-                Ok(IrExpr::Const(lv))
+                let is_signed = matches!(v,
+                    Value::Binary { is_signed: true, .. }
+                    | Value::Hex { is_signed: true, .. }
+                    | Value::Octal { is_signed: true, .. });
+                if is_signed {
+                    Ok(IrExpr::Signed(Box::new(IrExpr::Const(lv))))
+                } else {
+                    Ok(IrExpr::Const(lv))
+                }
             }
             Expr::FillLit(val) => Ok(IrExpr::FillLit(*val)),
             Expr::Ident(name) => {
@@ -3076,7 +3084,7 @@ fn value_to_logicvec(val: &Value) -> LogicVec {
             }
             lv
         }
-        Value::Binary { bits, width } => {
+        Value::Binary { bits, width, .. } => {
             let w = width.unwrap_or(bits.len());
             let mut vec = LogicVec::new(w);
             for (i, c) in bits.chars().rev().enumerate() {
@@ -3092,7 +3100,7 @@ fn value_to_logicvec(val: &Value) -> LogicVec {
             }
             vec
         }
-        Value::Hex { bits, width } => {
+        Value::Hex { bits, width, .. } => {
             let w = width.unwrap_or(bits.len() * 4);
             let mut vec = LogicVec::new(w);
             let digits: String = bits.chars().filter(|c| *c != '_').collect();
@@ -3110,7 +3118,7 @@ fn value_to_logicvec(val: &Value) -> LogicVec {
             }
             vec
         }
-        Value::Octal { bits, width } => {
+        Value::Octal { bits, width, .. } => {
             let w = width.unwrap_or(bits.len() * 3);
             let mut vec = LogicVec::new(w);
             let digits: String = bits.chars().filter(|c| *c != '_').collect();

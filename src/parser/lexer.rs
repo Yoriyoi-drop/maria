@@ -591,7 +591,7 @@ impl Lexer {
         }
 
         // Plain decimal
-        Token::Number { value: s, base: None, width: None }
+        Token::Number { value: s, base: None, width: None, is_signed: false }
     }
 
     fn parse_verilog_number(&self, s: &str) -> Token {
@@ -599,7 +599,7 @@ impl Lexer {
         // e.g., 8'b10101010, 32'habcd, '1, '0
         let parts: Vec<&str> = s.split('\'').collect();
         if parts.len() != 2 {
-            return Token::Number { value: s.to_string(), base: None, width: None };
+            return Token::Number { value: s.to_string(), base: None, width: None, is_signed: false };
         }
 
         let width_str = parts[0];
@@ -611,12 +611,12 @@ impl Lexer {
 
         let rest = parts[1];
         if rest.is_empty() {
-            return Token::Number { value: s.to_string(), base: None, width: None };
+            return Token::Number { value: s.to_string(), base: None, width: None, is_signed: false };
         }
 
         let mut chars = rest.chars();
         let first_char = chars.next().unwrap();
-        let (base_char, _is_signed) = match first_char {
+        let (base_char, is_signed) = match first_char {
             's' | 'S' => (chars.next().unwrap_or('d'), true),
             _ => (first_char, false),
         };
@@ -634,6 +634,7 @@ impl Lexer {
             value: value_part.replace('_', ""),
             base,
             width,
+            is_signed,
         }
     }
 

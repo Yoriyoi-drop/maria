@@ -3305,17 +3305,19 @@ impl Parser {
                     Ok(Expr::Ident(name.clone()))
                 }
             }
-            Token::Number { value, base, width } => {
+            Token::Number { value, base, width, is_signed } => {
                 self.advance();
                 let val = if let Some(base) = base {
                     match base {
                         2 => Expr::Value(Value::Binary {
                             bits: value.clone(),
                             width: *width,
+                            is_signed: *is_signed,
                         }),
                         8 => Expr::Value(Value::Octal {
                             bits: value.clone(),
                             width: *width,
+                            is_signed: *is_signed,
                         }),
                         10 => {
                             let n = value.parse::<i64>().unwrap_or(0);
@@ -3324,6 +3326,7 @@ impl Parser {
                         16 => Expr::Value(Value::Hex {
                             bits: value.clone(),
                             width: *width,
+                            is_signed: *is_signed,
                         }),
                         _ => Expr::Value(Value::Decimal(value.parse::<i64>().unwrap_or(0))),
                     }
