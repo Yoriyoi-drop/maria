@@ -10,6 +10,7 @@ pub struct Design {
     pub packages: Vec<PackageDecl>,
     pub interfaces: Vec<Interface>,
     pub top_module: Option<String>,
+    pub unit_imports: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -519,6 +520,7 @@ pub enum PackageItem {
     Task(TaskDecl),
     Typedef(TypedefDecl),
     Param(ParamDecl),
+    Import { package: String, item: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]

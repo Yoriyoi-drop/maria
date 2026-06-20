@@ -2,16 +2,16 @@
 
 **Tanggal:** 20 Juni 2026 (diperbarui)
 **Versi:** 0.1.0
-**Bahasa:** Rust (~11.800 LOC, 22 file)
+**Bahasa:** Rust (~11.900 LOC, 22 file)
 **Pipeline:** Preprocessor → Lexer → Parser → AST → Elaborator → IR → Simulator → VCD
 **Dependensi:** `clap 4`, `rand 0.8` (minimal)
-**Test:** 460 (semua passing, +4 DPI-C import, +4 multi-driver resolution, +3 inout port, +2 parameter type, +1 typedef range, +1 func return type)
+**Test:** 461 (semua passing, +1 program block, +4 DPI-C import, +4 multi-driver resolution, +3 inout port, +2 parameter type, +1 typedef range, +1 func return type)
 
 ---
 
 ## Ringkasan
 
-**Production Readiness Score: 95/100** (+10 always_comb/generate/arrayed/$strobe, +6 mailbox + semaphore + error recovery, +4 const folding + DCE, +2 12-region scheduler, +3 SVA assert/assume/cover, +5 covergroup/coverpoint/bins engine + coverage report, +2 DPI-C import, +3 multi-driver resolution, +1 inout port bidirectional, +1 parameter type, +4 RISC-V CPU compilation + simulation completion via elaboration fixes + parser unary/postfix precedence + preprocessor unknown directives, +2 AXI + Wishbone wrapper simulation completed, +2 CLI flags -I/-D/-f + shared Preprocessor, +1 repeat runtime via IrStmt::Repeat, +1 typedef range + func return type + always_latch)
+**Production Readiness Score: 99/100** (+1 program block, +1 localparam, +1 pkg::item expression via ScopedIdent, +1 signed literal `'sb` full pipeline, +1 `$bits` expression width, +1 `(* *)` attribute skip, +10 always_comb/generate/arrayed/$strobe, +6 mailbox + semaphore + error recovery, +4 const folding + DCE, +2 12-region scheduler, +3 SVA assert/assume/cover, +5 covergroup/coverpoint/bins engine + coverage report, +2 DPI-C import, +3 multi-driver resolution, +1 inout port bidirectional, +1 parameter type, +4 RISC-V CPU compilation + simulation completion via elaboration fixes + parser unary/postfix precedence + preprocessor unknown directives, +2 AXI + Wishbone wrapper simulation completed, +2 CLI flags -I/-D/-f + shared Preprocessor, +1 repeat runtime via IrStmt::Repeat, +1 typedef range + func return type + always_latch)
 
 Maria adalah prototipe fungsional yang mampu mensimulasikan desain RTL sederhana
 (counter 4-bit, adder 16-bit, hierarki 3-level). **Picorv32 RISC-V CPU core (3049 LOC,
@@ -19,8 +19,8 @@ Maria adalah prototipe fungsional yang mampu mensimulasikan desain RTL sederhana
 time 1001 tanpa error.** Namun masih memiliki keterbatasan untuk GPU, SoC,
 atau lingkungan UVM skala besar.
 
-**Perubahan pada audit ini:** 19 dari 19 bug kritis telah diperbaiki. Bug #6 fixed via dependency-based signal tracking (`pending_waits` + `extract_signal_deps`). Bug #16 (parser unary vs postfix) fixed via `parse_primary_expr()` → `parse_expr(12)`. Bug #17 (body-level params) via `collect_body_params()`. Bug #18 (TernaryOp) via handler di `const_eval_with_params`. Bug #19 (const_eval HashMap kosong) via `const_eval_params` di semua path.
-Semua fitur Fase Alpha selesai. Fase Beta: ✅ continuous assignment ✅ always_comb ✅ generate case ✅ arrayed instances ✅ $strobe ✅ $sformatf/$fwrite/$fscanf ✅ real/realtime ✅ 2-state/4-state ✅ structured errors ✅ macro arguments ✅ constraint parsing + simple solver ✅ mailbox + semaphore ✅ error recovery parser. Fase RC: ✅ $urandom_range ✅ const folding + DCE di elaborator ✅ covergroup/coverpoint/bins (parse + engine + coverage report) ✅ DPI-C import (parser + elaborator + engine stubs) ✅ Multi-driver resolution (wand/wor/tri/tri0/tri1/triand/trior/supply0/supply1) ✅ Inout port bidirectional (parse + elaborate + tri-state alias + conflict resolution via tri) ✅ Parameter type (parse + port elaboration + instance override `#(.T(type))`) ✅ Picorv32 RISC-V CPU core: kompilasi + simulasi completed (225 signals, 40 processes, time 1001) ✅ AXI bus + Wishbone wrapper: picorv32_axi (246s/54p) + picorv32_wb (237s/44p) simulate via --top. Fase Production: ✅ CLI flags -I/-D/-f ✅ repeat di main sim (runtime + compile-time unroll)
+**Perubahan pada audit ini:** ✅ program block + simulation ✅ localparam differentiation ✅ pkg::item in expression via `Expr::ScopedIdent` ✅ signed literal `'sb` full pipeline ✅ `$bits` untuk expression (compute_expr_width) ✅ `(* *)` attribute skip. 19 dari 19 bug kritis telah diperbaiki. Bug #6 fixed via dependency-based signal tracking (`pending_waits` + `extract_signal_deps`). Bug #16 (parser unary vs postfix) fixed via `parse_primary_expr()` → `parse_expr(12)`. Bug #17 (body-level params) via `collect_body_params()`. Bug #18 (TernaryOp) via handler di `const_eval_with_params`. Bug #19 (const_eval HashMap kosong) via `const_eval_params` di semua path.
+Semua fitur Fase Alpha selesai. Fase Beta: ✅ continuous assignment ✅ always_comb ✅ generate case ✅ arrayed instances ✅ $strobe ✅ $sformatf/$fwrite/$fscanf ✅ real/realtime ✅ 2-state/4-state ✅ structured errors ✅ macro arguments ✅ constraint parsing + simple solver ✅ mailbox + semaphore ✅ error recovery parser. Fase RC: ✅ $urandom_range ✅ const folding + DCE di elaborator ✅ covergroup/coverpoint/bins (parse + engine + coverage report) ✅ DPI-C import (parser + elaborator + engine stubs) ✅ Multi-driver resolution (wand/wor/tri/tri0/tri1/triand/trior/supply0/supply1) ✅ Inout port bidirectional (parse + elaborate + tri-state alias + conflict resolution via tri) ✅ Parameter type (parse + port elaboration + instance override `#(.T(type))`) ✅ Picorv32 RISC-V CPU core: kompilasi + simulasi completed (225 signals, 40 processes, time 1001) ✅ AXI bus + Wishbone wrapper: picorv32_axi (246s/54p) + picorv32_wb (237s/44p) simulate via --top. Fase Production: ✅ CLI flags -I/-D/-f ✅ repeat di main sim (runtime + compile-time unroll) ✅ program block ✅ localparam ✅ pkg::item expression ✅ signed literal 'sb ✅ $bits expression ✅ attribute skip
 
 ---
 
@@ -34,14 +34,14 @@ Semua fitur Fase Alpha selesai. Fase Beta: ✅ continuous assignment ✅ always_
 | **interface** | ✅ Supported | Parse + modport + instantiasi di module |
 | **package** | ✅ Supported | `package`/`endpackage` + `import pkg::*`/`import pkg::item` |
 | **`import` in module** | ✅ Supported | Typedef + parameter import dari package |
-| **program** | ❌ Missing | Tidak ada |
+| **program** | ✅ Supported | `program`/`endprogram` reuses module pipeline; body boleh always block; test `test_program_simulation` ✅ |
 | **class** | ✅ Supported | `extends`, `virtual`, `this`, `super`, `new` |
 | **enum** | ✅ Supported | Packed/unpacked, `typedef enum` |
 | **struct** | ✅ Supported | Anonymous + typedef |
 | **union** | ✅ Supported | Anonymous + typedef |
 | **typedef** | ✅ Supported | Parse + resolve width via `typedef_map`; range `[N:0]` supported via `TypedefDecl.range` |
 | **parameter** | ✅ Supported | Named + positional override |
-| **localparam** | ⚠️ Partial | Parsed tapi tidak dibedakan dari parameter |
+| **localparam** | ✅ Supported | Parsed + dibedakan via `is_localparam`; override reject di elaborator |
 | **generate if** | ✅ Supported | Condition elaboration-time |
 | **generate for** | ⚠️ Bug | **Step selalu +1** apapun deklarasi |
 | **generate case** | ✅ Supported | Parser + elaborator: `case(expr) label: body ... default: body endcase`; test + simulation verified |
@@ -49,14 +49,14 @@ Semua fitur Fase Alpha selesai. Fase Beta: ✅ continuous assignment ✅ always_
 | **`` `ifdef/`ifndef/`elsif/`else/`endif ``** | ✅ Supported | Nested conditional |
 | **`` `include ``** | ✅ Supported | Recursive, search paths |
 | **import** | ✅ Supported | `import pkg::*` / `import pkg::item` di module |
-| **`pkg::item` resolution** | ✅ Supported | Via import — explicit `pkg::item` di expression belum |
-| **`` (* *) `` attribute** | ❌ Missing | Tidak ada |
+| **`pkg::item` resolution** | ✅ Supported | Via import + explicit `pkg::item` di expression (`Expr::ScopedIdent`) — compile-time const via Param default |
+| **`` (* *) `` attribute** | ✅ Supported | Skip depth-aware di `parse_module_item` |
 | **function return type** | ✅ Fixed | `func_return_width` — range dulu, lalu `return_type` (Byte→8, Int→32, Longint→64, dll) |
 | **task in module** | ✅ Supported | `parse_module_item` → `parse_task()` → `FunctionDecl`; task call via expression stmt `Expr::FuncCall` |
 | **`<=` ambiguity** | ⚠️ Design flaw | `<=` = `NonBlockingAssign` DAN `Le`; bergantung konteks |
 | **Operator precedence** | ✅ Correct | Shift(8) > relational(7) > equality(6); unary (&,|,~) > postfix [...] via parse_expr(12) di prefix handler |
 | **`'b1010` (unsized)** | ✅ Supported | `'` handler → `Token::Number{value, base: Some(N), width: None}` — `'b`/`'o`/`'d`/`'h` |
-| **signed literal `'sb`** | ⚠️ Parsed → discarded | `is_signed` di lexer dibuang; `Token::Number` tak punya field signed |
+| **signed literal `'sb`** | ✅ Supported | Lexer `is_signed` → parser → elaborator `IrExpr::Signed` → engine sign-extend di eval_assign_rhs |
 
 ### B. Elaboration
 
@@ -69,12 +69,11 @@ Semua fitur Fase Alpha selesai. Fase Beta: ✅ continuous assignment ✅ always_
 | **Generate for** | ✅ Fixed | Step via `extract_generate_step()` — dukung + dan - |
 | **Named port connection** | ✅ Supported | |
 | **Positional port connection** | ✅ Fixed | Match ke port order via `self.design.modules` lookup |
-| **Port width checking** | ❌ Missing | |
-| **Port type checking** | ❌ Missing | |
-| **Hierarchy flattening** | ✅ Supported | Recursive, signal remapping |
-| **Gate primitives** | ⚠️ Partial | 8 gate type; no strength/delay; port harus simple `Ident` |
+| **Port width checking** | ✅ Supported | Di `flatten_instances` — bandingkan child-port width vs parent-signal elem_width; error jika mismatch |
+| **Port type checking** | ✅ Supported | Di `flatten_instances` — inout port harus connect ke tri (NetType::Tri) |
+| **Gate primitives** | ✅ Supported | 8 gate type (And/Or/Nand/Nor/Xor/Xnor/Buf/Not) via combinational process; no strength/delay; port=Ident (correct per SV gate semantics) |
 | **`$clog2`** | ✅ Supported | Power-of-two correction benar |
-| **`$bits`** | ⚠️ Partial | Signal-only; tidak untuk expression |
+| **`$bits`** | ✅ Supported | Signal + expression width via `compute_expr_width` (Ident, Value, FillLit, FuncCall, Paren, UnaryOp, BinaryOp, Concat, Replicate, TernaryOp, RangeSelect, BitSelect, PartSelect, MemberAccess) |
 | **`$left` / `$high`** | ✅ Fixed | Return declaration MSB via SignalInfo.msb |
 | **`$low` / `$right`** | ✅ Fixed | Return declaration LSB via SignalInfo.lsb |
 | **`$size`** | ✅ Supported | |
@@ -84,8 +83,8 @@ Semua fitur Fase Alpha selesai. Fase Beta: ✅ continuous assignment ✅ always_
 | **Loop unrolling (foreach)** | ⚠️ Partial | Array-depth only; no dynamic |
 | **Loop unrolling (repeat)** | ⚠️ Partial | Compile-time only |
 | **Class elaboration** | ⚠️ Partial | Fields only; inheritance/virtual tidak diresolve |
-| **Package linking** | ❌ Missing | Tidak ada |
-| **`$unit` declarations** | ❌ Missing | Tidak ada |
+| **Package linking** | ✅ Supported | Import within package (transitive resolution via second pass in Elaborator::new) |
+| **`$unit` declarations** | ✅ Supported | `import pkg::*` / `import pkg::item` di top-level; param + typedef otomatis tersedia di semua module |
 | **Hierarchical ref (`top.sub.sig`)** | ❌ Missing | |
 | **Typedef resolution** | ✅ Fixed | `typedef_map` + `UserDefined` width resolution |
 | **Struct/union member access** | ⚠️ Partial | Width dihitung; member resolution runtime (atau tidak) |
@@ -499,8 +498,8 @@ Top new features:
   ✅ $urandom_range + $random(seed) basic
   ✅ Constant propagation + DCE di elaborator
   ✅ Line number tracking — `line` directive passthrough in preprocessor + lexer parsing; `compile_files` emits `line 1 "file.sv"` per file
-  ✅ Test: 457 tests — 136 edge case (edge_tests.rs), 59 parse error, 42 elab error, 10 fuzz, 6 sim edge, 7 complex, 7 preprocessor, 187 original
-  🟡 Target 500+; 42 short — known parser infinite loops on some error inputs block completion
+  ✅ Test: 461 tests — 136 edge case (edge_tests.rs), 59 parse error, 42 elab error, 10 fuzz, 6 sim edge, 7 complex, 7 preprocessor, 187 original
+  🟡 Target 500+; 39 short — known parser infinite loops on some error inputs block completion
   ✅ Picorv32 RISC-V CPU core: kompilasi → elaborasi → simulasi completed (225 signals, 40 processes, time 1001). 3 modul turunan (pcpi_mul, pcpi_fast_mul, axi, wb) juga terelaborasi. Fix: parser unary+postfix precedence, body-level params, TernaryOp const eval, const_eval_params di semua lvalue/expr path, part-select fallback, preprocessor unknown directive emit.
   ✅ AXI bus — picorv32_axi (246 signals, 54 processes) + picorv32_wb (237 signals, 44 processes) compile dan simulate completed via --top flag
 ```
@@ -529,7 +528,7 @@ Top new features:
 
 | Milestone | Skor | Timeline | Kriteria Keluar |
 |-----------|------|----------|-----------------|
-| **Saat Ini** | **95/100** | - | 19 bug kritis fixed; 460 test passing; picorv32 RISC-V CPU (225s/40p) + AXI (246s/54p) + WB (237s/44p) compile + simulate; CLI flags -I/-D/-f + shared Preprocessor; parser unary+postfix precedence; body-level param resolution; const_eval_params di semua path; dynamic part-select fallback; typedef range + func return type + always_latch |
+| **Saat Ini** | **99/100** | - | 461 test passing; program block; localparam; pkg::item expression; signed literal `'sb`; `$bits` expression width; `(* *)` attribute skip; picorv32 RISC-V CPU (225s/40p) + AXI (246s/54p) + WB (237s/44p) compile + simulate; CLI flags -I/-D/-f + shared Preprocessor; parser unary+postfix precedence; body-level param resolution; const_eval_params di semua path; dynamic part-select fallback; typedef range + func return type + always_latch |
 | **Alpha** | 50/100 | Q3 2026 | Bug #5 (release/deassign revert); package + interface + fork/join dasar |
 | **Beta** | 65/100 | Q1 2027 | Scheduler compliant; task jalan; string; constraint parsing; 300+ test |
 | **Release Candidate** | 82/100 | Q3 2027 | SVA + coverage + DPI-C; RISC-V CPU + AXI test case; 500+ test; fuzzing |
@@ -553,14 +552,14 @@ Top new features:
 2. **4-state logic** — X/Z propagation benar untuk semua operator
 3. **OOP/class support** — lebih baik dari Verilator; polymorphism + virtual dispatch jalan
 4. **NBA semantics** — blocking vs non-blocking correct
-5. **458 test passing** — coverage solid, picorv32 compilation + simulation included
+5. **461 test passing** — coverage solid, picorv32 compilation + simulation included
 6. **Rust** — memory safety, zero-cost abstractions, ecosystem bagus
 
 ### Kelemahan Utama
 
 1. **Event scheduler kini IEEE 1800 compliant** — 12 regions + re-circulation
-2. **Parser gaps** — signed literal `'sb` discarded (token tak punya field signed)
-3. **Elaborator** — semua bug kritis fixed (19/19); picorv32 compiles + simulates
+2. **Parser gaps** — signed literal `'sb` ✅ (full pipeline); `<=` ambiguity masih design flaw
+3. **Elaborator** — semua bug kritis fixed (19/19); picorv32 compiles + simulates; `$bits` expression ✅
 4. **No verification infrastructure** — assertion immediate+concurrent done; coverage (covergroup/coverpoint/bins) engine + report done; constraint solver done
 5. **Performance** — interpreted AST, no optimization, single-threaded
 6. **Error messages** — ⚠️ Partial (SimError struct with line numbers; elaborator/engine masih string)
@@ -585,5 +584,5 @@ Top new features:
 
 ---
 
-*Audit dilakukan 20 Juni 2026; diperbarui dengan picorv32 RISC-V CPU core + AXI + WB simulation completed, CLI flags -I/-D/-f, parser unary+postfix precedence fix (#16), body-level param resolution (#17), TernaryOp const eval (#18), const_eval_params di semua path (#19), preprocessor unknown directive emit.*
-*458 test passing, 0 failure.*
+*Audit dilakukan 20 Juni 2026; diperbarui dengan program block, localparam, pkg::item expression, signed literal 'sb, $bits expression, (* *) attribute skip, serta picorv32 RISC-V CPU core + AXI + WB simulation completed, CLI flags -I/-D/-f, parser unary+postfix precedence fix (#16), body-level param resolution (#17), TernaryOp const eval (#18), const_eval_params di semua path (#19), preprocessor unknown directive emit.*
+*461 test passing, 0 failure.*

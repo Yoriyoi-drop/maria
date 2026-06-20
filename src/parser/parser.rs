@@ -73,6 +73,7 @@ impl Parser {
         let mut classes = Vec::new();
         let mut packages = Vec::new();
         let mut interfaces = Vec::new();
+        let mut unit_imports = Vec::new();
         // First pass: collect all class names
         let saved_pos = self.pos;
         while self.peek() != &Token::Eof {
@@ -96,6 +97,13 @@ impl Parser {
                 self.parse_program_fast()?;
             } else if self.peek() == &Token::Package {
                 self.parse_package_decl()?;
+            } else if self.peek() == &Token::Import {
+                // Skip import statements in first pass
+                self.advance();
+                while self.peek() != &Token::Semi && self.peek() != &Token::Eof {
+                    self.advance();
+                }
+                if self.peek() == &Token::Semi { self.advance(); }
             } else {
                 let line = self.peek_line();
                 return Err(format!("line {}: expected module, interface, or class, found {}", line, self.peek()));
@@ -127,13 +135,26 @@ impl Parser {
                     let m = self.parse_module()?;
                     modules.push(m);
                 }
+                Token::Import => {
+                    self.advance();
+                    let pkg = self.expect_ident()?;
+                    self.expect(Token::Scope)?;
+                    let item = if self.peek() == &Token::Star {
+                        self.advance();
+                        "*".to_string()
+                    } else {
+                        self.expect_ident()?
+                    };
+                    self.skip_semi();
+                    unit_imports.push((pkg, item));
+                }
                 _ => {
                     let line = self.peek_line();
                     return Err(format!("line {}: expected module, interface, class, or package, found {}", line, self.peek()));
                 }
             }
         }
-        Ok(Design { modules, classes, packages, interfaces, top_module: None })
+        Ok(Design { modules, classes, packages, interfaces, top_module: None, unit_imports })
     }
 
     fn parse_package_decl(&mut self) -> Result<PackageDecl, String> {
@@ -181,6 +202,31 @@ impl Parser {
                             self.typedef_names.push(td.name.clone());
                             self.package_tdefs.entry(name.clone()).or_default().push(td.name.clone());
                             items.push(PackageItem::Typedef(td));
+                        }
+                        Token::Import => {
+                            self.advance();
+                            let pkg = self.expect_ident()?;
+                            self.expect(Token::Scope)?;
+                            let item = if self.peek() == &Token::Star {
+                                self.advance();
+                                "*".to_string()
+                            } else {
+                                self.expect_ident()?
+                            };
+                            // Register imported typedef names
+                            if let Some(tdefs) = self.package_tdefs.get(&pkg) {
+                                if item == "*" {
+                                    for name in tdefs {
+                                        if !self.typedef_names.contains(name) {
+                                            self.typedef_names.push(name.clone());
+                                        }
+                                    }
+                                } else if tdefs.contains(&item) && !self.typedef_names.contains(&item) {
+                                    self.typedef_names.push(item.clone());
+                                }
+                            }
+                            self.skip_semi();
+                            items.push(PackageItem::Import { package: pkg, item });
                         }
                         _ => {
                             let decl = self.parse_decl()?;

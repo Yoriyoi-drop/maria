@@ -19,7 +19,8 @@ pub struct Elaborator {
 
 impl Elaborator {
     pub fn new(design: Design) -> Self {
-        let mut package_symbols = HashMap::new();
+        let mut package_symbols: HashMap<String, HashMap<String, PackageItem>> = HashMap::new();
+        // First pass: collect directly declared items
         for pkg in &design.packages {
             let mut items = HashMap::new();
             for item in &pkg.items {
@@ -31,10 +32,42 @@ impl Elaborator {
                     PackageItem::Decl(d) => {
                         d.names.first().map(|v| v.name.clone()).unwrap_or_default()
                     }
+                    PackageItem::Import { .. } => continue,
                 };
                 items.insert(name, item.clone());
             }
             package_symbols.insert(pkg.name.clone(), items);
+        }
+        // Second pass: resolve imports within packages
+        let imports: Vec<(String, String, String)> = design.packages.iter()
+            .flat_map(|pkg| {
+                pkg.items.iter().filter_map(|item| {
+                    if let PackageItem::Import { package, item: import_item } = item {
+                        Some((pkg.name.clone(), package.clone(), import_item.clone()))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+        for (pkg_name, source_pkg_name, import_item) in imports {
+            let source_items = package_symbols.get(&source_pkg_name).cloned();
+            if let Some(source_items) = source_items {
+                if let Some(pkg_items) = package_symbols.get_mut(&pkg_name) {
+                    let names: Vec<String> = if import_item == "*" {
+                        source_items.keys().cloned().collect()
+                    } else {
+                        vec![import_item]
+                    };
+                    for name in names {
+                        if let Some(source_item) = source_items.get(&name) {
+                            if !pkg_items.contains_key(&name) {
+                                pkg_items.insert(name, source_item.clone());
+                            }
+                        }
+                    }
+                }
+            }
         }
         Elaborator {
             design,
@@ -298,6 +331,30 @@ impl Elaborator {
                                     type_param_overrides: &HashMap<String, usize>) -> Result<IrModule, String> {
         let mut effective_params = param_vals.clone();
 
+        // Process $unit imports
+        for (package, import_item) in &self.design.unit_imports {
+            if let Some(pkg_items) = self.package_symbols.get(package) {
+                let names: Vec<&str> = if import_item == "*" {
+                    pkg_items.keys().map(|s| s.as_str()).collect()
+                } else {
+                    vec![import_item.as_str()]
+                };
+                for name in names {
+                    if let Some(pkg_item) = pkg_items.get(name) {
+                        if let PackageItem::Param(p) = pkg_item {
+                            if !effective_params.contains_key(&p.name) {
+                                if let Some(expr) = &p.default {
+                                    if let Ok(val) = const_eval_with_params(expr, &effective_params) {
+                                        effective_params.insert(p.name.clone(), val);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Process package imports: add package parameters to effective_params
         for item in &module.items {
             if let ModuleItem::Import { package, item: import_item } = item {
@@ -346,7 +403,24 @@ impl Elaborator {
                 self.typedef_map.insert(td.name.clone(), width);
             }
         }
-
+        // Pre-pass: process $unit imports for typedefs
+        for (package, import_item) in &self.design.unit_imports {
+            if let Some(pkg_items) = self.package_symbols.get(package) {
+                let names: Vec<&str> = if import_item == "*" {
+                    pkg_items.keys().map(|s| s.as_str()).collect()
+                } else {
+                    vec![import_item.as_str()]
+                };
+                for name in names {
+                    if let Some(pkg_item) = pkg_items.get(name) {
+                        if let PackageItem::Typedef(td) = pkg_item {
+                            let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
+                            self.typedef_map.insert(td.name.clone(), width);
+                        }
+                    }
+                }
+            }
+        }
         // Pre-pass: process package imports for typedefs before declaration processing
         for item in &module.items {
             if let ModuleItem::Import { package, item: import_item } = item {
@@ -1004,6 +1078,49 @@ impl Elaborator {
             // Map port connections
             for (port_name, &parent_sig) in &inst.port_map {
                 if let Some(child_sig) = child.signals.iter().position(|s| s.name == *port_name) {
+                    let child_width = child.signals[child_sig].width;
+                    let parent_width = top.signals[parent_sig].elem_width;
+                    if child_width != parent_width {
+                        return Err(format!(
+                            "port width mismatch on instance '{}': port '{}' expects width {}, connected signal '{}' has width {}",
+                            inst.instance_name, port_name, child_width,
+                            top.signals[parent_sig].name, parent_width
+                        ));
+                    }
+                    // Port type checking: inout must connect to tri
+                    if child.signals[child_sig].kind == SignalKind::Inout
+                        && top.signals[parent_sig].net_type != NetType::Tri
+                    {
+                        return Err(format!(
+                            "port type mismatch on instance '{}': inout port '{}' must connect to a tri signal, but '{}' has net type {:?}",
+                            inst.instance_name, port_name,
+                            top.signals[parent_sig].name,
+                            top.signals[parent_sig].net_type
+                        ));
+                    }
+                    // Add hierarchical alias for port connections
+                    let hier_name = format!("{}.{}", inst.instance_name, port_name);
+                    let parent_info = top.signals[parent_sig].clone();
+                    top.signals.push(SignalInfo {
+                        name: hier_name,
+                        width: parent_info.width,
+                        kind: parent_info.kind.clone(),
+                        net_type: parent_info.net_type,
+                        multi_driver: parent_info.multi_driver,
+                        init_val: parent_info.init_val.clone(),
+                        array_depth: parent_info.array_depth,
+                        elem_width: parent_info.elem_width,
+                        class_name: parent_info.class_name.clone(),
+                        is_string: parent_info.is_string,
+                        is_mailbox: parent_info.is_mailbox,
+                        is_semaphore: parent_info.is_semaphore,
+                        is_real: parent_info.is_real,
+                        is_2state: parent_info.is_2state,
+                        is_dynamic: parent_info.is_dynamic,
+                        is_queue: parent_info.is_queue,
+                        msb: parent_info.msb,
+                        lsb: parent_info.lsb,
+                    });
                     sig_remap[child_sig] = Some(parent_sig);
                 }
             }
@@ -2136,11 +2253,14 @@ impl Elaborator {
                     }
                     "$bits" => {
                         if let Some(arg) = args.first() {
-                            let sig_id = resolve_expr_signal(arg, signal_map)
-                                .ok_or_else(|| "$bits argument must resolve to a signal".to_string())?;
-                            let info = &signals[sig_id];
-                            let total = info.width * if info.array_depth > 0 { info.array_depth } else { 1 };
-                            Ok(IrExpr::Const(LogicVec::from_u64(total as u64, 32)))
+                            let width = resolve_expr_signal(arg, signal_map)
+                                .map(|sig_id| {
+                                    let info = &signals[sig_id];
+                                    info.width * if info.array_depth > 0 { info.array_depth } else { 1 }
+                                })
+                                .or_else(|| compute_expr_width(arg, signal_map, signals, &self.param_vals).ok())
+                                .ok_or_else(|| "$bits argument must resolve to a signal or computable expression".to_string())?;
+                            Ok(IrExpr::Const(LogicVec::from_u64(width as u64, 32)))
                         } else {
                             Err("$bits requires one argument".to_string())
                         }
@@ -2223,13 +2343,19 @@ impl Elaborator {
                     args: ir_args?,
                 })
             }
-            Expr::MemberAccess { obj, field } => {
-                let ir_obj = self.elaborate_expr(obj, signal_map, signals)?;
-                Ok(IrExpr::MemberAccess {
-                    obj: Box::new(ir_obj),
-                    field: field.clone(),
-                })
+        Expr::MemberAccess { obj, field } => {
+            // Try to resolve as hierarchical signal reference first
+            let hier_name = Self::build_hier_name(obj, field);
+            if let Some(&sig_id) = signal_map.get(&hier_name) {
+                return Ok(IrExpr::Signal(sig_id, 0));
             }
+            // Fall back to struct/class member access
+            let ir_obj = self.elaborate_expr(obj, signal_map, signals)?;
+            Ok(IrExpr::MemberAccess {
+                obj: Box::new(ir_obj),
+                field: field.clone(),
+            })
+        }
             Expr::Null => Ok(IrExpr::Const(LogicVec::from_u64(0, 64))),
             Expr::Inside { expr: inner, .. } => {
                 // Inside expression - elaborate as case equality with first element
@@ -2990,6 +3116,93 @@ fn resolve_expr_signal(expr: &Expr, signal_map: &HashMap<String, SignalId>) -> O
         Expr::MethodCall { .. } => None,
         Expr::MemberAccess { .. } => None,
         _ => None,
+    }
+}
+
+fn compute_expr_width(expr: &Expr, signal_map: &HashMap<String, SignalId>,
+                      signals: &[SignalInfo], param_vals: &HashMap<String, i64>) -> Result<usize, String> {
+    match expr {
+        Expr::Ident(name) => {
+            if let Some(sig_id) = signal_map.get(name) {
+                let info = &signals[*sig_id];
+                Ok(info.width * if info.array_depth > 0 { info.array_depth } else { 1 })
+            } else if let Some(&val) = param_vals.get(name) {
+                let abs = val.unsigned_abs();
+                Ok(if val == 0 { 1 } else { 64 - (abs.leading_zeros() as usize) }.max(1))
+            } else {
+                Err(format!("cannot determine width of '{}'", name))
+            }
+        }
+        Expr::Value(v) => {
+            match v {
+                Value::Binary { width, .. } => Ok(width.unwrap_or(1)),
+                Value::Hex { width, .. } => Ok(width.unwrap_or(1)),
+                Value::Octal { width, .. } => Ok(width.unwrap_or(1)),
+                Value::Decimal(_) => Ok(32),
+                Value::Real(_) => Ok(64),
+            }
+        }
+        Expr::FillLit(_) => Ok(1),
+        Expr::FuncCall { name, .. } => {
+            if let Some(width) = param_vals.get(name) {
+                let abs = width.unsigned_abs();
+                Ok(if *width == 0 { 1 } else { 64 - (abs.leading_zeros() as usize) }.max(1))
+            } else {
+                Err(format!("cannot determine width of function '{}'", name))
+            }
+        }
+        Expr::Paren(inner) => compute_expr_width(inner, signal_map, signals, param_vals),
+        Expr::UnaryOp { op, expr: inner } => {
+            match op {
+                UnaryOp::ReductionAnd | UnaryOp::ReductionNand | UnaryOp::ReductionOr
+                | UnaryOp::ReductionNor | UnaryOp::ReductionXor | UnaryOp::ReductionXnor
+                | UnaryOp::Not => Ok(1),
+                _ => compute_expr_width(inner, signal_map, signals, param_vals),
+            }
+        }
+        Expr::BinaryOp { lhs, rhs, .. } => {
+            let lw = compute_expr_width(lhs, signal_map, signals, param_vals)?;
+            let rw = compute_expr_width(rhs, signal_map, signals, param_vals)?;
+            Ok(lw.max(rw))
+        }
+        Expr::Concat(items) => {
+            let mut total = 0;
+            for item in items {
+                total += compute_expr_width(item, signal_map, signals, param_vals)?;
+            }
+            Ok(total)
+        }
+        Expr::Replicate { count, expr: inner } => {
+            let c = const_eval_with_params(count, param_vals).unwrap_or(1) as usize;
+            let w = compute_expr_width(inner, signal_map, signals, param_vals)?;
+            Ok(c * w)
+        }
+        Expr::TernaryOp { true_expr, false_expr, .. } => {
+            let tw = compute_expr_width(true_expr, signal_map, signals, param_vals)?;
+            let fw = compute_expr_width(false_expr, signal_map, signals, param_vals)?;
+            Ok(tw.max(fw))
+        }
+        Expr::RangeSelect { msb, lsb, .. } => {
+            if let (Ok(m), Ok(l)) = (const_eval_with_params(msb, param_vals), const_eval_with_params(lsb, param_vals)) {
+                Ok((m.abs_diff(l) + 1) as usize)
+            } else {
+                Err("dynamic range select width not computable at compile time".to_string())
+            }
+        }
+        Expr::BitSelect { .. } => Ok(1),
+        Expr::PartSelect { width, .. } => {
+            Ok(const_eval_with_params(width, param_vals).unwrap_or(1) as usize)
+        }
+        Expr::MemberAccess { obj, .. } => {
+            compute_expr_width(obj, signal_map, signals, param_vals)
+        }
+        Expr::MethodCall { .. } | Expr::Cast { .. } | Expr::StreamingConcat { .. } => {
+            Err("width not computable for this expression type".to_string())
+        }
+        Expr::ScopedIdent { package, item } => {
+            Err(format!("cannot determine width of '{}.{}' at compile time", package, item))
+        }
+        _ => Err("cannot determine width of expression".to_string()),
     }
 }
 

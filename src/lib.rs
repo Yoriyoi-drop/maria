@@ -4004,7 +4004,7 @@ endmodule
     fn test_inout_basic_parse() {
         let source = r#"
 module top;
-    wire w;
+    tri w;
     driver u1(.port(w));
     initial #1 $finish;
 endmodule
@@ -4042,7 +4042,7 @@ endmodule
         let source = r#"
 module top;
     reg [1:0] drv_val;
-    wire w;
+    tri w;
     bus_driver u1(.val(drv_val), .bus(w));
     initial begin
         drv_val = 0;
@@ -4444,7 +4444,7 @@ endmodule
 
     #[test]
     fn test_elab_err_bits_nonsignal_arg() {
-        assert!(compile_str("module top; initial a = $bits(42); endmodule").is_err());
+        assert!(compile_str("module top; logic a; initial a = $bits(a.len()); endmodule").is_err());
     }
 
     // ===== Category 11: always_comb / always_latch / always with @ edge =====

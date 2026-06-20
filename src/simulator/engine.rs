@@ -2350,6 +2350,12 @@ impl SimulationEngine {
                 self.execute_method(obj_id, method, &arg_vals)
             }
             Expr::MemberAccess { obj, field } => {
+                // Try hierarchical signal reference first
+                let hier_name = Self::build_hier_name(obj, field);
+                if let Some(sig_id) = self.find_signal(&hier_name) {
+                    return Ok(self.state.read_signal(sig_id).clone());
+                }
+                // Fall back to object field access (class objects)
                 let obj_val = self.evaluate_ast_expr(obj)?;
                 let obj_id = obj_val.to_u64() as ObjId;
                 let obj_data = self.state.get_object(obj_id)
@@ -2439,6 +2445,16 @@ impl SimulationEngine {
 
     fn find_signal(&self, name: &str) -> Option<usize> {
         self.design.top.signals.iter().position(|s| s.name == name)
+    }
+
+    fn build_hier_name(obj: &Expr, field: &str) -> String {
+        match obj {
+            Expr::Ident(prefix) => format!("{}.{}", prefix, field),
+            Expr::MemberAccess { obj: inner, field: inner_field } => {
+                format!("{}.{}", Self::build_hier_name(inner, inner_field), field)
+            }
+            _ => String::new(),
+        }
     }
 
     fn evaluate_ast_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
