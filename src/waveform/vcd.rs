@@ -129,6 +129,7 @@ impl VcdWriter {
         }
 
         for (bare_name, width, array_depth) in sigs {
+            if *width == 0 { continue; }  // skip dynamic/queue arrays before allocation
             if *array_depth > 1 {
                 for elem in 0..*array_depth {
                     let code = format!("s{:x}", entry_idx);

@@ -553,7 +553,7 @@ impl Lexer {
                 }
                 // Read the value part
                 while let Some(c) = self.peek() {
-                    if c.is_ascii_alphanumeric() || c == '_' || c == 'x' || c == 'z' || c == 'X' || c == 'Z' {
+                    if c.is_ascii_alphanumeric() || c == '_' || c == 'x' || c == 'z' || c == 'X' || c == 'Z' || c == '?' {
                         s.push(self.advance());
                     } else {
                         break;
@@ -633,7 +633,7 @@ impl Lexer {
         };
 
         Token::Number {
-            value: value_part.replace('_', ""),
+            value: value_part.replace('_', "").replace('?', "z"),
             base,
             width,
             is_signed,

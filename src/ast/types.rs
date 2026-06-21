@@ -334,6 +334,15 @@ pub fn const_eval_with_params(expr: &Expr, param_vals: &HashMap<String, i64>) ->
         Expr::Paren(inner) => const_eval_with_params(inner, param_vals),
         Expr::MethodCall { .. } => Err("method calls not allowed in constant expression".to_string()),
         Expr::MemberAccess { .. } => Err("member access not allowed in constant expression".to_string()),
+        Expr::Inside { expr: inner, range_list } => {
+            let val = const_eval_with_params(inner, param_vals)?;
+            for item in range_list {
+                if const_eval_with_params(item, param_vals)? == val {
+                    return Ok(1);
+                }
+            }
+            Ok(0)
+        }
         _ => Err(format!("non-constant expression in parameter context: {:?}", expr)),
     }
 }
@@ -417,6 +426,7 @@ pub struct StructMember {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DataType {
+    Void,
     Bit,
     Logic,
     Int,
@@ -445,6 +455,7 @@ pub enum DataType {
 impl std::fmt::Display for DataType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            DataType::Void => write!(f, "void"),
             DataType::Bit => write!(f, "bit"),
             DataType::Logic => write!(f, "logic"),
             DataType::Int => write!(f, "int"),

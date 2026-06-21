@@ -160,6 +160,7 @@ pub struct SignalInfo {
     pub init_val: LogicVec,
     pub array_depth: usize,
     pub elem_width: usize,
+    pub array_dims: Vec<usize>,
     pub class_name: Option<String>,
     pub is_string: bool,
     pub is_real: bool,
@@ -451,6 +452,14 @@ pub enum IrExpr {
         return_width: usize,
     },
     HierRef(String),
+    Inside {
+        expr: Box<IrExpr>,
+        list: Vec<IrExpr>,
+    },
+    Cast {
+        width: usize,
+        expr: Box<IrExpr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -613,6 +622,11 @@ impl LogicVec {
             }
         }
         true
+    }
+
+    pub fn case_eq(&self, other: &LogicVec) -> LogicVec {
+        let eq = self.bits == other.bits;
+        LogicVec::from_u64(if eq { 1 } else { 0 }, 1)
     }
 }
 

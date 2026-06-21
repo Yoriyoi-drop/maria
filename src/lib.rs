@@ -2220,6 +2220,25 @@ endmodule
     }
 
     #[test]
+    fn test_dynamic_array_new_size() {
+        let source = r#"
+module tb;
+    int d[];
+    reg [31:0] sz;
+    initial begin
+        d = new[5];
+        sz = d.size();
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let sz = sigs.iter().find(|(n, _)| n == "sz")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(sz, 5, "dynamic array size should be 5 after new[5]");
+    }
+
+    #[test]
     fn test_queue_push_pop() {
         let source = r#"
 module tb;
@@ -2261,6 +2280,219 @@ endmodule
     }
 
     #[test]
+    fn test_queue_push_front() {
+        let source = r#"
+module tb;
+    int q[$];
+    reg [31:0] val;
+    initial begin
+        q.push_back(10);
+        q.push_back(20);
+        q.push_front(5);
+        val = q.pop_front();
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let val = sigs.iter().find(|(n, _)| n == "val")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(val, 5, "queue push_front then pop_front should return 5");
+    }
+
+    #[test]
+    fn test_queue_pop_back() {
+        let source = r#"
+module tb;
+    int q[$];
+    reg [31:0] val;
+    initial begin
+        q.push_back(10);
+        q.push_back(20);
+        q.push_back(30);
+        val = q.pop_back();
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let val = sigs.iter().find(|(n, _)| n == "val")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(val, 30, "pop_back should return last element 30");
+    }
+
+    #[test]
+    fn test_queue_exists() {
+        let source = r#"
+module tb;
+    int q[$];
+    reg [31:0] exists_0;
+    reg [31:0] exists_5;
+    initial begin
+        q.push_back(10);
+        q.push_back(20);
+        q.push_back(30);
+        exists_0 = q.exists(0);
+        exists_5 = q.exists(5);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let e0 = sigs.iter().find(|(n, _)| n == "exists_0")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        let e5 = sigs.iter().find(|(n, _)| n == "exists_5")
+            .map(|(_, v)| v.to_u64()).unwrap_or(99);
+        assert_eq!(e0, 1, "exists(0) should be 1 for element at index 0");
+        assert_eq!(e5, 0, "exists(5) should be 0 for index out of range");
+    }
+
+    #[test]
+    fn test_queue_delete_index() {
+        let source = r#"
+module tb;
+    int q[$];
+    reg [31:0] v0;
+    reg [31:0] v1;
+    reg [31:0] sz;
+    initial begin
+        q.push_back(10);
+        q.push_back(20);
+        q.push_back(30);
+        q.delete(1);
+        sz = q.size();
+        v0 = q.pop_front();
+        v1 = q.pop_front();
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let sz = sigs.iter().find(|(n, _)| n == "sz")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        let v0 = sigs.iter().find(|(n, _)| n == "v0")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        let v1 = sigs.iter().find(|(n, _)| n == "v1")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(sz, 2, "size should be 2 after delete(1)");
+        assert_eq!(v0, 10, "first element should still be 10");
+        assert_eq!(v1, 30, "second element should be 30 (index 1 deleted)");
+    }
+
+    #[test]
+    fn test_array_insert() {
+        let source = r#"
+module tb;
+    int q[$];
+    reg [31:0] v0;
+    reg [31:0] v1;
+    reg [31:0] v2;
+    initial begin
+        q.push_back(10);
+        q.push_back(30);
+        q.insert(1, 20);
+        v0 = q.pop_front();
+        v1 = q.pop_front();
+        v2 = q.pop_front();
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let v0 = sigs.iter().find(|(n, _)| n == "v0").map(|(_, v)| v.to_u64()).unwrap_or(0);
+        let v1 = sigs.iter().find(|(n, _)| n == "v1").map(|(_, v)| v.to_u64()).unwrap_or(0);
+        let v2 = sigs.iter().find(|(n, _)| n == "v2").map(|(_, v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(v0, 10, "insert: first element should be 10");
+        assert_eq!(v1, 20, "insert: inserted element should be 20");
+        assert_eq!(v2, 30, "insert: third element should be 30");
+    }
+
+    #[test]
+    fn test_array_reverse() {
+        let source = r#"
+module tb;
+    int q[$];
+    reg [31:0] v0;
+    reg [31:0] v1;
+    reg [31:0] v2;
+    initial begin
+        q.push_back(10);
+        q.push_back(20);
+        q.push_back(30);
+        q.reverse();
+        v0 = q.pop_front();
+        v1 = q.pop_front();
+        v2 = q.pop_front();
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let v0 = sigs.iter().find(|(n, _)| n == "v0").map(|(_, v)| v.to_u64()).unwrap_or(0);
+        let v1 = sigs.iter().find(|(n, _)| n == "v1").map(|(_, v)| v.to_u64()).unwrap_or(0);
+        let v2 = sigs.iter().find(|(n, _)| n == "v2").map(|(_, v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(v0, 30, "reverse: first should be 30");
+        assert_eq!(v1, 20, "reverse: second should be 20");
+        assert_eq!(v2, 10, "reverse: third should be 10");
+    }
+
+    #[test]
+    fn test_array_sort() {
+        let source = r#"
+module tb;
+    int q[$];
+    reg [31:0] v0;
+    reg [31:0] v1;
+    reg [31:0] v2;
+    initial begin
+        q.push_back(30);
+        q.push_back(10);
+        q.push_back(20);
+        q.sort();
+        v0 = q.pop_front();
+        v1 = q.pop_front();
+        v2 = q.pop_front();
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let v0 = sigs.iter().find(|(n, _)| n == "v0").map(|(_, v)| v.to_u64()).unwrap_or(0);
+        let v1 = sigs.iter().find(|(n, _)| n == "v1").map(|(_, v)| v.to_u64()).unwrap_or(0);
+        let v2 = sigs.iter().find(|(n, _)| n == "v2").map(|(_, v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(v0, 10, "sort: first should be 10");
+        assert_eq!(v1, 20, "sort: second should be 20");
+        assert_eq!(v2, 30, "sort: third should be 30");
+    }
+
+    #[test]
+    fn test_array_rsort() {
+        let source = r#"
+module tb;
+    int q[$];
+    reg [31:0] v0;
+    reg [31:0] v1;
+    reg [31:0] v2;
+    initial begin
+        q.push_back(10);
+        q.push_back(30);
+        q.push_back(20);
+        q.rsort();
+        v0 = q.pop_front();
+        v1 = q.pop_front();
+        v2 = q.pop_front();
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let v0 = sigs.iter().find(|(n, _)| n == "v0").map(|(_, v)| v.to_u64()).unwrap_or(0);
+        let v1 = sigs.iter().find(|(n, _)| n == "v1").map(|(_, v)| v.to_u64()).unwrap_or(0);
+        let v2 = sigs.iter().find(|(n, _)| n == "v2").map(|(_, v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(v0, 30, "rsort: first should be 30");
+        assert_eq!(v1, 20, "rsort: second should be 20");
+        assert_eq!(v2, 10, "rsort: third should be 10");
+    }
     fn test_sformatf_basic() {
         let source = r#"
 module tb;
@@ -6211,5 +6443,142 @@ endmodule
         let sigs = simulate_signals(source, 10).unwrap();
         let (_, val) = sigs.iter().find(|(n,_)| n == "failed").unwrap();
         assert_eq!(val.to_u64(), 1, "wait_order else should fire on out-of-order");
+    }
+
+    #[test]
+    fn test_inside_expression() {
+        let source = r#"
+module tb;
+    int a, b, c, d, e;
+    initial begin
+        a = 5;
+        if (a inside {1, 2, 5, 10}) b = 1; else b = 0;
+        if (a inside {1, 2, 3}) c = 1; else c = 0;
+        if (1 inside {}) d = 1; else d = 0;
+        if (a inside {1, 2, 3}) e = 1; else e = 0;
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 10).unwrap();
+        let (_, b) = sigs.iter().find(|(n,_)| n == "b").unwrap();
+        assert_eq!(b.to_u64(), 1, "5 inside {{1,2,5,10}} should be true");
+        let (_, c) = sigs.iter().find(|(n,_)| n == "c").unwrap();
+        assert_eq!(c.to_u64(), 0, "5 inside {{1,2,3}} should be false");
+        let (_, d) = sigs.iter().find(|(n,_)| n == "d").unwrap();
+        assert_eq!(d.to_u64(), 0, "1 inside {{}} should be false");
+        let (_, e) = sigs.iter().find(|(n,_)| n == "e").unwrap();
+        assert_eq!(e.to_u64(), 0, "5 inside {{1,2,3}} via else");
+    }
+
+    #[test]
+    fn test_automatic_function() {
+        let source = r#"
+module tb;
+    int result;
+    function automatic int add(int a, int b);
+        return a + b;
+    endfunction
+    initial begin
+        result = add(2, 3);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 10).unwrap();
+        let (_, val) = sigs.iter().find(|(n,_)| n == "result").unwrap();
+        assert_eq!(val.to_u64(), 5, "automatic function add(2,3) should be 5");
+    }
+
+    #[test]
+    fn test_static_function() {
+        let source = r#"
+module tb;
+    int result;
+    function static int add(int a, int b);
+        return a + b;
+    endfunction
+    initial begin
+        result = add(3, 4);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 10).unwrap();
+        let (_, val) = sigs.iter().find(|(n,_)| n == "result").unwrap();
+        assert_eq!(val.to_u64(), 7, "static function add(3,4) should be 7");
+    }
+
+    #[test]
+    fn test_bare_function() {
+        let source = r#"
+module tb;
+    int result;
+    function int add(int a, int b);
+        return a + b;
+    endfunction
+    initial begin
+        result = add(4, 5);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 10).unwrap();
+        let (_, val) = sigs.iter().find(|(n,_)| n == "result").unwrap();
+        assert_eq!(val.to_u64(), 9, "bare function add(4,5) should be 9");
+    }
+
+    #[test]
+    fn test_cast_int() {
+        let source = r#"
+module tb;
+    logic [7:0] a;
+    int b;
+    initial begin
+        a = 8'hFF;
+        b = int'(a);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 10).unwrap();
+        let (_, val) = sigs.iter().find(|(n,_)| n == "b").unwrap();
+        assert_eq!(val.to_u64(), 255, "int'(8'hFF) should be 255");
+    }
+
+    #[test]
+    fn test_cast_byte() {
+        let source = r#"
+module tb;
+    int a;
+    byte b;
+    initial begin
+        a = 32'h1234_ABCD;
+        b = byte'(a);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 10).unwrap();
+        let (_, val) = sigs.iter().find(|(n,_)| n == "b").unwrap();
+        assert_eq!(val.to_u64(), 0xCD, "byte'(32'h1234_ABCD) should be 0xCD");
+    }
+
+    #[test]
+    fn test_cast_bit() {
+        let source = r#"
+module tb;
+    logic [7:0] a;
+    logic b;
+    initial begin
+        a = 8'b1010_1010;
+        b = logic'(a);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 10).unwrap();
+        let (_, val) = sigs.iter().find(|(n,_)| n == "b").unwrap();
+        assert_eq!(val.to_u64(), 0, "logic'(8'haa) LSB should be 0");
     }
 }

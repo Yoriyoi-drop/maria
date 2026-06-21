@@ -595,6 +595,12 @@ impl Parser {
                 _ => {}
             }
 
+            // Skip optional type keyword (integer, int, reg, logic, bit)
+            match self.peek() {
+                Token::Integer | Token::Int | Token::Reg | Token::Logic | Token::Bit => { self.advance(); }
+                _ => {}
+            }
+
             // Parse optional range: [msb:lsb]
             let mut range = None;
             if self.peek() == &Token::LBrack {
@@ -1737,9 +1743,13 @@ impl Parser {
 
     fn parse_function(&mut self, virtual_flag: bool) -> Result<FunctionDecl, String> {
         self.advance(); // consume 'function'
+        // Skip optional 'automatic'/'static' qualifier
+        if matches!(self.peek(), Token::Auto | Token::Static) {
+            self.advance();
+        }
         // Parse optional return type
         let return_type = match self.peek() {
-            Token::Void => { self.advance(); Some(Box::new(DataType::Bit)) } // void -> bit placeholder
+            Token::Void => { self.advance(); Some(Box::new(DataType::Void)) }
             Token::Int => { self.advance(); Some(Box::new(DataType::Int)) }
             Token::Integer => { self.advance(); Some(Box::new(DataType::Integer)) }
             Token::String => { self.advance(); Some(Box::new(DataType::String)) }
@@ -1895,6 +1905,10 @@ impl Parser {
 
     fn parse_task(&mut self, virtual_flag: bool) -> Result<TaskDecl, String> {
         self.advance(); // consume 'task'
+        // Skip optional 'automatic'/'static' qualifier
+        if matches!(self.peek(), Token::Auto | Token::Static) {
+            self.advance();
+        }
         let name = self.expect_ident()?;
         let mut ports = Vec::new();
         let mut decls = Vec::new();

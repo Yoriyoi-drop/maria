@@ -2339,6 +2339,19 @@ impl SimulationEngine {
                 val.width = target_w;
             }
             Ok(val)
+        } else if let IrExpr::NewCall { class_name, args } = expr {
+            if class_name.is_empty() && args.len() == 1 {
+                let size_val = self.evaluate_expr(&args[0])?;
+                let size = size_val.to_u64() as usize;
+                if let Some(sig_id) = self.signal_id_from_lvalue(lhs) {
+                    let elem_width = self.design.top.signals[sig_id].elem_width;
+                    Ok(LogicVec::fill(LogicVal::X, size * elem_width))
+                } else {
+                    self.evaluate_expr(expr)
+                }
+            } else {
+                self.evaluate_expr(expr)
+            }
         } else {
             self.evaluate_expr(expr)
         }
@@ -2894,6 +2907,21 @@ impl SimulationEngine {
                     Err(format!("hierarchical signal '{}' not found", name))
                 }
             }
+            IrExpr::Inside { expr, list } => {
+                let val = self.evaluate_expr(expr)?;
+                for item in list {
+                    let item_val = self.evaluate_expr(item)?;
+                    let eq = val.case_eq(&item_val);
+                    if eq == LogicVec::from_u64(1, 1) {
+                        return Ok(LogicVec::from_u64(1, 1));
+                    }
+                }
+                Ok(LogicVec::from_u64(0, 1))
+            }
+            IrExpr::Cast { width, expr } => {
+                let val = self.evaluate_expr(expr)?;
+                Ok(val.resize(*width))
+            }
         }
     }
 
@@ -2903,7 +2931,8 @@ impl SimulationEngine {
                 sanitize_for_2state(&self.design.top.signals, *id, &mut val);
                 let is_str = self.design.top.signals.get(*id).map(|s| s.is_string).unwrap_or(false);
                 let sig_info = self.design.top.signals.get(*id).cloned();
-                let resized = if is_str {
+                let is_dyn = sig_info.as_ref().map(|s| s.is_dynamic || s.is_queue).unwrap_or(false);
+                let resized = if is_str || is_dyn {
                     val
                 } else {
                     let target_width = self.state.read_signal(*id).width;
@@ -3417,9 +3446,16 @@ impl SimulationEngine {
             }
             Expr::Null => Ok(LogicVec::from_u64(0, 64)),
             Expr::FillLit(v) => Ok(LogicVec::fill(*v, 1)),
-            Expr::Inside { expr: inner, .. } => {
-                // Inside expression - evaluate as case equality
-                self.evaluate_ast_expr(inner)
+            Expr::Inside { expr: inner, range_list } => {
+                let val = self.evaluate_ast_expr(inner)?;
+                for item in range_list {
+                    let item_val = self.evaluate_ast_expr(item)?;
+                    let eq = val.case_eq(&item_val);
+                    if eq == LogicVec::from_u64(1, 1) {
+                        return Ok(LogicVec::from_u64(1, 1));
+                    }
+                }
+                Ok(LogicVec::from_u64(0, 1))
             }
             Expr::StreamingConcat { slices, .. } => {
                 if let Some(first) = slices.first() {
@@ -3428,9 +3464,24 @@ impl SimulationEngine {
                     Ok(LogicVec::new(0))
                 }
             }
-            Expr::Cast { expr: inner, .. } => {
-                // Cast is a pass-through during evaluation
-                self.evaluate_ast_expr(inner)
+            Expr::Cast { dtype, expr: inner } => {
+                let val = self.evaluate_ast_expr(inner)?;
+                let cast_width = match crate::elaboration::elaborator::parse_type_spec_str(dtype) {
+                    Some(_) => {
+                        // For AST path, compute width from type string
+                        match dtype.as_str() {
+                            "bit" | "logic" => 1,
+                            "byte" => 8,
+                            "shortint" => 16,
+                            "int" | "integer" => 32,
+                            "longint" | "time" => 64,
+                            "real" | "realtime" => 64,
+                            _ => val.width,
+                        }
+                    }
+                    None => val.width,
+                };
+                Ok(val.resize(cast_width))
             }
             Expr::ScopedIdent { package, item } => {
                 Err(format!("scoped identifier '{}.{}' not resolved at runtime", package, item))
@@ -5251,8 +5302,27 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(count as u64, 32))
             }
             "delete" => {
-                self.state.write_signal(sig_id, LogicVec::new(0));
-                Ok(LogicVec::new(0))
+                if let Some(index_expr) = args.first() {
+                    let idx_val = self.evaluate_expr(index_expr)?;
+                    let idx = idx_val.to_u64() as usize;
+                    let lv = self.state.read_signal(sig_id);
+                    let elem_width = sig.elem_width;
+                    let count = if elem_width > 0 { lv.width / elem_width } else { 0 };
+                    if idx >= count {
+                        return Err(format!("delete index {} out of range (size {})", idx, count));
+                    }
+                    let before = lv.bits[..idx * elem_width].to_vec();
+                    let after = lv.bits[(idx + 1) * elem_width..].to_vec();
+                    let mut remaining = Vec::with_capacity(before.len() + after.len());
+                    remaining.extend(before);
+                    remaining.extend(after);
+                    let new_lv = LogicVec { width: remaining.len(), bits: remaining };
+                    self.state.write_signal(sig_id, new_lv);
+                    Ok(LogicVec::new(0))
+                } else {
+                    self.state.write_signal(sig_id, LogicVec::new(0));
+                    Ok(LogicVec::new(0))
+                }
             }
             "pop_front" => {
                 let lv = self.state.read_signal(sig_id);
@@ -5271,6 +5341,58 @@ impl SimulationEngine {
                 };
                 self.state.write_signal(sig_id, remaining);
                 Ok(result)
+            }
+            "pop_back" => {
+                let lv = self.state.read_signal(sig_id);
+                let elem_width = sig.elem_width;
+                if lv.width < elem_width {
+                    return Err("pop_back on empty queue".to_string());
+                }
+                let start = lv.width - elem_width;
+                let mut bits = Vec::with_capacity(elem_width);
+                for i in start..lv.width {
+                    bits.push(lv.bits.get(i).copied().unwrap_or(LogicVal::X));
+                }
+                let result = LogicVec { width: elem_width, bits };
+                let remaining = LogicVec {
+                    width: lv.width - elem_width,
+                    bits: lv.bits[..start].to_vec(),
+                };
+                self.state.write_signal(sig_id, remaining);
+                Ok(result)
+            }
+            "push_front" => {
+                let arg_val = if let Some(a) = args.first() {
+                    self.evaluate_expr(a)?
+                } else {
+                    return Err("push_front expects 1 argument".to_string());
+                };
+                let elem_width = sig.elem_width;
+                let padded = if arg_val.width >= elem_width {
+                    let bits = arg_val.bits[..elem_width].to_vec();
+                    LogicVec { width: elem_width, bits }
+                } else {
+                    let mut bits = arg_val.bits.clone();
+                    bits.resize(elem_width, LogicVal::X);
+                    LogicVec { width: elem_width, bits }
+                };
+                let mut existing = self.state.read_signal(sig_id).clone();
+                let mut new_bits = Vec::with_capacity(existing.width + elem_width);
+                new_bits.extend(padded.bits.iter().copied());
+                new_bits.extend(existing.bits.iter().copied());
+                existing.bits = new_bits;
+                existing.width += elem_width;
+                self.state.write_signal(sig_id, existing);
+                Ok(LogicVec::new(0))
+            }
+            "exists" => {
+                let index_expr = args.first().ok_or_else(|| "exists expects 1 argument".to_string())?;
+                let idx_val = self.evaluate_expr(index_expr)?;
+                let idx = idx_val.to_u64() as usize;
+                let lv = self.state.read_signal(sig_id);
+                let elem_width = sig.elem_width;
+                let count = if elem_width > 0 { lv.width / elem_width } else { 0 };
+                Ok(LogicVec::from_u64(if idx < count { 1 } else { 0 }, 1))
             }
             "push_back" => {
                 let arg_val = if let Some(a) = args.first() {
@@ -5291,6 +5413,117 @@ impl SimulationEngine {
                 existing.bits.extend(padded.bits.iter().copied());
                 existing.width += elem_width;
                 self.state.write_signal(sig_id, existing);
+                Ok(LogicVec::new(0))
+            }
+            "insert" => {
+                if args.len() < 2 {
+                    return Err("insert expects 2 arguments (index, value)".to_string());
+                }
+                let idx_val = self.evaluate_expr(&args[0])?;
+                let idx = idx_val.to_u64() as usize;
+                let arg_val = self.evaluate_expr(&args[1])?;
+                let elem_width = sig.elem_width;
+                let padded = if arg_val.width >= elem_width {
+                    let bits = arg_val.bits[..elem_width].to_vec();
+                    LogicVec { width: elem_width, bits }
+                } else {
+                    let mut bits = arg_val.bits.clone();
+                    bits.resize(elem_width, LogicVal::X);
+                    LogicVec { width: elem_width, bits }
+                };
+                let mut existing = self.state.read_signal(sig_id).clone();
+                let count = if elem_width > 0 { existing.width / elem_width } else { 0 };
+                let pos = idx.min(count);
+                let mut new_bits = Vec::with_capacity(existing.width + elem_width);
+                new_bits.extend(existing.bits[..pos * elem_width].iter().copied());
+                new_bits.extend(padded.bits.iter().copied());
+                new_bits.extend(existing.bits[pos * elem_width..].iter().copied());
+                existing.bits = new_bits;
+                existing.width += elem_width;
+                self.state.write_signal(sig_id, existing);
+                Ok(LogicVec::new(0))
+            }
+            "reverse" => {
+                let mut lv = self.state.read_signal(sig_id).clone();
+                let elem_width = sig.elem_width;
+                if elem_width > 0 {
+                    let count = lv.width / elem_width;
+                    let mut new_bits = Vec::with_capacity(lv.width);
+                    for i in (0..count).rev() {
+                        for j in 0..elem_width {
+                            new_bits.push(lv.bits[i * elem_width + j]);
+                        }
+                    }
+                    lv.bits = new_bits;
+                }
+                self.state.write_signal(sig_id, lv);
+                Ok(LogicVec::new(0))
+            }
+            "sort" => {
+                let lv = self.state.read_signal(sig_id).clone();
+                let elem_width = sig.elem_width;
+                if elem_width > 0 {
+                    let count = lv.width / elem_width;
+                    let mut elems: Vec<LogicVec> = (0..count).map(|i| {
+                        let mut bits = Vec::with_capacity(elem_width);
+                        for j in 0..elem_width {
+                            bits.push(lv.bits[i * elem_width + j]);
+                        }
+                        LogicVec { width: elem_width, bits }
+                    }).collect();
+                    elems.sort_by(|a, b| a.to_u64().cmp(&b.to_u64()));
+                    let mut new_bits = Vec::with_capacity(lv.width);
+                    for e in &elems {
+                        new_bits.extend(e.bits.iter().copied());
+                    }
+                    let sorted = LogicVec { width: lv.width, bits: new_bits };
+                    self.state.write_signal(sig_id, sorted);
+                }
+                Ok(LogicVec::new(0))
+            }
+            "rsort" => {
+                let lv = self.state.read_signal(sig_id).clone();
+                let elem_width = sig.elem_width;
+                if elem_width > 0 {
+                    let count = lv.width / elem_width;
+                    let mut elems: Vec<LogicVec> = (0..count).map(|i| {
+                        let mut bits = Vec::with_capacity(elem_width);
+                        for j in 0..elem_width {
+                            bits.push(lv.bits[i * elem_width + j]);
+                        }
+                        LogicVec { width: elem_width, bits }
+                    }).collect();
+                    elems.sort_by(|a, b| b.to_u64().cmp(&a.to_u64()));
+                    let mut new_bits = Vec::with_capacity(lv.width);
+                    for e in &elems {
+                        new_bits.extend(e.bits.iter().copied());
+                    }
+                    let sorted = LogicVec { width: lv.width, bits: new_bits };
+                    self.state.write_signal(sig_id, sorted);
+                }
+                Ok(LogicVec::new(0))
+            }
+            "shuffle" => {
+                let lv = self.state.read_signal(sig_id).clone();
+                let elem_width = sig.elem_width;
+                if elem_width > 0 {
+                    let count = lv.width / elem_width;
+                    let mut elems: Vec<LogicVec> = (0..count).map(|i| {
+                        let mut bits = Vec::with_capacity(elem_width);
+                        for j in 0..elem_width {
+                            bits.push(lv.bits[i * elem_width + j]);
+                        }
+                        LogicVec { width: elem_width, bits }
+                    }).collect();
+                    use rand::seq::SliceRandom;
+                    elems.shuffle(&mut rand::thread_rng());
+                    let mut new_bits = Vec::with_capacity(lv.width);
+                    for e in &elems {
+                        new_bits.extend(e.bits.iter().copied());
+                    }
+                    let shuffled = LogicVec { width: lv.width, bits: new_bits };
+                    self.state.write_signal(sig_id, shuffled);
+                }
                 Ok(LogicVec::new(0))
             }
             _ => Err(format!("unknown array/queue method: {}", method)),
@@ -5418,6 +5651,15 @@ fn extract_signal_deps_inner(expr: &IrExpr, deps: &mut Vec<SignalId>) {
             }
         }
         IrExpr::HierRef(_) => {}
+        IrExpr::Inside { expr, list } => {
+            extract_signal_deps_inner(expr, deps);
+            for item in list {
+                extract_signal_deps_inner(item, deps);
+            }
+        }
+        IrExpr::Cast { expr, .. } => {
+            extract_signal_deps_inner(expr, deps);
+        }
         IrExpr::Const(_) | IrExpr::FillLit(_) | IrExpr::String(_) | IrExpr::This => {}
     }
 }

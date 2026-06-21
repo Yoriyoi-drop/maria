@@ -159,6 +159,7 @@ impl Elaborator {
                         init_val: if is_real { LogicVec::new(64) } else { LogicVec::fill(LogicVal::Z, 0) },
                         array_depth: 1,
                         elem_width: if is_real { 64 } else { 0 },
+                        array_dims: vec![],
                         class_name: None,
                         is_string: decl.dtype == DataType::String,
                         is_mailbox: false,
@@ -190,6 +191,7 @@ impl Elaborator {
                         init_val: LogicVec::fill(LogicVal::Z, elem_width),
                         array_depth: 1,
                         elem_width,
+                        array_dims: vec![],
                         class_name: None,
                         is_string: false,
                         is_mailbox: false,
@@ -739,6 +741,7 @@ impl Elaborator {
                     init_val,
                     array_depth,
                     elem_width,
+                    array_dims: vec![],
                     class_name: None,
                     is_string: false,
                     is_mailbox: false,
@@ -822,6 +825,7 @@ impl Elaborator {
                         init_val: LogicVec::new(if is_real { 64 } else { 0 }),
                         array_depth: 1,
                         elem_width: if is_real { 64 } else { 0 },
+                        array_dims: vec![],
                         class_name: None,
                         is_string: decl.dtype == DataType::String,
                         is_mailbox: false,
@@ -854,6 +858,7 @@ impl Elaborator {
                         init_val: LogicVec::new(0),
                         array_depth: 0,
                         elem_width,
+                        array_dims: vec![],
                         class_name: None,
                         is_string: false,
                         is_mailbox: false,
@@ -1538,6 +1543,7 @@ impl Elaborator {
                         init_val: sig.init_val.clone(),
                         array_depth: sig.array_depth,
                         elem_width: sig.elem_width,
+                        array_dims: sig.array_dims.clone(),
                         class_name: sig.class_name.clone(),
                         is_string: sig.is_string,
                         is_mailbox: sig.is_mailbox,
@@ -1843,6 +1849,14 @@ impl Elaborator {
                 return_width: *return_width,
             },
             IrExpr::HierRef(name) => IrExpr::HierRef(name.clone()),
+            IrExpr::Inside { expr, list } => IrExpr::Inside {
+                expr: Box::new(self.translate_expr(expr, map_sig)),
+                list: list.iter().map(|e| self.translate_expr(e, map_sig)).collect(),
+            },
+            IrExpr::Cast { width, expr } => IrExpr::Cast {
+                width: *width,
+                expr: Box::new(self.translate_expr(expr, map_sig)),
+            },
         }
     }
 
@@ -2865,9 +2879,13 @@ impl Elaborator {
             }
         }
             Expr::Null => Ok(IrExpr::Const(LogicVec::from_u64(0, 64))),
-            Expr::Inside { expr: inner, .. } => {
-                // Inside expression - elaborate as case equality with first element
-                self.elaborate_expr(inner, signal_map, signals)
+            Expr::Inside { expr: inner, range_list } => {
+                let inner_ir = self.elaborate_expr(inner, signal_map, signals)?;
+                let mut list_ir = Vec::with_capacity(range_list.len());
+                for item in range_list {
+                    list_ir.push(self.elaborate_expr(&item, signal_map, signals)?);
+                }
+                Ok(IrExpr::Inside { expr: Box::new(inner_ir), list: list_ir })
             }
             Expr::StreamingConcat { slices, .. } => {
                 if let Some(first) = slices.first() {
@@ -2876,9 +2894,13 @@ impl Elaborator {
                     Ok(IrExpr::Const(LogicVec::new(0)))
                 }
             }
-            Expr::Cast { expr: inner, .. } => {
-                // Cast is a pass-through during elaboration
-                self.elaborate_expr(inner, signal_map, signals)
+            Expr::Cast { dtype, expr: inner } => {
+                let inner_ir = self.elaborate_expr(inner, signal_map, signals)?;
+                let cast_width = match parse_type_spec_str(dtype) {
+                    Some(dt) => self.resolve_type_width(&dt).unwrap_or(1),
+                    None => 1,
+                };
+                Ok(IrExpr::Cast { width: cast_width, expr: Box::new(inner_ir) })
             }
             Expr::FuncCall { name, args } if name.starts_with("process::") => {
                 let ir_args: Result<Vec<IrExpr>, String> = args.iter()
@@ -3681,6 +3703,15 @@ fn collect_read_signals_expr(expr: &IrExpr, out: &mut Vec<SignalId>) {
             }
         }
         IrExpr::HierRef(_) => {}
+        IrExpr::Inside { expr, list } => {
+            collect_read_signals_expr(expr, out);
+            for item in list {
+                collect_read_signals_expr(item, out);
+            }
+        }
+        IrExpr::Cast { expr, .. } => {
+            collect_read_signals_expr(expr, out);
+        }
     }
 }
 
@@ -3780,7 +3811,18 @@ fn compute_expr_width(expr: &Expr, signal_map: &HashMap<String, SignalId>,
             }
             compute_expr_width(obj, signal_map, signals, param_vals)
         }
-        Expr::MethodCall { .. } | Expr::Cast { .. } | Expr::StreamingConcat { .. } => {
+        Expr::Cast { dtype, .. } => {
+            match parse_type_spec_str(dtype) {
+                Some(dt) => match dt {
+                    DataType::UserDefined(name) => {
+                        param_vals.get(&name).map(|&v| v as usize).ok_or_else(|| format!("unknown type '{}'", name))
+                    }
+                    _ => Ok(dt.width()),
+                },
+                None => Err(format!("unknown type '{}' in cast", dtype)),
+            }
+        }
+        Expr::MethodCall { .. } | Expr::StreamingConcat { .. } => {
             Err("width not computable for this expression type".to_string())
         }
         Expr::ScopedIdent { package, item } => {
@@ -4028,6 +4070,7 @@ impl DataType {
             DataType::EnumType { base: _, members: _ } => 32,
             DataType::StructType { members } => members.iter().map(|m| m.range.as_ref().map(|r| r.width()).unwrap_or(1)).sum(),
             DataType::UnionType { members } => members.iter().map(|m| m.range.as_ref().map(|r| r.width()).unwrap_or(1)).max().unwrap_or(1),
+            DataType::Void => 0,
         }
     }
 }
@@ -4043,7 +4086,7 @@ impl DeclKind {
     }
 }
 
-fn parse_type_spec_str(s: &str) -> Option<DataType> {
+pub(crate) fn parse_type_spec_str(s: &str) -> Option<DataType> {
     match s {
         "bit" => Some(DataType::Bit),
         "logic" => Some(DataType::Logic),

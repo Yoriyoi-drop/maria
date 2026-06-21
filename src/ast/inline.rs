@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use super::expr::Expr;
 use super::stmt::Stmt;
 use super::types::{DataType, Decl, FunctionDecl, Module, ModuleItem};
+use super::expr::Value;
 
 fn func_port_width(func: &FunctionDecl, port_name: &str) -> usize {
     if let Some(port) = func.ports.iter().find(|p| p.name == port_name) {
@@ -31,6 +32,7 @@ fn func_return_width(func: &FunctionDecl) -> usize {
     }
     match &func.return_type {
         Some(inner) => match inner.as_ref() {
+            DataType::Void => 0,
             DataType::Byte => 8,
             DataType::Shortint => 16,
             DataType::Int | DataType::Integer => 32,
@@ -494,16 +496,24 @@ fn replace_func_calls_in_expr(
                 let c = *counter;
                 *counter += 1;
 
-                let ret_name = format!("__func_{}_{}_{}_result", prefix, name, c);
                 let ret_width = func_return_width(func);
-                temp_signals.push((ret_name.clone(), ret_width));
+                let is_void = ret_width == 0;
+                let ret_name = if !is_void {
+                    let rn = format!("__func_{}_{}_{}_result", prefix, name, c);
+                    temp_signals.push((rn.clone(), ret_width));
+                    Some(rn)
+                } else {
+                    None
+                };
 
                 let new_args: Vec<Expr> = args.into_iter()
                     .map(|a| replace_func_calls_in_expr(a, funcs, prefix, counter, preamble, temp_signals))
                     .collect();
 
                 let mut rename_map: HashMap<String, String> = HashMap::new();
-                rename_map.insert(name.clone(), ret_name.clone());
+                if let Some(ref rn) = ret_name {
+                    rename_map.insert(name.clone(), rn.clone());
+                }
 
                 let orig_args: Vec<Expr> = new_args.clone();
 
@@ -567,6 +577,16 @@ fn replace_func_calls_in_expr(
 
                 for func_stmt in &func.stmts {
                     let mut renamed = rename_in_stmt(func_stmt, &rename_map);
+                    // Convert Return(expr) to assignment to result signal
+                    if let Some(ref rn) = ret_name {
+                        if let Stmt::Return(Some(expr)) = &renamed {
+                            renamed = Stmt::BlockingAssign {
+                                lhs: Expr::Ident(rn.clone()),
+                                rhs: *expr.clone(),
+                                delay: None,
+                            };
+                        }
+                    }
                     renamed = rename_func_decls_in_stmt(renamed, &rename_map);
                     preamble.push(renamed);
                 }
@@ -588,7 +608,11 @@ fn replace_func_calls_in_expr(
                     }
                 }
 
-                Expr::Ident(ret_name)
+                if let Some(rn) = ret_name {
+                    Expr::Ident(rn)
+                } else {
+                    Expr::Value(Value::Decimal(0))
+                }
             } else {
                 Expr::FuncCall { name, args }
             }
@@ -758,7 +782,10 @@ fn rename_in_stmt(stmt: &Stmt, rename_map: &HashMap<String, String>) -> Stmt {
         Stmt::EventTrigger { name } => Stmt::EventTrigger { name },
         Stmt::Expr { expr } => Stmt::Expr { expr: rename_in_expr(expr, rename_map) },
         Stmt::Null => Stmt::Null,
-        Stmt::Return(expr) => Stmt::Return(expr),
+        Stmt::Return(expr) => {
+            let renamed_expr = expr.map(|e| Box::new(rename_in_expr(*e, rename_map)));
+            Stmt::Return(renamed_expr)
+        }
         Stmt::ForeachLoop { array_var, index_vars, stmts } => Stmt::ForeachLoop {
             array_var,
             index_vars,

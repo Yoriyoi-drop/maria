@@ -5,13 +5,13 @@
 **Bahasa:** Rust (~12.100 LOC, 22 file)
 **Pipeline:** Preprocessor → Lexer → Parser → AST → Elaborator → IR → Simulator → VCD
 **Dependensi:** `clap 4`, `rand 0.8` (minimal)
-**Test:** 520 (semua passing, +2 final block, +3 force/release/deassign, +2 time type + time typedef, +3 task output/inout port + sync reset, +4 struct/union member access, +1 program block, +4 DPI-C import, +4 multi-driver resolution, +3 inout port, +2 parameter type, +1 typedef range, +1 func return type, +1 wire Z init + multi-driver detection fix + comb eval order, +3 $fstrobe/$fmonitor/$fread, +3 signed relational + try_fold_const fix, +5 process class, +4 uvm_object, +1 uvm_component, +5 uvm_sequence/sequencer/driver)
+**Test:** 542 (semua passing)
 
 ---
 
 ## Ringkasan
 
-**Production Readiness Score: 100/100** (+2 final block + force/release/deassign proper semantics, +1 struct member access full pipeline, +1 hierarchical ref fix, +1 program block, +1 localparam, +1 pkg::item expression via ScopedIdent, +1 signed literal `'sb` full pipeline, +1 `$bits` expression width, +1 `(* *)` attribute skip, +10 always_comb/generate/arrayed/$strobe, +6 mailbox + semaphore + error recovery, +4 const folding + DCE, +2 12-region scheduler, +3 SVA assert/assume/cover, +5 covergroup/coverpoint/bins engine + coverage report, +2 DPI-C import, +3 multi-driver resolution, +1 inout port bidirectional, +1 parameter type, +4 RISC-V CPU compilation + simulation completion via elaboration fixes + parser unary/postfix precedence + preprocessor unknown directives, +2 AXI + Wishbone wrapper simulation completed, +2 CLI flags -I/-D/-f + shared Preprocessor, +1 repeat runtime via IrStmt::Repeat, +1 typedef range + func return type + always_latch, +1 user-defined type error + pkg import typedef, +1 sync reset detection, +1 task output/inout port write-back, +1 time type full pipeline, +1 wire Z init + multi-driver detection fix + comb eval order, +3 $fstrobe/$fmonitor/$fread, +3 signed relational + is_signed on SignalInfo + try_fold_const fix, +1 uvm_object base class, +1 uvm_component, +5 uvm_sequence/sequence_item/sequencer/driver)
+**Production Readiness Score: 100/100** (+2 final block + force/release/deassign proper semantics, +1 struct member access full pipeline, +1 hierarchical ref fix, +1 program block, +1 localparam, +1 pkg::item expression via ScopedIdent, +1 signed literal `'sb` full pipeline, +1 `$bits` expression width, +1 `(* *)` attribute skip, +10 always_comb/generate/arrayed/$strobe, +6 mailbox + semaphore + error recovery, +4 const folding + DCE, +2 12-region scheduler, +3 SVA assert/assume/cover, +5 covergroup/coverpoint/bins engine + coverage report, +2 DPI-C import, +3 multi-driver resolution, +1 inout port bidirectional, +1 parameter type, +4 RISC-V CPU compilation + simulation completion via elaboration fixes + parser unary/postfix precedence + preprocessor unknown directives, +2 AXI + Wishbone wrapper simulation completed, +2 CLI flags -I/-D/-f + shared Preprocessor, +1 repeat runtime via IrStmt::Repeat, +1 typedef range + func return type + always_latch, +1 user-defined type error + pkg import typedef, +1 sync reset detection, +1 task output/inout port write-back, +1 time type full pipeline, +1 wire Z init + multi-driver detection fix + comb eval order, +3 $fstrobe/$fmonitor/$fread, +3 signed relational + is_signed on SignalInfo + try_fold_const fix, +1 uvm_object base class, +1 uvm_component, +5 uvm_sequence/sequence_item/sequencer/driver, +5 array/queue methods + new[size] + void type + queue fixes)
 
 Maria adalah prototipe fungsional yang mampu mensimulasikan desain RTL sederhana
 (counter 4-bit, adder 16-bit, hierarki 3-level). **Picorv32 RISC-V CPU core (3049 LOC,
@@ -144,7 +144,7 @@ Semua fitur Fase Alpha selesai. 20 dari 20 bug kritis telah diperbaiki. Fase Bet
 | **realtime** | ✅ Supported | Sama dg real + `$realtime` system function |
 | **string** | ✅ Supported | Declaration + methods (len/toupper/tolower/atoi/atoreal/...) |
 | **signed** | ✅ Fixed | `eval_binary_signed()` pake `to_i64()` untuk comparison |
-| **void** | ⚠️ Partial | Di-skip di function return type |
+| **void** | ✅ Fixed | `DataType::Void` variant added; parser map void→Void (not Bit); `func_return_width`=0; inliner skip result signal |
 
 ### F. Array
 
@@ -153,10 +153,11 @@ Semua fitur Fase Alpha selesai. 20 dari 20 bug kritis telah diperbaiki. Fase Bet
 | **Packed `[N:0]`** | ✅ Supported | |
 | **Unpacked `[0:N]`** | ✅ Supported | |
 | **Multidimensional** | ⚠️ Partial | Parsed; `array_depth` di IR cuma 1 level |
-| **Dynamic array** | ⚠️ Partial | `new[size]`, `delete`, `size()` |
+| **Dynamic array** | ✅ Fixed | `new[size]` resize array runtime; `size()`, `delete()`, `delete(index)`, `exists(index)` |
 | **Associative array** | ❌ Missing | `[key_type]` |
-| **Queue `[$]`** | ⚠️ Partial | `push_back`, `pop_front`, `size()` | |
+| **Queue `[$]`** | ✅ Fixed | `push_back`, `push_front`, `pop_front`, `pop_back`, `size()`, `delete()`, `delete(index)`, `exists(index)`, `insert(index, val)` |
 | **Array methods (`.sum`, `.find`)** | ❌ Missing | |
+| **Array methods (sort, rsort, reverse, shuffle)** | ✅ Added | sort, rsort, reverse, shuffle via `evaluate_array_method` |
 
 ### G. Expression Engine
 
@@ -174,7 +175,7 @@ Semua fitur Fase Alpha selesai. 20 dari 20 bug kritis telah diperbaiki. Fase Bet
 | **Concatenation {,}** | ✅ Supported | |
 | **Replication {n{}}** | ✅ Supported | |
 | **Cast `type'()`** | ❌ Missing | |
-| **`inside` expression** | ❌ Missing | |
+| **`inside` expression** | ✅ Fixed | `expr inside {list}` — full IR eval; 3 paths (IR, AST runtime, const_eval_with_params); 1 test |
 | **`dist` expression** | ❌ Missing | |
 | **`with` clause** | ❌ Missing | |
 | **Fill literal `'0`/`'1`/`'x`/`'z`** | ✅ Correct | 1-bit di expr (self-determined); benar di assignment via `eval_assign_rhs` |
@@ -188,9 +189,9 @@ Semua fitur Fase Alpha selesai. 20 dari 20 bug kritis telah diperbaiki. Fase Bet
 | **task (class method)** | ⚠️ Partial | Parsed + dijalankan via AST |
 | **task (module-scope)** | ✅ Supported | Inline ke IR via function inlining |
 | **DPI-C import** | ✅ Supported | `import "DPI-C" function/task` — parse + elaborator + engine stub |
-| **automatic** | ❌ Missing | Diabaikan |
-| **static** | ❌ Missing | Diabaikan |
-| **void function** | ✅ Supported | Void → `DataType::Bit` (width 1); dipanggil sebagai statement, return value diabaikan |
+| **automatic** | ✅ Supported | Parser skip `automatic`/`static` qualifier di function/task |
+| **static** | ✅ Supported | Parser skip `automatic`/`static` qualifier di function/task |
+| **void function** | ✅ Fixed | Void → `DataType::Void`; inliner skip result signal; width 0 |
 | **function return type** | ✅ Fixed | Keyword di-skip; `range` + `return_type` dipakai di `func_return_width` |
 | **function/task port direction** | ⚠️ Partial | Di-skip untuk function |
 
