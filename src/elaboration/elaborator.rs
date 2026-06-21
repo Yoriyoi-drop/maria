@@ -1,12 +1,22 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::ast::types::const_eval_simple;
 use crate::ast::types::const_eval_with_params;
 use crate::ir::*;
 
+const BUILTIN_UVM_CLASSES: &[&str] = &[
+    "uvm_object", "uvm_component", "uvm_sequence_item", "uvm_sequence",
+    "uvm_sequencer", "uvm_driver", "uvm_monitor", "uvm_scoreboard",
+    "uvm_analysis_port", "uvm_analysis_imp", "uvm_test", "uvm_config_db", "uvm_report_object", "uvm_factory", "uvm_resource_db",
+];
+
 fn is_2state_type(dtype: &DataType) -> bool {
-    matches!(dtype, DataType::Bit | DataType::Byte | DataType::Shortint | DataType::Int | DataType::Longint)
+    matches!(dtype, DataType::Bit | DataType::Byte | DataType::Shortint | DataType::Int | DataType::Longint | DataType::Time)
+}
+
+fn is_signed_type(dtype: &DataType) -> bool {
+    matches!(dtype, DataType::Signed(_))
 }
 
 pub struct Elaborator {
@@ -14,7 +24,9 @@ pub struct Elaborator {
     pub modules: HashMap<String, IrModule>,
     pub param_vals: HashMap<String, i64>,
     pub typedef_map: HashMap<String, usize>,
+    pub typedef_field_map: HashMap<String, Vec<StructFieldInfo>>,
     pub package_symbols: HashMap<String, HashMap<String, PackageItem>>,
+    pub specialized_classes: std::cell::RefCell<Vec<ClassDecl>>,
 }
 
 impl Elaborator {
@@ -74,7 +86,9 @@ impl Elaborator {
             modules: HashMap::new(),
             param_vals: HashMap::new(),
             typedef_map: HashMap::new(),
+            typedef_field_map: HashMap::new(),
             package_symbols,
+            specialized_classes: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -99,6 +113,7 @@ impl Elaborator {
                         is_dynamic: false,
                         is_queue: false,
                         is_rand: false,
+                        expr: None,
                     }],
                 });
             }
@@ -135,32 +150,31 @@ impl Elaborator {
                         let sid = next_id;
                         next_id += 1;
                         signal_map.insert(var.name.clone(), sid);
-                        signals.push(SignalInfo {
-                            name: var.name.clone(),
-                            width: if is_real { 64 } else { 0 },
-                            kind: SignalKind::Wire,
-                            net_type: NetType::Wire,
-                            multi_driver: false,
-                            init_val: LogicVec::new(if is_real { 64 } else { 0 }),
-                            array_depth: 1,
-                            elem_width: if is_real { 64 } else { 0 },
-                            class_name: None,
-                            is_string: decl.dtype == DataType::String,
-                            is_mailbox: false,
-                            is_semaphore: false,
-                            is_real,
-                            is_2state: false,
-                            is_dynamic: false,
-                            is_queue: false,
-                            msb: if is_real { 63 } else { 0 },
-                            lsb: 0,
-                        });
-                        continue;
+                    signals.push(SignalInfo {
+                        name: var.name.clone(),
+                        width: if is_real { 64 } else { 0 },
+                        kind: SignalKind::Wire,
+                        net_type: NetType::Wire,
+                        multi_driver: false,
+                        init_val: if is_real { LogicVec::new(64) } else { LogicVec::fill(LogicVal::Z, 0) },
+                        array_depth: 1,
+                        elem_width: if is_real { 64 } else { 0 },
+                        class_name: None,
+                        is_string: decl.dtype == DataType::String,
+                        is_mailbox: false,
+                        is_semaphore: false,
+                        is_real,
+                        is_2state: false,
+                        is_dynamic: false,
+                        is_queue: false,
+                        is_signed: false,
+                        msb: if is_real { 63 } else { 0 },
+                        lsb: 0,
+                        struct_fields: vec![],
+                    });
+                    continue;
                     }
-                    let width = match &decl.dtype {
-                        DataType::UserDefined(name) => self.typedef_map.get(name).copied().unwrap_or(64),
-                        _ => decl.dtype.width(),
-                    };
+                    let width = self.resolve_type_width(&decl.dtype)?;
                     let elem_width = width.max(
                         var.resolved_width(&HashMap::new()).unwrap_or(width)
                     ).max(decl.kind.default_width());
@@ -173,7 +187,7 @@ impl Elaborator {
                         kind: SignalKind::Wire,
                         net_type: NetType::Wire,
                         multi_driver: false,
-                        init_val: LogicVec::new(elem_width),
+                        init_val: LogicVec::fill(LogicVal::Z, elem_width),
                         array_depth: 1,
                         elem_width,
                         class_name: None,
@@ -184,8 +198,10 @@ impl Elaborator {
                         is_2state: decl_is_2state,
                         is_dynamic: false,
                         is_queue: false,
+                        is_signed: is_signed_type(&decl.dtype),
                         msb: if elem_width > 0 { elem_width - 1 } else { 0 },
                         lsb: 0,
+                        struct_fields: vec![],
                     });
                 }
             }
@@ -214,9 +230,103 @@ impl Elaborator {
             .ok_or_else(|| format!("top module '{}' not found", top_name))?;
 
         // Flatten instances: merge child module processes into the top module
-        self.flatten_instances(&mut top)?;
+        let hier_signal_map = self.flatten_instances(&mut top)?;
 
-        let classes = self.elaborate_classes()?;
+        // Merge specialized parameterized classes into design classes before elaboration
+        {
+            let mut specialized = self.specialized_classes.borrow_mut();
+            for spec in specialized.drain(..) {
+                if !self.design.classes.iter().any(|c| c.name == spec.name) {
+                    self.design.classes.push(spec);
+                }
+            }
+        }
+
+        let mut classes = self.elaborate_classes()?;
+
+        // Inject built-in __uvm_object and __uvm_component classes
+        if !classes.contains_key("__uvm_object") {
+            for (_, cls) in classes.iter_mut() {
+                match cls.extends.as_deref() {
+                    Some("uvm_object") => cls.extends = Some("__uvm_object".to_string()),
+                    Some("uvm_component") => cls.extends = Some("__uvm_component".to_string()),
+                    Some("uvm_sequence_item") => cls.extends = Some("__uvm_sequence_item".to_string()),
+                    Some("uvm_sequence") => cls.extends = Some("__uvm_sequence".to_string()),
+                    Some("uvm_sequencer") => cls.extends = Some("__uvm_sequencer".to_string()),
+                    Some("uvm_driver") => cls.extends = Some("__uvm_driver".to_string()),
+                    Some("uvm_monitor") => cls.extends = Some("__uvm_monitor".to_string()),
+                    Some("uvm_scoreboard") => cls.extends = Some("__uvm_scoreboard".to_string()),
+                    Some("uvm_analysis_port") => cls.extends = Some("__uvm_analysis_port".to_string()),
+                    Some("uvm_analysis_imp") => cls.extends = Some("__uvm_analysis_imp".to_string()),
+                    Some("uvm_test") => cls.extends = Some("__uvm_test".to_string()),
+                    Some("uvm_config_db") => cls.extends = Some("__uvm_config_db".to_string()),
+                    Some("uvm_report_object") => cls.extends = Some("__uvm_report_object".to_string()),
+                    Some("uvm_factory") => cls.extends = Some("__uvm_factory".to_string()),
+                    Some("uvm_resource_db") => cls.extends = Some("__uvm_resource_db".to_string()),
+                    _ => {}
+                }
+            }
+            classes.insert("__uvm_object".to_string(), IrClassDef {
+                name: "__uvm_object".to_string(), extends: None, type_params: vec![],
+                fields: vec![], methods: vec![], constraints: vec![], rand_fields: vec![],
+            });
+            classes.insert("__uvm_report_object".to_string(), IrClassDef {
+                name: "__uvm_report_object".to_string(), extends: Some("__uvm_object".to_string()), type_params: vec![],
+                fields: vec![], methods: vec![], constraints: vec![], rand_fields: vec![],
+            });
+            classes.insert("__uvm_component".to_string(), IrClassDef {
+                name: "__uvm_component".to_string(), extends: Some("__uvm_report_object".to_string()), type_params: vec![],
+                fields: vec![], methods: vec![], constraints: vec![], rand_fields: vec![],
+            });
+            classes.insert("__uvm_sequence_item".to_string(), IrClassDef {
+                name: "__uvm_sequence_item".to_string(), extends: Some("__uvm_object".to_string()), type_params: vec![],
+                fields: vec![], methods: vec![], constraints: vec![], rand_fields: vec![],
+            });
+            classes.insert("__uvm_sequence".to_string(), IrClassDef {
+                name: "__uvm_sequence".to_string(), extends: Some("__uvm_sequence_item".to_string()), type_params: vec![],
+                fields: vec![], methods: vec![], constraints: vec![], rand_fields: vec![],
+            });
+            classes.insert("__uvm_sequencer".to_string(), IrClassDef {
+                name: "__uvm_sequencer".to_string(), extends: Some("__uvm_component".to_string()), type_params: vec![],
+                fields: vec![], methods: vec![], constraints: vec![], rand_fields: vec![],
+            });
+            classes.insert("__uvm_driver".to_string(), IrClassDef {
+                name: "__uvm_driver".to_string(), extends: Some("__uvm_component".to_string()), type_params: vec![],
+                fields: vec![], methods: vec![], constraints: vec![], rand_fields: vec![],
+            });
+            classes.insert("__uvm_monitor".to_string(), IrClassDef {
+                name: "__uvm_monitor".to_string(), extends: Some("__uvm_component".to_string()), type_params: vec![],
+                fields: vec![], methods: vec![], constraints: vec![], rand_fields: vec![],
+            });
+            classes.insert("__uvm_scoreboard".to_string(), IrClassDef {
+                name: "__uvm_scoreboard".to_string(), extends: Some("__uvm_component".to_string()), type_params: vec![],
+                fields: vec![], methods: vec![], constraints: vec![], rand_fields: vec![],
+            });
+            classes.insert("__uvm_analysis_port".to_string(), IrClassDef {
+                name: "__uvm_analysis_port".to_string(), extends: Some("__uvm_object".to_string()), type_params: vec![],
+                fields: vec![], methods: vec![], constraints: vec![], rand_fields: vec![],
+            });
+            classes.insert("__uvm_analysis_imp".to_string(), IrClassDef {
+                name: "__uvm_analysis_imp".to_string(), extends: Some("__uvm_object".to_string()), type_params: vec![],
+                fields: vec![], methods: vec![], constraints: vec![], rand_fields: vec![],
+            });
+            classes.insert("__uvm_test".to_string(), IrClassDef {
+                name: "__uvm_test".to_string(), extends: Some("__uvm_component".to_string()), type_params: vec![],
+                fields: vec![], methods: vec![], constraints: vec![], rand_fields: vec![],
+            });
+            classes.insert("__uvm_config_db".to_string(), IrClassDef {
+                name: "__uvm_config_db".to_string(), extends: Some("__uvm_object".to_string()), type_params: vec![],
+                fields: vec![], methods: vec![], constraints: vec![], rand_fields: vec![],
+            });
+            classes.insert("__uvm_resource_db".to_string(), IrClassDef {
+                name: "__uvm_resource_db".to_string(), extends: Some("__uvm_object".to_string()), type_params: vec![],
+                fields: vec![], methods: vec![], constraints: vec![], rand_fields: vec![],
+            });
+            classes.insert("__uvm_factory".to_string(), IrClassDef {
+                name: "__uvm_factory".to_string(), extends: Some("__uvm_object".to_string()), type_params: vec![],
+                fields: vec![], methods: vec![], constraints: vec![], rand_fields: vec![],
+            });
+        }
 
         self.detect_multi_driver_signals(&mut top)?;
 
@@ -231,11 +341,66 @@ impl Elaborator {
             classes,
             covergroups,
             dpi_imports,
+            hier_signal_map,
         })
     }
 
     fn resolve_param_values(&self, module: &Module, instance_overrides: &HashMap<String, i64>) -> Result<HashMap<String, i64>, String> {
         resolve_param_values_fn(module, instance_overrides)
+    }
+
+    fn store_typedef_fields(&mut self, name: &str, dtype: &DataType) {
+        let fields = Self::compute_struct_fields(dtype);
+        if !fields.is_empty() {
+            self.typedef_field_map.insert(name.to_string(), fields);
+        }
+    }
+
+    fn resolve_type_width(&self, dtype: &DataType) -> Result<usize, String> {
+        match dtype {
+            DataType::UserDefined(name) if name == "__mailbox" || name == "__semaphore" => Ok(64),
+            DataType::UserDefined(name) if name == "process" => Ok(64),
+            DataType::UserDefined(name) if BUILTIN_UVM_CLASSES.contains(&name.as_str()) => Ok(64),
+            DataType::UserDefined(name) => {
+                if self.design.classes.iter().any(|c| c.name == *name) {
+                    return Ok(64);
+                }
+                if self.design.modules.iter().any(|m|
+                    m.items.iter().any(|item| matches!(item, ModuleItem::Covergroup(cg) if cg.name == *name))
+                ) {
+                    return Ok(64);
+                }
+                self.typedef_map.get(name)
+                    .copied()
+                    .ok_or_else(|| format!("unknown type '{}' is not defined in this scope", name))
+            }
+            DataType::Signed(inner) => self.resolve_type_width(inner),
+            _ => Ok(dtype.width()),
+        }
+    }
+
+    fn compute_struct_fields(dtype: &DataType) -> Vec<StructFieldInfo> {
+        match dtype {
+            DataType::UnionType { members } => {
+                members.iter().map(|m| {
+                    let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
+                    StructFieldInfo { name: m.name.clone(), offset: 0, width: w }
+                }).collect()
+            }
+            DataType::StructType { members } => {
+                let mut fields = Vec::new();
+                let mut offset = 0usize;
+                let members_rev: Vec<_> = members.iter().rev().collect();
+                for m in &members_rev {
+                    let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
+                    fields.push(StructFieldInfo { name: m.name.clone(), offset, width: w });
+                    offset += w;
+                }
+                fields.reverse();
+                fields
+            }
+            _ => vec![],
+        }
     }
 }
 
@@ -315,7 +480,30 @@ fn resolve_param_values_fn(module: &Module, instance_overrides: &HashMap<String,
     Ok(vals)
 }
 
+fn detect_sync_reset(body: &[IrStmt]) -> Option<ResetInfo> {
+    if let Some(IrStmt::If { cond: IrExpr::Signal(sig_id, _), .. }) = body.first() {
+        return Some(ResetInfo {
+            signal: *sig_id,
+            polarity: true,
+            r#async: false,
+            value: LogicVec::new(1),
+        });
+    }
+    None
+}
+
 impl Elaborator {
+    fn resolve_class_field_width(&self, dtype: &DataType, type_params: &[TypeParam]) -> usize {
+        if let DataType::UserDefined(name) = dtype {
+            if let Some(tp) = type_params.iter().find(|tp| tp.name == *name) {
+                if let Some(ref default_dt) = tp.default_type {
+                    return default_dt.width();
+                }
+            }
+        }
+        dtype.width()
+    }
+
     fn elaborate_module(&mut self, module: &Module, known_modules: &[String]) -> Result<IrModule, String> {
         let param_vals = self.resolve_param_values(module, &HashMap::new())?;
         self.elaborate_module_with_params(module, known_modules, &param_vals)
@@ -378,6 +566,31 @@ impl Elaborator {
                         }
                     }
                 }
+                // Process module-level imports for typedefs
+                if let Some(pkg_items) = self.package_symbols.get(package) {
+                    let names: Vec<&str> = if import_item == "*" {
+                        pkg_items.keys().map(|s| s.as_str()).collect()
+                    } else {
+                        vec![import_item.as_str()]
+                    };
+                    let mut struct_imports: Vec<(String, DataType)> = Vec::new();
+                    for name in names {
+                        if let Some(pkg_item) = pkg_items.get(name) {
+                            if let PackageItem::Typedef(td) = pkg_item {
+                                if !self.typedef_map.contains_key(&td.name) {
+                                    let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
+                                    self.typedef_map.insert(td.name.clone(), width);
+                                }
+                                if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. }) {
+                                    struct_imports.push((td.name.clone(), td.dtype.clone()));
+                                }
+                            }
+                        }
+                    }
+                    for (name, dtype) in struct_imports {
+                        self.store_typedef_fields(&name, &dtype);
+                    }
+                }
             }
         }
         // Resolve type parameter widths from module's param declarations and overrides
@@ -401,6 +614,10 @@ impl Elaborator {
             if let ModuleItem::Typedef(td) = item {
                 let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
                 self.typedef_map.insert(td.name.clone(), width);
+                // Store struct/union field info for member access
+                if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. }) {
+                    self.store_typedef_fields(&td.name, &td.dtype);
+                }
             }
         }
         // Pre-pass: process $unit imports for typedefs
@@ -421,24 +638,61 @@ impl Elaborator {
                 }
             }
         }
-        // Pre-pass: process package imports for typedefs before declaration processing
-        for item in &module.items {
-            if let ModuleItem::Import { package, item: import_item } = item {
-                if let Some(pkg_items) = self.package_symbols.get(package) {
-                    let names: Vec<&str> = if import_item == "*" {
-                        pkg_items.keys().map(|s| s.as_str()).collect()
-                    } else {
-                        vec![import_item.as_str()]
-                    };
-                    for name in names {
-                        if let Some(pkg_item) = pkg_items.get(name) {
-                            if let PackageItem::Typedef(td) = pkg_item {
-                                let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
-                                self.typedef_map.entry(td.name.clone()).or_insert(width);
-                            }
+        // Pre-pass: store struct/union fields for $unit import typedefs
+        let unit_imports = self.design.unit_imports.clone();
+        let typedef_imports: Vec<(String, DataType)> = unit_imports.iter().filter_map(|(package, import_item)| {
+            self.package_symbols.get(package).and_then(|pkg_items| {
+                let names: Vec<String> = if import_item == "*" {
+                    pkg_items.keys().cloned().collect()
+                } else {
+                    vec![import_item.clone()]
+                };
+                names.iter().find_map(|name| {
+                    if let Some(PackageItem::Typedef(td)) = pkg_items.get(name.as_str()) {
+                        if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. }) {
+                            Some((td.name.clone(), td.dtype.clone()))
+                        } else {
+                            None
                         }
+                    } else {
+                        None
                     }
-                }
+                })
+            })
+        }).collect();
+        for (name, dtype) in &typedef_imports {
+            self.store_typedef_fields(name, dtype);
+        }
+        // Pre-pass: process package imports for typedefs before declaration processing
+        // Pre-pass: process package imports for struct/union typedef fields
+        let import_typedefs: Vec<(String, DataType)> = module.items.iter().filter_map(|item| {
+            if let ModuleItem::Import { package, item: import_item } = item {
+                self.package_symbols.get(package).and_then(|pkg_items| {
+                    let names: Vec<String> = if import_item == "*" {
+                        pkg_items.keys().cloned().collect()
+                    } else {
+                        vec![import_item.clone()]
+                    };
+                    names.iter().find_map(|name| {
+                        if let Some(PackageItem::Typedef(td)) = pkg_items.get(name.as_str()) {
+                            if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. }) {
+                                Some((td.name.clone(), td.dtype.clone()))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                })
+            } else {
+                None
+            }
+        }).collect();
+        for (name, dtype) in &import_typedefs {
+            let fields = Self::compute_struct_fields(dtype);
+            if !fields.is_empty() {
+                self.typedef_field_map.entry(name.clone()).or_insert(fields);
             }
         }
 
@@ -463,7 +717,8 @@ impl Elaborator {
                                          elem_width: usize,
                                          msb: usize,
                                          lsb: usize,
-                                         is_2state: bool|
+                                         is_2state: bool,
+                                         is_signed: bool|
          -> SignalId {
             if let Some(&sid) = signal_map.get(name) {
                 sid
@@ -471,13 +726,17 @@ impl Elaborator {
                 let sid = *id;
                 *id += 1;
                 signal_map.insert(name.to_string(), sid);
+                let init_val = match kind {
+                    SignalKind::Wire | SignalKind::Inout => LogicVec::fill(LogicVal::Z, width),
+                    _ => LogicVec::new(width),
+                };
                 signals.push(SignalInfo {
                     name: name.to_string(),
                     width,
                     kind,
                     net_type,
                     multi_driver: false,
-                    init_val: LogicVec::new(width),
+                    init_val,
                     array_depth,
                     elem_width,
                     class_name: None,
@@ -488,8 +747,10 @@ impl Elaborator {
                     is_2state,
                     is_dynamic: false,
                     is_queue: false,
+                    is_signed,
                     msb,
                     lsb,
+                    struct_fields: vec![],
                 });
                 sid
             }
@@ -530,7 +791,7 @@ impl Elaborator {
                 PortDirection::Inout => NetType::Tri,
                 _ => NetType::Wire,
             };
-            let sid = get_or_create_signal(&port.name, width, kind.clone(), net_type, &mut signals, &mut signal_map, &mut next_id, 1, width, p_msb, p_lsb, false);
+            let sid = get_or_create_signal(&port.name, width, kind.clone(), net_type, &mut signals, &mut signal_map, &mut next_id, 1, width, p_msb, p_lsb, false, false);
             match port.direction {
                 PortDirection::Input => inputs.push(sid),
                 PortDirection::Output => outputs.push(sid),
@@ -541,6 +802,7 @@ impl Elaborator {
         // Process declarations with parameter-aware width resolution
         for decl in &module.decls {
             let class_name = match &decl.dtype {
+                DataType::UserDefined(cn) if cn == "process" => Some("__process".to_string()),
                 DataType::UserDefined(cn) => Some(cn.clone()),
                 _ => None,
             };
@@ -568,16 +830,16 @@ impl Elaborator {
                         is_2state: false,
                         is_dynamic: false,
                         is_queue: false,
+                        is_signed: false,
                         msb: if is_real { 63 } else { 0 },
                         lsb: 0,
+                        struct_fields: vec![],
                     });
                     continue;
                 }
                 if var.is_dynamic || var.is_queue {
-                    let elem_width = match &decl.dtype {
-                        DataType::UserDefined(name) => self.typedef_map.get(name).copied().unwrap_or(64),
-                        _ => decl.dtype.width(),
-                    }.max(
+                    let dtype_width = self.resolve_type_width(&decl.dtype)?;
+                    let elem_width = dtype_width.max(
                         var.resolved_width(&effective_params)?
                     ).max(decl.kind.default_width());
                     let sid = next_id;
@@ -600,15 +862,13 @@ impl Elaborator {
                         is_2state: decl_is_2state,
                         is_dynamic: var.is_dynamic,
                         is_queue: var.is_queue,
-                        msb: 0,
-                        lsb: 0,
-                    });
-                    continue;
-                }
-                let dtype_width = match &decl.dtype {
-                    DataType::UserDefined(name) => self.typedef_map.get(name).copied().unwrap_or(64),
-                    _ => decl.dtype.width(),
-                };
+                        is_signed: is_signed_type(&decl.dtype),
+                    msb: 0,
+                    lsb: 0,
+                    struct_fields: vec![],
+                });
+            }
+                let dtype_width = self.resolve_type_width(&decl.dtype)?;
                 let elem_width = dtype_width.max(
                     var.resolved_width(&effective_params)?
                 ).max(
@@ -641,11 +901,19 @@ impl Elaborator {
                 if let Some(ar) = &var.array_range {
                     let depth = if ar.msb >= ar.lsb { ar.msb - ar.lsb + 1 } else { ar.lsb - ar.msb + 1 };
                     let total_width = elem_width * depth;
-                    let _sid = get_or_create_signal(&var.name, total_width, kind, net_type, &mut signals, &mut signal_map, &mut next_id, depth, elem_width, total_width - 1, 0, decl_is_2state);
+                    let _sid = get_or_create_signal(&var.name, total_width, kind.clone(), net_type, &mut signals, &mut signal_map, &mut next_id, depth, elem_width, total_width - 1, 0, decl_is_2state, is_signed_type(&decl.dtype));
                     if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
                         sig.is_2state = decl_is_2state;
-                        let elem_init = LogicVec::new(elem_width);
-                        let mut full_init = LogicVec::new(total_width);
+                        let elem_init = if kind == SignalKind::Wire {
+                            LogicVec::fill(LogicVal::Z, elem_width)
+                        } else {
+                            LogicVec::new(elem_width)
+                        };
+                        let mut full_init = if kind == SignalKind::Wire {
+                            LogicVec::fill(LogicVal::Z, total_width)
+                        } else {
+                            LogicVec::new(total_width)
+                        };
                         for i in 0..depth {
                             for j in 0..elem_width {
                                 full_init.bits[i * elem_width + j] = elem_init.bits[j].clone();
@@ -659,7 +927,7 @@ impl Elaborator {
                         }
                     }
                 } else {
-                    let _sid = get_or_create_signal(&var.name, elem_width, kind, net_type, &mut signals, &mut signal_map, &mut next_id, 1, elem_width, d_msb, d_lsb, decl_is_2state);
+                    let _sid = get_or_create_signal(&var.name, elem_width, kind, net_type, &mut signals, &mut signal_map, &mut next_id, 1, elem_width, d_msb, d_lsb, decl_is_2state, is_signed_type(&decl.dtype));
                     if let Some(class) = &class_name {
                         if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
                             sig.class_name = Some(class.clone());
@@ -670,6 +938,49 @@ impl Elaborator {
                     if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
                         sig.is_2state = decl_is_2state;
                     }
+                }
+                // Compute struct/union field offsets for member access
+                match &decl.dtype {
+                    DataType::StructType { members } | DataType::UnionType { members } => {
+                        if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
+                            match &decl.dtype {
+                                DataType::UnionType { members } => {
+                                    for m in members {
+                                        let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
+                                        sig.struct_fields.push(StructFieldInfo {
+                                            name: m.name.clone(),
+                                            offset: 0,
+                                            width: w,
+                                        });
+                                    }
+                                }
+                                _ => {
+                                    let mut offset = 0usize;
+                                    let members_rev: Vec<_> = members.iter().rev().collect();
+                                    for m in &members_rev {
+                                        let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
+                                        sig.struct_fields.push(StructFieldInfo {
+                                            name: m.name.clone(),
+                                            offset,
+                                            width: w,
+                                        });
+                                        offset += w;
+                                    }
+                                    sig.struct_fields.reverse();
+                                }
+                            }
+                        }
+                    }
+                    DataType::UserDefined(name) => {
+                        if let Some(fields) = self.typedef_field_map.get(name) {
+                            if !fields.is_empty() {
+                                if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
+                                    sig.struct_fields = fields.clone();
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -732,6 +1043,13 @@ impl Elaborator {
                         body,
                     });
                 }
+                ModuleItem::Final(final_block) => {
+                    let body = self.elaborate_stmt_block(&final_block.stmts, &signal_map, &known_modules, &signals)?;
+                    processes.push(Process::Final {
+                        name: format!("final_{}", processes.len()),
+                        body,
+                    });
+                }
                 ModuleItem::Assign(assign) => {
                     // Convert to a combinational process
                     let lhs = self.elaborate_lvalue(&assign.lhs, &signal_map, &signals)?;
@@ -748,6 +1066,32 @@ impl Elaborator {
                     // Already collected in pre-pass; register for UserDefined resolution
                     let width = self.typedef_map.get(&td.name).copied().unwrap_or_else(|| self.resolve_typedef_width(&td.dtype, td.range.as_ref()));
                     self.typedef_map.insert(td.name.clone(), width);
+                    // Store struct/union field info for member access
+                    match &td.dtype {
+                        DataType::StructType { members } | DataType::UnionType { members } => {
+                            let mut fields = Vec::new();
+                            match &td.dtype {
+                                DataType::UnionType { members } => {
+                                    for m in members {
+                                        let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
+                                        fields.push(StructFieldInfo { name: m.name.clone(), offset: 0, width: w });
+                                    }
+                                }
+                                _ => {
+                                    let mut offset = 0usize;
+                                    let members_rev: Vec<_> = members.iter().rev().collect();
+                                    for m in &members_rev {
+                                        let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
+                                        fields.push(StructFieldInfo { name: m.name.clone(), offset, width: w });
+                                        offset += w;
+                                    }
+                                    fields.reverse();
+                                }
+                            }
+                            self.typedef_field_map.insert(td.name.clone(), fields);
+                        }
+                        _ => {}
+                    }
                 }
                 ModuleItem::Instance(inst) => {
                     let mut port_map = HashMap::new();
@@ -847,6 +1191,32 @@ impl Elaborator {
             }
         }
 
+        // Process declaration initializers (wire a = 1; reg b = 0; etc.)
+        for decl in &module.decls {
+            for var in &decl.names {
+                if let Some(init_expr) = &var.expr {
+                    let lhs = self.elaborate_lvalue(
+                        &Expr::Ident(var.name.clone()),
+                        &signal_map, &signals,
+                    )?;
+                    let rhs = self.elaborate_expr(init_expr, &signal_map, &signals)?;
+                    if decl.kind.is_net() {
+                        let sensitivity = collect_sensitivity(init_expr, &signal_map);
+                        processes.push(Process::Combinational {
+                            name: format!("decl_assign_{}", processes.len()),
+                            sensitivity,
+                            body: vec![IrStmt::BlockingAssign { lhs, rhs, delay: None }],
+                        });
+                    } else {
+                        processes.push(Process::Initial {
+                            name: format!("decl_init_{}", processes.len()),
+                            body: vec![IrStmt::BlockingAssign { lhs, rhs, delay: None }],
+                        });
+                    }
+                }
+            }
+        }
+
         Ok(IrModule {
             name: module.name.clone(),
             signals,
@@ -865,7 +1235,7 @@ impl Elaborator {
             for member in &cd.members {
                 if let ClassMember::Decl(decl) = member {
                     for dv in &decl.names {
-                        let decl_width = decl.dtype.width();
+                        let decl_width = self.resolve_class_field_width(&decl.dtype, &cd.type_params);
                         let var_width = dv.resolved_width(&HashMap::new()).unwrap_or(1);
                         let elem_width = decl_width.max(var_width).max(1);
                         let (array_depth, actual_elem_width) = if let Some(ar) = &dv.array_range {
@@ -915,10 +1285,50 @@ impl Elaborator {
                         decl.names.iter().filter(|dv| dv.is_rand).map(|dv| dv.name.clone()).collect::<Vec<_>>()
                     } else { vec![] }
                 }).collect();
+            // Merge parent class fields (recursively) — parent fields come before child fields
+            let all_fields = if let Some(ref parent_name) = cd.extends {
+                let parent_key = parent_name.split("::").last().unwrap_or(parent_name).to_string();
+                let mut merged = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                if let Some(parent_cd) = classes.get(&parent_key) {
+                    let mut ancestors: Vec<&IrClassDef> = vec![parent_cd];
+                    loop {
+                        let current = ancestors.last().unwrap();
+                        if let Some(ref gp) = current.extends {
+                            let gp_key = gp.split("::").last().unwrap_or(gp);
+                            if let Some(gp_cd) = classes.get(gp_key) {
+                                ancestors.push(gp_cd);
+                            } else { break; }
+                        } else { break; }
+                    }
+                    for anc in ancestors.iter().rev() {
+                        for f in &anc.fields {
+                            if seen.insert(f.name.clone()) {
+                                merged.push(f.clone());
+                            }
+                        }
+                    }
+                }
+                for f in &fields {
+                    if seen.insert(f.name.clone()) {
+                        merged.push(f.clone());
+                    } else if let Some(pos) = merged.iter().position(|pf| pf.name == f.name) {
+                        merged[pos] = f.clone();
+                    }
+                }
+                merged
+            } else {
+                fields
+            };
+
             classes.insert(cd.name.clone(), IrClassDef {
                 name: cd.name.clone(),
                 extends: cd.extends.clone(),
-                fields,
+                type_params: cd.type_params.iter().map(|tp| IrTypeParam {
+                    name: tp.name.clone(),
+                    default_type: tp.default_type.clone(),
+                }).collect(),
+                fields: all_fields,
                 methods,
                 constraints,
                 rand_fields,
@@ -978,7 +1388,13 @@ impl Elaborator {
             match process {
                 Process::Combinational { body, .. } | Process::CombReactive { body, .. }
                     | Process::Sequential { body, .. } => {
-                    Self::count_drivers_in_stmts(body, &mut driver_count);
+                    let mut driven = HashSet::new();
+                    Self::collect_driven_signals(body, &mut driven);
+                    for id in driven {
+                        if id < driver_count.len() {
+                            driver_count[id] += 1;
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -995,47 +1411,46 @@ impl Elaborator {
         Ok(())
     }
 
-    fn count_drivers_in_stmts(stmts: &[IrStmt], counts: &mut Vec<usize>) {
+    fn collect_driven_signals(stmts: &[IrStmt], driven: &mut HashSet<usize>) {
         for stmt in stmts {
             match stmt {
                 IrStmt::BlockingAssign { lhs, .. } | IrStmt::NonBlockingAssign { lhs, .. } => {
                     if let IrLValue::Signal(id, _) = lhs {
-                        if *id < counts.len() {
-                            counts[*id] += 1;
-                        }
+                        driven.insert(*id);
                     }
                 }
                 IrStmt::Block { stmts: body } | IrStmt::NamedBlock { stmts: body, .. } => {
-                    Self::count_drivers_in_stmts(body, counts);
+                    Self::collect_driven_signals(body, driven);
                 }
                 IrStmt::If { true_branch, false_branch, .. } => {
-                    Self::count_drivers_in_stmts(true_branch, counts);
-                    Self::count_drivers_in_stmts(false_branch, counts);
+                    Self::collect_driven_signals(true_branch, driven);
+                    Self::collect_driven_signals(false_branch, driven);
                 }
                 IrStmt::Case { items, default, .. } => {
                     for item in items {
-                        Self::count_drivers_in_stmts(&item.body, counts);
+                        Self::collect_driven_signals(&item.body, driven);
                     }
-                    Self::count_drivers_in_stmts(default, counts);
+                    Self::collect_driven_signals(default, driven);
                 }
-                IrStmt::LoopFor { init, body, cond: _, step: _ } => {
+                IrStmt::LoopFor { init, body, .. } => {
                     if let Some(init) = init {
-                        Self::count_drivers_in_stmts(&[init.as_ref().clone()], counts);
+                        Self::collect_driven_signals(&[init.as_ref().clone()], driven);
                     }
-                    Self::count_drivers_in_stmts(body, counts);
+                    Self::collect_driven_signals(body, driven);
                 }
                 IrStmt::LoopWhile { body, .. } | IrStmt::LoopDoWhile { body, .. } | IrStmt::Repeat { body, .. } => {
-                    Self::count_drivers_in_stmts(body, counts);
+                    Self::collect_driven_signals(body, driven);
                 }
                 IrStmt::Delay { body, .. } | IrStmt::Wait { body, .. } => {
-                    Self::count_drivers_in_stmts(body, counts);
+                    Self::collect_driven_signals(body, driven);
                 }
                 _ => {}
             }
         }
     }
 
-    fn flatten_instances(&mut self, top: &mut IrModule) -> Result<(), String> {
+    fn flatten_instances(&mut self, top: &mut IrModule) -> Result<HashMap<String, SignalId>, String> {
+        let mut hier_signal_map: HashMap<String, SignalId> = HashMap::new();
         let instances = std::mem::take(&mut top.sub_instances);
         for inst in &instances {
             let ast_module_clone: Module = if let Some(m) = self.design.modules.iter()
@@ -1069,7 +1484,8 @@ impl Elaborator {
             };
 
             // Recursively flatten child's own instances
-            self.flatten_instances(&mut child)?;
+            let child_hier_map = self.flatten_instances(&mut child)?;
+            hier_signal_map.extend(child_hier_map);
 
             // Build signal remapping: child_signal_id -> parent_signal_id
             let mut sig_remap: Vec<Option<SignalId>> = vec![None; child.signals.len()];
@@ -1098,30 +1514,12 @@ impl Elaborator {
                             top.signals[parent_sig].net_type
                         ));
                     }
-                    // Add hierarchical alias for port connections
-                    let hier_name = format!("{}.{}", inst.instance_name, port_name);
-                    let parent_info = top.signals[parent_sig].clone();
-                    top.signals.push(SignalInfo {
-                        name: hier_name,
-                        width: parent_info.width,
-                        kind: parent_info.kind.clone(),
-                        net_type: parent_info.net_type,
-                        multi_driver: parent_info.multi_driver,
-                        init_val: parent_info.init_val.clone(),
-                        array_depth: parent_info.array_depth,
-                        elem_width: parent_info.elem_width,
-                        class_name: parent_info.class_name.clone(),
-                        is_string: parent_info.is_string,
-                        is_mailbox: parent_info.is_mailbox,
-                        is_semaphore: parent_info.is_semaphore,
-                        is_real: parent_info.is_real,
-                        is_2state: parent_info.is_2state,
-                        is_dynamic: parent_info.is_dynamic,
-                        is_queue: parent_info.is_queue,
-                        msb: parent_info.msb,
-                        lsb: parent_info.lsb,
-                    });
                     sig_remap[child_sig] = Some(parent_sig);
+                    // Add hierarchical alias: inst_name.port_name -> parent signal ID
+                    hier_signal_map.insert(
+                        format!("{}.{}", inst.instance_name, port_name),
+                        parent_sig,
+                    );
                 }
             }
 
@@ -1148,9 +1546,16 @@ impl Elaborator {
                         is_2state: sig.is_2state,
                         is_dynamic: sig.is_dynamic,
                         is_queue: sig.is_queue,
-                        msb: sig.msb,
+                        is_signed: sig.is_signed,
+                    msb: sig.msb,
                         lsb: sig.lsb,
-                    });
+                    struct_fields: sig.struct_fields.clone(),
+                });
+                    // Also add to hier_signal_map: internal signals already have the right name in flat list
+                    hier_signal_map.insert(
+                        format!("{}.{}", inst.instance_name, sig.name),
+                        new_id,
+                    );
                 }
             }
 
@@ -1163,7 +1568,7 @@ impl Elaborator {
                 top.processes.push(translated);
             }
         }
-        Ok(())
+        Ok(hier_signal_map)
     }
 
     fn translate_process(&self, process: &Process, map_sig: &dyn Fn(SignalId) -> SignalId) -> Result<Process, String> {
@@ -1199,6 +1604,10 @@ impl Elaborator {
             Process::AlwaysWithDelay { name, delay, body } => {
                 let new_body = self.translate_stmts(body, map_sig)?;
                 Ok(Process::AlwaysWithDelay { name: name.clone(), delay: *delay, body: new_body })
+            }
+            Process::Final { name, body } => {
+                let new_body = self.translate_stmts(body, map_sig)?;
+                Ok(Process::Final { name: name.clone(), body: new_body })
             }
         }
     }
@@ -1265,6 +1674,11 @@ impl Elaborator {
                 let new_body = self.translate_stmts(body, map_sig)?;
                 Ok(IrStmt::Repeat { count: new_count, body: new_body })
             }
+            IrStmt::Foreach { array_var, index_var, body } => {
+                let new_var = self.translate_expr(array_var, map_sig);
+                let new_body = self.translate_stmts(body, map_sig)?;
+                Ok(IrStmt::Foreach { array_var: new_var, index_var: index_var.clone(), body: new_body })
+            }
             IrStmt::Delay { delay, body } => {
                 let new_body = self.translate_stmts(body, map_sig)?;
                 Ok(IrStmt::Delay { delay: *delay, body: new_body })
@@ -1299,6 +1713,9 @@ impl Elaborator {
             IrStmt::Disable { name } => {
                 Ok(IrStmt::Disable { name: name.clone() })
             }
+            IrStmt::Force { lvalue, rhs } => {
+                Ok(IrStmt::Force { lvalue: self.translate_lvalue(lvalue, map_sig), rhs: self.translate_expr(rhs, map_sig) })
+            }
             IrStmt::Release { lvalue } => {
                 Ok(IrStmt::Release { lvalue: self.translate_lvalue(lvalue, map_sig) })
             }
@@ -1325,6 +1742,11 @@ impl Elaborator {
                 let new_cond = self.translate_expr(cond, map_sig);
                 let new_pass = self.translate_stmts(pass_stmt, map_sig)?;
                 Ok(IrStmt::Cover { cond: new_cond, pass_stmt: new_pass })
+            }
+            IrStmt::WaitOrder { events, failure_stmts } => {
+                let new_events = events.iter().map(|id| map_sig(*id)).collect();
+                let new_failure = self.translate_stmts(failure_stmts, map_sig)?;
+                Ok(IrStmt::WaitOrder { events: new_events, failure_stmts: new_failure })
             }
         }
     }
@@ -1420,6 +1842,7 @@ impl Elaborator {
                 args: args.iter().map(|a| self.translate_expr(a, map_sig)).collect(),
                 return_width: *return_width,
             },
+            IrExpr::HierRef(name) => IrExpr::HierRef(name.clone()),
         }
     }
 
@@ -1438,6 +1861,7 @@ impl Elaborator {
             AlwaysKind::AlwaysFF => {
                 let (clock, reset) = self.extract_clock_reset(&always.sensitivity, signal_map)?;
                 let body = self.elaborate_stmt_block(&always.stmts, signal_map, &[], signals)?;
+                let reset = reset.or_else(|| detect_sync_reset(&body));
                 Ok(Process::Sequential { name, clock, reset, body })
             }
             AlwaysKind::Always => {
@@ -1462,6 +1886,7 @@ impl Elaborator {
                         match self.extract_clock_reset(&always.sensitivity, signal_map) {
                             Ok((clock, reset)) => {
                                 let body = self.elaborate_stmt_block(&always.stmts, signal_map, &[], signals)?;
+                                let reset = reset.or_else(|| detect_sync_reset(&body));
                                 return Ok(Process::Sequential { name, clock, reset, body });
                             }
                             Err(_) => {} // fall through to combinational
@@ -1654,6 +2079,10 @@ impl Elaborator {
                         let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
                         Ok(IrStmt::SysCall { name: String::new(), args: vec![ir_expr] })
                     }
+                    Expr::FuncCall { name, .. } if name.ends_with("::new") => {
+                        let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                        Ok(IrStmt::SysCall { name: String::new(), args: vec![ir_expr] })
+                    }
                     Expr::FuncCall { name, .. } => {
                         // Check if this is a DPI function call used as a statement
                         let is_dpi = self.design.modules.iter().flat_map(|m| m.items.iter())
@@ -1728,7 +2157,7 @@ impl Elaborator {
             Stmt::Force { lhs, rhs } => {
                 let ir_lhs = self.elaborate_lvalue(lhs, signal_map, signals)?;
                 let ir_rhs = self.elaborate_expr(rhs, signal_map, signals)?;
-                Ok(IrStmt::BlockingAssign { lhs: ir_lhs, rhs: ir_rhs, delay: None })
+                Ok(IrStmt::Force { lvalue: ir_lhs, rhs: ir_rhs })
             }
             Stmt::Release { expr } => {
                 let ir_lhs = self.elaborate_lvalue(expr, signal_map, signals)?;
@@ -1841,22 +2270,32 @@ impl Elaborator {
                     body: ir_body,
                 })
             }
-            Stmt::ForeachLoop { array_var, index_var, stmts } => {
-                // Find the array signal and unroll the loop
+            Stmt::ForeachLoop { array_var, index_vars, stmts } => {
                 let sig_id = signal_map.get(array_var)
                     .ok_or_else(|| format!("array '{}' not found for foreach", array_var))?;
                 let sig_info = signals.get(*sig_id)
                     .ok_or_else(|| format!("signal info not found for '{}'", array_var))?;
-                let n = sig_info.array_depth;
-                if n == 0 {
-                    return Err(format!("'{}' is not an array, cannot use foreach", array_var));
+                if sig_info.is_dynamic || sig_info.is_queue {
+                    let ir_body = self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
+                    let iv = index_vars.first().cloned().unwrap_or_else(|| "i".to_string());
+                    Ok(IrStmt::Foreach {
+                        array_var: IrExpr::Signal(*sig_id, sig_info.width),
+                        index_var: iv,
+                        body: ir_body,
+                    })
+                } else {
+                    let n = sig_info.array_depth;
+                    if n == 0 {
+                        return Err(format!("'{}' is not an array, cannot use foreach", array_var));
+                    }
+                    let mut all_stmts = Vec::new();
+                    let iv = index_vars.first().cloned().unwrap_or_else(|| "i".to_string());
+                    for i in 0..n {
+                        let subst_stmts = substitute_loop_var_in_stmts(stmts, &iv, i as i64);
+                        all_stmts.extend(self.elaborate_stmt_block(&subst_stmts, signal_map, known_modules, signals)?);
+                    }
+                    Ok(IrStmt::Block { stmts: all_stmts })
                 }
-                let mut all_stmts = Vec::new();
-                for i in 0..n {
-                    let subst_stmts = substitute_loop_var_in_stmts(stmts, index_var, i as i64);
-                    all_stmts.extend(self.elaborate_stmt_block(&subst_stmts, signal_map, known_modules, signals)?);
-                }
-                Ok(IrStmt::Block { stmts: all_stmts })
             }
             Stmt::StmtCase { expr, items, default } => {
                 let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
@@ -1942,8 +2381,23 @@ impl Elaborator {
                 };
                 Ok(IrStmt::Cover { cond: ir_cond, pass_stmt: pass })
             }
-            Stmt::Expect { .. } | Stmt::WaitOrder { .. } => {
+            Stmt::Expect { .. } => {
                 Ok(IrStmt::Null)
+            }
+            Stmt::WaitOrder { events, fail_stmt } => {
+                let mut sig_ids = Vec::new();
+                for name in events {
+                    if let Some(idx) = signal_map.get(name) {
+                        sig_ids.push(*idx);
+                    } else {
+                        return Err(format!("wait_order: signal '{}' not found", name));
+                    }
+                }
+                let failure = match fail_stmt {
+                    Some(s) => vec![self.elaborate_stmt(&*s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                Ok(IrStmt::WaitOrder { events: sig_ids, failure_stmts: failure })
             }
             Stmt::Fork { processes, join_type } => {
                 let mut ir_processes = Vec::new();
@@ -2065,8 +2519,39 @@ impl Elaborator {
                 Ok(IrLValue::Concat(parts?))
             }
             Expr::MethodCall { .. } => Err("method calls cannot be used as lvalues".to_string()),
-            Expr::MemberAccess { .. } => Err("member access cannot be used as lvalues".to_string()),
+            Expr::MemberAccess { obj, field } => {
+                // Try struct/union field write
+                let hier_name = Self::build_hier_name(obj, field);
+                if let Some(&sig_id) = signal_map.get(&hier_name) {
+                    return Ok(IrLValue::Signal(sig_id, 0));
+                }
+                match self.elaborate_expr(obj, signal_map, signals) {
+                    Ok(IrExpr::Signal(sig_id, _)) => {
+                        let sig_info = &signals[sig_id];
+                        if !sig_info.struct_fields.is_empty() {
+                            if let Some(f) = sig_info.struct_fields.iter().find(|f| f.name == *field) {
+                                let lsb = f.offset;
+                                let msb = f.offset + f.width - 1;
+                                return Ok(IrLValue::RangeSelect(sig_id, lsb, msb));
+                            }
+                            return Err(format!("field '{}' not found in struct type", field));
+                        }
+                        Err("member access on non-struct signal cannot be used as lvalue".to_string())
+                    }
+                    _ => Err("member access cannot be used as lvalues".to_string()),
+                }
+            }
             _ => Err(format!("invalid lvalue expression: {:?}", expr)),
+        }
+    }
+
+    fn build_hier_name(obj: &Expr, field: &str) -> String {
+        match obj {
+            Expr::Ident(prefix) => format!("{}.{}", prefix, field),
+            Expr::MemberAccess { obj: inner, field: inner_field } => {
+                format!("{}.{}", Self::build_hier_name(inner, inner_field), field)
+            }
+            _ => String::new(),
         }
     }
 
@@ -2346,15 +2831,38 @@ impl Elaborator {
         Expr::MemberAccess { obj, field } => {
             // Try to resolve as hierarchical signal reference first
             let hier_name = Self::build_hier_name(obj, field);
-            if let Some(&sig_id) = signal_map.get(&hier_name) {
-                return Ok(IrExpr::Signal(sig_id, 0));
+            if !hier_name.is_empty() {
+                if let Some(&sig_id) = signal_map.get(&hier_name) {
+                    return Ok(IrExpr::Signal(sig_id, 0));
+                }
             }
-            // Fall back to struct/class member access
-            let ir_obj = self.elaborate_expr(obj, signal_map, signals)?;
-            Ok(IrExpr::MemberAccess {
-                obj: Box::new(ir_obj),
-                field: field.clone(),
-            })
+            // Try struct/union member access: resolve obj signal, check struct_fields
+            match self.elaborate_expr(obj, signal_map, signals) {
+                Ok(IrExpr::Signal(sig_id, _)) => {
+                    let sig_info = &signals[sig_id];
+                    if !sig_info.struct_fields.is_empty() {
+                        if let Some(f) = sig_info.struct_fields.iter().find(|f| f.name == *field) {
+                            let lsb = f.offset;
+                            let msb = f.offset + f.width - 1;
+                            return Ok(IrExpr::RangeSelect(sig_id, lsb, msb));
+                        }
+                        return Err(format!("field '{}' not found in struct type (width {})", field, sig_info.width));
+                    }
+                    Ok(IrExpr::MemberAccess {
+                        obj: Box::new(IrExpr::Signal(sig_id, 0)),
+                        field: field.clone(),
+                    })
+                }
+                Ok(ir_obj) => Ok(IrExpr::MemberAccess {
+                    obj: Box::new(ir_obj),
+                    field: field.clone(),
+                }),
+                Err(_) => {
+                    // If obj can't be elaborated (e.g., instance name), emit a HierRef
+                    // that the engine can resolve at runtime using the flattened signal list
+                    Ok(IrExpr::HierRef(hier_name))
+                }
+            }
         }
             Expr::Null => Ok(IrExpr::Const(LogicVec::from_u64(0, 64))),
             Expr::Inside { expr: inner, .. } => {
@@ -2371,6 +2879,62 @@ impl Elaborator {
             Expr::Cast { expr: inner, .. } => {
                 // Cast is a pass-through during elaboration
                 self.elaborate_expr(inner, signal_map, signals)
+            }
+            Expr::FuncCall { name, args } if name.starts_with("process::") => {
+                let ir_args: Result<Vec<IrExpr>, String> = args.iter()
+                    .map(|a| self.elaborate_expr(a, signal_map, signals))
+                    .collect();
+                Ok(IrExpr::SysFunc { name: name.clone(), args: ir_args? })
+            }
+            Expr::FuncCall { name, args } if name.ends_with("::new") && (self.design.classes.iter().any(|c| *name == format!("{}::new", c.name))
+                || BUILTIN_UVM_CLASSES.iter().any(|c| *name == format!("{}::new", c))
+                || name.contains('#')
+            ) => {
+                let raw_name = name.strip_suffix("::new").unwrap().to_string();
+                let class_name = if let Some(hash_pos) = raw_name.find('#') {
+                    let base = &raw_name[..hash_pos];
+                    let type_spec = &raw_name[hash_pos+1..];
+                    let specialized = format!("{}__param_{}", base, type_spec.replace(',', "_"));
+                    let exists_in_design = self.design.classes.iter().any(|c| c.name == specialized);
+                    let exists_in_spec = self.specialized_classes.borrow().iter().any(|c| c.name == specialized);
+                    if !exists_in_design && !exists_in_spec {
+                        let orig = self.design.classes.iter().find(|c| c.name == base).cloned();
+                        if let Some(mut spec) = orig {
+                            let tp_name = spec.type_params.first().map(|tp| tp.name.clone());
+                            spec.name = specialized.clone();
+                            if let Some(ref param_name) = tp_name {
+                                let type_dt = parse_type_spec_str(type_spec);
+                                if let Some(ref dt) = type_dt {
+                                    spec = substitute_class_types(spec, param_name, dt);
+                                }
+                            }
+                            self.specialized_classes.borrow_mut().push(spec);
+                        }
+                    }
+                    specialized
+                } else if BUILTIN_UVM_CLASSES.contains(&raw_name.as_str()) {
+                    format!("__{}", raw_name)
+                } else {
+                    raw_name.clone()
+                };
+                let ir_args: Result<Vec<IrExpr>, String> = args.iter()
+                    .map(|a| self.elaborate_expr(a, signal_map, signals))
+                    .collect();
+                Ok(IrExpr::NewCall { class_name, args: ir_args? })
+            }
+            Expr::FuncCall { name, args } if name == "uvm_factory::set_type_override_by_type" => {
+                let ir_args: Result<Vec<IrExpr>, String> = args.iter()
+                    .map(|a| self.elaborate_expr(a, signal_map, signals))
+                    .collect();
+                Ok(IrExpr::SysFunc { name: name.clone(), args: ir_args? })
+            }
+            Expr::FuncCall { name, args } if name == "uvm_config_db::set" || name == "uvm_config_db::get"
+                || name == "uvm_resource_db::set" || name == "uvm_resource_db::get" => {
+                let ir_args: Result<Vec<IrExpr>, String> = args.iter()
+                    .map(|a| self.elaborate_expr(a, signal_map, signals))
+                    .collect();
+                // Use SysFunc variant for engine dispatch
+                Ok(IrExpr::SysFunc { name: name.clone(), args: ir_args? })
             }
             Expr::FuncCall { name, args } if name != "new" => {
                 let is_dpi = self.design.modules.iter().flat_map(|m| m.items.iter())
@@ -2549,6 +3113,12 @@ fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, value
         }
         ModuleItem::Initial(initial) => {
             for stmt in &mut initial.stmts {
+                let old = std::mem::replace(stmt, Stmt::Null);
+                *stmt = substitute_loop_var_in_stmt(&old, var_name, value);
+            }
+        }
+        ModuleItem::Final(final_block) => {
+            for stmt in &mut final_block.stmts {
                 let old = std::mem::replace(stmt, Stmt::Null);
                 *stmt = substitute_loop_var_in_stmt(&old, var_name, value);
             }
@@ -2858,9 +3428,9 @@ fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> Stmt 
             stmt: stmt.as_ref().map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
         },
         Stmt::EventTrigger { name } => Stmt::EventTrigger { name: name.clone() },
-        Stmt::ForeachLoop { array_var, index_var, stmts } => Stmt::ForeachLoop {
+        Stmt::ForeachLoop { array_var, index_vars, stmts } => Stmt::ForeachLoop {
             array_var: array_var.clone(),
-            index_var: index_var.clone(),
+            index_vars: index_vars.clone(),
             stmts: substitute_loop_var_in_stmts(stmts, var_name, value),
         },
         Stmt::NamedBlock { name, stmts, decls } => Stmt::NamedBlock {
@@ -3041,6 +3611,9 @@ fn collect_read_signals_stmt(stmt: &IrStmt, out: &mut Vec<SignalId>) {
             collect_read_signals_stmts(stmts, out);
         }
         IrStmt::Release { .. } | IrStmt::Deassign { .. } => {}
+        IrStmt::Force { rhs, .. } => {
+            collect_read_signals_expr(rhs, out);
+        }
         IrStmt::Disable { .. } => {}
         _ => {}
     }
@@ -3107,6 +3680,7 @@ fn collect_read_signals_expr(expr: &IrExpr, out: &mut Vec<SignalId>) {
                 collect_read_signals_expr(arg, out);
             }
         }
+        IrExpr::HierRef(_) => {}
     }
 }
 
@@ -3193,7 +3767,17 @@ fn compute_expr_width(expr: &Expr, signal_map: &HashMap<String, SignalId>,
         Expr::PartSelect { width, .. } => {
             Ok(const_eval_with_params(width, param_vals).unwrap_or(1) as usize)
         }
-        Expr::MemberAccess { obj, .. } => {
+        Expr::MemberAccess { obj, field } => {
+            // Check if obj resolves to a struct signal
+            if let Expr::Ident(name) = obj.as_ref() {
+                if let Some(&sig_id) = signal_map.get(name) {
+                    if !signals[sig_id].struct_fields.is_empty() {
+                        if let Some(f) = signals[sig_id].struct_fields.iter().find(|f| f.name == *field) {
+                            return Ok(f.width);
+                        }
+                    }
+                }
+            }
             compute_expr_width(obj, signal_map, signals, param_vals)
         }
         Expr::MethodCall { .. } | Expr::Cast { .. } | Expr::StreamingConcat { .. } => {
@@ -3260,8 +3844,13 @@ fn try_fold_const(expr: &Expr, params: &HashMap<String, i64>) -> Result<Option<I
     match const_eval_with_params(expr, params) {
         Ok(val) => {
             let abs = val.unsigned_abs();
-            let width = if val == 0 { 1 } else { 64 - (abs.leading_zeros() as usize) }.max(1);
-            Ok(Some(IrExpr::Const(LogicVec::from_u64(abs, width))))
+            let min_width = if val >= 0 {
+                if val == 0 { 1 } else { 64 - (abs.leading_zeros() as usize) }
+            } else {
+                64 - (abs.leading_zeros() as usize) + 1
+            };
+            let width = min_width.max(32);
+            Ok(Some(IrExpr::Const(LogicVec::from_u64(val as u64, width))))
         }
         Err(_) => Ok(None),
     }
@@ -3431,6 +4020,7 @@ impl DataType {
             DataType::Shortint => 16,
             DataType::Int | DataType::Integer => 32,
             DataType::Longint => 64,
+            DataType::Time => 64,
             DataType::Real | DataType::Realtime => 64,
             DataType::String => 0,
             DataType::Signed(inner) => inner.width(),
@@ -3450,5 +4040,137 @@ impl DeclKind {
                 | DeclKind::Supply0 | DeclKind::Supply1 => 1,
             DeclKind::Int | DeclKind::Integer => 32,
         }
+    }
+}
+
+fn parse_type_spec_str(s: &str) -> Option<DataType> {
+    match s {
+        "bit" => Some(DataType::Bit),
+        "logic" => Some(DataType::Logic),
+        "int" => Some(DataType::Int),
+        "integer" => Some(DataType::Integer),
+        "byte" => Some(DataType::Byte),
+        "shortint" => Some(DataType::Shortint),
+        "longint" => Some(DataType::Longint),
+        "time" => Some(DataType::Time),
+        "real" => Some(DataType::Real),
+        "realtime" => Some(DataType::Realtime),
+        "string" => Some(DataType::String),
+        _ => {
+            // Check for 'signed <type>' pattern
+            if let Some(inner) = s.strip_prefix("signed ") {
+                parse_type_spec_str(inner).map(|dt| DataType::Signed(Box::new(dt)))
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn substitute_class_types(cd: ClassDecl, param_name: &str, replacement: &DataType) -> ClassDecl {
+    let mut new_members = Vec::new();
+    for member in cd.members {
+        match member {
+            ClassMember::Decl(mut decl) => {
+                decl.dtype = substitute_data_type(decl.dtype, param_name, replacement);
+                new_members.push(ClassMember::Decl(decl));
+            }
+            ClassMember::Function(mut fd) => {
+                fd.return_type = fd.return_type.map(|dt| {
+                    Box::new(substitute_data_type(*dt, param_name, replacement))
+                });
+                new_members.push(ClassMember::Function(fd));
+            }
+            ClassMember::Task(td) => {
+                new_members.push(ClassMember::Task(td));
+            }
+            ClassMember::Constraint { name, body } => {
+                let new_body = body.into_iter().map(|ci| {
+                    match ci {
+                        ConstraintItem::Expr(e) => {
+                            ConstraintItem::Expr(substitute_expr_types(e, param_name, replacement))
+                        }
+                    }
+                }).collect();
+                new_members.push(ClassMember::Constraint { name, body: new_body });
+            }
+            other => new_members.push(other),
+        }
+    }
+    ClassDecl { members: new_members, ..cd }
+}
+
+fn substitute_data_type(dt: DataType, param_name: &str, replacement: &DataType) -> DataType {
+    match dt {
+        DataType::UserDefined(ref name) if name == param_name => replacement.clone(),
+        DataType::Signed(inner) => DataType::Signed(Box::new(substitute_data_type(*inner, param_name, replacement))),
+        DataType::EnumType { base, members } => {
+            DataType::EnumType {
+                base: base.map(|b| Box::new(substitute_data_type(*b, param_name, replacement))),
+                members,
+            }
+        }
+        DataType::StructType { members } => {
+            DataType::StructType {
+                members: members.into_iter().map(|m| {
+                    StructMember {
+                        dtype: Box::new(substitute_data_type(*m.dtype, param_name, replacement)),
+                        ..m
+                    }
+                }).collect(),
+            }
+        }
+        DataType::UnionType { members } => {
+            DataType::UnionType {
+                members: members.into_iter().map(|m| {
+                    StructMember {
+                        dtype: Box::new(substitute_data_type(*m.dtype, param_name, replacement)),
+                        ..m
+                    }
+                }).collect(),
+            }
+        }
+        other => other,
+    }
+}
+
+fn substitute_expr_types(e: Expr, param_name: &str, replacement: &DataType) -> Expr {
+    match e {
+        Expr::BinaryOp { lhs, op, rhs } => {
+            Expr::BinaryOp {
+                lhs: Box::new(substitute_expr_types(*lhs, param_name, replacement)),
+                op,
+                rhs: Box::new(substitute_expr_types(*rhs, param_name, replacement)),
+            }
+        }
+        Expr::UnaryOp { op, expr } => {
+            Expr::UnaryOp { op, expr: Box::new(substitute_expr_types(*expr, param_name, replacement)) }
+        }
+        Expr::Paren(inner) => {
+            Expr::Paren(Box::new(substitute_expr_types(*inner, param_name, replacement)))
+        }
+        Expr::Concat(items) => {
+            Expr::Concat(items.into_iter().map(|e| substitute_expr_types(e, param_name, replacement)).collect())
+        }
+        Expr::Replicate { count, expr } => {
+            Expr::Replicate {
+                count: Box::new(substitute_expr_types(*count, param_name, replacement)),
+                expr: Box::new(substitute_expr_types(*expr, param_name, replacement)),
+            }
+        }
+        Expr::TernaryOp { cond, true_expr, false_expr } => {
+            Expr::TernaryOp {
+                cond: Box::new(substitute_expr_types(*cond, param_name, replacement)),
+                true_expr: Box::new(substitute_expr_types(*true_expr, param_name, replacement)),
+                false_expr: Box::new(substitute_expr_types(*false_expr, param_name, replacement)),
+            }
+        }
+        Expr::FuncCall { name, args } => {
+            Expr::FuncCall {
+                name,
+                args: args.into_iter().map(|a| substitute_expr_types(a, param_name, replacement)).collect(),
+            }
+        }
+        other => other,
     }
 }

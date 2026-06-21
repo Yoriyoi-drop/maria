@@ -808,6 +808,48 @@ endmodule"#, 5).unwrap();
     assert_eq!(v.to_u64(), 1);
 }
 
+#[test]
+fn test_edge_forever_with_delay() {
+    let sigs = simulate_signals(r#"
+module top;
+    reg [7:0] x;
+    initial begin
+        x = 0;
+        forever begin
+            #10 x = x + 1;
+            if (x == 3) break;
+        end
+        #1 $finish;
+    end
+endmodule"#, 50).unwrap();
+    // x should be 3 at the end (incremented at t=10, t=20, t=30)
+    let (_, v) = sigs.iter().find(|(n,_)| n == "x").unwrap();
+    assert_eq!(v.to_u64(), 3);
+}
+
+#[test]
+fn test_edge_forever_with_delay_events() {
+    // Test that events are properly spaced: counter increments exactly once per delay
+    let sigs = simulate_signals(r#"
+module top;
+    reg [7:0] cnt;
+    integer i;
+    initial begin
+        cnt = 0;
+        i = 0;
+        forever begin
+            #5 cnt = cnt + 1;
+            i = i + 1;
+            if (i == 4) break;
+        end
+        #1 $finish;
+    end
+endmodule"#, 50).unwrap();
+    let (_, v) = sigs.iter().find(|(n,_)| n == "cnt").unwrap();
+    // 4 increments: t=5, t=10, t=15, t=20
+    assert_eq!(v.to_u64(), 4);
+}
+
 // === 22. Wait with constant ===
 
 #[test]
@@ -1575,8 +1617,8 @@ module top;
     end
 endmodule"#, 10).unwrap();
     let (_, v) = sigs.iter().find(|(n,_)| n == "a").unwrap();
-    // After force then release, value is X (no driver stack tracking yet)
-    assert_eq!(v.to_u64(), 0);
+    // After force then release, value stays at forced value (release unblocks, doesn't rewrite)
+    assert_eq!(v.to_u64(), 99);
 }
 
 // === 63. While loop with complex condition ===

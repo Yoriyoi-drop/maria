@@ -35,6 +35,7 @@ fn func_return_width(func: &FunctionDecl) -> usize {
             DataType::Shortint => 16,
             DataType::Int | DataType::Integer => 32,
             DataType::Longint => 64,
+            DataType::Time => 64,
             DataType::Signed(s) => match s.as_ref() {
                 DataType::Bit => 1,
                 DataType::Logic => 1,
@@ -42,6 +43,7 @@ fn func_return_width(func: &FunctionDecl) -> usize {
                 DataType::Shortint => 16,
                 DataType::Int | DataType::Integer => 32,
                 DataType::Longint => 64,
+                DataType::Time => 64,
                 _ => 1,
             },
             _ => 1,
@@ -84,6 +86,12 @@ pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(String, u
                     .map(|s| inline_funcs_in_stmt(s, &funcs, prefix, &mut counter, &mut temp_signals))
                     .collect();
                 new_items.push(ModuleItem::Initial(initial));
+            }
+            ModuleItem::Final(mut final_block) => {
+                final_block.stmts = final_block.stmts.drain(..)
+                    .map(|s| inline_funcs_in_stmt(s, &funcs, prefix, &mut counter, &mut temp_signals))
+                    .collect();
+                new_items.push(ModuleItem::Final(final_block));
             }
             ModuleItem::Assign(assign) => {
                 let mut preamble = Vec::new();
@@ -309,12 +317,14 @@ fn inline_funcs_in_stmt(
                                 super::types::DataType::Shortint => 16,
                                 super::types::DataType::Int | super::types::DataType::Integer => 32,
                                 super::types::DataType::Longint => 64,
+                                super::types::DataType::Time => 64,
                                 super::types::DataType::Signed(inner) => match inner.as_ref() {
                                     super::types::DataType::Bit | super::types::DataType::Logic => 1,
                                     super::types::DataType::Byte => 8,
                                     super::types::DataType::Shortint => 16,
                                     super::types::DataType::Int | super::types::DataType::Integer => 32,
                                     super::types::DataType::Longint => 64,
+                                    super::types::DataType::Time => 64,
                                     _ => 32,
                                 },
                                 _ => 1,
@@ -431,11 +441,11 @@ fn inline_funcs_in_stmt(
         }
         Stmt::Null => Stmt::Null,
         Stmt::Return(expr) => Stmt::Return(expr),
-        Stmt::ForeachLoop { array_var, index_var, stmts } => {
+        Stmt::ForeachLoop { array_var, index_vars, stmts } => {
             let stmts = stmts.into_iter().map(|s| inline_funcs_in_stmt(
                 s, funcs, prefix, counter, temp_signals
             )).collect();
-            Stmt::ForeachLoop { array_var, index_var, stmts }
+            Stmt::ForeachLoop { array_var, index_vars, stmts }
         }
         Stmt::Break => Stmt::Break,
         Stmt::Continue => Stmt::Continue,
@@ -495,6 +505,8 @@ fn replace_func_calls_in_expr(
                 let mut rename_map: HashMap<String, String> = HashMap::new();
                 rename_map.insert(name.clone(), ret_name.clone());
 
+                let orig_args: Vec<Expr> = new_args.clone();
+
                 for (i, arg) in new_args.into_iter().enumerate() {
                     let port = func.ports.get(i)
                         .cloned()
@@ -525,12 +537,14 @@ fn replace_func_calls_in_expr(
                             super::types::DataType::Shortint => 16,
                             super::types::DataType::Int | super::types::DataType::Integer => 32,
                             super::types::DataType::Longint => 64,
+                            super::types::DataType::Time => 64,
                             super::types::DataType::Signed(inner) => match inner.as_ref() {
                                 super::types::DataType::Bit | super::types::DataType::Logic => 1,
                                 super::types::DataType::Byte => 8,
                                 super::types::DataType::Shortint => 16,
                                 super::types::DataType::Int | super::types::DataType::Integer => 32,
                                 super::types::DataType::Longint => 64,
+                                super::types::DataType::Time => 64,
                                 _ => 32,
                             },
                             _ => 1,
@@ -555,6 +569,23 @@ fn replace_func_calls_in_expr(
                     let mut renamed = rename_in_stmt(func_stmt, &rename_map);
                     renamed = rename_func_decls_in_stmt(renamed, &rename_map);
                     preamble.push(renamed);
+                }
+
+                // Write-back output/inout port values to caller's signals
+                for (i, orig_arg) in orig_args.into_iter().enumerate() {
+                    let port = func.ports.get(i)
+                        .cloned()
+                        .unwrap_or_else(|| super::types::FunctionPort {
+                            name: format!("_arg{}", i), range: None, expr_range: None,
+                        });
+                    let temp_arg_name = format!("__func_{}_{}_{}_{}", prefix, name, c, port.name);
+                    if let Expr::Ident(_) = &orig_arg {
+                        preamble.push(Stmt::BlockingAssign {
+                            lhs: orig_arg,
+                            rhs: Expr::Ident(temp_arg_name),
+                            delay: None,
+                        });
+                    }
                 }
 
                 Expr::Ident(ret_name)
@@ -728,9 +759,9 @@ fn rename_in_stmt(stmt: &Stmt, rename_map: &HashMap<String, String>) -> Stmt {
         Stmt::Expr { expr } => Stmt::Expr { expr: rename_in_expr(expr, rename_map) },
         Stmt::Null => Stmt::Null,
         Stmt::Return(expr) => Stmt::Return(expr),
-        Stmt::ForeachLoop { array_var, index_var, stmts } => Stmt::ForeachLoop {
+        Stmt::ForeachLoop { array_var, index_vars, stmts } => Stmt::ForeachLoop {
             array_var,
-            index_var,
+            index_vars,
             stmts: stmts.into_iter().map(|s| rename_in_stmt(&s, rename_map)).collect(),
         },
         Stmt::Break => Stmt::Break,

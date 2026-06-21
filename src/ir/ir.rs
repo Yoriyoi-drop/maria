@@ -11,6 +11,7 @@ pub struct IrDesign {
     pub classes: HashMap<String, IrClassDef>,
     pub covergroups: Vec<IrCovergroup>,
     pub dpi_imports: Vec<IrDpiImport>,
+    pub hier_signal_map: HashMap<String, SignalId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,9 +42,16 @@ pub struct IrCross {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct IrTypeParam {
+    pub name: String,
+    pub default_type: Option<crate::ast::types::DataType>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct IrClassDef {
     pub name: String,
     pub extends: Option<String>,
+    pub type_params: Vec<IrTypeParam>,
     pub fields: Vec<IrClassField>,
     pub methods: Vec<IrClassMethod>,
     pub constraints: Vec<(String, Vec<crate::ast::types::ConstraintItem>)>,
@@ -136,6 +144,13 @@ impl NetType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct StructFieldInfo {
+    pub name: String,
+    pub offset: usize,
+    pub width: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct SignalInfo {
     pub name: String,
     pub width: usize,
@@ -153,8 +168,10 @@ pub struct SignalInfo {
     pub is_2state: bool,
     pub is_dynamic: bool,
     pub is_queue: bool,
+    pub is_signed: bool,
     pub msb: usize,
     pub lsb: usize,
+    pub struct_fields: Vec<StructFieldInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -195,6 +212,10 @@ pub enum Process {
         body: Vec<IrStmt>,
     },
     Initial {
+        name: String,
+        body: Vec<IrStmt>,
+    },
+    Final {
         name: String,
         body: Vec<IrStmt>,
     },
@@ -274,9 +295,18 @@ pub enum IrStmt {
         count: IrExpr,
         body: Vec<IrStmt>,
     },
+    Foreach {
+        array_var: IrExpr,
+        index_var: String,
+        body: Vec<IrStmt>,
+    },
     Delay {
         delay: u64,
         body: Vec<IrStmt>,
+    },
+    Force {
+        lvalue: IrLValue,
+        rhs: IrExpr,
     },
     Wait {
         cond: IrExpr,
@@ -329,6 +359,10 @@ pub enum IrStmt {
     Cover {
         cond: IrExpr,
         pass_stmt: Vec<IrStmt>,
+    },
+    WaitOrder {
+        events: Vec<SignalId>,
+        failure_stmts: Vec<IrStmt>,
     },
 }
 
@@ -416,6 +450,7 @@ pub enum IrExpr {
         args: Vec<IrExpr>,
         return_width: usize,
     },
+    HierRef(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

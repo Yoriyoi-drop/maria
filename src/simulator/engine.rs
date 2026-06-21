@@ -3,9 +3,77 @@ use crate::simulator::state::SimulationState;
 use crate::simulator::value::*;
 use crate::waveform::VcdWriter;
 use crate::ast::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use rand::Rng;
+use std::fmt;
+
+// ── Debug types ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DebugMode { Normal, Debug, DeepDebug }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StepMode { Running, Paused, StepCycle }
+
+#[derive(Debug, Clone)]
+pub enum Breakpoint {
+    Cycle(u64),
+    SignalEq(String, LogicVec),
+    SignalNeq(String, LogicVec),
+    SignalChange(String),
+    Module(String),
+}
+
+impl fmt::Display for Breakpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Breakpoint::Cycle(c) => write!(f, "break cycle {}", c),
+            Breakpoint::SignalEq(n, v) => write!(f, "break signal {} == {}", n, v),
+            Breakpoint::SignalNeq(n, v) => write!(f, "break signal {} != {}", n, v),
+            Breakpoint::SignalChange(n) => write!(f, "break change {}", n),
+            Breakpoint::Module(n) => write!(f, "break module {}", n),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Watchpoint {
+    Signal(String),
+    MemAddr(u64),
+}
+
+impl fmt::Display for Watchpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Watchpoint::Signal(n) => write!(f, "watch {}", n),
+            Watchpoint::MemAddr(a) => write!(f, "watch mem[{:#x}]", a),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DebugEvent {
+    pub kind: DebugEventKind,
+    pub time: u64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum DebugEventKind {
+    BreakpointHit,
+    WatchpointHit,
+    StepComplete,
+    SignalChanged,
+}
+
+#[derive(Debug, Clone)]
+pub struct StateSnapshot {
+    pub time: u64,
+    pub signals: Vec<LogicVec>,
+    pub next_signals: Vec<LogicVec>,
+    pub changed: Vec<bool>,
+}
 
 #[derive(Debug, Clone)]
 pub enum EventKind {
@@ -70,6 +138,65 @@ pub enum FlowControl {
     Continue,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ProcessStatus {
+    Finished = 0,
+    Running = 1,
+    Waiting = 2,
+    Suspended = 3,
+    Killed = 4,
+}
+
+#[derive(Debug, Clone)]
+pub struct UvmObjectData {
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct UvmComponentData {
+    pub parent: Option<ObjId>,
+    pub children: Vec<ObjId>,
+    pub report_verbosity: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct UvmSequencerData {
+    pub item_queue: Vec<ObjId>,
+    pub current_item: Option<ObjId>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UvmDriverData {
+    pub sequencer_id: Option<ObjId>,
+    pub current_item: Option<ObjId>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UvmAnalysisPortData {
+    pub connections: Vec<ObjId>,
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct UvmAnalysisImpData {
+    pub parent: Option<ObjId>,
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct WaitOrderState {
+    pub events: Vec<SignalId>,
+    pub expected_idx: usize,
+    pub continuation: Vec<IrStmt>,
+    pub failure_stmts: Vec<IrStmt>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProcessInfo {
+    pub status: ProcessStatus,
+    pub await_continuations: Vec<Vec<IrStmt>>,
+}
+
 pub struct SimulationEngine {
     pub state: SimulationState,
     pub design: IrDesign,
@@ -89,18 +216,48 @@ pub struct SimulationEngine {
     monitor_last_values: Option<Vec<LogicVec>>,
     disable_pending: Option<String>,
     control_flow: Option<FlowControl>,
+    forced_signals: HashSet<SignalId>,
     signal_snapshot: Option<Vec<LogicVec>>,
     pending_waits: Vec<(Vec<SignalId>, Vec<IrStmt>)>,
+    pending_wait_orders: Vec<WaitOrderState>,
+    loop_continuation: Option<Vec<IrStmt>>,
     current_time: usize,
     fork_groups: Vec<ForkGroup>,
     reactive_events: Vec<EventKind>,
     strobe_events: Vec<Vec<IrExpr>>,
+    fstrobe_events: Vec<(u32, Vec<IrExpr>)>,
+    fmonitor_map: HashMap<u32, (Vec<IrExpr>, Vec<LogicVec>)>,
     mailbox_queues: HashMap<SignalId, Vec<LogicVec>>,
     semaphore_counts: HashMap<SignalId, u32>,
+    // uvm_object tracking
+    uvm_object_data: HashMap<ObjId, UvmObjectData>,
+    uvm_component_data: HashMap<ObjId, UvmComponentData>,
+    uvm_sequencer_data: HashMap<ObjId, UvmSequencerData>,
+    uvm_driver_data: HashMap<ObjId, UvmDriverData>,
+    uvm_analysis_port_data: HashMap<ObjId, UvmAnalysisPortData>,
+    uvm_analysis_imp_data: HashMap<ObjId, UvmAnalysisImpData>,
+    uvm_config_db_data: HashMap<(String, String), LogicVec>,
+    uvm_resource_db_data: HashMap<(String, String), LogicVec>,
+    factory_type_overrides: HashMap<String, String>,
+    root_test_obj_id: Option<ObjId>,
+    // Process tracking
+    process_map: HashMap<ObjId, ProcessInfo>,
+    next_process_id: ObjId,
+    current_process_id: Option<ObjId>,
     // Coverage tracking
-    cover_hits: HashMap<String, u64>,
-    cover_total: HashMap<String, u64>,
-    cover_bins: HashMap<String, HashMap<String, u64>>,
+    pub(crate) cover_hits: HashMap<String, u64>,
+    pub(crate) cover_total: HashMap<String, u64>,
+    pub(crate) cover_bins: HashMap<String, HashMap<String, u64>>,
+    // ── Debug fields ──
+    pub debug_mode: DebugMode,
+    pub breakpoints: Vec<Breakpoint>,
+    pub watchpoints: Vec<Watchpoint>,
+    pub signal_history: HashMap<String, Vec<(u64, LogicVec)>>,
+    pub snapshots: Vec<StateSnapshot>,
+    pub paused: bool,
+    pub step_mode: StepMode,
+    pub event_log: Vec<DebugEvent>,
+    pub snapshot_interval: u64,
 }
 
 impl SimulationEngine {
@@ -126,17 +283,44 @@ impl SimulationEngine {
             monitor_last_values: None,
             disable_pending: None,
             control_flow: None,
+            forced_signals: HashSet::new(),
             signal_snapshot: None,
             pending_waits: Vec::new(),
+            pending_wait_orders: Vec::new(),
+            loop_continuation: None,
             current_time: 0,
             fork_groups: Vec::new(),
             reactive_events: Vec::new(),
             strobe_events: Vec::new(),
+            fstrobe_events: Vec::new(),
+            fmonitor_map: HashMap::new(),
             mailbox_queues: HashMap::new(),
             semaphore_counts: HashMap::new(),
+            uvm_object_data: HashMap::new(),
+            uvm_component_data: HashMap::new(),
+            uvm_sequencer_data: HashMap::new(),
+            uvm_driver_data: HashMap::new(),
+            uvm_analysis_port_data: HashMap::new(),
+            uvm_analysis_imp_data: HashMap::new(),
+            uvm_config_db_data: HashMap::new(),
+            uvm_resource_db_data: HashMap::new(),
+            factory_type_overrides: HashMap::new(),
+            root_test_obj_id: None,
+            process_map: HashMap::new(),
+            next_process_id: 1,
+            current_process_id: None,
             cover_hits: HashMap::new(),
             cover_total: HashMap::new(),
             cover_bins: HashMap::new(),
+            debug_mode: DebugMode::Normal,
+            breakpoints: Vec::new(),
+            watchpoints: Vec::new(),
+            signal_history: HashMap::new(),
+            snapshots: Vec::new(),
+            paused: false,
+            step_mode: StepMode::Running,
+            event_log: Vec::new(),
+            snapshot_interval: 1000,
         }
     }
 
@@ -148,7 +332,6 @@ impl SimulationEngine {
         self.initialize_time_zero()?;
         self.execute_phases()?;
 
-        let mut iter_count = 0u64;
         while self.running && self.state.time <= self.max_time {
             let t = self.state.time as usize;
 
@@ -163,8 +346,7 @@ impl SimulationEngine {
             self.dump_vcd_time()?;
 
             // ── IEEE 1800 stratified event loop ──
-            // Iterate through all 12 regions in order; if any region generates
-            // new events, the loop re-circulates from Active (Pre-Active).
+            let mut delta_count = 0u64;
             loop {
                 let mut activity = false;
                 let mut deltas: Vec<SignalId> = Vec::new();
@@ -180,7 +362,51 @@ impl SimulationEngine {
                         | EventRegion::PreObserved
                         | EventRegion::PostObserved
                         | EventRegion::PostReactive => {
-                            // PLI callback regions — currently non-functional
+                            // PLI regions: process any events in this region
+                            if t < self.events.len() {
+                                let mut matched = true;
+                                while matched {
+                                    matched = false;
+                                    let mut to_process = Vec::new();
+                                    self.events[t].retain(|re| {
+                                        if re.region == region {
+                                            to_process.push(re.event.clone());
+                                            false
+                                        } else { true }
+                                    });
+                                    if !to_process.is_empty() {
+                                        activity = true;
+                                        matched = true;
+                                        for event in to_process {
+                                            self.process_event(event, t)?;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        EventRegion::Observed => {
+                            // Observed region: evaluate concurrent assertions (SVA).
+                            // Process any assertion-evaluation events scheduled here.
+                            if t < self.events.len() {
+                                let mut matched = true;
+                                while matched {
+                                    matched = false;
+                                    let mut to_process = Vec::new();
+                                    self.events[t].retain(|re| {
+                                        if re.region == EventRegion::Observed {
+                                            to_process.push(re.event.clone());
+                                            false
+                                        } else { true }
+                                    });
+                                    if !to_process.is_empty() {
+                                        activity = true;
+                                        matched = true;
+                                        for event in to_process {
+                                            self.process_event(event, t)?;
+                                        }
+                                    }
+                                }
+                            }
                         }
                         EventRegion::Active | EventRegion::Inactive => {
                             if t < self.events.len() {
@@ -213,9 +439,6 @@ impl SimulationEngine {
                                     }
                                 }
                             }
-                        }
-                        EventRegion::Observed => {
-                            // Future: SVA assertion evaluation
                         }
                         EventRegion::Reactive => {
                             // Commit changes and trigger sensitive processes
@@ -252,10 +475,10 @@ impl SimulationEngine {
                     }
                 }
 
-                iter_count += 1;
-                if iter_count > 1_000_000 {
-                    return Err("simulation exceeded max iterations".to_string());
+                if delta_count > 10_000_000 {
+                    return Err("simulation exceeded max delta cycles per time step (10M)".to_string());
                 }
+                delta_count += 1;
 
                 // Check pending $wait conditions
                 if !self.pending_waits.is_empty() && !deltas.is_empty() {
@@ -264,11 +487,21 @@ impl SimulationEngine {
                     }
                 }
 
+                // Check pending wait_order conditions
+                if !self.pending_wait_orders.is_empty() && !deltas.is_empty() {
+                    if self.process_pending_wait_orders(&deltas)? {
+                        activity = true;
+                    }
+                }
+
                 // Re-circulate if any events remain or NBA is pending
                 let has_remaining = t < self.events.len()
                     && self.events[t].iter().any(|re| {
-                        matches!(re.region, EventRegion::Active | EventRegion::Inactive
-                            | EventRegion::Nba | EventRegion::Reactive)
+                        matches!(re.region, EventRegion::PreActive | EventRegion::Active
+                            | EventRegion::Inactive | EventRegion::PreNba | EventRegion::Nba
+                            | EventRegion::PostNba | EventRegion::PreObserved
+                            | EventRegion::Observed | EventRegion::PostObserved
+                            | EventRegion::Reactive | EventRegion::PostReactive)
                     })
                     || !self.nba_pending.is_empty();
 
@@ -286,6 +519,16 @@ impl SimulationEngine {
             self.dump_vcd_state()?;
             self.check_monitor()?;
 
+            // ── Debug check at start of cycle ──
+            if self.debug_mode != DebugMode::Normal {
+                self.debug_check()?;
+                if self.paused { break; }
+                if self.step_mode == StepMode::StepCycle {
+                    self.paused = true;
+                    break;
+                }
+            }
+
             self.state.time += 1;
             if self.state.time > self.max_time {
                 break;
@@ -296,7 +539,144 @@ impl SimulationEngine {
             }
         }
 
-        self.report_coverage();
+        if !self.paused {
+            self.execute_final_blocks()?;
+            self.report_coverage();
+        }
+
+        Ok(())
+    }
+
+    fn debug_check(&mut self) -> Result<(), String> {
+        let time = self.state.time;
+
+        // Save snapshot for reverse debug
+        if self.debug_mode == DebugMode::DeepDebug && time % self.snapshot_interval == 0 {
+            self.snapshots.push(StateSnapshot {
+                time,
+                signals: self.state.signals.clone(),
+                next_signals: self.state.next_signals.clone(),
+                changed: self.state.changed.clone(),
+            });
+            if self.snapshots.len() > 10000 {
+                self.snapshots.remove(0);
+            }
+        }
+
+        // Update signal history
+        for sig in &self.design.top.signals {
+            let id = self.find_signal(&sig.name);
+            if let Some(id) = id {
+                let val = self.state.read_signal(id).clone();
+                self.signal_history.entry(sig.name.clone())
+                    .or_insert_with(Vec::new)
+                    .push((time, val));
+                if let Some(hist) = self.signal_history.get(&sig.name) {
+                    if hist.len() > 100000 {
+                        self.signal_history.get_mut(&sig.name).unwrap().remove(0);
+                    }
+                }
+            }
+        }
+
+        // Check breakpoints
+        for bp in &self.breakpoints {
+            match bp {
+                Breakpoint::Cycle(c) => {
+                    if *c == time {
+                        self.paused = true;
+                        self.event_log.push(DebugEvent {
+                            kind: DebugEventKind::BreakpointHit,
+                            time,
+                            message: format!("breakpoint cycle {} hit", c),
+                        });
+                    }
+                }
+                Breakpoint::SignalEq(name, expected) => {
+                    let id = self.find_signal(name);
+                    if let Some(id) = id {
+                        let val = self.state.read_signal(id);
+                        if val == expected {
+                            self.paused = true;
+                            self.event_log.push(DebugEvent {
+                                kind: DebugEventKind::BreakpointHit,
+                                time,
+                                message: format!("breakpoint {} == {} hit", name, expected),
+                            });
+                        }
+                    }
+                }
+                Breakpoint::SignalNeq(name, expected) => {
+                    let id = self.find_signal(name);
+                    if let Some(id) = id {
+                        let val = self.state.read_signal(id);
+                        if val != expected {
+                            self.paused = true;
+                            self.event_log.push(DebugEvent {
+                                kind: DebugEventKind::BreakpointHit,
+                                time,
+                                message: format!("breakpoint {} != {} hit", name, expected),
+                            });
+                        }
+                    }
+                }
+                Breakpoint::SignalChange(name) => {
+                    if let Some(history) = self.signal_history.get(name) {
+                        if history.len() >= 2 {
+                            let last = &history[history.len() - 1];
+                            let prev = &history[history.len() - 2];
+                            if last.1 != prev.1 {
+                                self.paused = true;
+                                self.event_log.push(DebugEvent {
+                                    kind: DebugEventKind::BreakpointHit,
+                                    time,
+                                    message: format!("breakpoint change {} hit: {} → {}", name, prev.1, last.1),
+                                });
+                            }
+                        }
+                    }
+                }
+                Breakpoint::Module(name) => {
+                    if self.design.top.name == *name {
+                        self.paused = true;
+                        self.event_log.push(DebugEvent {
+                            kind: DebugEventKind::BreakpointHit,
+                            time,
+                            message: format!("breakpoint module {} hit", name),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Check watchpoints
+        for wp in &self.watchpoints {
+            match wp {
+                Watchpoint::Signal(name) => {
+                    if let Some(history) = self.signal_history.get(name) {
+                        if history.len() >= 2 {
+                            let last = &history[history.len() - 1];
+                            let prev = &history[history.len() - 2];
+                            if last.1 != prev.1 {
+                                self.event_log.push(DebugEvent {
+                                    kind: DebugEventKind::WatchpointHit,
+                                    time,
+                                    message: format!("WATCH: {} changed\n  old = {}\n  new = {}\n  cycle = {}", name, prev.1, last.1, time),
+                                });
+                                self.paused = true;
+                            }
+                        }
+                    }
+                }
+                Watchpoint::MemAddr(addr) => {
+                    self.event_log.push(DebugEvent {
+                        kind: DebugEventKind::WatchpointHit,
+                        time,
+                        message: format!("WATCH: mem[0x{:X}] polled at cycle {}", addr, time),
+                    });
+                }
+            }
+        }
 
         Ok(())
     }
@@ -318,9 +698,24 @@ impl SimulationEngine {
                 None => true,
             };
             if changed {
-                let msg = format_display(&self.state, args);
+                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, args);
                 print!("{}", msg);
                 self.monitor_last_values = Some(new_vals);
+            }
+        }
+        let fmonitor: Vec<(u32, Vec<IrExpr>, Vec<LogicVec>)> = self.fmonitor_map.iter()
+            .map(|(h, (args, last))| (*h, args.clone(), last.clone()))
+            .collect();
+        for (handle, args, last) in fmonitor {
+            let new_vals: Vec<LogicVec> = args.iter()
+                .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
+                .collect();
+            if new_vals != last {
+                if let Some(f) = self.file_handles.get_mut(&handle) {
+                    let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &args);
+                    let _ = write!(f, "{}", msg);
+                }
+                self.fmonitor_map.insert(handle, (args, new_vals));
             }
         }
         Ok(())
@@ -329,8 +724,15 @@ impl SimulationEngine {
     fn process_strobe(&mut self) -> Result<(), String> {
         let events = std::mem::take(&mut self.strobe_events);
         for args in &events {
-            let msg = format_display(&self.state, args);
+            let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, args);
             print!("{}", msg);
+        }
+        let fstrobe = std::mem::take(&mut self.fstrobe_events);
+        for (handle, args) in &fstrobe {
+            if let Some(f) = self.file_handles.get_mut(handle) {
+                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, args);
+                let _ = write!(f, "{}", msg);
+            }
         }
         Ok(())
     }
@@ -350,14 +752,16 @@ impl SimulationEngine {
                 Process::Initial { .. } => {
                     self.events[t].push(RegionEvent { region: EventRegion::Active, event: EventKind::EvalProcess(pid) });
                 }
+                Process::Final { .. } => {
+                    // Final blocks execute only at $finish, not at time zero
+                }
                 Process::AlwaysWithDelay { .. } => {
                     self.events[t].push(RegionEvent { region: EventRegion::Active, event: EventKind::EvalProcess(pid) });
                 }
-                Process::Combinational { .. } => {
-                    self.evaluate_combinational(pid, t)?;
-                }
-                Process::CombReactive { .. } => {
-                    self.evaluate_combinational(pid, t)?;
+                Process::Combinational { .. } | Process::CombReactive { .. } => {
+                    // Evaluate at time zero via event, not inline, so initial/always
+                    // blocks run first and signals have settled
+                    self.events[t].push(RegionEvent { region: EventRegion::Active, event: EventKind::EvalProcess(pid) });
                 }
                 Process::Sequential { .. } => {}
             }
@@ -366,6 +770,12 @@ impl SimulationEngine {
         for cg in &self.design.covergroups {
             for cp in &cg.coverpoints {
                 let key = format!("{}.{}", cg.name, cp.name);
+                self.cover_total.insert(key.clone(), 0);
+                self.cover_hits.insert(key.clone(), 0);
+                self.cover_bins.insert(key, HashMap::new());
+            }
+            for cross in &cg.crosses {
+                let key = format!("{}.{}", cg.name, cross.name);
                 self.cover_total.insert(key.clone(), 0);
                 self.cover_hits.insert(key.clone(), 0);
                 self.cover_bins.insert(key, HashMap::new());
@@ -380,12 +790,31 @@ impl SimulationEngine {
             .find(|c| c.name == cg_name)
             .cloned();
         if let Some(cg) = cg {
+            let mut cp_values: HashMap<String, u64> = HashMap::new();
             for cp in &cg.coverpoints {
                 let key = format!("{}.{}", cg.name, cp.name);
                 let total = self.cover_total.entry(key.clone()).or_insert(0);
                 *total += 1;
                 let val = self.evaluate_expr(&cp.expr).unwrap_or(LogicVec::from_u64(0, 32));
+                cp_values.insert(cp.name.clone(), val.to_u64());
                 let bin_key = format!("{}={}", cp.name, val.to_u64());
+                let bins = self.cover_bins.entry(key.clone()).or_insert_with(HashMap::new);
+                let entry = bins.entry(bin_key).or_insert(0);
+                *entry += 1;
+                let hits = self.cover_hits.entry(key).or_insert(0);
+                *hits += 1;
+            }
+            // Cross coverage
+            for cross in &cg.crosses {
+                let key = format!("{}.{}", cg.name, cross.name);
+                let total = self.cover_total.entry(key.clone()).or_insert(0);
+                *total += 1;
+                let mut parts: Vec<String> = Vec::new();
+                for cp_name in &cross.coverpoints {
+                    let val = cp_values.get(cp_name).copied().unwrap_or(0);
+                    parts.push(format!("{}={}", cp_name, val));
+                }
+                let bin_key = parts.join(" x ");
                 let bins = self.cover_bins.entry(key.clone()).or_insert_with(HashMap::new);
                 let entry = bins.entry(bin_key).or_insert(0);
                 *entry += 1;
@@ -416,7 +845,36 @@ impl SimulationEngine {
                     }
                 }
             }
+            for cross in &cg.crosses {
+                let key = format!("{}.{}", cg.name, cross.name);
+                let total = self.cover_total.get(&key).copied().unwrap_or(0);
+                let hits = self.cover_hits.get(&key).copied().unwrap_or(0);
+                let bins = self.cover_bins.get(&key);
+                let pct = if total > 0 { (hits as f64 / total as f64) * 100.0 } else { 0.0 };
+                eprintln!("  {} (cross): {} hits / {} samples ({:.1}%)", cross.name, hits, total, pct);
+                if let Some(bins) = bins {
+                    for (bin_key, count) in bins.iter() {
+                        eprintln!("    - {}: {} hits", bin_key, count);
+                    }
+                }
+            }
         }
+    }
+
+    fn execute_final_blocks(&mut self) -> Result<(), String> {
+        let bodies: Vec<Vec<IrStmt>> = self.design.top.processes.iter()
+            .filter_map(|p| {
+                if let Process::Final { body, .. } = p {
+                    Some(body.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for body in &bodies {
+            self.evaluate_stmt_block(body)?;
+        }
+        Ok(())
     }
 
     fn process_event(&mut self, event: EventKind, t: usize) -> Result<(), String> {
@@ -543,12 +1001,23 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::BlockingAssign { lhs, rhs, delay: _ } => {
-                    let val = self.eval_assign_rhs(rhs, lhs)?;
-                    self.write_lvalue(lhs, val)?;
+                    if !self.is_forced(lhs) {
+                        let val = self.eval_assign_rhs(rhs, lhs)?;
+                        self.write_lvalue(lhs, val)?;
+                    }
                 }
                 IrStmt::NonBlockingAssign { lhs, rhs, delay: _ } => {
-                    let val = self.eval_assign_rhs(rhs, lhs)?;
-                    self.nba_pending.push((lhs.clone(), val));
+                    if !self.is_forced(lhs) {
+                        let val = self.eval_assign_rhs(rhs, lhs)?;
+                        self.nba_pending.push((lhs.clone(), val));
+                    }
+                }
+                IrStmt::Force { lvalue, rhs } => {
+                    let val = self.eval_assign_rhs(rhs, lvalue)?;
+                    self.write_lvalue(lvalue, val)?;
+                    if let Some(id) = self.signal_id_from_lvalue(lvalue) {
+                        self.forced_signals.insert(id);
+                    }
                 }
                 IrStmt::Delay { delay, body } => {
                     let delay_val = *delay as usize;
@@ -557,6 +1026,9 @@ impl SimulationEngine {
                         let mut later: Vec<IrStmt> = body.clone();
                         let remaining: Vec<IrStmt> = stmts[i + 1..].to_vec();
                         later.extend(remaining);
+                        if let Some(loop_cont) = &self.loop_continuation {
+                            later.extend(loop_cont.clone());
+                        }
                         if !later.is_empty() {
                             let region = if delay_val == 0 {
                                 EventRegion::Inactive
@@ -614,10 +1086,14 @@ impl SimulationEngine {
                     return Ok(true);
                 }
                 IrStmt::Release { lvalue } => {
-                    self.write_lvalue(lvalue, LogicVec::new(1))?;
+                    if let Some(id) = self.signal_id_from_lvalue(lvalue) {
+                        self.forced_signals.remove(&id);
+                    }
                 }
                 IrStmt::Deassign { lvalue } => {
-                    self.write_lvalue(lvalue, LogicVec::new(1))?;
+                    if let Some(id) = self.signal_id_from_lvalue(lvalue) {
+                        self.forced_signals.remove(&id);
+                    }
                 }
                 IrStmt::Wait { cond, body } => {
                     let cond_val = self.evaluate_expr(cond)?;
@@ -637,12 +1113,35 @@ impl SimulationEngine {
                     }
                     return Ok(true);
                 }
+                IrStmt::WaitOrder { events, failure_stmts } => {
+                    let remaining = stmts[i + 1..].to_vec();
+                    self.pending_wait_orders.push(WaitOrderState {
+                        events: events.clone(),
+                        expected_idx: 0,
+                        continuation: remaining,
+                        failure_stmts: failure_stmts.clone(),
+                    });
+                    return Ok(false);
+                }
                 IrStmt::SysCall { name, args: ir_args } => {
                     if name == "display" || name == "write" {
-                        let msg = format_display(&self.state, ir_args);
+                        let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, ir_args);
                         print!("{}", msg);
                     } else if name == "strobe" {
                         self.strobe_events.push(ir_args.clone());
+                    } else if name == "fstrobe" {
+                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        if let Some(h) = handle {
+                            self.fstrobe_events.push((h, ir_args[1..].to_vec()));
+                        }
+                    } else if name == "fmonitor" {
+                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        if let Some(h) = handle {
+                            let vals: Vec<LogicVec> = ir_args[1..].iter()
+                                .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
+                                .collect();
+                            self.fmonitor_map.insert(h, (ir_args[1..].to_vec(), vals));
+                        }
                     } else if name == "monitor" {
                         let vals: Vec<LogicVec> = ir_args.iter()
                             .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
@@ -705,7 +1204,32 @@ impl SimulationEngine {
                             self.state.write_signal(sid, LogicVec::from_u64(val, 32));
                         }
                     } else if name == "dumpfile" {
-                        // $dumpfile sets the VCD file name (handled at elaboration)
+                        if let Some(IrExpr::String(fname)) = ir_args.first() {
+                            let path = fname.clone();
+                            let design = &self.design;
+                            let state = &self.state.signals;
+                            if let Some(ref mut vcd) = self.vcd {
+                                let _ = vcd.reopen(&path, design, state);
+                            } else {
+                                match VcdWriter::new(&path, design) {
+                                    Ok(v) => self.vcd = Some(v),
+                                    Err(e) => eprintln!("VCD: cannot create '{}': {}", path, e),
+                                }
+                            }
+                        }
+                    } else if name == "dumpall" {
+                        if let Some(ref mut vcd) = self.vcd {
+                            vcd.write_time_header(self.state.time)?;
+                            let design = &self.design;
+                            let state = &self.state.signals;
+                            vcd.dump_all(design, state)?;
+                        }
+                    } else if name == "dumplimit" {
+                        if let Some(limit) = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64())) {
+                            if let Some(ref mut vcd) = self.vcd {
+                                vcd.max_dump_size = Some(limit);
+                            }
+                        }
                     } else if name == "dumpvars" {
                         if let Some(ref mut vcd) = self.vcd {
                             vcd.enabled = true;
@@ -751,7 +1275,7 @@ impl SimulationEngine {
                         let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(&self.state, &ir_args[1..]);
+                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &ir_args[1..]);
                                 let _ = write!(f, "{}", msg);
                             }
                         }
@@ -759,7 +1283,7 @@ impl SimulationEngine {
                         let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(&self.state, &ir_args[1..]);
+                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &ir_args[1..]);
                                 let _ = write!(f, "{}", msg);
                             }
                         }
@@ -801,6 +1325,30 @@ impl SimulationEngine {
                                     }
                                 }
                             }
+                        }
+                    } else if name == "fread" {
+                        let target = ir_args.first().and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                        let src = ir_args.get(1);
+                        let data = if let Some(IrExpr::String(fname)) = src {
+                            std::fs::read(fname).ok()
+                        } else if let Some(arg) = src {
+                            let handle = self.evaluate_expr(arg).ok().map(|v| v.to_u64() as u32).unwrap_or(0);
+                            if handle > 0 {
+                                use std::io::Read;
+                                self.file_handles.get_mut(&handle).and_then(|f| {
+                                    let mut buf = Vec::new();
+                                    f.read_to_end(&mut buf).ok().map(|_| buf)
+                                })
+                            } else { None }
+                        } else { None };
+                        if let (Some(sid), Some(bytes)) = (target, data) {
+                            let mut bits = Vec::with_capacity(bytes.len() * 8);
+                            for byte in bytes {
+                                for i in 0..8 {
+                                    bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                                }
+                            }
+                            self.state.write_signal(sid, LogicVec { width: bits.len(), bits });
                         }
                     } else if name == "fclose" {
                         let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
@@ -893,7 +1441,11 @@ impl SimulationEngine {
                         if self.control_flow.is_some() { self.control_flow = None; break; }
                         let cond_val = self.evaluate_expr(cond)?;
                         if !cond_val.to_bool().unwrap_or(false) { break; }
-                        self.evaluate_block_with_delay_fork(body, fork_id)?;
+                        let old_loop_cont = self.loop_continuation.take();
+                        self.loop_continuation = Some(vec![IrStmt::LoopWhile { cond: cond.clone(), body: body.clone() }]);
+                        let completed = self.evaluate_block_with_delay_fork(body, fork_id)?;
+                        self.loop_continuation = old_loop_cont;
+                        if !completed { return Ok(false); }
                         let cf = self.control_flow.take();
                         if cf == Some(FlowControl::Continue) { continue; }
                         if cf == Some(FlowControl::Break) { break; }
@@ -903,7 +1455,11 @@ impl SimulationEngine {
                     loop {
                         if self.disable_pending.is_some() { break; }
                         if self.control_flow.is_some() { self.control_flow = None; break; }
-                        self.evaluate_block_with_delay_fork(body, fork_id)?;
+                        let old_loop_cont = self.loop_continuation.take();
+                        self.loop_continuation = Some(vec![IrStmt::LoopDoWhile { cond: cond.clone(), body: body.clone() }]);
+                        let completed = self.evaluate_block_with_delay_fork(body, fork_id)?;
+                        self.loop_continuation = old_loop_cont;
+                        if !completed { return Ok(false); }
                         let cf = self.control_flow.take();
                         if cf == Some(FlowControl::Continue) { continue; }
                         if cf == Some(FlowControl::Break) { break; }
@@ -918,6 +1474,28 @@ impl SimulationEngine {
                         if self.disable_pending.is_some() { break; }
                         if self.control_flow.is_some() { self.control_flow = None; break; }
                         self.evaluate_block_with_delay_fork(body, fork_id)?;
+                        let cf = self.control_flow.take();
+                        if cf == Some(FlowControl::Continue) { continue; }
+                        if cf == Some(FlowControl::Break) { break; }
+                    }
+                }
+                IrStmt::Foreach { array_var, index_var, body } => {
+                    let lv = self.evaluate_expr(array_var)?;
+                    let sig_info = if let IrExpr::Signal(id, _) = array_var {
+                        self.design.top.signals.get(*id)
+                    } else { None };
+                    let elem_width = sig_info.map(|s| s.elem_width).unwrap_or(1);
+                    let count = if elem_width > 0 { lv.width / elem_width } else { 0 };
+                    for i in 0..count {
+                        if self.disable_pending.is_some() { break; }
+                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        let idx_val = LogicVec::from_u64(i as u64, 32);
+                        let mut scope = HashMap::new();
+                        scope.insert(index_var.clone(), idx_val);
+                        let depth = self.method_locals.len();
+                        self.method_locals.push(scope);
+                        self.evaluate_block_with_delay_fork(body, fork_id)?;
+                        self.method_locals.truncate(depth);
                         let cf = self.control_flow.take();
                         if cf == Some(FlowControl::Continue) { continue; }
                         if cf == Some(FlowControl::Break) { break; }
@@ -1034,12 +1612,23 @@ impl SimulationEngine {
             if self.control_flow.is_some() { return Ok(()); }
             match stmt {
                 IrStmt::BlockingAssign { lhs, rhs, delay: _ } => {
-                    let val = self.eval_assign_rhs(rhs, lhs)?;
-                    self.write_lvalue(lhs, val)?;
+                    if !self.is_forced(lhs) {
+                        let val = self.eval_assign_rhs(rhs, lhs)?;
+                        self.write_lvalue(lhs, val)?;
+                    }
                 }
                 IrStmt::NonBlockingAssign { lhs, rhs, delay: _ } => {
-                    let val = self.eval_assign_rhs(rhs, lhs)?;
-                    self.nba_pending.push((lhs.clone(), val));
+                    if !self.is_forced(lhs) {
+                        let val = self.eval_assign_rhs(rhs, lhs)?;
+                        self.nba_pending.push((lhs.clone(), val));
+                    }
+                }
+                IrStmt::Force { lvalue, rhs } => {
+                    let val = self.eval_assign_rhs(rhs, lvalue)?;
+                    self.write_lvalue(lvalue, val)?;
+                    if let Some(id) = self.signal_id_from_lvalue(lvalue) {
+                        self.forced_signals.insert(id);
+                    }
                 }
                 IrStmt::If { cond, true_branch: then_stmts, false_branch: else_stmts } => {
                     let cond_val = self.evaluate_expr(cond)?;
@@ -1068,10 +1657,23 @@ impl SimulationEngine {
                 }
                 IrStmt::SysCall { name, args: ir_args } => {
                     if name == "display" || name == "write" {
-                        let msg = format_display(&self.state, ir_args);
+                        let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, ir_args);
                         print!("{}", msg);
                     } else if name == "strobe" {
                         self.strobe_events.push(ir_args.clone());
+                    } else if name == "fstrobe" {
+                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        if let Some(h) = handle {
+                            self.fstrobe_events.push((h, ir_args[1..].to_vec()));
+                        }
+                    } else if name == "fmonitor" {
+                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        if let Some(h) = handle {
+                            let vals: Vec<LogicVec> = ir_args[1..].iter()
+                                .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
+                                .collect();
+                            self.fmonitor_map.insert(h, (ir_args[1..].to_vec(), vals));
+                        }
                     } else if name == "monitor" {
                         let vals: Vec<LogicVec> = ir_args.iter()
                             .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
@@ -1106,6 +1708,33 @@ impl SimulationEngine {
                         let sig_id = ir_args.first().and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
                         if let Some(sid) = sig_id {
                             self.state.write_signal(sid, LogicVec::from_u64(val as u64, 32));
+                        }
+                    } else if name == "dumpfile" {
+                        if let Some(IrExpr::String(fname)) = ir_args.first() {
+                            let path = fname.clone();
+                            let design = &self.design;
+                            let state = &self.state.signals;
+                            if let Some(ref mut vcd) = self.vcd {
+                                let _ = vcd.reopen(&path, design, state);
+                            } else {
+                                match VcdWriter::new(&path, design) {
+                                    Ok(v) => self.vcd = Some(v),
+                                    Err(e) => eprintln!("VCD: cannot create '{}': {}", path, e),
+                                }
+                            }
+                        }
+                    } else if name == "dumpall" {
+                        if let Some(ref mut vcd) = self.vcd {
+                            vcd.write_time_header(self.state.time)?;
+                            let design = &self.design;
+                            let state = &self.state.signals;
+                            vcd.dump_all(design, state)?;
+                        }
+                    } else if name == "dumplimit" {
+                        if let Some(limit) = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64())) {
+                            if let Some(ref mut vcd) = self.vcd {
+                                vcd.max_dump_size = Some(limit);
+                            }
                         }
                     } else if name == "dumpvars" || name == "dumpon" {
                         if let Some(ref mut vcd) = self.vcd {
@@ -1148,7 +1777,7 @@ impl SimulationEngine {
                         let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(&self.state, &ir_args[1..]);
+                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &ir_args[1..]);
                                 let _ = write!(f, "{}", msg);
                             }
                         }
@@ -1156,7 +1785,7 @@ impl SimulationEngine {
                         let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(&self.state, &ir_args[1..]);
+                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &ir_args[1..]);
                                 let _ = write!(f, "{}", msg);
                             }
                         }
@@ -1198,6 +1827,30 @@ impl SimulationEngine {
                                     }
                                 }
                             }
+                        }
+                    } else if name == "fread" {
+                        let target = ir_args.first().and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                        let src = ir_args.get(1);
+                        let data = if let Some(IrExpr::String(fname)) = src {
+                            std::fs::read(fname).ok()
+                        } else if let Some(arg) = src {
+                            let handle = self.evaluate_expr(arg).ok().map(|v| v.to_u64() as u32).unwrap_or(0);
+                            if handle > 0 {
+                                use std::io::Read;
+                                self.file_handles.get_mut(&handle).and_then(|f| {
+                                    let mut buf = Vec::new();
+                                    f.read_to_end(&mut buf).ok().map(|_| buf)
+                                })
+                            } else { None }
+                        } else { None };
+                        if let (Some(sid), Some(bytes)) = (target, data) {
+                            let mut bits = Vec::with_capacity(bytes.len() * 8);
+                            for byte in bytes {
+                                for i in 0..8 {
+                                    bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                                }
+                            }
+                            self.state.write_signal(sid, LogicVec { width: bits.len(), bits });
                         }
                     } else if name == "fclose" {
                         let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
@@ -1346,6 +1999,28 @@ impl SimulationEngine {
                         if cf == Some(FlowControl::Break) { break; }
                     }
                 }
+                IrStmt::Foreach { array_var, index_var, body } => {
+                    let lv = self.evaluate_expr(array_var)?;
+                    let sig_info = if let IrExpr::Signal(id, _) = array_var {
+                        self.design.top.signals.get(*id)
+                    } else { None };
+                    let elem_width = sig_info.map(|s| s.elem_width).unwrap_or(1);
+                    let count = if elem_width > 0 { lv.width / elem_width } else { 0 };
+                    for i in 0..count {
+                        if self.disable_pending.is_some() { break; }
+                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        let idx_val = LogicVec::from_u64(i as u64, 32);
+                        let mut scope = HashMap::new();
+                        scope.insert(index_var.clone(), idx_val);
+                        let depth = self.method_locals.len();
+                        self.method_locals.push(scope);
+                        self.evaluate_stmt_block(body)?;
+                        self.method_locals.truncate(depth);
+                        let cf = self.control_flow.take();
+                        if cf == Some(FlowControl::Continue) { continue; }
+                        if cf == Some(FlowControl::Break) { break; }
+                    }
+                }
                 IrStmt::MethodCallStmt { obj, method, args } => {
                 if let IrExpr::Signal(id, _) = obj {
                     let sig_info = self.design.top.signals.get(*id).cloned();
@@ -1435,15 +2110,29 @@ impl SimulationEngine {
                         self.evaluate_stmt_block(body)?;
                     }
                 }
+                IrStmt::WaitOrder { events, failure_stmts } => {
+                    let continuation: Vec<IrStmt> = stmts[i + 1..].to_vec();
+                    self.pending_wait_orders.push(WaitOrderState {
+                        events: events.clone(),
+                        expected_idx: 0,
+                        continuation,
+                        failure_stmts: failure_stmts.clone(),
+                    });
+                    return Ok(());
+                }
                 IrStmt::Disable { name } => {
                     self.disable_pending = Some(name.clone());
                     return Ok(());
                 }
                 IrStmt::Release { lvalue } => {
-                    self.write_lvalue(lvalue, LogicVec::new(1))?;
+                    if let Some(id) = self.signal_id_from_lvalue(lvalue) {
+                        self.forced_signals.remove(&id);
+                    }
                 }
                 IrStmt::Deassign { lvalue } => {
-                    self.write_lvalue(lvalue, LogicVec::new(1))?;
+                    if let Some(id) = self.signal_id_from_lvalue(lvalue) {
+                        self.forced_signals.remove(&id);
+                    }
                 }
                 IrStmt::Fork { processes, join_type } => {
                     let fid = self.fork_groups.len();
@@ -1529,6 +2218,44 @@ impl SimulationEngine {
         Ok(matched)
     }
 
+    fn process_pending_wait_orders(&mut self, deltas: &[SignalId]) -> Result<bool, String> {
+        let mut any_done = false;
+        let mut remaining = Vec::new();
+        let orders = std::mem::take(&mut self.pending_wait_orders);
+        'order: for mut order in orders {
+            let mut changed_in_order = Vec::new();
+            for d in deltas {
+                if let Some(pos) = order.events.iter().position(|e| e == d) {
+                    changed_in_order.push(pos);
+                }
+            }
+            changed_in_order.sort();
+            for &pos in &changed_in_order {
+                if pos == order.expected_idx {
+                    order.expected_idx += 1;
+                    if order.expected_idx == order.events.len() {
+                        if !order.continuation.is_empty() {
+                            self.evaluate_block_with_delay(&order.continuation)?;
+                        }
+                        any_done = true;
+                        continue 'order;
+                    }
+                } else if pos > order.expected_idx {
+                    if !order.failure_stmts.is_empty() {
+                        self.evaluate_stmt_block(&order.failure_stmts)?;
+                    }
+                    any_done = true;
+                    continue 'order;
+                }
+            }
+            remaining.push(order);
+        }
+        for item in remaining {
+            self.pending_wait_orders.push(item);
+        }
+        Ok(any_done)
+    }
+
     fn trigger_sensitive_processes(&mut self, changed: &[(usize, LogicVec, LogicVec)], _t: usize) -> Result<(), String> {
         let processes = self.design.top.processes.clone();
         for (pid, process) in processes.iter().enumerate() {
@@ -1577,8 +2304,26 @@ impl SimulationEngine {
     fn commit_nba(&mut self) {
         let pending = std::mem::take(&mut self.nba_pending);
         for (lvalue, val) in pending {
-            let _ = self.write_lvalue(&lvalue, val);
+            if !self.is_forced(&lvalue) {
+                let _ = self.write_lvalue(&lvalue, val);
+            }
         }
+    }
+
+    fn signal_id_from_lvalue(&self, lvalue: &IrLValue) -> Option<SignalId> {
+        match lvalue {
+            IrLValue::Signal(id, _) => Some(*id),
+            IrLValue::RangeSelect(id, _, _) => Some(*id),
+            IrLValue::BitSelect(id, _) => Some(*id),
+            IrLValue::ArrayIndex { sig_id, .. } => Some(*sig_id),
+            IrLValue::ArrayRangeSelect { sig_id, .. } => Some(*sig_id),
+            IrLValue::ArrayBitSelect { sig_id, .. } => Some(*sig_id),
+            IrLValue::Concat(_) => None,
+        }
+    }
+
+    fn is_forced(&self, lvalue: &IrLValue) -> bool {
+        self.signal_id_from_lvalue(lvalue).map_or(false, |id| self.forced_signals.contains(&id))
     }
 
     fn eval_assign_rhs(&mut self, expr: &IrExpr, lhs: &IrLValue) -> Result<LogicVec, String> {
@@ -1705,7 +2450,8 @@ impl SimulationEngine {
                     };
                     Ok(LogicVec::from_u64(result.to_bits(), 64))
                 } else if matches!(op, BinaryIrOp::Lt | BinaryIrOp::Le | BinaryIrOp::Gt | BinaryIrOp::Ge)
-                    && (matches!(lhs.as_ref(), IrExpr::Signed(_)) || matches!(rhs.as_ref(), IrExpr::Signed(_)))
+                    && (is_signed_expr(lhs.as_ref(), &self.design.top.signals)
+                        || is_signed_expr(rhs.as_ref(), &self.design.top.signals))
                 {
                     Ok(eval_binary_signed(op.clone(), &lval, &rval))
                 } else {
@@ -1790,9 +2536,35 @@ impl SimulationEngine {
                         let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(&self.state, &args[1..]);
+                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &args[1..]);
                                 let _ = write!(f, "{}", msg);
                             }
+                        }
+                        Ok(LogicVec::from_u64(0, 1))
+                    }
+                    "$fread" => {
+                        let target = args.first().and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                        let src = args.get(1);
+                        let data = if let Some(IrExpr::String(fname)) = src {
+                            std::fs::read(fname).ok()
+                        } else if let Some(arg) = src {
+                            let handle = self.evaluate_expr(arg).ok().map(|v| v.to_u64() as u32).unwrap_or(0);
+                            if handle > 0 {
+                                use std::io::Read;
+                                self.file_handles.get_mut(&handle).and_then(|f| {
+                                    let mut buf = Vec::new();
+                                    f.read_to_end(&mut buf).ok().map(|_| buf)
+                                })
+                            } else { None }
+                        } else { None };
+                        if let (Some(sid), Some(bytes)) = (target, data) {
+                            let mut bits = Vec::with_capacity(bytes.len() * 8);
+                            for byte in bytes {
+                                for i in 0..8 {
+                                    bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                                }
+                            }
+                            self.state.write_signal(sid, LogicVec { width: bits.len(), bits });
                         }
                         Ok(LogicVec::from_u64(0, 1))
                     }
@@ -1850,7 +2622,7 @@ impl SimulationEngine {
                         if args.is_empty() {
                             return Ok(LogicVec::new(0));
                         }
-                        let msg = format_display(&self.state, args);
+            let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, args);
                         let mut bits = Vec::with_capacity(msg.len() * 8);
                         for c in msg.chars() {
                             let byte = c as u8;
@@ -1884,6 +2656,85 @@ impl SimulationEngine {
                         let t = self.state.time as f64;
                         Ok(LogicVec::from_u64(t.to_bits(), 64))
                     }
+                    "process::self" => {
+                        let pid = self.current_process_id.unwrap_or(0);
+                        if pid == 0 {
+                            let pid = self.state.alloc_object("__process");
+                            self.process_map.insert(pid, ProcessInfo {
+                                status: ProcessStatus::Running,
+                                await_continuations: Vec::new(),
+                            });
+                            self.current_process_id = Some(pid);
+                        }
+                        Ok(LogicVec::from_u64(self.current_process_id.unwrap_or(0) as u64, 64))
+                    }
+                    "uvm_config_db::set" => {
+                        let arg_vals: Vec<LogicVec> = args.iter()
+                            .map(|a| self.evaluate_expr(a))
+                            .collect::<Result<_, _>>()?;
+                        let inst_name = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
+                        let field_name = if arg_vals.len() > 2 { logicvec_to_string(&arg_vals[2]) } else { String::new() };
+                        let value = if arg_vals.len() > 3 { arg_vals[3].clone() } else { LogicVec::new(1) };
+                        self.uvm_config_db_data.insert((inst_name, field_name), value);
+                        Ok(LogicVec::from_u64(1, 1))
+                    }
+                    "uvm_config_db::get" => {
+                        let arg_vals: Vec<LogicVec> = args.iter()
+                            .map(|a| self.evaluate_expr(a))
+                            .collect::<Result<_, _>>()?;
+                        let inst_name = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
+                        let field_name = if arg_vals.len() > 2 { logicvec_to_string(&arg_vals[2]) } else { String::new() };
+                        let key = (inst_name, field_name);
+                        let stored = self.uvm_config_db_data.get(&key).cloned();
+                        if let Some(val) = stored {
+                            if let Some(last_arg) = args.get(3) {
+                                if let IrExpr::Signal(sig_id, _) = last_arg {
+                                    self.state.write_signal(*sig_id, val);
+                                }
+                            }
+                            Ok(LogicVec::from_u64(1, 1))
+                        } else {
+                            Ok(LogicVec::from_u64(0, 1))
+                        }
+                    }
+                    "uvm_resource_db::set" => {
+                        let arg_vals: Vec<LogicVec> = args.iter()
+                            .map(|a| self.evaluate_expr(a))
+                            .collect::<Result<_, _>>()?;
+                        let scope = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
+                        let name = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
+                        let value = if arg_vals.len() > 2 { arg_vals[2].clone() } else { LogicVec::new(1) };
+                        self.uvm_resource_db_data.insert((scope, name), value);
+                        Ok(LogicVec::from_u64(1, 1))
+                    }
+                    "uvm_resource_db::get" => {
+                        let arg_vals: Vec<LogicVec> = args.iter()
+                            .map(|a| self.evaluate_expr(a))
+                            .collect::<Result<_, _>>()?;
+                        let scope = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
+                        let rname = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
+                        let key = (scope, rname);
+                        let stored = self.uvm_resource_db_data.get(&key).cloned();
+                        if let Some(val) = stored {
+                            if let Some(last_arg) = args.get(2) {
+                                if let IrExpr::Signal(sig_id, _) = last_arg {
+                                    self.state.write_signal(*sig_id, val);
+                                }
+                            }
+                            Ok(LogicVec::from_u64(1, 1))
+                        } else {
+                            Ok(LogicVec::from_u64(0, 1))
+                        }
+                    }
+                    "uvm_factory::set_type_override_by_type" => {
+                        let arg_vals: Vec<LogicVec> = args.iter()
+                            .map(|a| self.evaluate_expr(a))
+                            .collect::<Result<_, _>>()?;
+                        let orig = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
+                        let override_type = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
+                        self.factory_type_overrides.insert(orig, override_type);
+                        Ok(LogicVec::from_u64(1, 1))
+                    }
                     _ => {
                         eprintln!("warning: unsupported system function '{}'", name);
                         Ok(LogicVec::from_u64(0, 32))
@@ -1898,6 +2749,8 @@ impl SimulationEngine {
                 let is_cg = self.design.covergroups.iter().any(|c| c.name == *class_name);
                 let effective_name = if is_cg {
                     format!("__covergroup_{}", class_name)
+                } else if let Some(override_type) = self.factory_type_overrides.get(class_name) {
+                    override_type.clone()
                 } else {
                     class_name.clone()
                 };
@@ -1917,6 +2770,33 @@ impl SimulationEngine {
                                 obj.fields.entry(field.name.clone()).or_insert_with(|| LogicVec::from_u64(0, field.width));
                             }
                         }
+                    }
+                    if self.is_uvm_object_hierarchy(&class_name) {
+                        self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name: String::new() });
+                    }
+                    if self.is_uvm_analysis_port_hierarchy(&class_name) {
+                        let pname = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
+                        self.uvm_analysis_port_data.entry(obj_id).or_insert_with(|| UvmAnalysisPortData { connections: Vec::new(), name: pname.clone() });
+                        self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name: pname });
+                    }
+                    if self.is_uvm_analysis_imp_hierarchy(&class_name) {
+                        let pname = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
+                        let parent_obj = arg_vals.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                        self.uvm_analysis_imp_data.entry(obj_id).or_insert_with(|| UvmAnalysisImpData { parent: if parent_obj != 0 { Some(parent_obj) } else { None }, name: pname.clone() });
+                        self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name: pname });
+                    }
+                    if self.is_uvm_component_hierarchy(&class_name) {
+                        let name = logicvec_to_string(&arg_vals[0]);
+                        let parent_obj = arg_vals.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                        self.uvm_object_data.insert(obj_id, UvmObjectData { name: name.clone() });
+                        let mut cd = UvmComponentData { parent: None, children: Vec::new(), report_verbosity: 2 };
+                        if parent_obj != 0 {
+                            cd.parent = Some(parent_obj);
+                            if let Some(pd) = self.uvm_component_data.get_mut(&parent_obj) {
+                                pd.children.push(obj_id);
+                            }
+                        }
+                        self.uvm_component_data.insert(obj_id, cd);
                     }
                     if self.find_method_in_hierarchy(&class_name, "new").is_ok() {
                         self.execute_method(obj_id, "new", &arg_vals)?;
@@ -2005,6 +2885,15 @@ impl SimulationEngine {
             IrExpr::DpiCall { name, args, return_width } => {
                 self.evaluate_dpi_call(name, args, *return_width)
             }
+            IrExpr::HierRef(name) => {
+                if let Some(sig_id) = self.find_signal(name) {
+                    let mut val = self.state.read_signal(sig_id).clone();
+                    sanitize_for_2state(&self.design.top.signals, sig_id, &mut val);
+                    Ok(val)
+                } else {
+                    Err(format!("hierarchical signal '{}' not found", name))
+                }
+            }
         }
     }
 
@@ -2026,7 +2915,7 @@ impl SimulationEngine {
                 };
                 // Apply resolution for multi-driver nets
                 if let Some(ref info) = sig_info {
-                    if info.multi_driver && info.net_type != NetType::Wire {
+                    if info.multi_driver && (info.kind == SignalKind::Wire || info.kind == SignalKind::Inout) {
                         let current = self.state.read_signal(*id).clone();
                         let resolved = resolve_net_values(info.net_type, &current, &resized);
                         self.state.write_signal(*id, resolved);
@@ -2181,17 +3070,6 @@ impl SimulationEngine {
         }
     }
 
-    fn evaluate_combinational(&mut self, pid: usize, _t: usize) -> Result<(), String> {
-        let body = self.design.top.processes.get(pid).map(|p| match p {
-            Process::Combinational { body, .. } => body.clone(),
-            Process::CombReactive { body, .. } => body.clone(),
-            _ => vec![],
-        }).unwrap_or_default();
-        if !body.is_empty() {
-            self.evaluate_stmt_block(&body)?;
-        }
-        Ok(())
-    }
 
     fn get_lvalue_width(&self, lvalue: &IrLValue) -> usize {
         match lvalue {
@@ -2316,6 +3194,123 @@ impl SimulationEngine {
                     .collect::<Result<_, _>>()?;
                 let obj_id = self.state.alloc_object("");
                 Ok(LogicVec::from_u64(obj_id as u64, 64))
+            }
+            Expr::FuncCall { name, args } if name.ends_with("::new") => {
+                let raw_name = name.strip_suffix("::new").unwrap().to_string();
+                let is_builtin = matches!(raw_name.as_str(),
+                    "uvm_object" | "uvm_component" | "uvm_sequence_item" | "uvm_sequence"
+                    | "uvm_sequencer" | "uvm_driver" | "uvm_monitor" | "uvm_scoreboard"
+                    | "uvm_analysis_port" | "uvm_analysis_imp" | "uvm_test" | "uvm_report_object"
+                    | "uvm_factory" | "uvm_resource_db"
+                );
+                let effective = if is_builtin { format!("__{}", raw_name) } else { raw_name.clone() };
+                let effective = self.factory_type_overrides.get(&effective).unwrap_or(&effective).clone();
+                let obj_id = self.state.alloc_object(&effective);
+                let arg_vals: Vec<LogicVec> = args.iter()
+                    .map(|a| self.evaluate_ast_expr(a))
+                    .collect::<Result<_, _>>()?;
+                // Initialize built-in data
+                if is_builtin {
+                    if raw_name == "uvm_analysis_port" {
+                        let pname = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
+                        self.uvm_analysis_port_data.insert(obj_id, UvmAnalysisPortData { connections: Vec::new(), name: pname.clone() });
+                        self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name: pname });
+                    } else if raw_name == "uvm_analysis_imp" {
+                        let pname = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
+                        let parent_obj = arg_vals.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                        self.uvm_analysis_imp_data.insert(obj_id, UvmAnalysisImpData { parent: if parent_obj != 0 { Some(parent_obj) } else { None }, name: pname.clone() });
+                        self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name: pname });
+                    }
+                }
+                if self.find_method_in_hierarchy(&effective, "new").is_ok() {
+                    self.execute_method(obj_id, "new", &arg_vals)?;
+                }
+                Ok(LogicVec::from_u64(obj_id as u64, 64))
+            }
+            Expr::FuncCall { name, args } if name == "uvm_config_db::set" => {
+                let arg_vals: Vec<LogicVec> = args.iter()
+                    .map(|a| self.evaluate_ast_expr(a))
+                    .collect::<Result<_, _>>()?;
+                let inst_name = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
+                let field_name = if arg_vals.len() > 2 { logicvec_to_string(&arg_vals[2]) } else { String::new() };
+                let value = if arg_vals.len() > 3 { arg_vals[3].clone() } else { LogicVec::new(1) };
+                self.uvm_config_db_data.insert((inst_name, field_name), value);
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            Expr::FuncCall { name, args } if name == "uvm_config_db::get" => {
+                let arg_vals: Vec<LogicVec> = args.iter()
+                    .map(|a| self.evaluate_ast_expr(a))
+                    .collect::<Result<_, _>>()?;
+                let inst_name = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
+                let field_name = if arg_vals.len() > 2 { logicvec_to_string(&arg_vals[2]) } else { String::new() };
+                let key = (inst_name, field_name);
+                let stored = self.uvm_config_db_data.get(&key).cloned();
+                if let Some(val) = stored {
+                    if let Some(last_arg) = args.get(3) {
+                        match last_arg {
+                            Expr::Ident(var) => {
+                                self.write_local_or_field(var, val.clone())?;
+                            }
+                            Expr::MemberAccess { obj, field } => {
+                                let obj_val = self.evaluate_ast_expr(obj)?;
+                                let obj_id = obj_val.to_u64() as ObjId;
+                                if let Some(obj) = self.state.get_object_mut(obj_id) {
+                                    obj.fields.insert(field.clone(), val.clone());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Ok(LogicVec::from_u64(1, 1))
+                } else {
+                    Ok(LogicVec::from_u64(0, 1))
+                }
+            }
+            Expr::FuncCall { name, args } if name == "uvm_resource_db::set" => {
+                let arg_vals: Vec<LogicVec> = args.iter()
+                    .map(|a| self.evaluate_ast_expr(a))
+                    .collect::<Result<_, _>>()?;
+                let scope = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
+                let rname = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
+                let value = if arg_vals.len() > 2 { arg_vals[2].clone() } else { LogicVec::new(1) };
+                self.uvm_resource_db_data.insert((scope, rname), value);
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            Expr::FuncCall { name, args } if name == "uvm_resource_db::get" => {
+                let arg_vals: Vec<LogicVec> = args.iter()
+                    .map(|a| self.evaluate_ast_expr(a))
+                    .collect::<Result<_, _>>()?;
+                let scope = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
+                let rname = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
+                let key = (scope, rname);
+                let stored = self.uvm_resource_db_data.get(&key).cloned();
+                if let Some(val) = stored {
+                    if let Some(last_arg) = args.get(2) {
+                        match last_arg {
+                            Expr::Ident(var) => { self.write_local_or_field(var, val.clone())?; }
+                            Expr::MemberAccess { obj, field } => {
+                                let obj_val = self.evaluate_ast_expr(obj)?;
+                                let obj_id = obj_val.to_u64() as ObjId;
+                                if let Some(obj) = self.state.get_object_mut(obj_id) {
+                                    obj.fields.insert(field.clone(), val.clone());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Ok(LogicVec::from_u64(1, 1))
+                } else {
+                    Ok(LogicVec::from_u64(0, 1))
+                }
+            }
+            Expr::FuncCall { name, args } if name == "uvm_factory::set_type_override_by_type" => {
+                let arg_vals: Vec<LogicVec> = args.iter()
+                    .map(|a| self.evaluate_ast_expr(a))
+                    .collect::<Result<_, _>>()?;
+                let orig = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
+                let override_type = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
+                self.factory_type_overrides.insert(orig, override_type);
+                Ok(LogicVec::from_u64(1, 1))
             }
             Expr::FuncCall { name, args } => {
                 let _arg_vals: Vec<LogicVec> = args.iter()
@@ -2445,6 +3440,7 @@ impl SimulationEngine {
 
     fn find_signal(&self, name: &str) -> Option<usize> {
         self.design.top.signals.iter().position(|s| s.name == name)
+            .or_else(|| self.design.hier_signal_map.get(name).copied())
     }
 
     fn build_hier_name(obj: &Expr, field: &str) -> String {
@@ -2800,19 +3796,19 @@ impl SimulationEngine {
                 self.disable_pending = Some(name.clone());
                 Ok(())
             }
-            Stmt::ForeachLoop { array_var, index_var, stmts } => {
+            Stmt::ForeachLoop { array_var, index_vars, stmts } => {
                 let count = self.get_foreach_count(array_var);
+                let iv = index_vars.first().cloned().unwrap_or_else(|| "i".to_string());
                 for i in 0..count {
                     let idx_val = LogicVec::from_u64(i as u64, 32);
-                    // Push scope with index variable
                     let mut scope = HashMap::new();
-                    scope.insert(index_var.clone(), idx_val);
-                    let old_locals = self.method_locals.clone();
+                    scope.insert(iv.clone(), idx_val);
+                    let depth = self.method_locals.len();
                     self.method_locals.push(scope);
                     for s in stmts {
                         self.evaluate_ast_stmt(s)?;
                     }
-                    self.method_locals = old_locals;
+                    self.method_locals.truncate(depth);
                 }
                 Ok(())
             }
@@ -2851,6 +3847,7 @@ impl SimulationEngine {
         let phase_methods = ["build_phase", "connect_phase", "run_phase"];
         let mut best: Option<(String, usize)> = None;
         for (name, cls) in &self.design.classes {
+            if !self.is_uvm_test_hierarchy(name) { continue; }
             let count = phase_methods.iter()
                 .filter(|pm| cls.methods.iter().any(|m| &m.name == *pm))
                 .count();
@@ -2858,7 +3855,32 @@ impl SimulationEngine {
                 best = Some((name.clone(), count));
             }
         }
+        // fallback: any class with phase methods
+        if best.is_none() {
+            for (name, cls) in &self.design.classes {
+                let count = phase_methods.iter()
+                    .filter(|pm| cls.methods.iter().any(|m| &m.name == *pm))
+                    .count();
+                if count > 0 && best.as_ref().map_or(true, |b| count > b.1) {
+                    best = Some((name.clone(), count));
+                }
+            }
+        }
         best.map(|(name, _)| name)
+    }
+
+    fn is_uvm_test_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_test" { return true; }
+            match self.design.classes.get(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
     }
 
     fn execute_phases(&mut self) -> Result<(), String> {
@@ -2866,25 +3888,189 @@ impl SimulationEngine {
             Some(c) => c,
             None => return Ok(()),
         };
-        for phase in &["build_phase", "connect_phase", "run_phase"] {
-            self.run_phase_method(&class_name, phase)?;
+        // Create root test object once, shared across all phases
+        let obj_id = self.state.alloc_object(&class_name);
+        self.root_test_obj_id = Some(obj_id);
+
+        // build_phase: root then children
+        if self.find_method_in_hierarchy(&class_name, "build_phase").is_ok() {
+            self.current_this = Some(obj_id);
+            self.execute_method(obj_id, "build_phase", &[])?;
+            self.current_this = None;
+            self.call_phase_on_children(obj_id, "build_phase")?;
+        }
+        // connect_phase: root then children
+        if self.find_method_in_hierarchy(&class_name, "connect_phase").is_ok() {
+            self.current_this = Some(obj_id);
+            self.execute_method(obj_id, "connect_phase", &[])?;
+            self.current_this = None;
+            self.call_phase_on_children(obj_id, "connect_phase")?;
+        }
+        // run_phase: call root's run_phase (blocking since delays in methods are no-ops)
+        if self.find_method_in_hierarchy(&class_name, "run_phase").is_ok() {
+            self.current_this = Some(obj_id);
+            self.execute_method(obj_id, "run_phase", &[])?;
+            self.current_this = None;
         }
         Ok(())
     }
 
-    fn run_phase_method(&mut self, class_name: &str, phase: &str) -> Result<(), String> {
-        if !self.design.classes.contains_key(class_name) {
-            return Ok(());
+    fn call_phase_on_children(&mut self, obj_id: ObjId, phase: &str) -> Result<(), String> {
+        if let Some(cdata) = self.uvm_component_data.get(&obj_id) {
+            let children = cdata.children.clone();
+            for child_id in children {
+                if let Some(obj) = self.state.get_object(child_id) {
+                    let child_class = &obj.class_name;
+                    if self.find_method_in_hierarchy(child_class, phase).is_ok() {
+                        self.current_this = Some(child_id);
+                        self.execute_method(child_id, phase, &[])?;
+                        self.current_this = None;
+                    }
+                }
+                self.call_phase_on_children(child_id, phase)?;
+            }
         }
-        if self.find_method_in_hierarchy(class_name, phase).is_err() {
-            return Ok(());
-        }
-        let obj_id = self.state.alloc_object(class_name);
-        self.current_this = Some(obj_id);
-        let arg_vals = vec![];
-        self.execute_method(obj_id, phase, &arg_vals)?;
-        self.current_this = None;
         Ok(())
+    }
+
+    fn is_uvm_object_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_object" { return true; }
+            match self.design.classes.get(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    fn is_uvm_component_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_component" { return true; }
+            match self.design.classes.get(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    fn is_uvm_report_object_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_report_object" { return true; }
+            match self.design.classes.get(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    fn is_uvm_sequence_item_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_sequence_item" { return true; }
+            match self.design.classes.get(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    fn is_uvm_sequence_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_sequence" { return true; }
+            match self.design.classes.get(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    fn is_uvm_sequencer_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_sequencer" { return true; }
+            match self.design.classes.get(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    fn is_uvm_monitor_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_monitor" { return true; }
+            match self.design.classes.get(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    fn is_uvm_analysis_port_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_analysis_port" { return true; }
+            match self.design.classes.get(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    fn is_uvm_analysis_imp_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_analysis_imp" { return true; }
+            match self.design.classes.get(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    fn is_uvm_driver_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_driver" { return true; }
+            match self.design.classes.get(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
     }
 
     fn execute_method(&mut self, obj_id: ObjId, method: &str,
@@ -2902,6 +4088,9 @@ impl SimulationEngine {
         if class_name == "__semaphore" {
             return self.execute_semaphore_method(obj_id, method, args);
         }
+        if class_name == "__process" {
+            return self.execute_process_method(obj_id, method, args);
+        }
         // Covergroup support: sample() records coverage data
         if method == "sample" && class_name.starts_with("__covergroup_") {
             let cg_name = &class_name["__covergroup_".len()..];
@@ -2909,6 +4098,77 @@ impl SimulationEngine {
                 return self.sample_covergroup(cg_name).map(|_| LogicVec::from_u64(1, 1));
             }
         }
+        // Check uvm_driver hierarchy (most specific first)
+        if self.is_uvm_driver_hierarchy(&class_name) {
+            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+            if !has_override {
+                return self.execute_uvm_driver_method(obj_id, method, args);
+            }
+        }
+        // Check uvm_sequencer hierarchy
+        if self.is_uvm_sequencer_hierarchy(&class_name) {
+            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+            if !has_override {
+                return self.execute_uvm_sequencer_method(obj_id, method, args);
+            }
+        }
+        // Check uvm_sequence hierarchy
+        if self.is_uvm_sequence_hierarchy(&class_name) {
+            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+            if !has_override {
+                return self.execute_uvm_sequence_method(obj_id, method, args);
+            }
+        }
+        // Check uvm_monitor hierarchy
+        if self.is_uvm_monitor_hierarchy(&class_name) {
+            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+            if !has_override {
+                return self.execute_uvm_monitor_method(obj_id, method, args);
+            }
+        }
+        // Check uvm_analysis_port hierarchy
+        if self.is_uvm_analysis_port_hierarchy(&class_name) {
+            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+            if !has_override {
+                return self.execute_uvm_analysis_port_method(obj_id, method, args);
+            }
+        }
+        // Check uvm_analysis_imp hierarchy
+        if self.is_uvm_analysis_imp_hierarchy(&class_name) {
+            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+            if !has_override {
+                return self.execute_uvm_analysis_imp_method(obj_id, method, args);
+            }
+        }
+        // Check uvm_sequence_item hierarchy
+        if self.is_uvm_sequence_item_hierarchy(&class_name) {
+            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+            if !has_override {
+                return self.execute_uvm_sequence_item_method(obj_id, method, args);
+            }
+        }
+        // Check for uvm_component hierarchy methods — only intercept if class doesn't override
+        if self.is_uvm_component_hierarchy(&class_name) {
+            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+            if !has_override {
+                return self.execute_uvm_component_method(obj_id, method, args);
+            }
+        }
+        // Check for uvm_report_object hierarchy methods — only intercept if class doesn't override
+        if self.is_uvm_report_object_hierarchy(&class_name) {
+            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+            if !has_override {
+                return self.execute_uvm_report_object_method(obj_id, method, args);
+            }
+        }
+        // Check for uvm_object hierarchy methods — only intercept if class doesn't override
+        if self.is_uvm_object_hierarchy(&class_name) {
+            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+            if !has_override {
+                return self.execute_uvm_object_method(obj_id, method, args);
+            }
+        }
+
         // Check for built-in randomize() — only if no user-defined override exists
         if method == "randomize" {
             let has_user_method = self.find_method_in_hierarchy(&class_name, method).is_ok();
@@ -3043,6 +4303,436 @@ impl SimulationEngine {
         }
     }
 
+    fn execute_process_method(&mut self, _obj_id: ObjId, method: &str, _args: &[LogicVec]) -> Result<LogicVec, String> {
+        match method {
+            "status" => {
+                let status = self.process_map.get(&_obj_id).map(|p| p.status as u64).unwrap_or(0);
+                Ok(LogicVec::from_u64(status, 32))
+            }
+            "kill" => {
+                if let Some(pi) = self.process_map.get_mut(&_obj_id) {
+                    pi.status = ProcessStatus::Killed;
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "await" => {
+                let status = self.process_map.get(&_obj_id).map(|p| p.status).unwrap_or(ProcessStatus::Finished);
+                if status == ProcessStatus::Finished || status == ProcessStatus::Killed {
+                    return Ok(LogicVec::from_u64(1, 1));
+                }
+                Err("process::await() not yet implemented for non-finished processes".to_string())
+            }
+            "self" => {
+                Ok(LogicVec::from_u64(_obj_id as u64, 64))
+            }
+            "suspend" => {
+                if let Some(pi) = self.process_map.get_mut(&_obj_id) {
+                    pi.status = ProcessStatus::Suspended;
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "resume" => {
+                if let Some(pi) = self.process_map.get_mut(&_obj_id) {
+                    pi.status = ProcessStatus::Running;
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            _ => Err(format!("unknown process method: {}", method)),
+        }
+    }
+
+    fn execute_uvm_object_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+        match method {
+            "new" => {
+                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                self.uvm_object_data.insert(obj_id, UvmObjectData { name });
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "get_name" => {
+                let data = self.uvm_object_data.get(&obj_id)
+                    .ok_or_else(|| "uvm_object not initialized".to_string())?;
+                Ok(string_to_logicvec(&data.name))
+            }
+            "set_name" => {
+                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                if let Some(data) = self.uvm_object_data.get_mut(&obj_id) {
+                    data.name = name;
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "get_type_name" => {
+                let class_name = self.state.get_object(obj_id)
+                    .map(|o| o.class_name.clone())
+                    .unwrap_or_default();
+                Ok(string_to_logicvec(&class_name))
+            }
+            "print" => {
+                let data = self.uvm_object_data.get(&obj_id)
+                    .ok_or_else(|| "uvm_object not initialized".to_string())?;
+                let class_name = self.state.get_object(obj_id)
+                    .map(|o| o.class_name.clone())
+                    .unwrap_or_default();
+                println!("UVM_INFO @ {}: {} [{}]", self.current_time, data.name, class_name);
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            _ => Err(format!("uvm_object::{} not implemented", method)),
+        }
+    }
+
+    fn execute_uvm_report_object_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+        match method {
+            "uvm_report_info" => {
+                let id = args.get(0).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                let msg = args.get(1).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                eprintln!("UVM_INFO @ {}: {} [{}]", self.current_time, msg, id);
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "uvm_report_warning" => {
+                let id = args.get(0).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                let msg = args.get(1).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                eprintln!("UVM_WARNING @ {}: {} [{}]", self.current_time, msg, id);
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "uvm_report_error" => {
+                let id = args.get(0).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                let msg = args.get(1).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                eprintln!("UVM_ERROR @ {}: {} [{}]", self.current_time, msg, id);
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "uvm_report_fatal" => {
+                let id = args.get(0).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                let msg = args.get(1).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                eprintln!("UVM_FATAL @ {}: {} [{}]", self.current_time, msg, id);
+                self.running = false;
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            _ => self.execute_uvm_object_method(obj_id, method, args),
+        }
+    }
+
+    fn execute_uvm_component_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+        match method {
+            "new" => {
+                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                let parent_obj = args.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                self.uvm_object_data.insert(obj_id, UvmObjectData { name: name.clone() });
+                let mut cd = UvmComponentData { parent: None, children: Vec::new(), report_verbosity: 2 };
+                if parent_obj != 0 {
+                    cd.parent = Some(parent_obj);
+                    if let Some(pd) = self.uvm_component_data.get_mut(&parent_obj) {
+                        pd.children.push(obj_id);
+                    }
+                }
+                self.uvm_component_data.insert(obj_id, cd);
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "get_full_name" => {
+                let mut names = Vec::new();
+                let mut current = Some(obj_id);
+                while let Some(id) = current {
+                    let n = self.uvm_object_data.get(&id).map(|d| d.name.clone()).unwrap_or_default();
+                    names.push(n);
+                    current = self.uvm_component_data.get(&id).and_then(|d| d.parent);
+                }
+                names.reverse();
+                let full = names.join(".");
+                Ok(string_to_logicvec(&full))
+            }
+            "get_parent" => {
+                let pid = self.uvm_component_data.get(&obj_id).and_then(|d| d.parent).unwrap_or(0);
+                Ok(LogicVec::from_u64(pid as u64, 64))
+            }
+            "get_num_children" => {
+                let n = self.uvm_component_data.get(&obj_id).map(|d| d.children.len() as u64).unwrap_or(0);
+                Ok(LogicVec::from_u64(n, 32))
+            }
+            "get_child" => {
+                let idx = args.first().map(|a| a.to_u64() as usize).unwrap_or(0);
+                let cid = self.uvm_component_data.get(&obj_id)
+                    .and_then(|d| d.children.get(idx).copied())
+                    .unwrap_or(0);
+                Ok(LogicVec::from_u64(cid as u64, 64))
+            }
+            "has_child" => {
+                let name = args.first().map(|a| logicvec_to_string(a)).unwrap_or_default();
+                let found = self.uvm_component_data.get(&obj_id)
+                    .map(|d| d.children.iter().any(|cid| {
+                        self.uvm_object_data.get(cid).map(|od| od.name == name).unwrap_or(false)
+                    }))
+                    .unwrap_or(false);
+                Ok(LogicVec::from_u64(if found { 1 } else { 0 }, 1))
+            }
+            "set_report_verbosity" => {
+                let level = args.first().map(|a| a.to_u64() as u32).unwrap_or(2);
+                if let Some(d) = self.uvm_component_data.get_mut(&obj_id) {
+                    d.report_verbosity = level;
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "get_report_verbosity" => {
+                let level = self.uvm_component_data.get(&obj_id).map(|d| d.report_verbosity).unwrap_or(2);
+                Ok(LogicVec::from_u64(level as u64, 32))
+            }
+            "build_phase" | "connect_phase" | "run_phase" => {
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            _ => self.execute_uvm_report_object_method(obj_id, method, args),
+        }
+    }
+
+    fn execute_uvm_sequence_item_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+        match method {
+            "new" => {
+                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name });
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "get_type_name" => {
+                let class_name = self.state.get_object(obj_id)
+                    .map(|o| o.class_name.clone())
+                    .unwrap_or_default();
+                Ok(string_to_logicvec(&class_name))
+            }
+            _ => self.execute_uvm_object_method(obj_id, method, args),
+        }
+    }
+
+    fn execute_uvm_sequence_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+        match method {
+            "new" => {
+                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name });
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "start" => {
+                // args[0] = sequencer obj_id
+                let seqr_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                // Store sequencer obj_id on the sequence object's fields
+                if let Some(obj) = self.state.get_object_mut(obj_id) {
+                    obj.fields.insert("__sequencer".to_string(), LogicVec::from_u64(seqr_id as u64, 64));
+                }
+                // Call body()
+                if self.find_method_in_hierarchy(&{
+                    self.state.get_object(obj_id).map(|o| o.class_name.clone()).unwrap_or_default()
+                }, "body").is_ok() {
+                    self.execute_method(obj_id, "body", &[])?;
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "body" => Ok(LogicVec::from_u64(1, 1)),
+            "start_item" => {
+                let item_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                // Get sequencer from stored field
+                let seqr_id = self.state.get_object(obj_id)
+                    .and_then(|o| o.fields.get("__sequencer"))
+                    .map(|v| v.to_u64() as ObjId)
+                    .unwrap_or(0);
+                if seqr_id != 0 {
+                    self.uvm_sequencer_data.entry(seqr_id)
+                        .or_insert_with(|| UvmSequencerData { item_queue: Vec::new(), current_item: None })
+                        .item_queue.push(item_id);
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "finish_item" => {
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "get_sequencer" => {
+                let seqr_id = self.state.get_object(obj_id)
+                    .and_then(|o| o.fields.get("__sequencer"))
+                    .cloned()
+                    .unwrap_or(LogicVec::from_u64(0, 64));
+                Ok(seqr_id)
+            }
+            "create" => {
+                let name = args.first().map(|a| logicvec_to_string(a)).unwrap_or_default();
+                // Create a new object of the sequence's type
+                let class_name = self.state.get_object(obj_id)
+                    .map(|o| o.class_name.clone())
+                    .unwrap_or_default();
+                let child = self.state.alloc_object(&class_name);
+                // Set name on the new object
+                self.uvm_object_data.entry(child).or_insert_with(|| UvmObjectData { name });
+                // Initialize fields from class def
+                if let Some(cls) = self.design.classes.get(&class_name) {
+                    if let Some(obj) = self.state.get_object_mut(child) {
+                        for field in &cls.fields {
+                            obj.fields.entry(field.name.clone()).or_insert_with(|| LogicVec::from_u64(0, field.width));
+                        }
+                    }
+                }
+                Ok(LogicVec::from_u64(child as u64, 64))
+            }
+            _ => self.execute_uvm_sequence_item_method(obj_id, method, args),
+        }
+    }
+
+    fn execute_uvm_sequencer_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+        match method {
+            "new" => {
+                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                let parent_obj = args.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                self.uvm_object_data.insert(obj_id, UvmObjectData { name: name.clone() });
+                let mut cd = UvmComponentData { parent: None, children: Vec::new(), report_verbosity: 2 };
+                if parent_obj != 0 {
+                    cd.parent = Some(parent_obj);
+                    if let Some(pd) = self.uvm_component_data.get_mut(&parent_obj) {
+                        pd.children.push(obj_id);
+                    }
+                }
+                self.uvm_component_data.insert(obj_id, cd);
+                self.uvm_sequencer_data.insert(obj_id, UvmSequencerData { item_queue: Vec::new(), current_item: None });
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "get_next_item" => {
+                let data = self.uvm_sequencer_data.get_mut(&obj_id)
+                    .ok_or_else(|| "sequencer not initialized".to_string())?;
+                let item = data.item_queue.first().copied().unwrap_or(0);
+                data.current_item = data.item_queue.first().copied();
+                Ok(LogicVec::from_u64(item as u64, 64))
+            }
+            "item_done" => {
+                if let Some(data) = self.uvm_sequencer_data.get_mut(&obj_id) {
+                    if data.current_item.is_some() {
+                        data.item_queue.remove(0);
+                        data.current_item = None;
+                    }
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            _ => self.execute_uvm_component_method(obj_id, method, args),
+        }
+    }
+
+    fn execute_uvm_driver_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+        match method {
+            "new" => {
+                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                let parent_obj = args.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                self.uvm_object_data.insert(obj_id, UvmObjectData { name: name.clone() });
+                let mut cd = UvmComponentData { parent: None, children: Vec::new(), report_verbosity: 2 };
+                if parent_obj != 0 {
+                    cd.parent = Some(parent_obj);
+                    if let Some(pd) = self.uvm_component_data.get_mut(&parent_obj) {
+                        pd.children.push(obj_id);
+                    }
+                }
+                self.uvm_component_data.insert(obj_id, cd);
+                self.uvm_driver_data.insert(obj_id, UvmDriverData { sequencer_id: None, current_item: None });
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "set_sequencer" => {
+                let seqr_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                if let Some(data) = self.uvm_driver_data.get_mut(&obj_id) {
+                    data.sequencer_id = Some(seqr_id);
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "get_next_item" => {
+                let data = self.uvm_driver_data.get(&obj_id)
+                    .ok_or_else(|| "driver not initialized".to_string())?;
+                let seqr_id = data.sequencer_id.unwrap_or(0);
+                if seqr_id != 0 {
+                    self.execute_uvm_sequencer_method(seqr_id, "get_next_item", args)
+                } else {
+                    Ok(LogicVec::from_u64(0, 64))
+                }
+            }
+            "item_done" => {
+                let data = self.uvm_driver_data.get(&obj_id)
+                    .ok_or_else(|| "driver not initialized".to_string())?;
+                let seqr_id = data.sequencer_id.unwrap_or(0);
+                if seqr_id != 0 {
+                    self.execute_uvm_sequencer_method(seqr_id, "item_done", args)
+                } else {
+                    Ok(LogicVec::from_u64(1, 1))
+                }
+            }
+            _ => self.execute_uvm_component_method(obj_id, method, args),
+        }
+    }
+
+    fn execute_uvm_monitor_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+        match method {
+            "new" => {
+                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                let parent_obj = args.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                self.uvm_object_data.insert(obj_id, UvmObjectData { name: name.clone() });
+                let mut cd = UvmComponentData { parent: None, children: Vec::new(), report_verbosity: 2 };
+                if parent_obj != 0 {
+                    cd.parent = Some(parent_obj);
+                    if let Some(pd) = self.uvm_component_data.get_mut(&parent_obj) {
+                        pd.children.push(obj_id);
+                    }
+                }
+                self.uvm_component_data.insert(obj_id, cd);
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            _ => self.execute_uvm_component_method(obj_id, method, args),
+        }
+    }
+
+    fn execute_uvm_analysis_port_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+        match method {
+            "new" => {
+                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                self.uvm_analysis_port_data.insert(obj_id, UvmAnalysisPortData { connections: Vec::new(), name: name.clone() });
+                self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name });
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "connect" => {
+                let imp_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                if let Some(data) = self.uvm_analysis_port_data.get_mut(&obj_id) {
+                    data.connections.push(imp_id);
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "write" => {
+                let item_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                let connections = self.uvm_analysis_port_data.get(&obj_id)
+                    .map(|d| d.connections.clone())
+                    .unwrap_or_default();
+                for imp_id in &connections {
+                    let imp_args = vec![LogicVec::from_u64(item_id as u64, 64)];
+                    self.execute_uvm_analysis_imp_method(*imp_id, "write", &imp_args)?;
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            _ => self.execute_uvm_object_method(obj_id, method, args),
+        }
+    }
+
+    fn execute_uvm_analysis_imp_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+        match method {
+            "new" => {
+                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                let parent_obj = args.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                self.uvm_analysis_imp_data.insert(obj_id, UvmAnalysisImpData { parent: Some(parent_obj), name: name.clone() });
+                self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name });
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "write" => {
+                let item_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                let parent = self.uvm_analysis_imp_data.get(&obj_id)
+                    .and_then(|d| d.parent)
+                    .unwrap_or(0);
+                let parent_name = if parent != 0 {
+                    self.state.get_object(parent)
+                        .map(|o| o.class_name.clone())
+                        .unwrap_or_default()
+                } else { String::new() };
+                if parent != 0 && !parent_name.is_empty()
+                    && self.find_method_in_hierarchy(&parent_name, "write").is_ok()
+                {
+                    let write_args = vec![LogicVec::from_u64(item_id as u64, 64)];
+                    self.execute_method(parent, "write", &write_args)?;
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            _ => self.execute_uvm_object_method(obj_id, method, args),
+        }
+    }
+
     fn execute_super_method(&mut self, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
         let obj_id = self.current_this
             .ok_or_else(|| "'super' used outside class method".to_string())?;
@@ -3052,6 +4742,40 @@ impl SimulationEngine {
         let parent = self.design.classes.get(&class_name)
             .and_then(|c| c.extends.clone())
             .ok_or_else(|| format!("class '{}' has no parent for super call", class_name))?;
+        // Check hierarchy from most specific to least
+        if parent == "__uvm_driver" || self.is_uvm_driver_hierarchy(&parent) {
+            return self.execute_uvm_driver_method(obj_id, method, args);
+        }
+        if parent == "__uvm_monitor" || self.is_uvm_monitor_hierarchy(&parent) {
+            return self.execute_uvm_monitor_method(obj_id, method, args);
+        }
+        if parent == "__uvm_sequencer" || self.is_uvm_sequencer_hierarchy(&parent) {
+            return self.execute_uvm_sequencer_method(obj_id, method, args);
+        }
+        if parent == "__uvm_sequence" || self.is_uvm_sequence_hierarchy(&parent) {
+            return self.execute_uvm_sequence_method(obj_id, method, args);
+        }
+        if parent == "__uvm_sequence_item" || self.is_uvm_sequence_item_hierarchy(&parent) {
+            return self.execute_uvm_sequence_item_method(obj_id, method, args);
+        }
+        if parent == "__uvm_analysis_port" || self.is_uvm_analysis_port_hierarchy(&parent) {
+            return self.execute_uvm_analysis_port_method(obj_id, method, args);
+        }
+        if parent == "__uvm_analysis_imp" || self.is_uvm_analysis_imp_hierarchy(&parent) {
+            return self.execute_uvm_analysis_imp_method(obj_id, method, args);
+        }
+        // Check if parent is uvm_component hierarchy
+        if parent == "__uvm_component" || self.is_uvm_component_hierarchy(&parent) {
+            return self.execute_uvm_component_method(obj_id, method, args);
+        }
+        // Check if parent is uvm_report_object hierarchy
+        if parent == "__uvm_report_object" || self.is_uvm_report_object_hierarchy(&parent) {
+            return self.execute_uvm_report_object_method(obj_id, method, args);
+        }
+        // Check if parent is uvm_object hierarchy
+        if parent == "__uvm_object" || self.is_uvm_object_hierarchy(&parent) {
+            return self.execute_uvm_object_method(obj_id, method, args);
+        }
         // Super dispatch: start search from parent class, skipping current class override
         let method_def = self.find_method_in_hierarchy(&parent, method)?.clone();
         self.execute_method_body(Some(obj_id), &method_def, args, method)
@@ -3083,7 +4807,7 @@ impl SimulationEngine {
             }
         }
 
-        let old_locals = self.method_locals.clone();
+        let depth = self.method_locals.len();
         self.method_locals.push(local_signals);
 
         let old_method = self.current_method.clone();
@@ -3098,7 +4822,7 @@ impl SimulationEngine {
             .unwrap_or_else(|| LogicVec::new(1));
 
         self.current_method = old_method;
-        self.method_locals = old_locals;
+        self.method_locals.truncate(depth);
         self.current_this = old_this;
         Ok(return_val)
     }
@@ -3178,13 +4902,13 @@ fn get_field_elem_width(&self, expr: &Expr) -> Option<usize> {
     }
 }
 
-fn format_display(state: &SimulationState, ir_args: &[IrExpr]) -> String {
+fn format_display(state: &SimulationState, signals: &[SignalInfo], hier_map: &HashMap<String, SignalId>, ir_args: &[IrExpr]) -> String {
     let (fmt_str, start_idx) = if let Some(IrExpr::String(s)) = ir_args.first() {
         (s.clone(), 1)
     } else {
         let mut parts = Vec::new();
         for arg in ir_args {
-            if let Ok(val) = eval_display_arg(state, arg) {
+            if let Ok(val) = eval_display_arg(state, signals, hier_map, arg) {
                 parts.push(format!("{}", val));
             }
         }
@@ -3192,7 +4916,7 @@ fn format_display(state: &SimulationState, ir_args: &[IrExpr]) -> String {
     };
 
     let value_args: Vec<LogicVec> = ir_args[start_idx..].iter()
-        .filter_map(|a| eval_display_arg(state, a).ok())
+        .filter_map(|a| eval_display_arg(state, signals, hier_map, a).ok())
         .collect();
 
     let mut value_idx = 0usize;
@@ -3255,8 +4979,17 @@ fn format_display(state: &SimulationState, ir_args: &[IrExpr]) -> String {
     result
 }
 
-fn eval_display_arg(state: &SimulationState, arg: &IrExpr) -> Result<LogicVec, String> {
+fn eval_display_arg(state: &SimulationState, signals: &[SignalInfo], hier_map: &HashMap<String, SignalId>, arg: &IrExpr) -> Result<LogicVec, String> {
     match arg {
+        IrExpr::HierRef(name) => {
+            if let Some(pos) = signals.iter().position(|s| s.name == *name) {
+                Ok(state.read_signal(pos).clone())
+            } else if let Some(&pos) = hier_map.get(name) {
+                Ok(state.read_signal(pos).clone())
+            } else {
+                Err(format!("hierarchical signal '{}' not found", name))
+            }
+        }
         IrExpr::String(s) => {
             let mut bits = Vec::with_capacity(s.len() * 8);
             for c in s.chars() {
@@ -3284,7 +5017,7 @@ fn eval_display_arg(state: &SimulationState, arg: &IrExpr) -> Result<LogicVec, S
                     Ok(LogicVec { bits: vec![bit], width: 1 })
                 }
                 IrExpr::ExprRangeSelect(inner, msb, lsb) => {
-                    let val = eval_display_arg(state, inner)?;
+                    let val = eval_display_arg(state, signals, hier_map, inner)?;
                     let (start, end) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
                     if end < val.width {
                         let mut bits = val.bits[start..=end].to_vec();
@@ -3295,14 +5028,14 @@ fn eval_display_arg(state: &SimulationState, arg: &IrExpr) -> Result<LogicVec, S
                     }
                 }
                 IrExpr::ExprBitSelect(inner, idx) => {
-                    let val = eval_display_arg(state, inner)?;
+                    let val = eval_display_arg(state, signals, hier_map, inner)?;
                     let bit = val.bits.get(*idx).copied().unwrap_or(LogicVal::X);
                     Ok(LogicVec { bits: vec![bit], width: 1 })
                 }
                 IrExpr::ExprPartSelect(inner, base_expr, width_expr) => {
-                    let val = eval_display_arg(state, inner)?;
-                    let base = eval_display_arg(state, base_expr).ok().map(|v| v.to_u64() as usize).unwrap_or(0);
-                    let width = eval_display_arg(state, width_expr).ok().map(|v| v.to_u64() as usize).unwrap_or(0);
+                    let val = eval_display_arg(state, signals, hier_map, inner)?;
+                    let base = eval_display_arg(state, signals, hier_map, base_expr).ok().map(|v| v.to_u64() as usize).unwrap_or(0);
+                    let width = eval_display_arg(state, signals, hier_map, width_expr).ok().map(|v| v.to_u64() as usize).unwrap_or(0);
                     if width == 0 || base >= val.width {
                         Ok(LogicVec::new(1))
                     } else {
@@ -3312,10 +5045,10 @@ fn eval_display_arg(state: &SimulationState, arg: &IrExpr) -> Result<LogicVec, S
                         Ok(LogicVec { width: bits.len(), bits })
                     }
                 }
-                IrExpr::Signed(inner) => eval_display_arg(state, inner),
+                IrExpr::Signed(inner) => eval_display_arg(state, signals, hier_map, inner),
                 IrExpr::ArrayIndex { sig_id, index, elem_width } => {
                     let array_val = state.read_signal(*sig_id);
-                    let idx = eval_display_arg(state, index).ok().map(|v| v.to_u64() as usize).unwrap_or(0);
+                    let idx = eval_display_arg(state, signals, hier_map, index).ok().map(|v| v.to_u64() as usize).unwrap_or(0);
                     let start = idx * elem_width;
                     let mut bits = Vec::with_capacity(*elem_width);
                     for i in start..start + elem_width {
@@ -3387,6 +5120,17 @@ fn read_bin_file(filename: &str, elem_width: usize, array_depth: usize, start: O
         if data.len() >= len { break; }
     }
     Ok(data)
+}
+
+pub fn string_to_logicvec(s: &str) -> LogicVec {
+    let mut bits = Vec::with_capacity(s.len() * 8);
+    for c in s.chars() {
+        let byte = c as u8;
+        for b in 0..8 {
+            bits.push(if (byte >> b) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+        }
+    }
+    LogicVec { width: bits.len(), bits }
 }
 
 pub fn logicvec_to_string(lv: &LogicVec) -> String {
@@ -3673,6 +5417,20 @@ fn extract_signal_deps_inner(expr: &IrExpr, deps: &mut Vec<SignalId>) {
                 extract_signal_deps_inner(a, deps);
             }
         }
+        IrExpr::HierRef(_) => {}
         IrExpr::Const(_) | IrExpr::FillLit(_) | IrExpr::String(_) | IrExpr::This => {}
+    }
+}
+
+fn is_signed_expr(expr: &IrExpr, signals: &[SignalInfo]) -> bool {
+    match expr {
+        IrExpr::Signed(_) => true,
+        IrExpr::Signal(id, _) | IrExpr::BitSelect(id, _) | IrExpr::RangeSelect(id, ..) => {
+            signals.get(*id).map(|s| s.is_signed).unwrap_or(false)
+        }
+        IrExpr::ArrayIndex { sig_id, .. } => {
+            signals.get(*sig_id).map(|s| s.is_signed).unwrap_or(false)
+        }
+        _ => false,
     }
 }

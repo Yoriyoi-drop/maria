@@ -8,11 +8,12 @@ pub struct Parser {
     class_names: Vec<String>,
     typedef_names: Vec<String>,
     package_tdefs: std::collections::HashMap<String, Vec<String>>,
+    type_param_names: Vec<String>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<(Token, usize, usize)>) -> Self {
-        Self { tokens, pos: 0, class_names: Vec::new(), typedef_names: Vec::new(), package_tdefs: std::collections::HashMap::new() }
+        Self { tokens, pos: 0, class_names: vec!["process".to_string(), "uvm_object".to_string(), "uvm_component".to_string(), "uvm_sequence_item".to_string(), "uvm_sequence".to_string(), "uvm_sequencer".to_string(), "uvm_driver".to_string(), "uvm_monitor".to_string(), "uvm_scoreboard".to_string(), "uvm_analysis_port".to_string(), "uvm_analysis_imp".to_string(), "uvm_test".to_string(), "uvm_config_db".to_string(), "uvm_report_object".to_string(), "uvm_factory".to_string(), "uvm_resource_db".to_string()], typedef_names: Vec::new(), package_tdefs: std::collections::HashMap::new(), type_param_names: Vec::new() }
     }
 
     fn peek(&self) -> &Token {
@@ -69,6 +70,22 @@ impl Parser {
 
     pub fn parse_design(&mut self) -> Result<Design, String> {
         self.class_names.clear();
+        self.class_names.push("process".to_string());
+        self.class_names.push("uvm_object".to_string());
+        self.class_names.push("uvm_component".to_string());
+        self.class_names.push("uvm_sequence_item".to_string());
+        self.class_names.push("uvm_sequence".to_string());
+        self.class_names.push("uvm_sequencer".to_string());
+        self.class_names.push("uvm_driver".to_string());
+        self.class_names.push("uvm_monitor".to_string());
+        self.class_names.push("uvm_scoreboard".to_string());
+        self.class_names.push("uvm_analysis_port".to_string());
+        self.class_names.push("uvm_analysis_imp".to_string());
+        self.class_names.push("uvm_test".to_string());
+        self.class_names.push("uvm_config_db".to_string());
+        self.class_names.push("uvm_report_object".to_string());
+        self.class_names.push("uvm_factory".to_string());
+        self.class_names.push("uvm_resource_db".to_string());
         let mut modules = Vec::new();
         let mut classes = Vec::new();
         let mut packages = Vec::new();
@@ -80,6 +97,14 @@ impl Parser {
             if self.peek() == &Token::Class {
                 let start = self.pos;
                 self.advance(); // consume 'class'
+                if self.peek() == &Token::Hash {
+                    self.advance(); // consume #
+                    self.expect(Token::LParen)?;
+                    while self.peek() != &Token::RParen && self.peek() != &Token::Eof {
+                        self.advance();
+                    }
+                    let _ = self.expect(Token::RParen);
+                }
                 if let Token::Ident(name) = self.peek() {
                     self.class_names.push(name.clone());
                 }
@@ -173,7 +198,7 @@ impl Parser {
                             // Skip optional type keyword (int, bit, logic, etc.)
                             match self.peek() {
                                 Token::Int | Token::Integer | Token::Bit | Token::Byte
-                                | Token::Shortint | Token::Longint | Token::Logic
+                                | Token::Shortint | Token::Longint | Token::Time | Token::Logic
                                 | Token::Reg | Token::Wire | Token::Signed => { self.advance(); }
                                 _ => {}
                             }
@@ -241,6 +266,23 @@ impl Parser {
 
     fn parse_class(&mut self) -> Result<ClassDecl, String> {
         self.advance(); // consume 'class'
+        let mut type_params = Vec::new();
+        if self.peek() == &Token::Hash {
+            self.advance();
+            self.expect(Token::LParen)?;
+            loop {
+                if self.peek() == &Token::RParen { break; }
+                self.expect(Token::Type)?;
+                let tp_name = self.expect_ident()?;
+                let default_type = if self.peek() == &Token::BlockingAssign {
+                    self.advance();
+                    Some(self.parse_type_expr()?)
+                } else { None };
+                type_params.push(TypeParam { name: tp_name, default_type });
+                if self.peek() == &Token::Comma { self.advance(); } else { break; }
+            }
+            self.expect(Token::RParen)?;
+        }
         let name = self.expect_ident()?;
         let extends = if self.peek() == &Token::Extends {
             self.advance();
@@ -249,6 +291,7 @@ impl Parser {
             None
         };
         self.expect(Token::Semi)?;
+        self.type_param_names = type_params.iter().map(|tp| tp.name.clone()).collect();
         let mut members = Vec::new();
         loop {
             match self.peek() {
@@ -271,7 +314,7 @@ impl Parser {
                 Token::Task => {
                     members.push(ClassMember::Task(self.parse_task(false)?));
                 }
-                Token::Input | Token::Output | Token::Inout | Token::Reg | Token::Logic | Token::Wire | Token::Int | Token::Integer | Token::Signed | Token::Bit | Token::Byte | Token::Shortint | Token::Longint | Token::String | Token::Mailbox | Token::Semaphore | Token::Real | Token::RealTime | Token::Enum | Token::Struct | Token::Union | Token::Wand | Token::Wor | Token::Tri | Token::Tri0 | Token::Tri1 | Token::TriAnd | Token::TriOr | Token::Supply0 | Token::Supply1 => {
+                Token::Input | Token::Output | Token::Inout | Token::Reg | Token::Logic | Token::Wire | Token::Int | Token::Integer | Token::Signed | Token::Bit | Token::Byte | Token::Shortint | Token::Longint | Token::Time | Token::String | Token::Mailbox | Token::Semaphore | Token::Real | Token::RealTime | Token::Enum | Token::Struct | Token::Union | Token::Wand | Token::Wor | Token::Tri | Token::Tri0 | Token::Tri1 | Token::TriAnd | Token::TriOr | Token::Supply0 | Token::Supply1 => {
                     let mut decl = self.parse_decl()?;
                     for n in &mut decl.names { n.is_rand = false; }
                     members.push(ClassMember::Decl(decl));
@@ -281,6 +324,14 @@ impl Parser {
                     let mut decl = self.parse_decl()?;
                     for n in &mut decl.names { n.is_rand = true; }
                     members.push(ClassMember::Decl(decl));
+                }
+                Token::Ident(name) if self.type_param_names.contains(name) => {
+                    let tp_name = name.clone();
+                    self.advance();
+                    let decl_expr_range = if self.peek() == &Token::LBrack { self.parse_range()? } else { None };
+                    let names = self.parse_decl_names(decl_expr_range)?;
+                    self.skip_semi();
+                    members.push(ClassMember::Decl(crate::ast::types::Decl { dtype: DataType::UserDefined(tp_name), kind: crate::ast::types::DeclKind::Logic, names }));
                 }
                 Token::Constraint => {
                     self.advance();
@@ -301,7 +352,8 @@ impl Parser {
                 }
             }
         }
-        Ok(ClassDecl { name, extends, members })
+        self.type_param_names.clear();
+        Ok(ClassDecl { name, extends, type_params, members })
     }
 
     fn parse_module(&mut self) -> Result<Module, String> {
@@ -618,6 +670,7 @@ impl Parser {
             Token::Byte => DataType::Byte,
             Token::Shortint => DataType::Shortint,
             Token::Longint => DataType::Longint,
+            Token::Time => DataType::Time,
             Token::Reg => DataType::Logic,
             Token::Real => DataType::Real,
             Token::RealTime => DataType::Realtime,
@@ -764,12 +817,16 @@ impl Parser {
                 let initial = self.parse_initial()?;
                 Ok(Some(ModuleItem::Initial(initial)))
             }
+            Token::Final => {
+                let final_block = self.parse_final()?;
+                Ok(Some(ModuleItem::Final(final_block)))
+            }
             Token::Assign => {
                 let assign = self.parse_assign()?;
                 Ok(Some(ModuleItem::Assign(assign)))
             }
             Token::Wire | Token::Reg | Token::Logic | Token::Int | Token::Integer
-                | Token::Bit | Token::Byte | Token::Shortint | Token::Longint
+                | Token::Bit | Token::Byte | Token::Shortint | Token::Longint | Token::Time
                 | Token::String | Token::Real | Token::RealTime
                 | Token::Mailbox | Token::Semaphore
                 | Token::Enum | Token::Struct | Token::Union
@@ -783,13 +840,22 @@ impl Parser {
                 if self.class_names.contains(name) || self.typedef_names.contains(name) {
                     let dtype = DataType::UserDefined(name.clone());
                     self.advance();
+                    // Handle parameterized class: Class #(type) varname — skip type args, use base class name
+                    if self.peek() == &Token::Hash {
+                        self.advance();
+                        self.expect(Token::LParen)?;
+                        while self.peek() != &Token::RParen && self.peek() != &Token::Eof {
+                            self.advance();
+                        }
+                        let _ = self.expect(Token::RParen);
+                    }
                     let mut names = Vec::new();
                     loop {
                         if let Token::Ident(n) = self.peek() {
                             let vname = n.clone();
                             self.advance();
                             names.push(DeclVar {
-                                name: vname, range: None, expr_range: None, array_range: None, is_dynamic: false, is_queue: false, is_rand: false,
+                                name: vname, range: None, expr_range: None, array_range: None, is_dynamic: false, is_queue: false, is_rand: false, expr: None,
                             });
                         } else {
                             if self.peek() == &Token::BlockingAssign {
@@ -1024,7 +1090,7 @@ impl Parser {
             Token::Logic => DeclKind::Logic,
             Token::Int => DeclKind::Int,
             Token::Integer => DeclKind::Integer,
-            Token::Bit | Token::Byte | Token::Shortint | Token::Longint => {
+            Token::Bit | Token::Byte | Token::Shortint | Token::Longint | Token::Time => {
                 let dt = match self.peek() {
                     Token::Bit => DataType::Bit,
                     Token::Byte => DataType::Byte,
@@ -1044,7 +1110,7 @@ impl Parser {
                 self.advance();
                 let base = match self.peek() {
                     Token::Bit | Token::Logic | Token::Int | Token::Integer
-                        | Token::Byte | Token::Shortint | Token::Longint => {
+                        | Token::Byte | Token::Shortint | Token::Longint | Token::Time => {
                         let dt = match self.peek() {
                             Token::Bit => DataType::Bit,
                             Token::Logic => DataType::Logic,
@@ -1216,6 +1282,12 @@ impl Parser {
                             None
                         }
                     });
+                    let init_expr = if self.peek() == &Token::BlockingAssign {
+                        self.advance();
+                        Some(self.parse_expr(0)?)
+                    } else {
+                        None
+                    };
                     names.push(DeclVar {
                         name: name.clone(),
                         range: var_range,
@@ -1224,6 +1296,7 @@ impl Parser {
                         is_dynamic,
                         is_queue,
                         is_rand: false,
+                        expr: init_expr,
                     });
                 }
                 _ => break,
@@ -1282,6 +1355,7 @@ impl Parser {
                 Token::Byte => { self.advance(); DataType::Byte }
                 Token::Shortint => { self.advance(); DataType::Shortint }
                 Token::Longint => { self.advance(); DataType::Longint }
+                Token::Time => { self.advance(); DataType::Time }
                 Token::Reg => { self.advance(); DataType::Logic }
                 Token::Signed => {
                     self.advance();
@@ -1293,6 +1367,7 @@ impl Parser {
                         Token::Byte => { self.advance(); DataType::Byte }
                         Token::Shortint => { self.advance(); DataType::Shortint }
                         Token::Longint => { self.advance(); DataType::Longint }
+                        Token::Time => { self.advance(); DataType::Time }
                         _ => DataType::Logic,
                     };
                     DataType::Signed(Box::new(inner))
@@ -1324,7 +1399,7 @@ impl Parser {
                 self.advance();
                 let base = match self.peek() {
                     Token::Bit | Token::Logic | Token::Int | Token::Integer
-                        | Token::Byte | Token::Shortint | Token::Longint => {
+                        | Token::Byte | Token::Shortint | Token::Longint | Token::Time => {
                         let dt = match self.peek() {
                             Token::Bit => DataType::Bit,
                             Token::Logic => DataType::Logic,
@@ -1406,6 +1481,17 @@ impl Parser {
                     (name, dtype, range)
                 } else {
                     return Err(format!("line {}: expected name after typedef longint", self.peek_line()));
+                }
+            }
+            Token::Time => {
+                self.advance();
+                let range = if self.peek() == &Token::LBrack { self.parse_range()? } else { None };
+                if let Token::Ident(name) = self.peek() {
+                    let name = name.clone();
+                    self.advance();
+                    (name, DataType::Time, range)
+                } else {
+                    return Err(format!("line {}: expected name after typedef time", self.peek_line()));
                 }
             }
             Token::Int => {
@@ -1660,9 +1746,15 @@ impl Parser {
             Token::Byte => { self.advance(); Some(Box::new(DataType::Byte)) }
             Token::Shortint => { self.advance(); Some(Box::new(DataType::Shortint)) }
             Token::Longint => { self.advance(); Some(Box::new(DataType::Longint)) }
+            Token::Time => { self.advance(); Some(Box::new(DataType::Time)) }
             Token::Bit => { self.advance(); Some(Box::new(DataType::Bit)) }
             Token::Logic => { self.advance(); Some(Box::new(DataType::Logic)) }
             Token::Signed => { self.advance(); Some(Box::new(DataType::Signed(Box::new(DataType::Logic)))) }
+            Token::Ident(name) if self.type_param_names.contains(name) => {
+                let tp_name = name.clone();
+                self.advance();
+                Some(Box::new(DataType::UserDefined(tp_name)))
+            }
             _ => None,
         };
         if self.peek() == &Token::Unsigned { self.advance(); }
@@ -1692,6 +1784,10 @@ impl Parser {
                     Token::Input | Token::Output | Token::Inout)
                 {
                     self.advance();
+                } else if let Token::Ident(name) = self.peek() {
+                    if self.type_param_names.contains(name) {
+                        self.advance();
+                    }
                 }
                 // Skip range like [7:0]
                 let range = if self.peek() == &Token::LBrack {
@@ -1948,6 +2044,12 @@ impl Parser {
         Ok(InitialBlock { stmts })
     }
 
+    fn parse_final(&mut self) -> Result<InitialBlock, String> {
+        self.advance();
+        let stmts = self.parse_stmt_block()?;
+        Ok(InitialBlock { stmts })
+    }
+
     fn parse_sensitivity_events(&mut self) -> Result<Vec<SensitivityEvent>, String> {
         let mut events = Vec::new();
         loop {
@@ -2163,7 +2265,7 @@ impl Parser {
 
     fn is_type_token(&self) -> bool {
         matches!(self.peek(), Token::Bit | Token::Logic | Token::Int | Token::Integer
-            | Token::Byte | Token::Shortint | Token::Longint | Token::Reg
+            | Token::Byte | Token::Shortint | Token::Longint | Token::Time | Token::Reg
             | Token::Real | Token::RealTime | Token::String
             | Token::Struct | Token::Union | Token::Enum)
     }
@@ -2343,8 +2445,14 @@ impl Parser {
             }
         }
         self.expect(Token::RParen)?;
+        let fail_stmt = if self.peek() == &Token::Else {
+            self.advance(); // consume 'else'
+            Some(Box::new(self.parse_stmt()?))
+        } else {
+            None
+        };
         self.skip_semi();
-        Ok(Stmt::WaitOrder { events })
+        Ok(Stmt::WaitOrder { events, fail_stmt })
     }
 
     fn parse_covergroup(&mut self) -> Result<CovergroupDecl, String> {
@@ -2844,10 +2952,23 @@ impl Parser {
                         Ok(Stmt::BlockingAssign { lhs, rhs, delay: None })
                     }
                     Token::NonBlockingAssign => {
-                        self.advance();
-                        let rhs = self.parse_expr(0)?;
-                        self.skip_semi();
-                        Ok(Stmt::NonBlockingAssign { lhs, rhs, delay: None })
+                        if is_valid_lvalue(&lhs) {
+                            self.advance();
+                            let rhs = self.parse_expr(0)?;
+                            self.skip_semi();
+                            Ok(Stmt::NonBlockingAssign { lhs, rhs, delay: None })
+                        } else {
+                            self.advance();
+                            let rhs = self.parse_expr(8)?;
+                            self.skip_semi();
+                            Ok(Stmt::Expr {
+                                expr: Expr::BinaryOp {
+                                    op: BinaryOp::Le,
+                                    lhs: Box::new(lhs),
+                                    rhs: Box::new(rhs),
+                                },
+                            })
+                        }
                     }
                     _ => {
                         self.skip_semi();
@@ -3006,11 +3127,19 @@ impl Parser {
         self.expect(Token::LParen)?;
         let array_var = self.expect_ident()?;
         self.expect(Token::LBrack)?;
-        let index_var = self.expect_ident()?;
+        let mut index_vars = Vec::new();
+        loop {
+            index_vars.push(self.expect_ident()?);
+            if self.peek() == &Token::Comma {
+                self.advance();
+            } else {
+                break;
+            }
+        }
         self.expect(Token::RBrack)?;
         self.expect(Token::RParen)?;
         let stmts = self.parse_stmt_block()?;
-        Ok(Stmt::ForeachLoop { array_var, index_var, stmts })
+        Ok(Stmt::ForeachLoop { array_var, index_vars, stmts })
     }
 
     fn parse_while_stmt(&mut self) -> Result<Stmt, String> {
@@ -3319,7 +3448,61 @@ impl Parser {
                 if self.peek() == &Token::Scope {
                     self.advance();
                     let item = self.expect_ident()?;
+                    if self.peek() == &Token::LParen {
+                        self.advance();
+                        let mut args = Vec::new();
+                        if self.peek() != &Token::RParen {
+                            loop {
+                                args.push(self.parse_expr(0)?);
+                                if self.peek() == &Token::Comma {
+                                    self.advance();
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        self.expect(Token::RParen)?;
+                        return Ok(Expr::FuncCall { name: format!("{}::{}", name, item), args });
+                    }
                     return Ok(Expr::ScopedIdent { package: name.clone(), item });
+                }
+                // Class#(Type)::method resolution (parameterized class)
+                if self.peek() == &Token::Hash {
+                    self.advance();
+                    self.expect(Token::LParen)?;
+                    let mut type_specs = Vec::new();
+                    loop {
+                        if self.peek() == &Token::RParen { break; }
+                        let dt = self.parse_type_expr()?;
+                        type_specs.push(dt);
+                        if self.peek() == &Token::Comma { self.advance(); } else { break; }
+                    }
+                    self.expect(Token::RParen)?;
+                    let type_str: Vec<String> = type_specs.iter().map(|dt| dt.to_string()).collect();
+                    let suffix = type_str.join(",");
+                    let class_prefix = if suffix.is_empty() { name.clone() } else { format!("{}#{}", name, suffix) };
+                    if self.peek() == &Token::Scope {
+                        self.advance();
+                        let item = self.expect_ident()?;
+                        if self.peek() == &Token::LParen {
+                            self.advance();
+                            let mut args = Vec::new();
+                            if self.peek() != &Token::RParen {
+                                loop {
+                                    args.push(self.parse_expr(0)?);
+                                    if self.peek() == &Token::Comma {
+                                        self.advance();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                            self.expect(Token::RParen)?;
+                            return Ok(Expr::FuncCall { name: format!("{}::{}", class_prefix, item), args });
+                        }
+                        return Ok(Expr::ScopedIdent { package: class_prefix, item });
+                    }
+                    return Ok(Expr::Ident(class_prefix));
                 }
                 // Type cast: type_name'(expr)
                 if self.peek() == &Token::Quote {
@@ -3525,7 +3708,7 @@ impl Parser {
             }
             // Type cast: int'(expr), logic'(expr), bit'(expr), etc.
             Token::Int | Token::Integer | Token::Logic | Token::Bit
-                | Token::Byte | Token::Shortint | Token::Longint | Token::Signed
+                | Token::Byte | Token::Shortint | Token::Longint | Token::Time | Token::Signed
                 | Token::Real | Token::RealTime => {
                 let type_name = match &tok {
                     Token::Int => "int",
@@ -3535,6 +3718,7 @@ impl Parser {
                     Token::Byte => "byte",
                     Token::Shortint => "shortint",
                     Token::Longint => "longint",
+                    Token::Time => "time",
                     Token::Signed => "signed",
                     Token::Real => "real",
                     Token::RealTime => "realtime",
@@ -3557,4 +3741,15 @@ impl Parser {
             _ => Err(format!("line {}: expected expression, found {}", self.peek_line(), tok)),
         }
     }
+}
+
+fn is_valid_lvalue(expr: &Expr) -> bool {
+    matches!(expr,
+        Expr::Ident(_)
+        | Expr::RangeSelect { .. }
+        | Expr::BitSelect { .. }
+        | Expr::PartSelect { .. }
+        | Expr::Concat(_)
+        | Expr::MemberAccess { .. }
+    )
 }

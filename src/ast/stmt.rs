@@ -145,7 +145,7 @@ pub enum Stmt {
     },
     ForeachLoop {
         array_var: String,
-        index_var: String,
+        index_vars: Vec<String>,
         stmts: Vec<Stmt>,
     },
     // Unique/Priority case qualifiers
@@ -186,6 +186,7 @@ pub enum Stmt {
     },
     WaitOrder {
         events: Vec<String>,
+        fail_stmt: Option<Box<Stmt>>,
     },
     /// Unique/priority if
     UniqueIf {

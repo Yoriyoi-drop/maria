@@ -11,18 +11,19 @@ cargo test --lib              # same, excludes main.rs
 cargo test <test_name>        # single test (no --lib needed if unique)
 ```
 
-No CI, no lint, no typecheck shortcuts. Just `cargo test`. All 142 tests pass.
+No CI, no lint, no typecheck shortcuts. Just `cargo test`. All 505 tests pass.
 
 ## Pipeline architecture
 
 1. **`src/main.rs`** — CLI entrypoint. Reads `.sv` file(s), concatenates, feeds through lexer → parser → elaborator → engine.
-2. **`src/lib.rs`** — Library entrypoint. Exposes `compile_str()`, `simulate_str()`, `simulate_signals()` (returns signal map for tests). Tests live inline at `src/lib.rs:115`.
+2. **`src/lib.rs`** — Library entrypoint. Exposes `compile_str()`, `simulate_str()`, `simulate_signals()` (returns signal map for tests). Tests live inline at `src/lib.rs:122`.
 3. **`src/parser/`** — `lexer.rs` (tokenizer), `parser.rs` (Pratt-style top-down operator precedence), `preprocessor.rs` (`` `ifdef ``/`define`).
 4. **`src/ast/`** — `expr.rs`, `stmt.rs`, `types.rs`, `inline.rs` (function inlining for `loop_unroll` and `substitute_loop_var`).
 5. **`src/elaboration/elaborator.rs`** — AST → IR, signal collection, type resolution, loop unrolling, constant folding for `$clog2`/`$bits`/`$size`/`$left`/`$right`/`$low`/`$high`.
 6. **`src/ir/ir.rs`** — IR types (`IrStmt`, `IrExpr`, `LogicVec`).
 7. **`src/simulator/`** — `engine.rs` (event-driven scheduler), `state.rs` (signal storage), `value.rs` (`eval_binary`, `eval_unary`).
 8. **`src/waveform/vcd.rs`** — VCD dump.
+9. **`src/debugger/mod.rs`** — `Debugger` struct wrapping `SimulationEngine`. Step, breakpoint, watchpoint, timeline, hierarchy tree, reverse debug, memory inspect. 21 unit tests inline.
 
 ## Key conventions & gotchas
 
@@ -61,9 +62,10 @@ User-defined `randomize()` methods override the built-in. `rand_fields` and `con
 File proyek mendaftar file `.sv` (satu per baris, `#` untuk komentar). Dibaca via `--start` flag. Path relatif terhadap direktori `.maria`.
 
 ## Files
-- `src/simulator/engine.rs:2610` — largest file. Event loop, all statement handlers, loop unrolling, `$display`/`$fopen`/`$urandom`, fork/join tracking, `execute_randomize`.
-- `src/parser/parser.rs:2311` — second largest. Operator precedence table at line ~1968.
-- `src/elaboration/elaborator.rs:2143` — AST→IR translation, constant folding, signal resolution.
+- `src/simulator/engine.rs:4022` — largest file. Event loop, all statement handlers, loop unrolling, `$display`/`$fopen`/`$urandom`, fork/join tracking, `execute_randomize`, debug hook.
+- `src/parser/parser.rs:3586` — second largest. Operator precedence table at line ~1968.
+- `src/elaboration/elaborator.rs:3729` — AST→IR translation, constant folding, signal resolution.
+- `src/debugger/mod.rs:585` — Debugger struct + 21 unit tests.
 
 ## Run
 ```shell
@@ -73,3 +75,34 @@ cargo run -- test/tb_counter.sv -T 200    # max time
 cargo run -- file.sv --ast                # print AST
 cargo run -- file.sv --tokens             # print tokens
 ```
+
+## Debug mode
+
+Activate via `--debug` (basic) or `--deep-debug` (with snapshot/reverse). Debug types (`DebugMode`, `StepMode`, `Breakpoint`, `Watchpoint`) defined in `src/simulator/engine.rs`. `Debugger` wrapper in `src/debugger/mod.rs`.
+
+### CLI flags
+```shell
+--debug                   # enable debug mode (pause at breakpoints)
+--deep-debug              # enable + snapshots for reverse debug
+--step                    # run one cycle then pause
+--break-cycle <N>         # break at cycle N
+--break-change <NAME>     # break when signal changes
+--break-eq NAME=VAL       # break when signal == VAL (hex)
+--watch <NAME>            # watchpoint (pause on change)
+--timeline <NAME>         # print signal timeline post-sim
+--timeline-len <N>        # max timeline entries (default 20)
+--print-signal <NAME>     # print signal value post-sim
+--print-state             # print all signal values
+--tree                    # print hierarchy tree
+--mem <ADDR> <LEN>        # memory inspector (hex)
+--snap-interval <N>       # snapshot interval (default 1000)
+```
+
+### Breakpoint checking
+`debug_check()` dipanggil di akhir setiap cycle (sebelum time increment) di `SimulationEngine::run()`. Cycle breakpoint `break cycle N` pause saat `state.time == N`. Signal breakpoint (`SignalEq`/`SignalNeq`/`SignalChange`) diperiksa setiap cycle via `signal_history`. Watchpoints juga diperiksa di sini — jika nilai berubah, engine pause dan event dicatat.
+
+### Reverse debug (deep-debug)
+Snapshot `StateSnapshot` disimpan setiap `snapshot_interval` cycle. `reverse_step()` pop snapshot terakhir dan restore state. `reverse_continue(target)` mundur ke snapshot terdekat ≤ target.
+
+### Signal history
+Semua signal dicatat di `signal_history: HashMap<String, Vec<(u64, LogicVec)>>` setiap cycle (maks 100k entry per signal). Dipakai oleh timeline, break-change, dan watchpoint.

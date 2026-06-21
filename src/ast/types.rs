@@ -17,7 +17,14 @@ pub struct Design {
 pub struct ClassDecl {
     pub name: String,
     pub extends: Option<String>,
+    pub type_params: Vec<TypeParam>,
     pub members: Vec<ClassMember>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeParam {
+    pub name: String,
+    pub default_type: Option<DataType>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -251,6 +258,71 @@ pub fn const_eval_with_params(expr: &Expr, param_vals: &HashMap<String, i64>) ->
         Expr::BinaryOp { op: BinaryOp::BitXor, lhs, rhs } => {
             Ok(const_eval_with_params(lhs, param_vals)? ^ const_eval_with_params(rhs, param_vals)?)
         }
+        Expr::BinaryOp { op: BinaryOp::BitXnor, lhs, rhs } => {
+            Ok(!(const_eval_with_params(lhs, param_vals)? ^ const_eval_with_params(rhs, param_vals)?))
+        }
+        Expr::BinaryOp { op: BinaryOp::Shl, lhs, rhs } => {
+            Ok(const_eval_with_params(lhs, param_vals)? << const_eval_with_params(rhs, param_vals)?)
+        }
+        Expr::BinaryOp { op: BinaryOp::Shr, lhs, rhs } => {
+            Ok(const_eval_with_params(lhs, param_vals)? >> const_eval_with_params(rhs, param_vals)?)
+        }
+        Expr::BinaryOp { op: BinaryOp::Sshl, lhs, rhs } => {
+            Ok(const_eval_with_params(lhs, param_vals)? << const_eval_with_params(rhs, param_vals)?)
+        }
+        Expr::BinaryOp { op: BinaryOp::Sshr, lhs, rhs } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(l >> r)
+        }
+        Expr::BinaryOp { op: BinaryOp::CaseEq, lhs, rhs } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(if l == r { 1 } else { 0 })
+        }
+        Expr::BinaryOp { op: BinaryOp::CaseNeq, lhs, rhs } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(if l != r { 1 } else { 0 })
+        }
+        Expr::BinaryOp { op: BinaryOp::EqWild, lhs, rhs } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(if l == r { 1 } else { 0 })
+        }
+        Expr::BinaryOp { op: BinaryOp::NeqWild, lhs, rhs } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(if l != r { 1 } else { 0 })
+        }
+        Expr::UnaryOp { op: UnaryOp::Not, expr: inner } => {
+            let v = const_eval_with_params(inner, param_vals)?;
+            Ok(if v == 0 { 1 } else { 0 })
+        }
+        Expr::UnaryOp { op: UnaryOp::ReductionAnd, expr: inner } => {
+            let v = const_eval_with_params(inner, param_vals)?;
+            Ok(if v != 0 && v != -1 { 0 } else { 1 })
+        }
+        Expr::UnaryOp { op: UnaryOp::ReductionNand, expr: inner } => {
+            let v = const_eval_with_params(inner, param_vals)?;
+            Ok(if v != 0 && v != -1 { 1 } else { 0 })
+        }
+        Expr::UnaryOp { op: UnaryOp::ReductionOr, expr: inner } => {
+            let v = const_eval_with_params(inner, param_vals)?;
+            Ok(if v == 0 { 0 } else { 1 })
+        }
+        Expr::UnaryOp { op: UnaryOp::ReductionNor, expr: inner } => {
+            let v = const_eval_with_params(inner, param_vals)?;
+            Ok(if v == 0 { 1 } else { 0 })
+        }
+        Expr::UnaryOp { op: UnaryOp::ReductionXor, expr: inner } => {
+            let v = const_eval_with_params(inner, param_vals)?;
+            Ok((v.count_ones() & 1) as i64)
+        }
+        Expr::UnaryOp { op: UnaryOp::ReductionXnor, expr: inner } => {
+            let v = const_eval_with_params(inner, param_vals)?;
+            Ok(1 - (v.count_ones() & 1) as i64)
+        }
         Expr::TernaryOp { cond, true_expr, false_expr } => {
             let cond_val = const_eval_with_params(cond, param_vals)?;
             if cond_val != 0 {
@@ -320,6 +392,7 @@ pub struct DeclVar {
     pub is_dynamic: bool,
     pub is_queue: bool,
     pub is_rand: bool,
+    pub expr: Option<Expr>,
 }
 
 impl DeclVar {
@@ -351,6 +424,7 @@ pub enum DataType {
     Byte,
     Shortint,
     Longint,
+    Time,
     Real,
     Realtime,
     String,
@@ -366,6 +440,29 @@ pub enum DataType {
     UnionType {
         members: Vec<StructMember>,
     },
+}
+
+impl std::fmt::Display for DataType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DataType::Bit => write!(f, "bit"),
+            DataType::Logic => write!(f, "logic"),
+            DataType::Int => write!(f, "int"),
+            DataType::Integer => write!(f, "integer"),
+            DataType::Byte => write!(f, "byte"),
+            DataType::Shortint => write!(f, "shortint"),
+            DataType::Longint => write!(f, "longint"),
+            DataType::Time => write!(f, "time"),
+            DataType::Real => write!(f, "real"),
+            DataType::Realtime => write!(f, "realtime"),
+            DataType::String => write!(f, "string"),
+            DataType::Signed(inner) => write!(f, "signed {}", inner),
+            DataType::UserDefined(name) => write!(f, "{}", name),
+            DataType::EnumType { .. } => write!(f, "enum"),
+            DataType::StructType { .. } => write!(f, "struct"),
+            DataType::UnionType { .. } => write!(f, "union"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -441,6 +538,7 @@ pub struct DpiArg {
 pub enum ModuleItem {
     Always(AlwaysBlock),
     Initial(InitialBlock),
+    Final(InitialBlock),
     Assign(ContinuousAssign),
     Instance(ModuleInstance),
     Gate(GatePrimitive),
