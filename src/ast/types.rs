@@ -119,9 +119,9 @@ pub struct Range {
 impl Range {
     pub fn width(&self) -> usize {
         if self.msb >= self.lsb {
-            self.msb - self.lsb + 1
+            self.msb.saturating_sub(self.lsb).saturating_add(1)
         } else {
-            self.lsb - self.msb + 1
+            self.lsb.saturating_sub(self.msb).saturating_add(1)
         }
     }
 }
@@ -159,6 +159,17 @@ pub fn const_eval_simple(expr: &Expr) -> Result<i64, String> {
     }
 }
 
+/// Encode a short string as i64 for parameter comparison purposes.
+/// Strings up to 8 characters are encoded as little-endian bytes.
+pub fn string_to_i64(s: &str) -> i64 {
+    let bytes = s.as_bytes();
+    let mut val: i64 = 0;
+    for (i, &b) in bytes.iter().enumerate().take(8) {
+        val |= (b as i64) << (i * 8);
+    }
+    val
+}
+
 pub fn const_eval_with_params(expr: &Expr, param_vals: &HashMap<String, i64>) -> Result<i64, String> {
     match expr {
         Expr::Value(Value::Decimal(n)) => Ok(*n),
@@ -171,6 +182,7 @@ pub fn const_eval_with_params(expr: &Expr, param_vals: &HashMap<String, i64>) ->
         Expr::Value(Value::Octal { bits, .. }) => {
             i64::from_str_radix(&bits.replace('x', "0").replace('z', "0"), 8).map_err(|_| "bad octal".to_string())
         }
+        Expr::String(s) => Ok(string_to_i64(s)),
         Expr::Ident(name) => {
             if let Some(&val) = param_vals.get(name) {
                 Ok(val)
@@ -332,6 +344,14 @@ pub fn const_eval_with_params(expr: &Expr, param_vals: &HashMap<String, i64>) ->
             }
         }
         Expr::Paren(inner) => const_eval_with_params(inner, param_vals),
+        Expr::ScopedIdent { package, item } => {
+            let qualified = format!("{}::{}", package, item);
+            if let Some(&val) = param_vals.get(&qualified) {
+                Ok(val)
+            } else {
+                Err(format!("cannot evaluate package parameter '{}'", qualified))
+            }
+        }
         Expr::MethodCall { .. } => Err("method calls not allowed in constant expression".to_string()),
         Expr::MemberAccess { .. } => Err("member access not allowed in constant expression".to_string()),
         Expr::Inside { expr: inner, range_list } => {
@@ -342,6 +362,24 @@ pub fn const_eval_with_params(expr: &Expr, param_vals: &HashMap<String, i64>) ->
                 }
             }
             Ok(0)
+        }
+        Expr::FuncCall { name, args } if name == "$clog2" => {
+            if let Some(arg) = args.first() {
+                let v = const_eval_with_params(arg, param_vals)?;
+                if v <= 1 { Ok(0) } else {
+                    let n = v as u64;
+                    let msb = (64 - n.leading_zeros()) as i64;
+                    if n.is_power_of_two() { Ok(msb - 1) } else { Ok(msb) }
+                }
+            } else { Ok(0) }
+        }
+        Expr::FuncCall { name, args } if name == "$bits" || name == "$size" => {
+            if let Some(arg) = args.first() {
+                const_eval_with_params(arg, param_vals)
+            } else { Ok(0) }
+        }
+        Expr::FuncCall { name, .. } if name.starts_with('$') => {
+            Err(format!("cannot evaluate system function '{}' in constant context", name))
         }
         _ => Err(format!("non-constant expression in parameter context: {:?}", expr)),
     }

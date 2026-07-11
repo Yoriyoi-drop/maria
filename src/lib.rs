@@ -75,7 +75,7 @@ pub fn compile_str(source: &str) -> Result<ir::IrDesign, SimError> {
         tokens.push((tok, line, col));
     }
 
-    let mut parser = Parser::new(tokens);
+    let mut parser = Parser::new(tokens, "<string>");
     let design = parser.parse_design()?;
 
     let mut elaborator = elaboration::Elaborator::new(design);
@@ -6241,7 +6241,7 @@ endmodule"#, 5).unwrap();
             }
             tokens.push((tok, line, col));
         }
-        let mut parser = Parser::new(tokens);
+    let mut parser = Parser::new(tokens, "<string>");
         let design = parser.parse_design().unwrap_or_else(|e| {
             panic!("parse_design failed: {}", e);
         });

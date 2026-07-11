@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use crate::ast::types::const_eval_simple;
 use crate::ast::types::const_eval_with_params;
+use crate::ast::types::string_to_i64;
 use crate::ir::*;
 
 const BUILTIN_UVM_CLASSES: &[&str] = &[
@@ -444,11 +445,21 @@ fn resolve_param_values_fn(module: &Module, instance_overrides: &HashMap<String,
 
     // Collect body-level parameter declarations and add them to vals first
     // so they can be referenced by module.params expressions
+    // Helper to evaluate a parameter's default value, handling string defaults
+    let eval_param_default = |e: &Expr, existing_vals: &HashMap<String, i64>| -> i64 {
+        match e {
+            Expr::String(s) => string_to_i64(s),
+            _ => const_eval_with_params(e, existing_vals).unwrap_or(0),
+        }
+    };
+
+    // Collect body-level parameter declarations and add them to vals first
+    // so they can be referenced by module.params expressions
     for param in collect_body_params(module) {
         if !vals.contains_key(&param.name) {
             match &param.default {
                 Some(e) => {
-                    let v = const_eval_with_params(e, &vals).unwrap_or(0);
+                    let v = eval_param_default(e, &vals);
                     vals.insert(param.name.clone(), v);
                 }
                 None => {
@@ -461,7 +472,7 @@ fn resolve_param_values_fn(module: &Module, instance_overrides: &HashMap<String,
     for (i, param) in module.params.iter().enumerate() {
         if param.is_localparam {
             if let Some(e) = &param.default {
-                vals.insert(param.name.clone(), const_eval_with_params(e, &vals).unwrap_or(0));
+                vals.insert(param.name.clone(), eval_param_default(e, &vals));
             } else {
                 vals.insert(param.name.clone(), 0);
             }
@@ -473,7 +484,7 @@ fn resolve_param_values_fn(module: &Module, instance_overrides: &HashMap<String,
             *override_val
         } else {
             match &param.default {
-                Some(e) => const_eval_with_params(e, &vals).unwrap_or(0),
+                Some(e) => eval_param_default(e, &vals),
                 None => 0,
             }
         };

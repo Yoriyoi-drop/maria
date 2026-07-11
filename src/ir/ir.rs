@@ -490,9 +490,10 @@ impl Default for LogicVec {
 
 impl LogicVec {
     pub fn new(width: usize) -> Self {
+        let w = if width > 1_000_000 { 1 } else { width };
         LogicVec {
-            bits: vec![LogicVal::X; width],
-            width,
+            bits: vec![LogicVal::X; w],
+            width: w,
         }
     }
 

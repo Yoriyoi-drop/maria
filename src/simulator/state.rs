@@ -65,7 +65,13 @@ impl SimulationState {
     }
 
     pub fn write_signal(&mut self, id: SignalId, val: LogicVec) {
-        if self.signals[id] != val {
+        // Compare against pending (next_signals) if already changed this delta,
+        // otherwise compare against committed (signals)
+        if self.changed[id] {
+            if self.next_signals[id] != val {
+                self.next_signals[id] = val;
+            }
+        } else if self.signals[id] != val {
             self.next_signals[id] = val;
             self.changed[id] = true;
         }

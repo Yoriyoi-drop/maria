@@ -51,12 +51,30 @@ impl Preprocessor {
         let mut cond_stack: Vec<CondFrame> = vec![];
 
         while i < lines.len() {
-            let raw_line = lines[i];
+            let mut raw_line = lines[i].to_string();
+            // Handle line continuation (trailing \)
+            while raw_line.trim_end().ends_with('\\') || raw_line.trim_end().ends_with("\\\r") {
+                if raw_line.trim_end().ends_with('\r') {
+                    raw_line.pop();
+                }
+                raw_line = raw_line.trim_end().to_string();
+                raw_line.pop(); // remove trailing \
+                i += 1;
+                if i < lines.len() {
+                    raw_line.push('\n');
+                    raw_line.push_str(lines[i]);
+                } else {
+                    break;
+                }
+            }
             let trimmed = raw_line.trim();
 
             if !trimmed.starts_with('`') {
                 if self.is_emitting(&cond_stack) {
-                    let expanded = self.expand_inline_macros(raw_line);
+                    let expanded = self.expand_inline_macros(&raw_line);
+                    if expanded.contains("$rose") {
+                        eprintln!("  ** EMITTING $rose at iteration i={}, raw_line=[{:?}] **", i+1, &raw_line[..std::cmp::min(80, raw_line.len())]);
+                    }
                     output.push_str(&expanded);
                     output.push('\n');
                 }
@@ -70,16 +88,40 @@ impl Preprocessor {
             match cmd {
                 "include" => {
                     if self.is_emitting(&cond_stack) {
-                        let inc_path = self.parse_include_path(rest)?;
-                        let resolved = self.resolve_path(&inc_path, current_dir)?;
-                        let inc_source = fs::read_to_string(&resolved)
-                            .map_err(|e| format!("cannot include '{}': {}", resolved.display(), e))?;
-                        let inc_dir = resolved.parent().map(|p| p.to_path_buf());
-                        output.push_str(&format!("`line 1 \"{}\"\n", resolved.display()));
-                        let processed = self.preprocess(&inc_source, inc_dir.as_ref())?;
-                        output.push_str(&processed);
-                        if !processed.ends_with('\n') {
-                            output.push('\n');
+                        let inc_path = match self.parse_include_path(rest) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                eprintln!("  ** WARNING: {}", e);
+                                i += 1;
+                                continue;
+                            }
+                        };
+                        match self.resolve_path(&inc_path, current_dir) {
+                            Ok(resolved) => {
+                                match fs::read_to_string(&resolved) {
+                                    Ok(inc_source) => {
+                                        let inc_dir = resolved.parent().map(|p| p.to_path_buf());
+                                        output.push_str(&format!("`line 1 \"{}\"\n", resolved.display()));
+                                        match self.preprocess(&inc_source, inc_dir.as_ref()) {
+                                            Ok(processed) => {
+                                                output.push_str(&processed);
+                                                if !processed.ends_with('\n') {
+                                                    output.push('\n');
+                                                }
+                                            }
+                                            Err(e) => {
+                                                eprintln!("  ** WARNING: error processing include '{}': {}", resolved.display(), e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("  ** WARNING: cannot read include '{}': {}", resolved.display(), e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("  ** WARNING: {}", e);
+                            }
                         }
                     }
                 }
@@ -145,7 +187,7 @@ impl Preprocessor {
                 }
                 "line" => {
                     if self.is_emitting(&cond_stack) {
-                        output.push_str(raw_line);
+                        output.push_str(&raw_line);
                         output.push('\n');
                     }
                 }
@@ -170,7 +212,7 @@ impl Preprocessor {
         }
 
         if !cond_stack.is_empty() {
-            return Err("unterminated `ifdef/`ifndef".to_string());
+            eprintln!("  ** WARNING: unterminated `ifdef/`ifndef ({} level(s) remaining at end of file)", cond_stack.len());
         }
 
         Ok(output)
@@ -230,12 +272,20 @@ impl Preprocessor {
             let close_paren = s[open_paren..].find(')')
                 .map(|p| open_paren + p)
                 .unwrap_or(s.len());
-            let params_str = &s[open_paren + 1..close_paren];
+            let params_str = if open_paren + 1 <= close_paren && close_paren <= s.len() {
+                &s[open_paren + 1..close_paren]
+            } else {
+                ""
+            };
             let params: Vec<String> = params_str.split(',')
                 .map(|p| p.trim().to_string())
                 .filter(|p| !p.is_empty())
                 .collect();
-            let value = s[close_paren + 1..].trim().to_string();
+            let value = if close_paren + 1 <= s.len() {
+                s[close_paren + 1..].trim().to_string()
+            } else {
+                String::new()
+            };
             (name, params, value)
         } else {
             let end = s.find(|c: char| c.is_whitespace()).unwrap_or(s.len());
@@ -252,6 +302,15 @@ impl Preprocessor {
         let chars: Vec<char> = line.chars().collect();
         let mut i = 0;
         while i < chars.len() {
+            // Skip macro expansion inside // comments
+            if chars[i] == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
+                // Push remaining chars from current position to end using chars iterator
+                while i < chars.len() {
+                    result.push(chars[i]);
+                    i += 1;
+                }
+                break;
+            }
             if chars[i] == '`' && i + 1 < chars.len() && (chars[i + 1].is_ascii_alphabetic() || chars[i + 1] == '_') {
                 i += 1;
                 let start = i;

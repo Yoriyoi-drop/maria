@@ -7,9 +7,7 @@ use super::expr::Value;
 
 fn func_port_width(func: &FunctionDecl, port_name: &str) -> usize {
     if let Some(port) = func.ports.iter().find(|p| p.name == port_name) {
-        if let Some(r) = &port.range {
-            return r.width();
-        }
+        if let Some(r) = &port.range { return r.width(); }
     }
     for decl in &func.decls {
         for var in &decl.names {
@@ -19,7 +17,10 @@ fn func_port_width(func: &FunctionDecl, port_name: &str) -> usize {
             }
         }
     }
-    1
+    // Port has no range and no matching decl — likely user-defined type (struct/enum)
+    // Use a safe default width (64) to avoid width mismatch issues during simulation
+    let known_builtin = func.ports.iter().any(|p| p.name == port_name && p.range.is_none());
+    if known_builtin { 1 } else { 64 }
 }
 
 fn func_return_width(func: &FunctionDecl) -> usize {

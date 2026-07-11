@@ -60,7 +60,7 @@ pub enum Token {
     Decrement, // --
     // Assignment
     AssignOp, // =
-    PlusAssign, MinusAssign,
+    PlusAssign, MinusAssign, XorAssign,
     // Blocking / Non-blocking
     BlockingAssign, // =
     NonBlockingAssign, // <=
@@ -536,13 +536,18 @@ impl Lexer {
         while let Some(c) = self.peek() {
             if c.is_ascii_digit() || c == '_' || c == 'x' || c == 'z' || c == 'X' || c == 'Z' {
                 s.push(self.advance());
-            } else if c == '\'' {
-                // Could be sized format like 8'b1010
+        } else if c == '\'' {
+            // Check for size cast: 22'(expr) — next char after ' should not be '('
+            if self.peek_next() == Some('(') {
+                // This is a cast: 22'(expr). Leave ' for the next token (Quote).
+                break;
+            }
+            // Could be sized format like 8'b1010
+            s.push(self.advance());
+            // Read base character
+            if self.peek().is_some() {
                 s.push(self.advance());
-                // Read base character
-                if self.peek().is_some() {
-                    s.push(self.advance());
-                }
+            }
                 // Skip whitespace before value (e.g., 32'h 0000_0000)
                 while let Some(c) = self.peek() {
                     if c.is_ascii_whitespace() {
@@ -757,6 +762,7 @@ impl Lexer {
             }
             '^' => {
                 if self.peek() == Some('~') { self.advance(); Token::CaretTilde }
+                else if self.peek() == Some('=') { self.advance(); Token::XorAssign }
                 else { Token::Caret }
             }
             ':' => {

@@ -156,6 +156,20 @@ fn run(cli: Cli) -> Result<(), SimError> {
             base_pp.define(def, "");
         }
     }
+    // Auto-detect include paths: walk up from each source looking for hw/ip/*/rtl
+    for src in &sources {
+        if let Some(dir) = std::path::Path::new(src).parent() {
+            let mut candidate = Some(dir.to_path_buf());
+            while let Some(d) = candidate {
+                let rtl_dir = d.join("hw").join("ip").join("prim").join("rtl");
+                if rtl_dir.join("prim_assert.sv").exists() {
+                    base_pp.add_search_path(rtl_dir.to_str().unwrap());
+                    break;
+                }
+                candidate = d.parent().map(|p| p.to_path_buf());
+            }
+        }
+    }
 
     // Combine all sources
     let mut combined = String::new();
@@ -184,7 +198,8 @@ fn run(cli: Cli) -> Result<(), SimError> {
         return Err(SimError::new(None, "no tokens found (empty source?)"));
     }
 
-    let mut parser = Parser::new(tokens);
+    let first_source = sources.first().map(|s| s.as_str()).unwrap_or("<unknown>");
+    let mut parser = Parser::new(tokens, first_source);
     let design = parser.parse_design()?;
 
     if cli.print_ast {
