@@ -143,9 +143,30 @@ impl Parser {
             } else if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
                 // Skip (* ... *) attributes
                 self.skip_attribute();
+            } else if self.peek() == &Token::Virtual && self.peek_ahead(1) == &Token::Class {
+                // virtual class — collect class name
+                let start = self.pos;
+                self.advance(); // consume virtual
+                self.advance(); // consume class
+                if self.peek() == &Token::Hash {
+                    self.advance();
+                    if self.peek() == &Token::LParen { let _ = self.skip_balanced_paren(); }
+                }
+                if let Token::Ident(name) = self.peek() {
+                    self.class_names.push(name.clone());
+                }
+                self.pos = start;
+                let c = self.parse_class()?;
+                classes.push(c);
+            } else if self.peek() == &Token::Covergroup {
+                // Skip covergroup in first pass — collect name
+                let cg = self.parse_covergroup()?;
+                self.class_names.push(cg.name.clone());
             } else {
-                let line = self.peek_line();
-                return Err(format!("line {}: expected module, interface, or class, found {}", line, self.peek()));
+                // Gracefully skip unknown top-level constructs
+                eprintln!("warning: skipping top-level construct at line {}: {}", self.peek_line(), self.peek());
+                // Try to advance past the unknown construct
+                self.advance();
             }
         }
         self.pos = saved_pos;
@@ -190,9 +211,22 @@ impl Parser {
                 Token::LParen if self.peek_ahead(1) == &Token::Star => {
                     self.skip_attribute();
                 }
+                Token::Virtual if self.peek_ahead(1) == &Token::Class => {
+                    let c = self.parse_class()?;
+                    classes.push(c);
+                }
+                Token::Covergroup => {
+                    let cg = self.parse_covergroup()?;
+                    // Store covergroup in first module as module item for elaboration
+                    if let Some(m) = modules.first_mut() {
+                        m.items.push(ModuleItem::Covergroup(cg));
+                    }
+                }
                 _ => {
                     let line = self.peek_line();
-                    return Err(format!("line {}: expected module, interface, class, or package, found {}", line, self.peek()));
+                    // Gracefully skip unknown constructs at top level
+                    self.advance();
+                    eprintln!("warning: skipping top-level construct at line {}: {}", line, self.peek());
                 }
             }
         }
@@ -337,10 +371,19 @@ impl Parser {
                             items.push(PackageItem::Task(self.parse_task(false)?));
                         }
                         Token::Typedef => {
-                            let td = self.parse_typedef()?;
-                            self.typedef_names.push(td.name.clone());
-                            self.package_tdefs.entry(name.clone()).or_default().push(td.name.clone());
-                            items.push(PackageItem::Typedef(td));
+                            // Check for 'typedef class' (forward declaration)
+                            if matches!(self.peek_ahead(1), Token::Class | Token::Virtual) {
+                                self.advance(); // consume 'typedef'
+                                while self.peek() != &Token::Semi && self.peek() != &Token::Eof {
+                                    self.advance();
+                                }
+                                self.skip_semi();
+                            } else {
+                                let td = self.parse_typedef()?;
+                                self.typedef_names.push(td.name.clone());
+                                self.package_tdefs.entry(name.clone()).or_default().push(td.name.clone());
+                                items.push(PackageItem::Typedef(td));
+                            }
                         }
                         Token::Import => {
                             self.advance();
@@ -400,7 +443,15 @@ impl Parser {
         let name = self.expect_ident()?;
         let extends = if self.peek() == &Token::Extends {
             self.advance();
-            Some(self.expect_ident()?)
+            let base_name = self.expect_ident()?;
+            // Handle parameterized base class: extends Base #(.PARAM(value), ...)
+            if self.peek() == &Token::Hash {
+                self.advance();
+                if self.peek() == &Token::LParen {
+                    self.skip_balanced_paren()?;
+                }
+            }
+            Some(base_name)
         } else {
             None
         };
@@ -1215,6 +1266,15 @@ impl Parser {
                 Ok(Some(ModuleItem::Gate(gate)))
             }
             Token::Typedef => {
+                // Check for 'typedef class' (forward declaration)
+                if matches!(self.peek_ahead(1), Token::Class | Token::Virtual) {
+                    self.advance(); // consume 'typedef'
+                    while self.peek() != &Token::Semi && self.peek() != &Token::Eof {
+                        self.advance();
+                    }
+                    self.skip_semi();
+                    return Ok(None);
+                }
                 let td = self.parse_typedef()?;
                 self.typedef_names.push(td.name.clone());
                 Ok(Some(ModuleItem::Typedef(td)))
@@ -1328,6 +1388,34 @@ impl Parser {
         }
     }
 
+    fn parse_scoped_type_name(&mut self) -> Option<DataType> {
+        // Check if the next tokens are Ident(::Ident)? — a user-defined type name
+        // that should be treated as the type of a declaration (e.g., wire pkg::type varname)
+        if let Token::Ident(s) = self.peek() {
+            let s = s.clone();
+            let ahead = self.peek_ahead(1).clone();
+            if ahead == Token::Scope {
+                let pkg = s;
+                self.advance(); // consume package name
+                self.advance(); // consume ::
+                if let Token::Ident(t) = self.peek() {
+                    let type_name = t.clone();
+                    self.advance();
+                    Some(DataType::UserDefined(format!("{}::{}", pkg, type_name)))
+                } else {
+                    None
+                }
+            } else if matches!(ahead, Token::Ident(_) | Token::LBrack) {
+                self.advance();
+                Some(DataType::UserDefined(s))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     fn parse_decl(&mut self) -> Result<Decl, String> {
         let kind = match self.peek() {
             Token::Wire => DeclKind::Wire,
@@ -1438,7 +1526,13 @@ impl Parser {
             }
             Token::Ident(_) => {
                 let name = self.expect_ident()?;
-                let dtype = DataType::UserDefined(name);
+                let mut dtype = DataType::UserDefined(name);
+                // Handle scoped type: pkg::type
+                if self.peek() == &Token::Scope {
+                    self.advance();
+                    let type_name = self.expect_ident()?;
+                    dtype = DataType::UserDefined(format!("{}::{}", match &dtype { DataType::UserDefined(s) => s, _ => "", }, type_name));
+                }
                 let decl_expr_range = if self.peek() == &Token::LBrack {
                     self.parse_range()?
                 } else {
@@ -1474,10 +1568,26 @@ impl Parser {
             None
         };
 
+        // Handle scoped type name after wire/reg/logic: wire pkg::type varname
+        // Only try when no range precedes (to avoid misinterpreting "wire [7:0] arr")
+        // or when we see :: which is unambiguous scoped type
+        let scoped_dtype = if matches!(self.peek(), Token::Ident(_))
+            && (decl_expr_range.is_none() || self.peek_ahead(1) == &Token::Scope)
+        {
+            if let Some(sdt) = self.parse_scoped_type_name() {
+                Some(sdt)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let effective_dtype = scoped_dtype.unwrap_or(dtype);
+
         let names = self.parse_decl_names(decl_expr_range)?;
         self.skip_semi();
 
-        Ok(Decl { dtype, kind, names })
+        Ok(Decl { dtype: effective_dtype, kind, names })
     }
 
     fn parse_decl_names(&mut self, decl_expr_range: Option<ExprRange>) -> Result<Vec<DeclVar>, String> {
