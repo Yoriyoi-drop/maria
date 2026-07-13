@@ -1,3 +1,6 @@
 /target/
 *.vcd
 *.vcd.lxt
+/logs/
+*.log 
+/opentitan/
