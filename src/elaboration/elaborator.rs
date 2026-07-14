@@ -105,6 +105,8 @@ impl Elaborator {
                         array_range: None,
                         is_dynamic: false,
                         is_queue: false,
+                        is_associative: false,
+                        assoc_key_type: None,
                         is_rand: false,
                         expr: None,
                     }],
@@ -161,6 +163,7 @@ impl Elaborator {
                         is_2state: false,
                         is_dynamic: false,
                         is_queue: false,
+                        is_associative: false,
                         is_signed: false,
                         msb: if is_real { 63 } else { 0 },
                         lsb: 0,
@@ -193,6 +196,7 @@ impl Elaborator {
                         is_2state: decl_is_2state,
                         is_dynamic: false,
                         is_queue: false,
+                        is_associative: false,
                         is_signed: is_signed_type(&decl.dtype),
                         msb: if elem_width > 0 { elem_width - 1 } else { 0 },
                         lsb: 0,
@@ -658,6 +662,7 @@ impl Elaborator {
                     is_2state,
                     is_dynamic: false,
                     is_queue: false,
+                        is_associative: false,
                     is_signed,
                     msb,
                     lsb,
@@ -742,6 +747,7 @@ impl Elaborator {
                         is_2state: false,
                         is_dynamic: false,
                         is_queue: false,
+                        is_associative: false,
                         is_signed: false,
                         msb: if is_real { 63 } else { 0 },
                         lsb: 0,
@@ -775,6 +781,7 @@ impl Elaborator {
                         is_2state: decl_is_2state,
                         is_dynamic: var.is_dynamic,
                         is_queue: var.is_queue,
+                        is_associative: var.is_associative,
                         is_signed: is_signed_type(&decl.dtype),
                     msb: 0,
                     lsb: 0,
@@ -1466,6 +1473,7 @@ impl Elaborator {
                         is_2state: sig.is_2state,
                         is_dynamic: sig.is_dynamic,
                         is_queue: sig.is_queue,
+                        is_associative: sig.is_associative,
                         is_signed: sig.is_signed,
                     msb: sig.msb,
                         lsb: sig.lsb,
@@ -1770,6 +1778,10 @@ impl Elaborator {
             IrExpr::Cast { width, expr } => IrExpr::Cast {
                 width: *width,
                 expr: Box::new(self.translate_expr(expr, map_sig)),
+            },
+            IrExpr::StreamingConcat { op, slices } => IrExpr::StreamingConcat {
+                op: op.clone(),
+                slices: slices.iter().map(|e| self.translate_expr(e, map_sig)).collect(),
             },
         }
     }
@@ -2801,12 +2813,15 @@ impl Elaborator {
                 }
                 Ok(IrExpr::Inside { expr: Box::new(inner_ir), list: list_ir })
             }
-            Expr::StreamingConcat { slices, .. } => {
-                if let Some(first) = slices.first() {
-                    self.elaborate_expr(first, signal_map, signals)
-                } else {
-                    Ok(IrExpr::Const(LogicVec::new(0)))
+            Expr::StreamingConcat { op, slices } => {
+                let mut ir_slices = Vec::new();
+                for sl in slices {
+                    ir_slices.push(self.elaborate_expr(sl, signal_map, signals)?);
                 }
+                Ok(IrExpr::StreamingConcat {
+                    op: op.clone(),
+                    slices: ir_slices,
+                })
             }
             Expr::Cast { dtype, expr: inner } => {
                 let inner_ir = self.elaborate_expr(inner, signal_map, signals)?;
@@ -2951,6 +2966,7 @@ impl Elaborator {
             is_2state: false,
             is_dynamic: false,
             is_queue: false,
+                        is_associative: false,
             is_signed: false,
             msb: width - 1,
             lsb: 0,

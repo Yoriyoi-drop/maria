@@ -169,6 +169,7 @@ pub struct SignalInfo {
     pub is_2state: bool,
     pub is_dynamic: bool,
     pub is_queue: bool,
+    pub is_associative: bool,
     pub is_signed: bool,
     pub msb: usize,
     pub lsb: usize,
@@ -460,6 +461,10 @@ pub enum IrExpr {
         width: usize,
         expr: Box<IrExpr>,
     },
+    StreamingConcat {
+        op: String,
+        slices: Vec<IrExpr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -478,7 +483,7 @@ pub enum BinaryIrOp {
     LogicalAnd, LogicalOr,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LogicVec {
     pub bits: Vec<LogicVal>,
     pub width: usize,
@@ -631,7 +636,7 @@ impl LogicVec {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LogicVal {
     Zero,
     One,

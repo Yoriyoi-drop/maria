@@ -16,12 +16,12 @@ No CI, no lint, no typecheck shortcuts. Just `cargo test`. All 505 tests pass.
 ## Pipeline architecture
 
 1. **`src/main.rs`** — CLI entrypoint. Reads `.sv` file(s), concatenates, feeds through lexer → parser → elaborator → engine.
-2. **`src/lib.rs`** — Library entrypoint. Exposes `compile_str()`, `simulate_str()`, `simulate_signals()` (returns signal map for tests). Tests live inline at `src/lib.rs:122`.
+2. **`src/lib.rs`** — Library entrypoint. Exposes `compile_str()`, `simulate_str()`, `simulate_signals()`. Tests live in `src/tests/mod.rs`.
 3. **`src/parser/`** — `lexer.rs` (tokenizer), `parser.rs` (Pratt-style top-down operator precedence), `preprocessor.rs` (`` `ifdef ``/`define`).
-4. **`src/ast/`** — `expr.rs`, `stmt.rs`, `types.rs`, `inline.rs` (function inlining for `loop_unroll` and `substitute_loop_var`).
+4. **`src/ast/`** — `expr.rs`, `stmt.rs`, `types.rs`, `const_eval.rs`, `inline.rs` (function inlining for `loop_unroll` and `substitute_loop_var`).
 5. **`src/elaboration/elaborator.rs`** — AST → IR, signal collection, type resolution, loop unrolling, constant folding for `$clog2`/`$bits`/`$size`/`$left`/`$right`/`$low`/`$high`.
 6. **`src/ir/ir.rs`** — IR types (`IrStmt`, `IrExpr`, `LogicVec`).
-7. **`src/simulator/`** — `engine.rs` (event-driven scheduler), `state.rs` (signal storage), `value.rs` (`eval_binary`, `eval_unary`).
+7. **`src/simulator/`** — `engine.rs` (event-driven scheduler), `types.rs` (debug/event/UVM types), `state.rs` (signal storage), `value.rs` (`eval_binary`, `eval_unary`).
 8. **`src/waveform/vcd.rs`** — VCD dump.
 9. **`src/debugger/mod.rs`** — `Debugger` struct wrapping `SimulationEngine`. Step, breakpoint, watchpoint, timeline, hierarchy tree, reverse debug, memory inspect. 21 unit tests inline.
 

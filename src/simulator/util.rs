@@ -132,6 +132,11 @@ pub fn extract_signal_deps_inner(expr: &IrExpr, deps: &mut Vec<SignalId>) {
         IrExpr::Cast { expr, .. } => {
             extract_signal_deps_inner(expr, deps);
         }
+        IrExpr::StreamingConcat { slices, .. } => {
+            for e in slices {
+                extract_signal_deps_inner(e, deps);
+            }
+        }
         IrExpr::Const(_) | IrExpr::FillLit(_) | IrExpr::String(_) | IrExpr::This => {}
     }
 }

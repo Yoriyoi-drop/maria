@@ -198,6 +198,8 @@ pub struct DeclVar {
     pub array_range: Option<Range>,
     pub is_dynamic: bool,
     pub is_queue: bool,
+    pub is_associative: bool,
+    pub assoc_key_type: Option<DataType>,
     pub is_rand: bool,
     pub expr: Option<Expr>,
 }

@@ -42,6 +42,7 @@ pub struct SimulationEngine {
     fmonitor_map: HashMap<u32, (Vec<IrExpr>, Vec<LogicVec>)>,
     mailbox_queues: HashMap<SignalId, Vec<LogicVec>>,
     semaphore_counts: HashMap<SignalId, u32>,
+    assoc_data: HashMap<SignalId, HashMap<LogicVec, LogicVec>>,
     uvm_object_data: HashMap<ObjId, UvmObjectData>,
     uvm_component_data: HashMap<ObjId, UvmComponentData>,
     uvm_sequencer_data: HashMap<ObjId, UvmSequencerData>,
@@ -105,6 +106,7 @@ impl SimulationEngine {
             fmonitor_map: HashMap::new(),
             mailbox_queues: HashMap::new(),
             semaphore_counts: HashMap::new(),
+            assoc_data: HashMap::new(),
             uvm_object_data: HashMap::new(),
             uvm_component_data: HashMap::new(),
             uvm_sequencer_data: HashMap::new(),
@@ -1314,7 +1316,7 @@ impl SimulationEngine {
                     if let IrExpr::Signal(id, _) = obj {
                         let sig_info = self.design.top.signals.get(*id).cloned();
                         if let Some(ref sig) = sig_info {
-                            if sig.is_dynamic || sig.is_queue {
+                            if sig.is_dynamic || sig.is_queue || sig.is_associative {
                                 let _ = self.evaluate_array_method(*id, sig, method, args)?;
                                 continue;
                             }
@@ -1834,7 +1836,7 @@ impl SimulationEngine {
                 if let IrExpr::Signal(id, _) = obj {
                     let sig_info = self.design.top.signals.get(*id).cloned();
                     if let Some(ref sig) = sig_info {
-                        if sig.is_dynamic || sig.is_queue {
+                        if sig.is_dynamic || sig.is_queue || sig.is_associative {
                             let _ = self.evaluate_array_method(*id, sig, method, args)?;
                             continue;
                         }
@@ -2218,9 +2220,18 @@ impl SimulationEngine {
                 Ok(LogicVec { width: bits.len(), bits })
             }
             IrExpr::ArrayIndex { sig_id, index, elem_width } => {
+                let key_val = self.evaluate_expr(index)?;
+                // Check if this is an associative array
+                let sig_info = self.design.top.signals.get(*sig_id);
+                if sig_info.map(|s| s.is_associative).unwrap_or(false) {
+                    let assoc_map = self.assoc_data.entry(*sig_id).or_insert_with(HashMap::new);
+                    if let Some(val) = assoc_map.get(&key_val) {
+                        return Ok(val.clone());
+                    }
+                    return Ok(LogicVec::new(*elem_width));
+                }
                 let array_val = self.state.read_signal(*sig_id).clone();
-                let idx_val = self.evaluate_expr(index)?;
-                let idx = idx_val.to_u64() as usize;
+                let idx = key_val.to_u64() as usize;
                 let start = idx * elem_width;
                 let end = start + elem_width - 1;
                 let mut bits = Vec::with_capacity(*elem_width);
@@ -2731,6 +2742,26 @@ impl SimulationEngine {
                 let val = self.evaluate_expr(expr)?;
                 Ok(val.resize(*width))
             }
+            IrExpr::StreamingConcat { op, slices } => {
+                let mut vals = Vec::new();
+                for sl in slices {
+                    vals.push(self.evaluate_expr(sl)?);
+                }
+                if op == ">>" {
+                    let mut all_bits = Vec::new();
+                    for v in &vals {
+                        all_bits.extend(v.bits.iter());
+                    }
+                    all_bits.reverse();
+                    Ok(LogicVec { width: all_bits.len(), bits: all_bits })
+                } else {
+                    let mut result = LogicVec::new(0);
+                    for v in vals.iter().rev() {
+                        result = result.extend(v);
+                    }
+                    Ok(result)
+                }
+            }
         }
     }
 
@@ -2784,10 +2815,18 @@ impl SimulationEngine {
                 self.state.write_signal(*sig_id, existing);
             }
             IrLValue::ArrayIndex { sig_id, index, elem_width } => {
+                let key_val = self.evaluate_expr(index)?;
+                // Check if this is an associative array
+                let sig_info = self.design.top.signals.get(*sig_id);
+                if sig_info.map(|s| s.is_associative).unwrap_or(false) {
+                    sanitize_for_2state(&self.design.top.signals, *sig_id, &mut val);
+                    let assoc_map = self.assoc_data.entry(*sig_id).or_insert_with(HashMap::new);
+                    assoc_map.insert(key_val, val);
+                    return Ok(());
+                }
                 sanitize_for_2state(&self.design.top.signals, *sig_id, &mut val);
                 let mut existing = self.state.read_signal(*sig_id).clone();
-                let idx_val = self.evaluate_expr(index)?;
-                let idx = idx_val.to_u64() as usize;
+                let idx = key_val.to_u64() as usize;
                 let start = idx * elem_width;
                 let needed = start + elem_width;
                 if needed > existing.width {
@@ -3266,12 +3305,27 @@ impl SimulationEngine {
                 }
                 Ok(LogicVec::from_u64(0, 1))
             }
-            Expr::StreamingConcat { slices, .. } => {
-                if let Some(first) = slices.first() {
-                    self.evaluate_ast_expr(first)
-                } else {
-                    Ok(LogicVec::new(0))
+            Expr::StreamingConcat { op, slices } => {
+                let mut vals = Vec::new();
+                for sl in slices {
+                    vals.push(self.evaluate_ast_expr(sl)?);
                 }
+                let mut result = LogicVec::new(0);
+                if op == ">>" {
+                    // Right-to-left: reverse bit order of concatenated result
+                    let mut all_bits = Vec::new();
+                    for v in &vals {
+                        all_bits.extend(v.bits.iter());
+                    }
+                    all_bits.reverse();
+                    result = LogicVec { width: all_bits.len(), bits: all_bits };
+                } else {
+                    // Left-to-right: reverse slice order
+                    for v in vals.iter().rev() {
+                        result = result.extend(v);
+                    }
+                }
+                Ok(result)
             }
             Expr::Cast { dtype, expr: inner } => {
                 let val = self.evaluate_ast_expr(inner)?;
@@ -4907,8 +4961,15 @@ fn eval_display_arg(state: &SimulationState, signals: &[SignalInfo], hier_map: &
                 }
                 IrExpr::Signed(inner) => eval_display_arg(state, signals, hier_map, inner),
                 IrExpr::ArrayIndex { sig_id, index, elem_width } => {
+                    let key_val = eval_display_arg(state, signals, hier_map, index).ok().unwrap_or(LogicVec::new(1));
+                    let sig_info = signals.get(*sig_id);
+                    if sig_info.map(|s| s.is_associative).unwrap_or(false) {
+                        // For display, try to look up from assoc_data via signal values
+                        // This is a simplified read - display may show original array
+                        return Ok(key_val);
+                    }
                     let array_val = state.read_signal(*sig_id);
-                    let idx = eval_display_arg(state, signals, hier_map, index).ok().map(|v| v.to_u64() as usize).unwrap_or(0);
+                    let idx = key_val.to_u64() as usize;
                     let start = idx * elem_width;
                     let mut bits = Vec::with_capacity(*elem_width);
                     for i in start..start + elem_width {
@@ -5104,6 +5165,77 @@ fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<Lo
 
 impl SimulationEngine {
     fn evaluate_array_method(&mut self, sig_id: SignalId, sig: &SignalInfo, method: &str, args: &[IrExpr]) -> Result<LogicVec, String> {
+        // Check if this is an associative array method
+        if sig.is_associative {
+            // Evaluate args first to avoid borrow conflicts with assoc_data access
+            let args_eval: Vec<LogicVec> = args.iter()
+                .map(|a| self.evaluate_expr(a))
+                .collect::<Result<Vec<_>, String>>()?;
+            let assoc_map = self.assoc_data.entry(sig_id).or_insert_with(HashMap::new);
+            match method {
+                "num" => {
+                    let n = assoc_map.len();
+                    return Ok(LogicVec::from_u64(n as u64, 32));
+                }
+                "delete" => {
+                    if args_eval.is_empty() {
+                        assoc_map.clear();
+                    } else {
+                        assoc_map.remove(&args_eval[0]);
+                    }
+                    return Ok(LogicVec::new(0));
+                }
+                "exists" => {
+                    let found = assoc_map.contains_key(&args_eval[0]);
+                    return Ok(LogicVec::from_u64(if found { 1 } else { 0 }, 1));
+                }
+                "first" => {
+                    if let Some(key) = assoc_map.keys().next() {
+                        return Ok(key.clone());
+                    }
+                    return Ok(LogicVec::new(0));
+                }
+                "last" => {
+                    if let Some(key) = assoc_map.keys().last() {
+                        return Ok(key.clone());
+                    }
+                    return Ok(LogicVec::new(0));
+                }
+                "next" => {
+                    if let Some(key) = args_eval.first() {
+                        let mut found = false;
+                        let mut next_val = LogicVec::new(0);
+                        for k in assoc_map.keys() {
+                            if found {
+                                next_val = k.clone();
+                                break;
+                            }
+                            if *k == *key {
+                                found = true;
+                            }
+                        }
+                        return Ok(next_val);
+                    }
+                    return Ok(LogicVec::new(0));
+                }
+                "prev" => {
+                    if let Some(key) = args_eval.first() {
+                        let mut prev_val = LogicVec::new(0);
+                        for k in assoc_map.keys() {
+                            if *k == *key {
+                                return Ok(prev_val);
+                            }
+                            prev_val = k.clone();
+                        }
+                        return Ok(LogicVec::new(0));
+                    }
+                    return Ok(LogicVec::new(0));
+                }
+                _ => {
+                    // Fall through to default array methods (like push_back, etc.)
+                }
+            }
+        }
         match method {
             "size" => {
                 let lv = self.state.read_signal(sig_id);

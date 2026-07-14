@@ -815,6 +815,11 @@ pub fn collect_read_signals_expr(expr: &IrExpr, out: &mut Vec<SignalId>) {
         IrExpr::Cast { expr, .. } => {
             collect_read_signals_expr(expr, out);
         }
+        IrExpr::StreamingConcat { slices, .. } => {
+            for e in slices {
+                collect_read_signals_expr(e, out);
+            }
+        }
     }
 }
 

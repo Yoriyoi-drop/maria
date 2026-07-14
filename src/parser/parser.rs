@@ -1135,7 +1135,7 @@ impl Parser {
                             let vname = n.clone();
                             self.advance();
                             names.push(DeclVar {
-                                name: vname, range: None, expr_range: None, array_range: None, is_dynamic: false, is_queue: false, is_rand: false, expr: None,
+                                name: vname, range: None, expr_range: None, array_range: None, is_dynamic: false, is_queue: false, is_associative: false, assoc_key_type: None, is_rand: false, expr: None,
                             });
                         } else {
                             if self.peek() == &Token::BlockingAssign {
@@ -1600,6 +1600,8 @@ impl Parser {
                     self.advance();
                     let mut is_dynamic = false;
                     let mut is_queue = false;
+                    let mut is_associative = false;
+                    let mut assoc_key_type: Option<DataType> = None;
                     let (var_expr_range, array_range) = if decl_expr_range.is_some() {
                         let ar = if self.peek() == &Token::LBrack {
                             if self.peek_ahead(1) == &Token::RBrack {
@@ -1610,7 +1612,30 @@ impl Parser {
                                 self.advance(); self.advance(); self.advance();
                                 is_queue = true;
                                 None
-                            } else if self.peek_ahead(1) != &Token::Colon {
+                            } else if self.peek_ahead(1) == &Token::Int {
+                                // int-key associative array
+                                self.advance(); // [
+                                self.advance(); // int
+                                self.expect(Token::RBrack)?;
+                                is_associative = true;
+                                assoc_key_type = Some(DataType::Int);
+                                None
+                            } else if self.peek_ahead(1) == &Token::String {
+                                // string-key associative array
+                                self.advance(); // [
+                                self.advance(); // string
+                                self.expect(Token::RBrack)?;
+                                is_associative = true;
+                                assoc_key_type = Some(DataType::String);
+                                None
+                            } else if self.peek_ahead(1) != &Token::Colon
+                                && self.peek_ahead(1) != &Token::Int
+                                && self.peek_ahead(1) != &Token::String
+                                && self.peek_ahead(1) != &Token::Bit
+                                && self.peek_ahead(1) != &Token::Logic
+                                && self.peek_ahead(1) != &Token::Byte
+                                && self.peek_ahead(1) != &Token::Shortint
+                                && self.peek_ahead(1) != &Token::Longint {
                                 self.advance(); // [
                                 self.parse_expr(0)?;
                                 self.expect(Token::RBrack)?;
@@ -1684,6 +1709,8 @@ impl Parser {
                         array_range,
                         is_dynamic,
                         is_queue,
+                        is_associative,
+                        assoc_key_type,
                         is_rand: false,
                         expr: init_expr,
                     });
@@ -4258,16 +4285,32 @@ impl Parser {
             }
             Token::LBrace => {
                 self.advance();
-                // Check for streaming operator: {<<n{expr}} or {>>n{expr}}
+                // Check for streaming operator: {<<N{expr}} or {>>N{expr}}
                 if matches!(self.peek(), Token::Shl | Token::Shr | Token::Sshl | Token::Sshr) {
-                    let direction_is_reverse = matches!(self.peek(), Token::Shl | Token::Sshl);
+                    let op = if matches!(self.peek(), Token::Shl | Token::Sshl) {
+                        String::from("<<")
+                    } else {
+                        String::from(">>")
+                    };
                     self.advance();
-                    let _slice_size = self.parse_expr(0)?;
+                    if !matches!(self.peek(), Token::LBrace) {
+                        let _slice_size = self.parse_expr(0)?;
+                    }
                     self.expect(Token::LBrace)?;
-                    let inner = self.parse_expr(0)?;
+                    let mut slices = Vec::new();
+                    loop {
+                        if self.peek() == &Token::RBrace { break; }
+                        let item = self.parse_expr(0)?;
+                        slices.push(item);
+                        if self.peek() == &Token::Comma {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
                     self.expect(Token::RBrace)?;
                     self.expect(Token::RBrace)?;
-                    return Ok(inner);
+                    return Ok(Expr::StreamingConcat { op, slices });
                 }
                 let mut exprs = Vec::new();
                 loop {
