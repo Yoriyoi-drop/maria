@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::ast::types::const_eval_simple;
 use crate::parser::lexer::*;
+use super::util::*;
 
 pub struct Parser {
     tokens: Vec<(Token, usize, usize)>,
@@ -4381,15 +4382,4 @@ impl Parser {
             _ => Err(format!("line {}: expected expression, found {}", self.peek_line(), tok)),
         }
     }
-}
-
-fn is_valid_lvalue(expr: &Expr) -> bool {
-    matches!(expr,
-        Expr::Ident(_)
-        | Expr::RangeSelect { .. }
-        | Expr::BitSelect { .. }
-        | Expr::PartSelect { .. }
-        | Expr::Concat(_)
-        | Expr::MemberAccess { .. }
-    )
 }
