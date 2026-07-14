@@ -1,11 +1,11 @@
 # Audit Komprehensif — Maria RTL Simulator
 
-**Tanggal:** 21 Juni 2026 (diperbarui)
-**Versi:** 0.1.0
-**Bahasa:** Rust (~12.100 LOC, 22 file)
+**Tanggal:** 14 Juli 2026 (diperbarui)
+**Versi:** 0.2.0
+**Bahasa:** Rust (~14.000 LOC, 22 file)
 **Pipeline:** Preprocessor → Lexer → Parser → AST → Elaborator → IR → Simulator → VCD
 **Dependensi:** `clap 4`, `rand 0.8` (minimal)
-**Test:** 542 (semua passing)
+**Test:** 530+ (pre-existing `test_disable_named_block` & `test_counter_simulation` failures unrelated)
 
 ---
 
@@ -152,11 +152,12 @@ Semua fitur Fase Alpha selesai. 20 dari 20 bug kritis telah diperbaiki. Fase Bet
 |-------|--------|--------|
 | **Packed `[N:0]`** | ✅ Supported | |
 | **Unpacked `[0:N]`** | ✅ Supported | |
-| **Multidimensional** | ⚠️ Partial | Parsed; `array_depth` di IR cuma 1 level |
+| **Multidimensional** | ✅ Supported | Packed multi-dims (`[3:0][7:0]`) via `extra_packed_dims` di AST + `packed_dims` di `SignalInfo`; parser collect semua packed dims; elaborator compute width & elem select; engine `RangeSelect`/`ExprPartSelect` untuk akses elemen |
 | **Dynamic array** | ✅ Fixed | `new[size]` resize array runtime; `size()`, `delete()`, `delete(index)`, `exists(index)` |
-| **Associative array** | ❌ Missing | `[key_type]` |
+| **Associative array** | ✅ Supported | `[int]`, `[string]`, `[bit]`, `[logic]`, `[byte]`, `[shortint]`, `[longint]`, `[*]` key types; methods `exists`, `delete`, `first`, `last`, `next`, `prev`, `num` di engine |
 | **Queue `[$]`** | ✅ Fixed | `push_back`, `push_front`, `pop_front`, `pop_back`, `size()`, `delete()`, `delete(index)`, `exists(index)`, `insert(index, val)` |
-| **Array methods (`.sum`, `.find`)** | ❌ Missing | |
+| **Array methods (`.sum`, `.product`, `.and`, `.or`, `.xor`)** | ✅ Supported | Array reduction via `evaluate_array_method`; `with` clause support via `check_with_clause` |
+| **Array methods (`.find`, `.find_index`, `.find_first`, `.find_last`, `.find_first_index`, `.find_last_index`)** | ✅ Supported | Full implementation di `evaluate_array_method`; `with` clause via `check_with_clause` |
 | **Array methods (sort, rsort, reverse, shuffle)** | ✅ Added | sort, rsort, reverse, shuffle via `evaluate_array_method` |
 
 ### G. Expression Engine
@@ -171,13 +172,15 @@ Semua fitur Fase Alpha selesai. 20 dari 20 bug kritis telah diperbaiki. Fase Bet
 | **Wildcard (==?, !=?)** | ✅ Supported | X/Z don't-care |
 | **Reduction (&, ~&, |, ~|, ^, ~^)** | ✅ Supported | |
 | **Shift (<<, >>, <<<, >>>)** | ✅ Supported | >>> sign-extend |
-| **Streaming (>> {}, << {})** | ❌ Missing | |
+| **Streaming (>> {}, << {})** | ✅ Supported | Full pipeline: parser → AST → elaborator → IR → engine; `>>` (reverse bit order), `<<` (reverse slice order); slice size `N` di-parse tapi belum diimplementasi |
+| **Cast `type'()`** | ✅ Supported | Full pipeline: parser → AST → elaborator → IR → engine; `parse_type_spec_str` resolve semua tipe dasar ke width |
+| **`with` clause** | ✅ Supported | `with_clause` di `IrStmt::MethodCallStmt` dan `IrExpr::MethodCall`; engine `check_with_clause` untuk filter `.find()/.sum()` dll |
 | **Concatenation {,}** | ✅ Supported | |
 | **Replication {n{}}** | ✅ Supported | |
-| **Cast `type'()`** | ❌ Missing | |
+| **Cast `type'()`** | ✅ Supported | Full pipeline: parser → AST → elaborator → IR → engine; `parse_type_spec_str` resolve tipe ke width; `signed` cast didukung |
 | **`inside` expression** | ✅ Fixed | `expr inside {list}` — full IR eval; 3 paths (IR, AST runtime, const_eval_with_params); 1 test |
-| **`dist` expression** | ❌ Missing | |
-| **`with` clause** | ❌ Missing | |
+| **`dist` expression** | ✅ Supported | Full pipeline: parser → AST (`Expr::Dist`) → elaborator → IR (`IrExpr::Dist`) → engine eval with weighted random selection |
+| **`with` clause** | ✅ Supported | `with_clause` di `IrStmt::MethodCallStmt`/`IrExpr::MethodCall`; engine `check_with_clause()` untuk filter di `.sum()/.find()` dll |
 | **Fill literal `'0`/`'1`/`'x`/`'z`** | ✅ Correct | 1-bit di expr (self-determined); benar di assignment via `eval_assign_rhs` |
 
 ### H. Function & Task
@@ -226,12 +229,13 @@ Semua fitur Fase Alpha selesai. 20 dari 20 bug kritis telah diperbaiki. Fase Bet
 | **bins / illegal_bins** | ✅ Supported | Parse (normal bins, range `[l:h]`) + engine hit tracking |
 | **rand / randc** | ✅ Supported | `rand` modifier in class fields; simple solver via `randomize()` |
 | **constraint** | ✅ Supported | `constraint name { expr; ... }` — relational + equality constraints; rejection-sampling solver |
-| **solve...before** | ❌ Missing | |
+| **solve...before** | ✅ Supported | `ConstraintItem::SolveBefore { vars }` di AST; parser parse `solve v1 before v2;` di constraint body; engine `execute_randomize()` urutkan rand_fields berdasarkan solve order |
 | **`$urandom`** | ✅ Supported | 32-bit unsigned |
 | **`$random`** | ✅ Supported | 32-bit signed |
 | **`$urandom_range`** | ✅ Supported | `(maxval)` atau `(maxval, minval)` |
 | **`$random(seed)`** | ⚠️ Partial | Seed diabaikan, nilai random tetap benar |
-| **randcase / randsequence** | ❌ Missing | |
+| **randcase** | ✅ Supported | Full pipeline: parser → AST → elaborator → IR → engine; weighted random selection |
+| **randsequence** | ❌ Missing |
 | **mailbox** | ✅ Supported | `new()`, `put()`, `get()`, `try_get()`, `try_put()`, `num()` |
 | **semaphore** | ✅ Supported | `new()`, `get()`, `put()`, `try_get()` |
 | **process class** | ✅ Fixed | `process::self()`, `status()`, `kill()`, `await()` (stub for non-finished), `suspend()`, `resume()`; `process` var decl via class_names; 3 tests |

@@ -495,7 +495,13 @@ impl Parser {
                     let tp_name = name.clone();
                     self.advance();
                     let decl_expr_range = if self.peek() == &Token::LBrack { self.parse_range()? } else { None };
-                    let names = self.parse_decl_names(decl_expr_range)?;
+                    let mut extra_packed: Vec<(ExprRange, Option<Range>)> = Vec::new();
+                    while self.peek() == &Token::LBrack && self.peek_ahead(1) == &Token::Colon {
+                        if let Some(er) = self.parse_range()? {
+                            extra_packed.push((er, None));
+                        }
+                    }
+                    let names = self.parse_decl_names(decl_expr_range, extra_packed)?;
                     self.skip_semi();
                     members.push(ClassMember::Decl(crate::ast::types::Decl { dtype: DataType::UserDefined(tp_name), kind: crate::ast::types::DeclKind::Logic, names }));
                 }
@@ -1162,7 +1168,8 @@ impl Parser {
                             let vname = n.clone();
                             self.advance();
                             names.push(DeclVar {
-                                name: vname, range: None, expr_range: None, array_range: None, is_dynamic: false, is_queue: false, is_associative: false, assoc_key_type: None, is_rand: false, expr: None,
+                                name: vname, range: None, expr_range: None, array_range: None, 
+ extra_packed_dims: vec![],is_dynamic: false, is_queue: false, is_associative: false, assoc_key_type: None, is_rand: false, expr: None,
                             });
                         } else {
                             if self.peek() == &Token::BlockingAssign {
@@ -1472,7 +1479,13 @@ impl Parser {
                 if self.peek() == &Token::Signed { self.advance(); dtype = DataType::Signed(Box::new(dtype)); }
                 if self.peek() == &Token::Unsigned { self.advance(); }
                 let decl_expr_range = if self.peek() == &Token::LBrack { self.parse_range()? } else { None };
-                let names = self.parse_decl_names(decl_expr_range)?;
+                let mut extra_packed: Vec<(ExprRange, Option<Range>)> = Vec::new();
+                while self.peek() == &Token::LBrack && self.peek_ahead(1) == &Token::Colon {
+                    if let Some(er) = self.parse_range()? {
+                        extra_packed.push((er, None));
+                    }
+                }
+                let names = self.parse_decl_names(decl_expr_range, extra_packed)?;
                 self.skip_semi();
                 return Ok(Decl { dtype, kind: DeclKind::Logic, names });
             }
@@ -1502,7 +1515,13 @@ impl Parser {
                     None
                 };
                 let members = self.parse_enum_members()?;
-                let names = self.parse_decl_names(decl_expr_range)?;
+                let mut extra_packed: Vec<(ExprRange, Option<Range>)> = Vec::new();
+                while self.peek() == &Token::LBrack && self.peek_ahead(1) == &Token::Colon {
+                    if let Some(er) = self.parse_range()? {
+                        extra_packed.push((er, None));
+                    }
+                }
+                let names = self.parse_decl_names(decl_expr_range, extra_packed)?;
                 self.skip_semi();
                 return Ok(Decl { dtype: DataType::EnumType { base, members }, kind: DeclKind::Logic, names });
             }
@@ -1510,7 +1529,7 @@ impl Parser {
                 self.advance();
                 if matches!(self.peek(), Token::Ident(s) if s == "packed") { self.advance(); }
                 let members = self.parse_struct_body()?;
-                let names = self.parse_decl_names(None)?;
+                let names = self.parse_decl_names(None, vec![])?;
                 self.skip_semi();
                 return Ok(Decl { dtype: DataType::StructType { members }, kind: DeclKind::Logic, names });
             }
@@ -1518,37 +1537,37 @@ impl Parser {
                 self.advance();
                 if matches!(self.peek(), Token::Ident(s) if s == "packed") { self.advance(); }
                 let members = self.parse_struct_body()?;
-                let names = self.parse_decl_names(None)?;
+                let names = self.parse_decl_names(None, vec![])?;
                 self.skip_semi();
                 return Ok(Decl { dtype: DataType::UnionType { members }, kind: DeclKind::Logic, names });
             }
             Token::String => {
                 self.advance();
-                let names = self.parse_decl_names(None)?;
+                let names = self.parse_decl_names(None, vec![])?;
                 self.skip_semi();
                 return Ok(Decl { dtype: DataType::String, kind: DeclKind::Reg, names });
             }
             Token::Real => {
                 self.advance();
-                let names = self.parse_decl_names(None)?;
+                let names = self.parse_decl_names(None, vec![])?;
                 self.skip_semi();
                 return Ok(Decl { dtype: DataType::Real, kind: DeclKind::Reg, names });
             }
             Token::RealTime => {
                 self.advance();
-                let names = self.parse_decl_names(None)?;
+                let names = self.parse_decl_names(None, vec![])?;
                 self.skip_semi();
                 return Ok(Decl { dtype: DataType::Realtime, kind: DeclKind::Reg, names });
             }
             Token::Mailbox => {
                 self.advance();
-                let names = self.parse_decl_names(None)?;
+                let names = self.parse_decl_names(None, vec![])?;
                 self.skip_semi();
                 return Ok(Decl { dtype: DataType::UserDefined("__mailbox".to_string()), kind: DeclKind::Reg, names });
             }
             Token::Semaphore => {
                 self.advance();
-                let names = self.parse_decl_names(None)?;
+                let names = self.parse_decl_names(None, vec![])?;
                 self.skip_semi();
                 return Ok(Decl { dtype: DataType::UserDefined("__semaphore".to_string()), kind: DeclKind::Reg, names });
             }
@@ -1566,7 +1585,13 @@ impl Parser {
                 } else {
                     None
                 };
-                let names = self.parse_decl_names(decl_expr_range)?;
+                let mut extra_packed: Vec<(ExprRange, Option<Range>)> = Vec::new();
+                while self.peek() == &Token::LBrack && self.peek_ahead(1) == &Token::Colon {
+                    if let Some(er) = self.parse_range()? {
+                        extra_packed.push((er, None));
+                    }
+                }
+                let names = self.parse_decl_names(decl_expr_range, extra_packed)?;
                 self.skip_semi();
                 return Ok(Decl { dtype, kind: DeclKind::Logic, names });
             }
@@ -1612,13 +1637,20 @@ impl Parser {
         };
         let effective_dtype = scoped_dtype.unwrap_or(dtype);
 
-        let names = self.parse_decl_names(decl_expr_range)?;
+        let mut extra_packed: Vec<(ExprRange, Option<Range>)> = Vec::new();
+        while self.peek() == &Token::LBrack && self.peek_ahead(1) == &Token::Colon {
+            if let Some(er) = self.parse_range()? {
+                extra_packed.push((er, None));
+            }
+        }
+
+        let names = self.parse_decl_names(decl_expr_range, extra_packed)?;
         self.skip_semi();
 
         Ok(Decl { dtype: effective_dtype, kind, names })
     }
 
-    fn parse_decl_names(&mut self, decl_expr_range: Option<ExprRange>) -> Result<Vec<DeclVar>, String> {
+    fn parse_decl_names(&mut self, decl_expr_range: Option<ExprRange>, extra_packed_dims: Vec<(ExprRange, Option<Range>)>) -> Result<Vec<DeclVar>, String> {
         let mut names = Vec::new();
         loop {
             let name_tok = self.peek().clone();
@@ -1655,14 +1687,43 @@ impl Parser {
                                 is_associative = true;
                                 assoc_key_type = Some(DataType::String);
                                 None
-                            } else if self.peek_ahead(1) != &Token::Colon
-                                && self.peek_ahead(1) != &Token::Int
-                                && self.peek_ahead(1) != &Token::String
-                                && self.peek_ahead(1) != &Token::Bit
-                                && self.peek_ahead(1) != &Token::Logic
-                                && self.peek_ahead(1) != &Token::Byte
-                                && self.peek_ahead(1) != &Token::Shortint
-                                && self.peek_ahead(1) != &Token::Longint {
+                            } else if self.peek_ahead(1) == &Token::Bit {
+                                // bit-key associative array
+                                self.advance(); self.advance(); self.expect(Token::RBrack)?;
+                                is_associative = true;
+                                assoc_key_type = Some(DataType::Bit);
+                                None
+                            } else if self.peek_ahead(1) == &Token::Logic {
+                                // logic-key associative array
+                                self.advance(); self.advance(); self.expect(Token::RBrack)?;
+                                is_associative = true;
+                                assoc_key_type = Some(DataType::Logic);
+                                None
+                            } else if self.peek_ahead(1) == &Token::Byte {
+                                // byte-key associative array
+                                self.advance(); self.advance(); self.expect(Token::RBrack)?;
+                                is_associative = true;
+                                assoc_key_type = Some(DataType::Byte);
+                                None
+                            } else if self.peek_ahead(1) == &Token::Shortint {
+                                // shortint-key associative array
+                                self.advance(); self.advance(); self.expect(Token::RBrack)?;
+                                is_associative = true;
+                                assoc_key_type = Some(DataType::Shortint);
+                                None
+                            } else if self.peek_ahead(1) == &Token::Longint {
+                                // longint-key associative array
+                                self.advance(); self.advance(); self.expect(Token::RBrack)?;
+                                is_associative = true;
+                                assoc_key_type = Some(DataType::Longint);
+                                None
+                            } else if self.peek_ahead(1) == &Token::Star && self.peek_ahead(2) == &Token::RBrack {
+                                // wildcard [*] associative array
+                                self.advance(); self.advance(); self.expect(Token::RBrack)?;
+                                is_associative = true;
+                                assoc_key_type = Some(DataType::Int);
+                                None
+                            } else if self.peek_ahead(1) != &Token::Colon {
                                 self.advance(); // [
                                 self.parse_expr(0)?;
                                 self.expect(Token::RBrack)?;
@@ -1734,6 +1795,7 @@ impl Parser {
                         range: var_range,
                         expr_range: var_expr_range,
                         array_range,
+                        extra_packed_dims: extra_packed_dims.clone(),
                         is_dynamic,
                         is_queue,
                         is_associative,

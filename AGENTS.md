@@ -11,7 +11,7 @@ cargo test --lib              # same, excludes main.rs
 cargo test <test_name>        # single test (no --lib needed if unique)
 ```
 
-No CI, no lint, no typecheck shortcuts. Just `cargo test`. All 505 tests pass.
+No CI, no lint, no typecheck shortcuts. Just `cargo test`. Over 530 tests pass.
 
 ## Pipeline architecture
 
@@ -62,9 +62,9 @@ User-defined `randomize()` methods override the built-in. `rand_fields` and `con
 File proyek mendaftar file `.sv` (satu per baris, `#` untuk komentar). Dibaca via `--start` flag. Path relatif terhadap direktori `.maria`.
 
 ## Files
-- `src/simulator/engine.rs:4022` — largest file. Event loop, all statement handlers, loop unrolling, `$display`/`$fopen`/`$urandom`, fork/join tracking, `execute_randomize`, debug hook.
-- `src/parser/parser.rs:3586` — second largest. Operator precedence table at line ~1968.
-- `src/elaboration/elaborator.rs:3729` — AST→IR translation, constant folding, signal resolution.
+- `src/simulator/engine.rs:5969` — largest file. Event loop, all statement handlers, loop unrolling, `$display`/`$fopen`/`$urandom`, fork/join tracking, `execute_randomize`, debug hook.
+- `src/parser/parser.rs:4605` — second largest. Operator precedence table at line ~1968.
+- `src/elaboration/elaborator.rs:3227` — AST→IR translation, constant folding, signal resolution, multidimensional packed array support.
 - `src/debugger/mod.rs:585` — Debugger struct + 21 unit tests.
 
 ## Run

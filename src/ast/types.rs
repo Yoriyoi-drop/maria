@@ -199,6 +199,7 @@ pub struct DeclVar {
     pub range: Option<Range>,
     pub expr_range: Option<ExprRange>,
     pub array_range: Option<Range>,
+    pub extra_packed_dims: Vec<(ExprRange, Option<Range>)>,
     pub is_dynamic: bool,
     pub is_queue: bool,
     pub is_associative: bool,
@@ -209,10 +210,62 @@ pub struct DeclVar {
 
 impl DeclVar {
     pub fn resolved_width(&self, param_vals: &HashMap<String, i64>) -> Result<usize, String> {
-        if let Some(r) = &self.range {
+        let base_width = if let Some(r) = &self.range {
+            r.width()
+        } else if let Some(er) = &self.expr_range {
+            let r = resolve_expr_range(er, param_vals)?;
+            r.width()
+        } else {
+            1
+        };
+        // Multiply by all extra packed dim widths
+        let mut total = base_width;
+        for (er, _) in &self.extra_packed_dims {
+            let r = resolve_expr_range(er, param_vals)?;
+            total *= r.width();
+        }
+        Ok(total)
+    }
+
+    /// Returns all packed dimension widths from outermost to innermost.
+    pub fn packed_dim_widths(&self, param_vals: &HashMap<String, i64>) -> Result<Vec<usize>, String> {
+        let first_width = if let Some(er) = &self.expr_range {
+            let r = resolve_expr_range(er, param_vals)?;
+            r.width()
+        } else if let Some(r) = &self.range {
+            r.width()
+        } else {
+            1usize
+        };
+        let mut dims = vec![first_width];
+        for (er, _) in &self.extra_packed_dims {
+            let r = resolve_expr_range(er, param_vals)?;
+            dims.push(r.width());
+        }
+        Ok(dims)
+    }
+
+    /// Returns the width of the innermost element (last packed dim).
+    pub fn innermost_width(&self, param_vals: &HashMap<String, i64>) -> Result<usize, String> {
+        if let Some((er, _)) = self.extra_packed_dims.last() {
+            let r = resolve_expr_range(er, param_vals)?;
+            Ok(r.width())
+        } else if let Some(r) = &self.range {
             Ok(r.width())
         } else if let Some(er) = &self.expr_range {
             let r = resolve_expr_range(er, param_vals)?;
+            Ok(r.width())
+        } else {
+            Ok(1)
+        }
+    }
+
+    /// Returns the number of elements at the outermost packed dimension.
+    pub fn outer_depth(&self, param_vals: &HashMap<String, i64>) -> Result<usize, String> {
+        if let Some(er) = &self.expr_range {
+            let r = resolve_expr_range(er, param_vals)?;
+            Ok(r.width())
+        } else if let Some(r) = &self.range {
             Ok(r.width())
         } else {
             Ok(1)

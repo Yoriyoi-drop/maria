@@ -103,7 +103,9 @@ impl Elaborator {
                             })
                         } else { None },
                         array_range: None,
-                        is_dynamic: false,
+                        
+
+                        extra_packed_dims: vec![],is_dynamic: false,
                         is_queue: false,
                         is_associative: false,
                         assoc_key_type: None,
@@ -168,6 +170,7 @@ impl Elaborator {
                         msb: if is_real { 63 } else { 0 },
                         lsb: 0,
                         struct_fields: vec![],
+                        packed_dims: vec![],
                     });
                     continue;
                     }
@@ -201,6 +204,7 @@ impl Elaborator {
                         msb: if elem_width > 0 { elem_width - 1 } else { 0 },
                         lsb: 0,
                         struct_fields: vec![],
+                        packed_dims: vec![],
                     });
                 }
             }
@@ -667,6 +671,7 @@ impl Elaborator {
                     msb,
                     lsb,
                     struct_fields: vec![],
+                    packed_dims: vec![],
                 });
                 sid
             }
@@ -752,6 +757,7 @@ impl Elaborator {
                         msb: if is_real { 63 } else { 0 },
                         lsb: 0,
                         struct_fields: vec![],
+                        packed_dims: vec![],
                     });
                     continue;
                 }
@@ -786,6 +792,7 @@ impl Elaborator {
                     msb: 0,
                     lsb: 0,
                     struct_fields: vec![],
+                    packed_dims: vec![],
                 });
             }
                 let dtype_width = self.resolve_type_width(&decl.dtype)?;
@@ -845,6 +852,25 @@ impl Elaborator {
                             if class == "__mailbox" { sig.is_mailbox = true; }
                             if class == "__semaphore" { sig.is_semaphore = true; }
                         }
+                        // Compute packed dimension widths for multi-dim packed arrays
+                        if !var.extra_packed_dims.is_empty() {
+                            let first_width = if let Some(er) = &var.expr_range {
+                                resolve_expr_range(er, &effective_params).map(|r| r.width())
+                            } else if let Some(r) = &var.range {
+                                Ok(r.width())
+                            } else {
+                                Ok(1usize)
+                            };
+                            if let Ok(fw) = first_width {
+                                let mut pd = vec![fw];
+                                for (extra_er, _) in &var.extra_packed_dims {
+                                    if let Ok(or) = resolve_expr_range(extra_er, &effective_params) {
+                                        pd.push(or.width());
+                                    }
+                                }
+                                sig.packed_dims = pd;
+                            }
+                        }
                     }
                 } else {
                     let _sid = get_or_create_signal(&var.name, elem_width, kind, net_type, &mut signals, &mut signal_map, &mut next_id, 1, elem_width, d_msb, d_lsb, decl_is_2state, is_signed_type(&decl.dtype));
@@ -857,6 +883,20 @@ impl Elaborator {
                     }
                     if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
                         sig.is_2state = decl_is_2state;
+                        // Compute packed dimension widths for multi-dim packed arrays
+                        if !var.extra_packed_dims.is_empty() {
+                            if let Some(er) = &var.expr_range {
+                                if let Ok(r) = resolve_expr_range(er, &effective_params) {
+                                    let mut pd = vec![r.width()];
+                                    for (extra_er, _) in &var.extra_packed_dims {
+                                        if let Ok(or) = resolve_expr_range(extra_er, &effective_params) {
+                                            pd.push(or.width());
+                                        }
+                                    }
+                                    sig.packed_dims = pd;
+                                }
+                            }
+                        }
                     }
                 }
                 // Compute struct/union field offsets for member access
@@ -1480,6 +1520,7 @@ impl Elaborator {
                     msb: sig.msb,
                         lsb: sig.lsb,
                     struct_fields: sig.struct_fields.clone(),
+                    packed_dims: sig.packed_dims.clone(),
                 });
                     // Also add to hier_signal_map: internal signals already have the right name in flat list
                     hier_signal_map.insert(
@@ -2416,7 +2457,19 @@ impl Elaborator {
                 match inner_lv {
                     IrLValue::Signal(sid, _) => {
                         let sig = &signals[sid];
-                        if sig.array_depth > 1 || sig.is_dynamic || sig.is_queue {
+                        // Check for multi-dim packed array: packed_dims.len() > 1
+                        if sig.packed_dims.len() > 1 {
+                            let outer_elem_width = sig.width / sig.packed_dims[0];
+                            if let Ok(idx) = const_eval_params(bs_index, &self.param_vals) {
+                                let idx = idx as usize;
+                                let lsb = idx * outer_elem_width;
+                                let msb = lsb + outer_elem_width - 1;
+                                Ok(IrLValue::RangeSelect(sid, msb, lsb))
+                            } else {
+                                let index_expr = self.elaborate_expr(bs_index, signal_map, signals)?;
+                                Ok(IrLValue::ArrayIndex { sig_id: sid, index: Box::new(index_expr), elem_width: outer_elem_width })
+                            }
+                        } else if sig.array_depth > 1 || sig.is_dynamic || sig.is_queue {
                             let index_expr = self.elaborate_expr(bs_index, signal_map, signals)?;
                             Ok(IrLValue::ArrayIndex { sig_id: sid, index: Box::new(index_expr), elem_width: sig.elem_width })
                         } else if let Ok(idx) = const_eval_params(bs_index, &self.param_vals) {
@@ -2588,7 +2641,25 @@ impl Elaborator {
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
                 if let IrExpr::Signal(sid, _) = &inner_expr {
                     let sig = &signals[*sid];
-                    if sig.array_depth > 1 || sig.is_dynamic || sig.is_queue {
+                    // Check for multi-dim packed array: packed_dims.len() > 1
+                    if sig.packed_dims.len() > 1 {
+                        let outer_elem_width = sig.width / sig.packed_dims[0];
+                        if let Ok(idx) = const_eval_params(index, &self.param_vals) {
+                            let idx = idx as usize;
+                            let lsb = idx * outer_elem_width;
+                            let msb = lsb + outer_elem_width - 1;
+                            Ok(IrExpr::RangeSelect(*sid, msb, lsb))
+                        } else {
+                            let index_expr = self.elaborate_expr(index, signal_map, signals)?;
+                            let base_expr = IrExpr::BinaryOp(BinaryIrOp::Mul,
+                                Box::new(index_expr),
+                                Box::new(IrExpr::Const(LogicVec::from_u64(outer_elem_width as u64, 32))));
+                            Ok(IrExpr::ExprPartSelect(
+                                Box::new(IrExpr::Signal(*sid, sig.width)),
+                                Box::new(base_expr),
+                                Box::new(IrExpr::Const(LogicVec::from_u64(outer_elem_width as u64, 32)))))
+                        }
+                    } else if sig.array_depth > 1 || sig.is_dynamic || sig.is_queue {
                         let index_expr = self.elaborate_expr(index, signal_map, signals)?;
                         Ok(IrExpr::ArrayIndex { sig_id: *sid, index: Box::new(index_expr), elem_width: sig.elem_width })
                     } else if let Ok(idx) = const_eval_params(index, &self.param_vals) {
@@ -3039,6 +3110,7 @@ impl Elaborator {
             msb: width - 1,
             lsb: 0,
             struct_fields: vec![],
+            packed_dims: vec![],
         });
         // Add a continuous assignment process
         let sensitivity = collect_sensitivity(expr, signal_map);
