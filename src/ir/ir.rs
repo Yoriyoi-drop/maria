@@ -75,6 +75,7 @@ pub struct IrClassField {
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrClassMethod {
     pub name: String,
+    pub is_task: bool,
     pub virtual_flag: bool,
     pub ports: Vec<crate::ast::FunctionPort>,
     pub decls: Vec<crate::ast::Decl>,
@@ -332,6 +333,7 @@ pub enum IrStmt {
         obj: IrExpr,
         method: String,
         args: Vec<IrExpr>,
+        with_clause: Option<Box<IrExpr>>,
     },
     Break,
     Continue,
@@ -365,6 +367,9 @@ pub enum IrStmt {
     WaitOrder {
         events: Vec<SignalId>,
         failure_stmts: Vec<IrStmt>,
+    },
+    RandCase {
+        items: Vec<(IrExpr, Vec<IrStmt>)>,
     },
 }
 
@@ -442,6 +447,7 @@ pub enum IrExpr {
         obj: Box<IrExpr>,
         method: String,
         args: Vec<IrExpr>,
+        with_clause: Option<Box<IrExpr>>,
     },
     MemberAccess {
         obj: Box<IrExpr>,
@@ -465,6 +471,24 @@ pub enum IrExpr {
         op: String,
         slices: Vec<IrExpr>,
     },
+    Dist {
+        expr: Box<IrExpr>,
+        items: Vec<IrDistItem>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IrDistItem {
+    pub range_lo: Option<i64>,
+    pub range_hi: Option<i64>,
+    pub weight_type: DistWeightType,
+    pub weight: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DistWeightType {
+    Item,
+    Range,
 }
 
 #[derive(Debug, Clone, PartialEq)]

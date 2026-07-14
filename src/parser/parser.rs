@@ -505,6 +505,33 @@ impl Parser {
                     self.expect(Token::LBrace)?;
                     let mut body = Vec::new();
                     while self.peek() != &Token::RBrace {
+                        // Check for solve...before directive
+                        if let Token::Ident(ref s) = self.peek() {
+                            if s == "solve" {
+                                self.advance();
+                                let mut vars = Vec::new();
+                                // Parse: solve x before y;
+                                let first_var = self.expect_ident()?;
+                                vars.push(first_var);
+                                if let Token::Ident(ref s2) = self.peek() {
+                                    if s2 == "before" {
+                                        self.advance();
+                                        loop {
+                                            let v = self.expect_ident()?;
+                                            vars.push(v);
+                                            if self.peek() == &Token::Comma {
+                                                self.advance();
+                                            } else {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                self.skip_semi();
+                                body.push(ConstraintItem::SolveBefore { vars });
+                                continue;
+                            }
+                        }
                         let expr = self.parse_expr(0)?;
                         self.skip_semi();
                         body.push(ConstraintItem::Expr(expr));
@@ -2784,6 +2811,51 @@ impl Parser {
             | Token::Struct | Token::Union | Token::Enum)
     }
 
+    fn parse_dist_item(&mut self) -> Result<DistItem, String> {
+        // dist item: expr := weight  or  expr :/ weight  or  [lo:hi] := weight  or  [lo:hi] :/ weight
+        if self.peek() == &Token::LBrack && self.peek_ahead(1) != &Token::RBrack && self.peek_ahead(1) != &Token::Colon {
+            // Range item: [lo:hi] := weight or [lo:hi] :/ weight
+            self.advance(); // [
+            let lo = self.parse_expr(0)?;
+            self.expect(Token::Colon)?;
+            let hi = self.parse_expr(0)?;
+            self.expect(Token::RBrack)?;
+            if self.peek() == &Token::Equiv { // :=
+                self.advance();
+                let val = self.parse_expr(0)?;
+                let weight = const_eval_simple(&val).unwrap_or(0) as u64;
+                Ok(DistItem::Range(Box::new(lo), Box::new(hi), DistWeight::Item(weight)))
+            } else if matches!(self.peek(), Token::Colon) && self.peek_ahead(1) == &Token::Slash {
+                // :/
+                self.advance(); // :
+                self.advance(); // /
+                let val = self.parse_expr(0)?;
+                let weight = const_eval_simple(&val).unwrap_or(0) as u64;
+                Ok(DistItem::Range(Box::new(lo), Box::new(hi), DistWeight::Range(weight)))
+            } else {
+                return Err(format!("line {}: expected := or :/ after dist range", self.peek_line()));
+            }
+        } else {
+            // Single value: expr := weight or expr :/ weight
+            let expr = self.parse_expr(0)?;
+            if self.peek() == &Token::Equiv { // :=
+                self.advance();
+                let val = self.parse_expr(0)?;
+                let weight = const_eval_simple(&val).unwrap_or(0) as u64;
+                Ok(DistItem::Value(Box::new(expr), DistWeight::Item(weight)))
+            } else if matches!(self.peek(), Token::Colon) && self.peek_ahead(1) == &Token::Slash {
+                // :/
+                self.advance(); // :
+                self.advance(); // /
+                let val = self.parse_expr(0)?;
+                let weight = const_eval_simple(&val).unwrap_or(0) as u64;
+                Ok(DistItem::Value(Box::new(expr), DistWeight::Range(weight)))
+            } else {
+                return Err(format!("line {}: expected := or :/ after dist item", self.peek_line()));
+            }
+        }
+    }
+
     fn parse_gate_primitive(&mut self) -> Result<GatePrimitive, String> {
         let gate_type = match self.peek() {
             Token::And => { self.advance(); GateType::And }
@@ -3359,6 +3431,27 @@ impl Parser {
                 self.skip_semi();
                 Ok(Stmt::EventTrigger { name })
             }
+            Token::Ident(ref s) if s == "randcase" => {
+                self.advance();
+                let mut items = Vec::new();
+                loop {
+                    if self.peek() == &Token::Endcase || self.peek() == &Token::Eof {
+                        if self.peek() == &Token::Endcase {
+                            self.advance();
+                        }
+                        break;
+                    }
+                    let weight = self.parse_expr(0)?;
+                    self.expect(Token::Colon)?;
+                    let stmt = self.parse_stmt()?;
+                    let w = const_eval_simple(&weight).unwrap_or(1) as u64;
+                    items.push(RandCaseItem {
+                        weight: w,
+                        stmt: Box::new(stmt),
+                    });
+                }
+                Ok(Stmt::RandCase { items })
+            }
             Token::Semi => {
                 self.advance();
                 Ok(Stmt::Null)
@@ -3444,6 +3537,7 @@ impl Parser {
                                     obj: Box::new(lhs),
                                     method: member,
                                     args,
+                                    with_clause: None,
                                 };
                             } else {
                                 lhs = Expr::MemberAccess {
@@ -3917,6 +4011,55 @@ impl Parser {
                     };
                     continue;
                 }
+                Token::Ident(ref s) if s == "dist" => {
+                    // expr dist { items }
+                    // Same precedence as inside (7)
+                    if 7 < min_prec { break; }
+                    self.advance();
+                    self.expect(Token::LBrace)?;
+                    let mut items = Vec::new();
+                    if self.peek() != &Token::RBrace {
+                        loop {
+                            let dist_item = self.parse_dist_item()?;
+                            items.push(dist_item);
+                            if self.peek() == &Token::Comma {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    self.expect(Token::RBrace)?;
+                    lhs = Expr::Dist {
+                        expr: Box::new(lhs),
+                        items,
+                    };
+                    continue;
+                }
+                Token::Ident(ref s) if s == "with" => {
+                    // expr.method(args) with (expr)
+                    // Same precedence as method call
+                    if 6 < min_prec { break; }
+                    self.advance();
+                    self.expect(Token::LParen)?;
+                    let with_expr = self.parse_expr(0)?;
+                    self.expect(Token::RParen)?;
+                    let old_lhs = std::mem::replace(&mut lhs, Expr::Value(Value::Decimal(0)));
+                    match old_lhs {
+                        Expr::MethodCall { obj, method, args, with_clause: None } => {
+                            lhs = Expr::MethodCall {
+                                obj,
+                                method,
+                                args,
+                                with_clause: Some(Box::new(with_expr)),
+                            };
+                        }
+                        _ => {
+                            return Err(self.err("'with' clause can only follow a method call"));
+                        }
+                    }
+                    continue;
+                }
                 Token::LBrack => {
                     self.advance();
                     if self.peek() == &Token::RBrack {
@@ -3989,6 +4132,7 @@ impl Parser {
                             obj: Box::new(lhs),
                             method: member,
                             args,
+                            with_clause: None,
                         };
                     } else {
                         lhs = Expr::MemberAccess {

@@ -563,6 +563,12 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
             stmts: substitute_loop_var_in_stmts(stmts, var_name, value),
             decls: decls.clone(),
         },
+        Stmt::RandCase { items } => Stmt::RandCase {
+            items: items.iter().map(|rc| RandCaseItem {
+                weight: rc.weight,
+                stmt: Box::new(substitute_loop_var_in_stmt(&rc.stmt, var_name, value)),
+            }).collect(),
+        },
         Stmt::Break => Stmt::Break,
         Stmt::Continue => Stmt::Continue,
         Stmt::DoWhile { cond, stmts } => Stmt::DoWhile {
@@ -627,10 +633,11 @@ pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> E
             false_expr: Box::new(substitute_loop_var_in_expr(false_expr, var_name, value)),
         },
         Expr::Paren(inner) => Expr::Paren(Box::new(substitute_loop_var_in_expr(inner, var_name, value))),
-        Expr::MethodCall { obj, method, args } => Expr::MethodCall {
+        Expr::MethodCall { obj, method, args, with_clause } => Expr::MethodCall {
             obj: Box::new(substitute_loop_var_in_expr(obj, var_name, value)),
             method: method.clone(),
             args: args.iter().map(|a| substitute_loop_var_in_expr(a, var_name, value)).collect(),
+            with_clause: with_clause.clone().map(|wc| Box::new(substitute_loop_var_in_expr(&wc, var_name, value))),
         },
         Expr::MemberAccess { obj, field } => Expr::MemberAccess {
             obj: Box::new(substitute_loop_var_in_expr(obj, var_name, value)),
@@ -644,6 +651,10 @@ pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> E
         Expr::StreamingConcat { op, slices } => Expr::StreamingConcat {
             op: op.clone(),
             slices: slices.iter().map(|e| substitute_loop_var_in_expr(e, var_name, value)).collect(),
+        },
+        Expr::Dist { expr, items } => Expr::Dist {
+            expr: Box::new(substitute_loop_var_in_expr(expr, var_name, value)),
+            items: items.clone(),
         },
         Expr::Cast { dtype, expr: inner } => Expr::Cast {
             dtype: dtype.clone(),
@@ -740,6 +751,12 @@ pub fn collect_read_signals_stmt(stmt: &IrStmt, out: &mut Vec<SignalId>) {
             collect_read_signals_expr(rhs, out);
         }
         IrStmt::Disable { .. } => {}
+        IrStmt::RandCase { items } => {
+            for (w_expr, body) in items {
+                collect_read_signals_expr(w_expr, out);
+                collect_read_signals_stmts(body, out);
+            }
+        }
         _ => {}
     }
 }
@@ -813,6 +830,9 @@ pub fn collect_read_signals_expr(expr: &IrExpr, out: &mut Vec<SignalId>) {
             }
         }
         IrExpr::Cast { expr, .. } => {
+            collect_read_signals_expr(expr, out);
+        }
+        IrExpr::Dist { expr, .. } => {
             collect_read_signals_expr(expr, out);
         }
         IrExpr::StreamingConcat { slices, .. } => {
@@ -930,7 +950,7 @@ pub fn compute_expr_width(expr: &Expr, signal_map: &HashMap<String, SignalId>,
                 None => Err(format!("unknown type '{}' in cast", dtype)),
             }
         }
-        Expr::MethodCall { .. } | Expr::StreamingConcat { .. } => {
+        Expr::MethodCall { .. } | Expr::StreamingConcat { .. } | Expr::Dist { .. } => {
             Err("width not computable for this expression type".to_string())
         }
         Expr::ScopedIdent { package, item } => {
@@ -979,6 +999,7 @@ pub fn collect_sensitivity(expr: &Expr, signal_map: &HashMap<String, SignalId>) 
         }
         Expr::MethodCall { obj, .. } => collect_sensitivity(obj, signal_map),
         Expr::MemberAccess { obj, .. } => collect_sensitivity(obj, signal_map),
+        Expr::Dist { expr, .. } => collect_sensitivity(expr, signal_map),
         _ => vec![],
     }
 }
@@ -1181,6 +1202,9 @@ pub fn substitute_class_types(cd: ClassDecl, param_name: &str, replacement: &Dat
                     match ci {
                         ConstraintItem::Expr(e) => {
                             ConstraintItem::Expr(substitute_expr_types(e, param_name, replacement))
+                        }
+                        ConstraintItem::SolveBefore { vars } => {
+                            ConstraintItem::SolveBefore { vars }
                         }
                     }
                 }).collect();

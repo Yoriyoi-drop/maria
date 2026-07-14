@@ -53,6 +53,9 @@ pub struct TaskDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstraintItem {
     Expr(Expr),
+    SolveBefore {
+        vars: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

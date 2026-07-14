@@ -469,6 +469,14 @@ fn inline_funcs_in_stmt(
                 join_type,
             }
         }
+        Stmt::RandCase { items } => Stmt::RandCase {
+            items: items.into_iter().map(|rc| {
+                crate::ast::stmt::RandCaseItem {
+                    weight: rc.weight,
+                    stmt: Box::new(inline_funcs_in_stmt(*rc.stmt, funcs, prefix, counter, temp_signals)),
+                }
+            }).collect(),
+        },
         // New variants: pass through unchanged (no function call rewriting needed yet)
         other @ Stmt::UniqueCase { .. }
         | other @ Stmt::PriorityCase { .. }
@@ -812,6 +820,12 @@ fn rename_in_stmt(stmt: &Stmt, rename_map: &HashMap<String, String>) -> Stmt {
         Stmt::Fork { processes, join_type } => Stmt::Fork {
             processes: processes.into_iter().map(|s| rename_in_stmt(&s, rename_map)).collect(),
             join_type,
+        },
+        Stmt::RandCase { items } => Stmt::RandCase {
+            items: items.into_iter().map(|rc| crate::ast::stmt::RandCaseItem {
+                weight: rc.weight,
+                stmt: Box::new(rename_in_stmt(&rc.stmt, rename_map)),
+            }).collect(),
         },
     }
 }

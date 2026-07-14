@@ -1184,6 +1184,7 @@ impl Elaborator {
                 match m {
                     ClassMember::Function(fd) => Some(IrClassMethod {
                         name: fd.name.clone(),
+                        is_task: false,
                         virtual_flag: fd.virtual_flag,
                         ports: fd.ports.clone(),
                         decls: fd.decls.clone(),
@@ -1191,6 +1192,7 @@ impl Elaborator {
                     }),
                     ClassMember::Task(td) => Some(IrClassMethod {
                         name: td.name.clone(),
+                        is_task: true,
                         virtual_flag: td.virtual_flag,
                         ports: td.ports.clone(),
                         decls: td.decls.clone(),
@@ -1629,11 +1631,12 @@ impl Elaborator {
             }
             IrStmt::SysFinish => Ok(IrStmt::SysFinish),
             IrStmt::Null => Ok(IrStmt::Null),
-            IrStmt::MethodCallStmt { obj, method, args } => {
+            IrStmt::MethodCallStmt { obj, method, args, with_clause } => {
                 Ok(IrStmt::MethodCallStmt {
                     obj: self.translate_expr(obj, map_sig),
                     method: method.clone(),
                     args: args.iter().map(|a| self.translate_expr(a, map_sig)).collect(),
+                    with_clause: with_clause.as_ref().map(|wc| Box::new(self.translate_expr(wc, map_sig))),
                 })
             }
             IrStmt::Break => Ok(IrStmt::Break),
@@ -1675,6 +1678,14 @@ impl Elaborator {
                 let new_events = events.iter().map(|id| map_sig(*id)).collect();
                 let new_failure = self.translate_stmts(failure_stmts, map_sig)?;
                 Ok(IrStmt::WaitOrder { events: new_events, failure_stmts: new_failure })
+            }
+            IrStmt::RandCase { items } => {
+                let new_items: Result<Vec<(IrExpr, Vec<IrStmt>)>, String> = items.iter().map(|(weight_expr, body)| {
+                    let new_weight = self.translate_expr(weight_expr, map_sig);
+                    let new_body = self.translate_stmts(body, map_sig)?;
+                    Ok((new_weight, new_body))
+                }).collect();
+                Ok(IrStmt::RandCase { items: new_items? })
             }
         }
     }
@@ -1742,10 +1753,11 @@ impl Elaborator {
                 args: args.iter().map(|a| self.translate_expr(a, map_sig)).collect(),
             },
             IrExpr::This => IrExpr::This,
-            IrExpr::MethodCall { obj, method, args } => IrExpr::MethodCall {
+            IrExpr::MethodCall { obj, method, args, with_clause } => IrExpr::MethodCall {
                 obj: Box::new(self.translate_expr(obj, map_sig)),
                 method: method.clone(),
                 args: args.iter().map(|a| self.translate_expr(a, map_sig)).collect(),
+                with_clause: with_clause.as_ref().map(|wc| Box::new(self.translate_expr(wc, map_sig))),
             },
             IrExpr::MemberAccess { obj, field } => IrExpr::MemberAccess {
                 obj: Box::new(self.translate_expr(obj, map_sig)),
@@ -1782,6 +1794,10 @@ impl Elaborator {
             IrExpr::StreamingConcat { op, slices } => IrExpr::StreamingConcat {
                 op: op.clone(),
                 slices: slices.iter().map(|e| self.translate_expr(e, map_sig)).collect(),
+            },
+            IrExpr::Dist { expr, items } => IrExpr::Dist {
+                expr: Box::new(self.translate_expr(expr, map_sig)),
+                items: items.clone(),
             },
         }
     }
@@ -2004,15 +2020,20 @@ impl Elaborator {
             }
             Stmt::Expr { expr } => {
                 match expr {
-                    Expr::MethodCall { obj, method, args } => {
+                    Expr::MethodCall { obj, method, args, with_clause } => {
                         let ir_obj = self.elaborate_expr(obj, signal_map, signals)?;
                         let ir_args: Vec<IrExpr> = args.iter()
                             .map(|a| self.elaborate_expr(a, signal_map, signals))
                             .collect::<Result<_, _>>()?;
+                        let ir_with = match with_clause {
+                            Some(wc) => Some(Box::new(self.elaborate_expr(wc, signal_map, signals)?)),
+                            None => None,
+                        };
                         Ok(IrStmt::MethodCallStmt {
                             obj: ir_obj,
                             method: method.clone(),
                             args: ir_args,
+                            with_clause: ir_with,
                         })
                     }
                     Expr::FuncCall { name, .. } if name.starts_with('$') => {
@@ -2351,6 +2372,14 @@ impl Elaborator {
                     JoinType::JoinNone => IrJoinType::JoinNone,
                 };
                 Ok(IrStmt::Fork { processes: ir_processes, join_type: ir_join })
+            }
+            Stmt::RandCase { items } => {
+                let new_items: Result<Vec<(IrExpr, Vec<IrStmt>)>, String> = items.iter().map(|rc| {
+                    let weight_expr = IrExpr::Const(LogicVec::from_u64(rc.weight as u64, 32));
+                    let body = self.elaborate_stmt_block(&[*rc.stmt.clone()], signal_map, known_modules, signals)?;
+                    Ok((weight_expr, body))
+                }).collect();
+                Ok(IrStmt::RandCase { items: new_items? })
             }
         }
     }
@@ -2757,15 +2786,20 @@ impl Elaborator {
                 Ok(IrExpr::NewCall { class_name: String::new(), args: ir_args? })
             }
             Expr::String(s) => Ok(IrExpr::String(s.clone())),
-            Expr::MethodCall { obj, method, args } => {
+            Expr::MethodCall { obj, method, args, with_clause } => {
                 let ir_obj = self.elaborate_expr(obj, signal_map, signals)?;
                 let ir_args: Result<Vec<IrExpr>, String> = args.iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
                     .collect();
+                let ir_with = match with_clause {
+                    Some(wc) => Some(Box::new(self.elaborate_expr(wc, signal_map, signals)?)),
+                    None => None,
+                };
                 Ok(IrExpr::MethodCall {
                     obj: Box::new(ir_obj),
                     method: method.clone(),
                     args: ir_args?,
+                    with_clause: ir_with,
                 })
             }
         Expr::MemberAccess { obj, field } => {
@@ -2821,6 +2855,40 @@ impl Elaborator {
                 Ok(IrExpr::StreamingConcat {
                     op: op.clone(),
                     slices: ir_slices,
+                })
+            }
+            Expr::Dist {
+                expr: inner,
+                items,
+            } => {
+                let inner_ir = self.elaborate_expr(inner, signal_map, signals)?;
+                let ir_items = items.iter().map(|di| {
+                    match di {
+                        crate::ast::DistItem::Value(e, crate::ast::DistWeight::Item(w)) => {
+                            let ev = self.elaborate_expr(e, signal_map, signals).unwrap_or(IrExpr::Const(LogicVec::from_u64(0, 32)));
+                            let lo = if let IrExpr::Const(ref lv) = ev { Some(lv.to_u64() as i64) } else { None };
+                            crate::ir::IrDistItem { range_lo: lo, range_hi: lo, weight_type: crate::ir::DistWeightType::Item, weight: *w as i64 }
+                        }
+                        crate::ast::DistItem::Value(e, crate::ast::DistWeight::Range(w)) => {
+                            let ev = self.elaborate_expr(e, signal_map, signals).unwrap_or(IrExpr::Const(LogicVec::from_u64(0, 32)));
+                            let lo = if let IrExpr::Const(ref lv) = ev { Some(lv.to_u64() as i64) } else { None };
+                            crate::ir::IrDistItem { range_lo: lo, range_hi: lo, weight_type: crate::ir::DistWeightType::Range, weight: *w as i64 }
+                        }
+                        crate::ast::DistItem::Range(lo, hi, crate::ast::DistWeight::Item(w)) => {
+                            let lo_v = const_eval_with_params(lo, &self.param_vals).ok();
+                            let hi_v = const_eval_with_params(hi, &self.param_vals).ok();
+                            crate::ir::IrDistItem { range_lo: lo_v, range_hi: hi_v, weight_type: crate::ir::DistWeightType::Item, weight: *w as i64 }
+                        }
+                        crate::ast::DistItem::Range(lo, hi, crate::ast::DistWeight::Range(w)) => {
+                            let lo_v = const_eval_with_params(lo, &self.param_vals).ok();
+                            let hi_v = const_eval_with_params(hi, &self.param_vals).ok();
+                            crate::ir::IrDistItem { range_lo: lo_v, range_hi: hi_v, weight_type: crate::ir::DistWeightType::Range, weight: *w as i64 }
+                        }
+                    }
+                }).collect::<Vec<_>>();
+                Ok(IrExpr::Dist {
+                    expr: Box::new(inner_ir),
+                    items: ir_items,
                 })
             }
             Expr::Cast { dtype, expr: inner } => {

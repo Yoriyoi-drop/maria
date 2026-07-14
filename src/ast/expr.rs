@@ -46,6 +46,7 @@ pub enum Expr {
         obj: Box<Expr>,
         method: String,
         args: Vec<Expr>,
+        with_clause: Option<Box<Expr>>,
     },
     MemberAccess {
         obj: Box<Expr>,
@@ -68,6 +69,22 @@ pub enum Expr {
         package: String,
         item: String,
     },
+    Dist {
+        expr: Box<Expr>,
+        items: Vec<DistItem>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DistItem {
+    Value(Box<Expr>, DistWeight),
+    Range(Box<Expr>, Box<Expr>, DistWeight),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DistWeight {
+    Item(u64),   // := weight (each item in range gets this weight)
+    Range(u64),  // :/ weight (total weight for the range)
 }
 
 #[derive(Debug, Clone, PartialEq)]

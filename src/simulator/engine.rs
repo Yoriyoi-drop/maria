@@ -509,7 +509,7 @@ impl SimulationEngine {
                 None => true,
             };
             if changed {
-                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, args);
+                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, args);
                 print!("{}", msg);
                 self.monitor_last_values = Some(new_vals);
             }
@@ -523,7 +523,7 @@ impl SimulationEngine {
                 .collect();
             if new_vals != last {
                 if let Some(f) = self.file_handles.get_mut(&handle) {
-                    let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &args);
+                    let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, &args);
                     let _ = write!(f, "{}", msg);
                 }
                 self.fmonitor_map.insert(handle, (args, new_vals));
@@ -535,13 +535,13 @@ impl SimulationEngine {
     fn process_strobe(&mut self) -> Result<(), String> {
         let events = std::mem::take(&mut self.strobe_events);
         for args in &events {
-            let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, args);
+            let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, args);
             print!("{}", msg);
         }
         let fstrobe = std::mem::take(&mut self.fstrobe_events);
         for (handle, args) in &fstrobe {
             if let Some(f) = self.file_handles.get_mut(handle) {
-                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, args);
+                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, args);
                 let _ = write!(f, "{}", msg);
             }
         }
@@ -934,9 +934,27 @@ impl SimulationEngine {
                     });
                     return Ok(false);
                 }
+                IrStmt::RandCase { items } => {
+                    let total: u64 = items.iter().map(|(w_expr, _)| {
+                        self.evaluate_expr(w_expr).unwrap_or(LogicVec::from_u64(1, 32)).to_u64()
+                    }).sum();
+                    if total > 0 {
+                        let r = self.rng.gen::<u64>() % total;
+                        let mut cumulative = 0u64;
+                        for (w_expr, body) in items {
+                            let weight = self.evaluate_expr(w_expr).unwrap_or(LogicVec::from_u64(1, 32)).to_u64();
+                            cumulative += weight;
+                            if r < cumulative {
+                                let completed = self.evaluate_block_with_delay_fork(body, fork_id)?;
+                                if !completed { return Ok(false); }
+                                break;
+                            }
+                        }
+                    }
+                }
                 IrStmt::SysCall { name, args: ir_args } => {
                     if name == "display" || name == "write" {
-                        let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, ir_args);
+                        let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, ir_args);
                         print!("{}", msg);
                     } else if name == "strobe" {
                         self.strobe_events.push(ir_args.clone());
@@ -1086,7 +1104,7 @@ impl SimulationEngine {
                         let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &ir_args[1..]);
+                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, &ir_args[1..]);
                                 let _ = write!(f, "{}", msg);
                             }
                         }
@@ -1094,7 +1112,7 @@ impl SimulationEngine {
                         let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &ir_args[1..]);
+                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, &ir_args[1..]);
                                 let _ = write!(f, "{}", msg);
                             }
                         }
@@ -1312,12 +1330,12 @@ impl SimulationEngine {
                         if cf == Some(FlowControl::Break) { break; }
                     }
                 }
-                IrStmt::MethodCallStmt { obj, method, args } => {
+                IrStmt::MethodCallStmt { obj, method, args, with_clause } => {
                     if let IrExpr::Signal(id, _) = obj {
                         let sig_info = self.design.top.signals.get(*id).cloned();
                         if let Some(ref sig) = sig_info {
                             if sig.is_dynamic || sig.is_queue || sig.is_associative {
-                                let _ = self.evaluate_array_method(*id, sig, method, args)?;
+                                let _ = self.evaluate_array_method(*id, sig, method, args, with_clause.as_deref())?;
                                 continue;
                             }
                             // Auto-create object for class/covergroup variables
@@ -1350,6 +1368,23 @@ impl SimulationEngine {
                         .map(|a| self.evaluate_expr(a))
                         .collect::<Result<_, _>>()?;
                     self.execute_method(obj_id, method, &arg_vals)?;
+                }
+                IrStmt::RandCase { items } => {
+                    let total: u64 = items.iter().map(|(w_expr, _)| {
+                        self.evaluate_expr(w_expr).unwrap_or(LogicVec::from_u64(1, 32)).to_u64()
+                    }).sum();
+                    if total > 0 {
+                        let r = self.rng.gen::<u64>() % total;
+                        let mut cumulative = 0u64;
+                        for (w_expr, body) in items {
+                            let weight = self.evaluate_expr(w_expr).unwrap_or(LogicVec::from_u64(1, 32)).to_u64();
+                            cumulative += weight;
+                            if r < cumulative {
+                                self.evaluate_stmt_block(body)?;
+                                break;
+                            }
+                        }
+                    }
                 }
                 IrStmt::Fork { processes, join_type } => {
                     let fid = self.fork_groups.len();
@@ -1468,7 +1503,7 @@ impl SimulationEngine {
                 }
                 IrStmt::SysCall { name, args: ir_args } => {
                     if name == "display" || name == "write" {
-                        let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, ir_args);
+                        let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, ir_args);
                         print!("{}", msg);
                     } else if name == "strobe" {
                         self.strobe_events.push(ir_args.clone());
@@ -1588,7 +1623,7 @@ impl SimulationEngine {
                         let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &ir_args[1..]);
+                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, &ir_args[1..]);
                                 let _ = write!(f, "{}", msg);
                             }
                         }
@@ -1596,7 +1631,7 @@ impl SimulationEngine {
                         let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &ir_args[1..]);
+                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, &ir_args[1..]);
                                 let _ = write!(f, "{}", msg);
                             }
                         }
@@ -1810,6 +1845,23 @@ impl SimulationEngine {
                         if cf == Some(FlowControl::Break) { break; }
                     }
                 }
+                IrStmt::RandCase { items } => {
+                    let total: u64 = items.iter().map(|(w_expr, _)| {
+                        self.evaluate_expr(w_expr).unwrap_or(LogicVec::from_u64(1, 32)).to_u64()
+                    }).sum();
+                    if total > 0 {
+                        let r = self.rng.gen::<u64>() % total;
+                        let mut cumulative = 0u64;
+                        for (w_expr, body) in items {
+                            let weight = self.evaluate_expr(w_expr).unwrap_or(LogicVec::from_u64(1, 32)).to_u64();
+                            cumulative += weight;
+                            if r < cumulative {
+                                self.evaluate_stmt_block(body)?;
+                                break;
+                            }
+                        }
+                    }
+                }
                 IrStmt::Foreach { array_var, index_var, body } => {
                     let lv = self.evaluate_expr(array_var)?;
                     let sig_info = if let IrExpr::Signal(id, _) = array_var {
@@ -1832,12 +1884,12 @@ impl SimulationEngine {
                         if cf == Some(FlowControl::Break) { break; }
                     }
                 }
-                IrStmt::MethodCallStmt { obj, method, args } => {
+                IrStmt::MethodCallStmt { obj, method, args, with_clause } => {
                 if let IrExpr::Signal(id, _) = obj {
                     let sig_info = self.design.top.signals.get(*id).cloned();
                     if let Some(ref sig) = sig_info {
                         if sig.is_dynamic || sig.is_queue || sig.is_associative {
-                            let _ = self.evaluate_array_method(*id, sig, method, args)?;
+                            let _ = self.evaluate_array_method(*id, sig, method, args, with_clause.as_deref())?;
                             continue;
                         }
                         if let Some(ref cn) = sig.class_name {
@@ -2338,6 +2390,32 @@ impl SimulationEngine {
                             Ok(LogicVec::from_u64(val, 32))
                         }
                     }
+                    "$signed" => {
+                        if let Some(arg) = args.first() {
+                            let val = self.evaluate_expr(arg)?;
+                            // Sign-extend: copy the MSB to all higher bits
+                            if val.width > 0 {
+                                let msb = val.bits.last().copied().unwrap_or(LogicVal::Zero);
+                                let new_width = val.width.max(1);
+                                let mut bits = val.bits.clone();
+                                bits.resize(new_width, msb);
+                                Ok(LogicVec { width: new_width, bits })
+                            } else {
+                                Ok(val)
+                            }
+                        } else {
+                            Err("$signed expects 1 argument".to_string())
+                        }
+                    }
+                    "$unsigned" => {
+                        if let Some(arg) = args.first() {
+                            let val = self.evaluate_expr(arg)?;
+                            // Unsigned: zero-extend (already the default)
+                            Ok(val)
+                        } else {
+                            Err("$unsigned expects 1 argument".to_string())
+                        }
+                    }
                     "$fopen" => {
                         let fname = args.first().and_then(|a| {
                             if let IrExpr::String(s) = a { Some(s.clone()) }
@@ -2369,7 +2447,7 @@ impl SimulationEngine {
                         let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &args[1..]);
+                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, &args[1..]);
                                 let _ = write!(f, "{}", msg);
                             }
                         }
@@ -2455,7 +2533,7 @@ impl SimulationEngine {
                         if args.is_empty() {
                             return Ok(LogicVec::new(0));
                         }
-            let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, args);
+            let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, args);
                         let mut bits = Vec::with_capacity(msg.len() * 8);
                         for c in msg.chars() {
                             let byte = c as u8;
@@ -2644,7 +2722,7 @@ impl SimulationEngine {
                     Err("'this' used outside of class method".to_string())
                 }
             }
-            IrExpr::MethodCall { obj, method, args } => {
+            IrExpr::MethodCall { obj, method, args, with_clause } => {
                 if let IrExpr::String(s) = obj.as_ref() {
                     let arg_vals: Vec<LogicVec> = args.iter()
                         .map(|a| self.evaluate_expr(a))
@@ -2694,7 +2772,7 @@ impl SimulationEngine {
                     let is_arr = self.design.top.signals.get(*id).map(|s| s.is_dynamic || s.is_queue).unwrap_or(false);
                     if is_arr {
                         let sig_info = self.design.top.signals[*id].clone();
-                        return self.evaluate_array_method(*id, &sig_info, method, args);
+                        return self.evaluate_array_method(*id, &sig_info, method, args, with_clause.as_deref());
                     }
                 }
                 let obj_val = self.evaluate_expr(obj)?;
@@ -2737,6 +2815,30 @@ impl SimulationEngine {
                     }
                 }
                 Ok(LogicVec::from_u64(0, 1))
+            }
+            IrExpr::Dist { expr: _expr, items } => {
+                // Dist expression in randomize context: use weighted random selection
+                if self.current_method.as_deref() == Some("randomize") {
+                    let total_weight: i64 = items.iter().map(|item| item.weight).sum();
+                    if total_weight > 0 {
+                        let r = (self.rng.gen::<u64>() % total_weight as u64) as i64;
+                        let mut cumulative = 0i64;
+                        for item in items {
+                            cumulative += item.weight;
+                            if r < cumulative {
+                                let v = match (item.range_lo, item.range_hi) {
+                                    (Some(lo), Some(hi)) if hi >= lo => {
+                                        lo + (self.rng.gen::<u64>() % ((hi - lo + 1) as u64)) as i64
+                                    }
+                                    (Some(v), _) | (_, Some(v)) => v,
+                                    _ => 0i64,
+                                };
+                                return Ok(LogicVec::from_u64(v as u64, 32));
+                            }
+                        }
+                    }
+                }
+                Ok(LogicVec::from_u64(1, 1))
             }
             IrExpr::Cast { width, expr } => {
                 let val = self.evaluate_expr(expr)?;
@@ -3205,7 +3307,7 @@ impl SimulationEngine {
                 }
                 Err(format!("unknown function '{}' in method context", name))
             }
-            Expr::MethodCall { obj, method, args } => {
+            Expr::MethodCall { obj, method, args, with_clause } => {
                 if let Expr::Ident(s) = obj.as_ref() {
                     if s == "super" {
                         let arg_vals: Vec<LogicVec> = args.iter()
@@ -3326,6 +3428,32 @@ impl SimulationEngine {
                     }
                 }
                 Ok(result)
+            }
+            Expr::Dist { expr: inner, items } => {
+                let inner_val = self.evaluate_ast_expr(inner)?;
+                let ir_items = items.iter().map(|di| {
+                    match di {
+                        crate::ast::DistItem::Value(e, crate::ast::DistWeight::Item(w)) => {
+                            let ev = self.evaluate_ast_expr(e).unwrap_or(LogicVec::from_u64(0, 32));
+                            crate::ir::IrDistItem { range_lo: Some(ev.to_u64() as i64), range_hi: Some(ev.to_u64() as i64), weight_type: crate::ir::DistWeightType::Item, weight: *w as i64 }
+                        }
+                        crate::ast::DistItem::Value(e, crate::ast::DistWeight::Range(w)) => {
+                            let ev = self.evaluate_ast_expr(e).unwrap_or(LogicVec::from_u64(0, 32));
+                            crate::ir::IrDistItem { range_lo: Some(ev.to_u64() as i64), range_hi: Some(ev.to_u64() as i64), weight_type: crate::ir::DistWeightType::Range, weight: *w as i64 }
+                        }
+                        crate::ast::DistItem::Range(lo, hi, crate::ast::DistWeight::Item(w)) => {
+                            let lo_v = self.evaluate_ast_expr(lo).ok().map(|v| v.to_u64() as i64);
+                            let hi_v = self.evaluate_ast_expr(hi).ok().map(|v| v.to_u64() as i64);
+                            crate::ir::IrDistItem { range_lo: lo_v, range_hi: hi_v, weight_type: crate::ir::DistWeightType::Item, weight: *w as i64 }
+                        }
+                        crate::ast::DistItem::Range(lo, hi, crate::ast::DistWeight::Range(w)) => {
+                            let lo_v = self.evaluate_ast_expr(lo).ok().map(|v| v.to_u64() as i64);
+                            let hi_v = self.evaluate_ast_expr(hi).ok().map(|v| v.to_u64() as i64);
+                            crate::ir::IrDistItem { range_lo: lo_v, range_hi: hi_v, weight_type: crate::ir::DistWeightType::Range, weight: *w as i64 }
+                        }
+                    }
+                }).collect::<Vec<_>>();
+                Ok(self.evaluate_expr(&IrExpr::Dist { expr: Box::new(IrExpr::Const(inner_val)), items: ir_items })?)
             }
             Expr::Cast { dtype, expr: inner } => {
                 let val = self.evaluate_ast_expr(inner)?;
@@ -4105,11 +4233,43 @@ impl SimulationEngine {
         let old_this = self.current_this;
         self.current_this = Some(obj_id);
 
+        // Extract solve...before ordering constraints
+        let mut before_map: std::collections::HashMap<String, std::collections::HashSet<String>> = std::collections::HashMap::new();
+        for (_, body) in &class_def.constraints {
+            for item in body {
+                if let ConstraintItem::SolveBefore { vars } = item {
+                    if vars.len() >= 2 {
+                        let first = &vars[0];
+                        for later in &vars[1..] {
+                            before_map.entry(first.clone())
+                                .or_insert_with(std::collections::HashSet::new)
+                                .insert(later.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Order rand_fields: fields in solve-before come first
+        let mut ordered_fields: Vec<String> = Vec::new();
+        let mut remaining: std::collections::HashSet<String> = class_def.rand_fields.iter().cloned().collect();
+        for fname in &class_def.rand_fields {
+            if before_map.contains_key(fname) && remaining.contains(fname) {
+                ordered_fields.push(fname.clone());
+                remaining.remove(fname);
+            }
+        }
+        for fname in &class_def.rand_fields {
+            if remaining.contains(fname) {
+                ordered_fields.push(fname.clone());
+            }
+        }
+
         let max_attempts = 100;
         let mut seed = self.current_time as u64;
         for _ in 0..max_attempts {
-            // Generate random values for each rand field
-            for fname in &class_def.rand_fields {
+            // Generate random values for each rand field in solve-order
+            for fname in &ordered_fields {
                 let field_info = class_def.fields.iter().find(|f| &f.name == fname);
                 let width = field_info.map(|f| f.width).unwrap_or(1);
                 seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -4119,15 +4279,21 @@ impl SimulationEngine {
                 }
             }
 
-            // Evaluate all constraints
+            // Evaluate all constraints (skip SolveBefore items)
             let mut all_satisfied = true;
             for (_, body) in &class_def.constraints {
                 for item in body {
-                    let ConstraintItem::Expr(expr) = item;
-                    let result = self.evaluate_ast_expr(expr)?;
-                    if !result.to_bool().unwrap_or(false) {
-                        all_satisfied = false;
-                        break;
+                    match item {
+                        ConstraintItem::Expr(expr) => {
+                            let result = self.evaluate_ast_expr(expr)?;
+                            if !result.to_bool().unwrap_or(false) {
+                                all_satisfied = false;
+                                break;
+                            }
+                        }
+                        ConstraintItem::SolveBefore { .. } => {
+                            // Just an ordering hint, skip during evaluation
+                        }
                     }
                 }
                 if !all_satisfied { break; }
@@ -4732,8 +4898,12 @@ impl SimulationEngine {
             self.evaluate_ast_stmt(&body)?;
         }
 
-        let return_val = self.get_local(method)
-            .unwrap_or_else(|| LogicVec::new(1));
+        let return_val = if method_def.is_task {
+            LogicVec::new(0)  // tasks return void
+        } else {
+            self.get_local(method)
+                .unwrap_or_else(|| LogicVec::new(1))
+        };
 
         self.current_method = old_method;
         self.method_locals.truncate(depth);
@@ -4816,13 +4986,13 @@ fn get_field_elem_width(&self, expr: &Expr) -> Option<usize> {
     }
 }
 
-fn format_display(state: &SimulationState, signals: &[SignalInfo], hier_map: &HashMap<String, SignalId>, ir_args: &[IrExpr]) -> String {
+fn format_display(state: &SimulationState, signals: &[SignalInfo], hier_map: &HashMap<String, SignalId>, assoc_data: &HashMap<SignalId, HashMap<LogicVec, LogicVec>>, ir_args: &[IrExpr]) -> String {
     let (fmt_str, start_idx) = if let Some(IrExpr::String(s)) = ir_args.first() {
         (s.clone(), 1)
     } else {
         let mut parts = Vec::new();
         for arg in ir_args {
-            if let Ok(val) = eval_display_arg(state, signals, hier_map, arg) {
+            if let Ok(val) = eval_display_arg(state, signals, hier_map, assoc_data, arg) {
                 parts.push(format!("{}", val));
             }
         }
@@ -4830,7 +5000,7 @@ fn format_display(state: &SimulationState, signals: &[SignalInfo], hier_map: &Ha
     };
 
     let value_args: Vec<LogicVec> = ir_args[start_idx..].iter()
-        .filter_map(|a| eval_display_arg(state, signals, hier_map, a).ok())
+        .filter_map(|a| eval_display_arg(state, signals, hier_map, assoc_data, a).ok())
         .collect();
 
     let mut value_idx = 0usize;
@@ -4893,7 +5063,7 @@ fn format_display(state: &SimulationState, signals: &[SignalInfo], hier_map: &Ha
     result
 }
 
-fn eval_display_arg(state: &SimulationState, signals: &[SignalInfo], hier_map: &HashMap<String, SignalId>, arg: &IrExpr) -> Result<LogicVec, String> {
+fn eval_display_arg(state: &SimulationState, signals: &[SignalInfo], hier_map: &HashMap<String, SignalId>, assoc_data: &HashMap<SignalId, HashMap<LogicVec, LogicVec>>, arg: &IrExpr) -> Result<LogicVec, String> {
     match arg {
         IrExpr::HierRef(name) => {
             if let Some(pos) = signals.iter().position(|s| s.name == *name) {
@@ -4931,7 +5101,7 @@ fn eval_display_arg(state: &SimulationState, signals: &[SignalInfo], hier_map: &
                     Ok(LogicVec { bits: vec![bit], width: 1 })
                 }
                 IrExpr::ExprRangeSelect(inner, msb, lsb) => {
-                    let val = eval_display_arg(state, signals, hier_map, inner)?;
+                    let val = eval_display_arg(state, signals, hier_map, assoc_data, inner)?;
                     let (start, end) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
                     if end < val.width {
                         let mut bits = val.bits[start..=end].to_vec();
@@ -4942,14 +5112,14 @@ fn eval_display_arg(state: &SimulationState, signals: &[SignalInfo], hier_map: &
                     }
                 }
                 IrExpr::ExprBitSelect(inner, idx) => {
-                    let val = eval_display_arg(state, signals, hier_map, inner)?;
+                    let val = eval_display_arg(state, signals, hier_map, assoc_data, inner)?;
                     let bit = val.bits.get(*idx).copied().unwrap_or(LogicVal::X);
                     Ok(LogicVec { bits: vec![bit], width: 1 })
                 }
                 IrExpr::ExprPartSelect(inner, base_expr, width_expr) => {
-                    let val = eval_display_arg(state, signals, hier_map, inner)?;
-                    let base = eval_display_arg(state, signals, hier_map, base_expr).ok().map(|v| v.to_u64() as usize).unwrap_or(0);
-                    let width = eval_display_arg(state, signals, hier_map, width_expr).ok().map(|v| v.to_u64() as usize).unwrap_or(0);
+                    let val = eval_display_arg(state, signals, hier_map, assoc_data, inner)?;
+                    let base = eval_display_arg(state, signals, hier_map, assoc_data, base_expr).ok().map(|v| v.to_u64() as usize).unwrap_or(0);
+                    let width = eval_display_arg(state, signals, hier_map, assoc_data, width_expr).ok().map(|v| v.to_u64() as usize).unwrap_or(0);
                     if width == 0 || base >= val.width {
                         Ok(LogicVec::new(1))
                     } else {
@@ -4959,14 +5129,17 @@ fn eval_display_arg(state: &SimulationState, signals: &[SignalInfo], hier_map: &
                         Ok(LogicVec { width: bits.len(), bits })
                     }
                 }
-                IrExpr::Signed(inner) => eval_display_arg(state, signals, hier_map, inner),
+                IrExpr::Signed(inner) => eval_display_arg(state, signals, hier_map, assoc_data, inner),
                 IrExpr::ArrayIndex { sig_id, index, elem_width } => {
-                    let key_val = eval_display_arg(state, signals, hier_map, index).ok().unwrap_or(LogicVec::new(1));
+                    let key_val = eval_display_arg(state, signals, hier_map, assoc_data, index).ok().unwrap_or(LogicVec::new(1));
                     let sig_info = signals.get(*sig_id);
                     if sig_info.map(|s| s.is_associative).unwrap_or(false) {
-                        // For display, try to look up from assoc_data via signal values
-                        // This is a simplified read - display may show original array
-                        return Ok(key_val);
+                        if let Some(assoc_map) = assoc_data.get(sig_id) {
+                            if let Some(val) = assoc_map.get(&key_val) {
+                                return Ok(val.clone());
+                            }
+                        }
+                        return Ok(LogicVec::new(*elem_width));
                     }
                     let array_val = state.read_signal(*sig_id);
                     let idx = key_val.to_u64() as usize;
@@ -5164,7 +5337,22 @@ fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<Lo
 }
 
 impl SimulationEngine {
-    fn evaluate_array_method(&mut self, sig_id: SignalId, sig: &SignalInfo, method: &str, args: &[IrExpr]) -> Result<LogicVec, String> {
+
+fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -> Result<bool, String> {
+    if let Some(wc) = with_clause {
+        let depth = self.method_locals.len();
+        let mut scope = std::collections::HashMap::new();
+        scope.insert("item".to_string(), elem.clone());
+        self.method_locals.push(scope);
+        let result = self.evaluate_expr(wc)?.to_bool().unwrap_or(false);
+        self.method_locals.truncate(depth);
+        Ok(result)
+    } else {
+        Ok(true)
+    }
+}
+
+    fn evaluate_array_method(&mut self, sig_id: SignalId, sig: &SignalInfo, method: &str, args: &[IrExpr], with_clause: Option<&IrExpr>) -> Result<LogicVec, String> {
         // Check if this is an associative array method
         if sig.is_associative {
             // Evaluate args first to avoid borrow conflicts with assoc_data access
@@ -5464,6 +5652,310 @@ impl SimulationEngine {
                     }
                     let shuffled = LogicVec { width: lv.width, bits: new_bits };
                     self.state.write_signal(sig_id, shuffled);
+                }
+                Ok(LogicVec::new(0))
+            }
+            // --- Reduction methods ---
+            "sum" => {
+                let lv = self.state.read_signal(sig_id).clone();
+                let elem_width = sig.elem_width;
+                if elem_width > 0 {
+                    let count = lv.width / elem_width;
+                    let mut result: u64 = 0;
+                    for i in 0..count {
+                        let mut bits = Vec::with_capacity(elem_width);
+                        for j in 0..elem_width {
+                            bits.push(lv.bits[i * elem_width + j]);
+                        }
+                        let elem = LogicVec { width: elem_width, bits };
+                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        result = result.wrapping_add(elem.to_u64());
+                    }
+                    Ok(LogicVec::from_u64(result, elem_width.max(32)))
+                } else {
+                    Ok(LogicVec::new(0))
+                }
+            }
+            "product" => {
+                let lv = self.state.read_signal(sig_id).clone();
+                let elem_width = sig.elem_width;
+                if elem_width > 0 {
+                    let count = lv.width / elem_width;
+                    let mut result: u64 = 1;
+                    for i in 0..count {
+                        let mut bits = Vec::with_capacity(elem_width);
+                        for j in 0..elem_width {
+                            bits.push(lv.bits[i * elem_width + j]);
+                        }
+                        let elem = LogicVec { width: elem_width, bits };
+                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        result = result.wrapping_mul(elem.to_u64());
+                    }
+                    Ok(LogicVec::from_u64(result, elem_width.max(32)))
+                } else {
+                    Ok(LogicVec::new(0))
+                }
+            }
+            "and" => {
+                let lv = self.state.read_signal(sig_id).clone();
+                let elem_width = sig.elem_width;
+                if elem_width > 0 && lv.width >= elem_width {
+                    let count = lv.width / elem_width;
+                    let mut result = LogicVec::fill(LogicVal::One, elem_width);
+                    for i in 0..count {
+                        let mut bits = Vec::with_capacity(elem_width);
+                        for j in 0..elem_width {
+                            let idx = i * elem_width + j;
+                            bits.push(lv.bits.get(idx).copied().unwrap_or(LogicVal::X));
+                        }
+                        let elem = LogicVec { width: elem_width, bits: bits.clone() };
+                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        for j in 0..elem_width {
+                            if bits.get(j) == Some(&LogicVal::Zero) {
+                                result.bits[j] = LogicVal::Zero;
+                            }
+                        }
+                    }
+                    Ok(result)
+                } else {
+                    Ok(LogicVec::fill(LogicVal::One, elem_width.max(1)))
+                }
+            }
+            "or" => {
+                let lv = self.state.read_signal(sig_id).clone();
+                let elem_width = sig.elem_width;
+                if elem_width > 0 && lv.width >= elem_width {
+                    let count = lv.width / elem_width;
+                    let mut result = LogicVec::fill(LogicVal::Zero, elem_width);
+                    for i in 0..count {
+                        let mut bits = Vec::with_capacity(elem_width);
+                        for j in 0..elem_width {
+                            let idx = i * elem_width + j;
+                            bits.push(lv.bits.get(idx).copied().unwrap_or(LogicVal::X));
+                        }
+                        let elem = LogicVec { width: elem_width, bits: bits.clone() };
+                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        for j in 0..elem_width {
+                            if bits.get(j) == Some(&LogicVal::One) {
+                                result.bits[j] = LogicVal::One;
+                            }
+                        }
+                    }
+                    Ok(result)
+                } else {
+                    Ok(LogicVec::fill(LogicVal::Zero, elem_width.max(1)))
+                }
+            }
+            "xor" => {
+                let lv = self.state.read_signal(sig_id).clone();
+                let elem_width = sig.elem_width;
+                if elem_width > 0 && lv.width >= elem_width {
+                    let count = lv.width / elem_width;
+                    let mut result = LogicVec::fill(LogicVal::Zero, elem_width);
+                    for i in 0..count {
+                        let mut bits = Vec::with_capacity(elem_width);
+                        for j in 0..elem_width {
+                            let idx = i * elem_width + j;
+                            bits.push(lv.bits.get(idx).copied().unwrap_or(LogicVal::X));
+                        }
+                        let elem = LogicVec { width: elem_width, bits: bits.clone() };
+                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        for j in 0..elem_width {
+                            if bits.get(j) == Some(&LogicVal::One) {
+                                result.bits[j] = match result.bits[j] {
+                                    LogicVal::Zero => LogicVal::One,
+                                    LogicVal::One => LogicVal::Zero,
+                                    other => other,
+                                };
+                            }
+                        }
+                    }
+                    Ok(result)
+                } else {
+                    Ok(LogicVec::fill(LogicVal::Zero, elem_width.max(1)))
+                }
+            }
+            // --- Ordering methods ---
+            "min" => {
+                let lv = self.state.read_signal(sig_id).clone();
+                let elem_width = sig.elem_width;
+                if elem_width > 0 && lv.width >= elem_width {
+                    let count = lv.width / elem_width;
+                    let mut min_val = u64::MAX;
+                    for i in 0..count {
+                        let mut bits = Vec::with_capacity(elem_width);
+                        for j in 0..elem_width {
+                            bits.push(lv.bits[i * elem_width + j]);
+                        }
+                        let elem = LogicVec { width: elem_width, bits };
+                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        let v = elem.to_u64();
+                        if v < min_val { min_val = v; }
+                    }
+                    Ok(LogicVec::from_u64(min_val, elem_width))
+                } else {
+                    Ok(LogicVec::new(1))
+                }
+            }
+            "max" => {
+                let lv = self.state.read_signal(sig_id).clone();
+                let elem_width = sig.elem_width;
+                if elem_width > 0 && lv.width >= elem_width {
+                    let count = lv.width / elem_width;
+                    let mut max_val: u64 = 0;
+                    for i in 0..count {
+                        let mut bits = Vec::with_capacity(elem_width);
+                        for j in 0..elem_width {
+                            bits.push(lv.bits[i * elem_width + j]);
+                        }
+                        let elem = LogicVec { width: elem_width, bits };
+                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        let v = elem.to_u64();
+                        if v > max_val { max_val = v; }
+                    }
+                    Ok(LogicVec::from_u64(max_val, elem_width))
+                } else {
+                    Ok(LogicVec::new(1))
+                }
+            }
+            "unique" => {
+                let lv = self.state.read_signal(sig_id).clone();
+                let elem_width = sig.elem_width;
+                if elem_width > 0 && lv.width >= elem_width {
+                    let count = lv.width / elem_width;
+                    let mut seen = std::collections::HashSet::new();
+                    let mut new_bits = Vec::new();
+                    for i in 0..count {
+                        let mut bits = Vec::with_capacity(elem_width);
+                        for j in 0..elem_width {
+                            bits.push(lv.bits[i * elem_width + j]);
+                        }
+                        let elem = LogicVec { width: elem_width, bits };
+                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        if seen.insert(elem.to_u64()) {
+                            for j in 0..elem_width {
+                                let idx = i * elem_width + j;
+                                new_bits.push(lv.bits.get(idx).copied().unwrap_or(LogicVal::X));
+                            }
+                        }
+                    }
+                    let result = LogicVec { width: new_bits.len(), bits: new_bits };
+                    self.state.write_signal(sig_id, result);
+                }
+                Ok(LogicVec::new(0))
+            }
+            // --- Locator methods ---
+            "find" | "find_first" | "find_last" => {
+                let lv = self.state.read_signal(sig_id).clone();
+                let elem_width = sig.elem_width;
+                if elem_width > 0 && lv.width >= elem_width {
+                    let count = lv.width / elem_width;
+                    if with_clause.is_some() {
+                        // If with_clause is provided, iterate and find matching elements
+                        let mut result_elems: Vec<LogicVec> = Vec::new();
+                        if method == "find_last" {
+                            for i in (0..count).rev() {
+                                let mut bits = Vec::with_capacity(elem_width);
+                                for j in 0..elem_width {
+                                    bits.push(lv.bits[i * elem_width + j]);
+                                }
+                                let elem = LogicVec { width: elem_width, bits };
+                                if self.check_with_clause(with_clause, &elem)? {
+                                    result_elems.push(elem);
+                                }
+                            }
+                        } else {
+                            for i in 0..count {
+                                let mut bits = Vec::with_capacity(elem_width);
+                                for j in 0..elem_width {
+                                    bits.push(lv.bits[i * elem_width + j]);
+                                }
+                                let elem = LogicVec { width: elem_width, bits };
+                                if self.check_with_clause(with_clause, &elem)? {
+                                    result_elems.push(elem);
+                                    if method == "find_first" { break; }
+                                }
+                            }
+                        }
+                        let total_width = result_elems.len() * elem_width;
+                        let mut all_bits = Vec::with_capacity(total_width);
+                        for e in &result_elems {
+                            all_bits.extend(e.bits.iter());
+                        }
+                        return Ok(LogicVec { width: total_width, bits: all_bits });
+                    }
+                    if method == "find_first" && count > 0 {
+                        let mut bits = Vec::with_capacity(elem_width);
+                        for j in 0..elem_width {
+                            bits.push(lv.bits[j]);
+                        }
+                        return Ok(LogicVec { width: elem_width, bits });
+                    }
+                    if method == "find_last" && count > 0 {
+                        let start = (count - 1) * elem_width;
+                        let mut bits = Vec::with_capacity(elem_width);
+                        for j in 0..elem_width {
+                            bits.push(lv.bits[start + j]);
+                        }
+                        return Ok(LogicVec { width: elem_width, bits });
+                    }
+                    // "find" returns all elements (same as array)
+                    return Ok(lv);
+                }
+                Ok(LogicVec::new(0))
+            }
+            "find_index" | "find_first_index" | "find_last_index" => {
+                let lv = self.state.read_signal(sig_id).clone();
+                let elem_width = sig.elem_width;
+                if elem_width > 0 && lv.width >= elem_width {
+                    let count = lv.width / elem_width;
+                    if with_clause.is_some() {
+                        let mut indices: Vec<u64> = Vec::new();
+                        if method == "find_last_index" {
+                            for i in (0..count).rev() {
+                                let mut bits = Vec::with_capacity(elem_width);
+                                for j in 0..elem_width {
+                                    bits.push(lv.bits[i * elem_width + j]);
+                                }
+                                let elem = LogicVec { width: elem_width, bits };
+                                if self.check_with_clause(with_clause, &elem)? {
+                                    indices.push(i as u64);
+                                }
+                            }
+                        } else {
+                            for i in 0..count {
+                                let mut bits = Vec::with_capacity(elem_width);
+                                for j in 0..elem_width {
+                                    bits.push(lv.bits[i * elem_width + j]);
+                                }
+                                let elem = LogicVec { width: elem_width, bits };
+                                if self.check_with_clause(with_clause, &elem)? {
+                                    indices.push(i as u64);
+                                    if method == "find_first_index" { break; }
+                                }
+                            }
+                        }
+                        let mut bits = Vec::new();
+                        for idx in &indices {
+                            let idx_vec = LogicVec::from_u64(*idx, 32);
+                            bits.extend(idx_vec.bits.iter());
+                        }
+                        return Ok(LogicVec { width: bits.len(), bits });
+                    }
+                    // Return indices as 32-bit values packed into result
+                    if method == "find_first_index" && count > 0 {
+                        return Ok(LogicVec::from_u64(0, 32));
+                    }
+                    if method == "find_last_index" && count > 0 {
+                        return Ok(LogicVec::from_u64((count - 1) as u64, 32));
+                    }
+                    // "find_index" returns all indices (0..count) as a packed queue
+                    let mut bits = Vec::new();
+                    for i in 0..count {
+                        let idx_vec = LogicVec::from_u64(i as u64, 32);
+                        bits.extend(idx_vec.bits.iter());
+                    }
+                    return Ok(LogicVec { width: bits.len(), bits });
                 }
                 Ok(LogicVec::new(0))
             }

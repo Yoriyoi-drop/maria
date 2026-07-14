@@ -203,6 +203,15 @@ pub enum Stmt {
         processes: Vec<Stmt>,
         join_type: JoinType,
     },
+    RandCase {
+        items: Vec<RandCaseItem>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RandCaseItem {
+    pub weight: u64,
+    pub stmt: Box<Stmt>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
