@@ -188,8 +188,14 @@ pub fn const_eval_with_params(expr: &Expr, param_vals: &HashMap<String, i64>) ->
                 Ok(val)
             } else if name == "1" {
                 Ok(1)
+            } else if name.starts_with('$') {
+                Err(format!("cannot evaluate system function '{}' in constant context", name))
             } else {
-                Err(format!("cannot evaluate parameter '{}'", name))
+                // Unknown identifier - return 0 with a warning
+                // This allows generate blocks and parameter expressions to proceed
+                // even when imported package parameters are not available.
+                eprintln!("warning: '{}' not found in parameter context, using 0", name);
+                Ok(0)
             }
         }
         Expr::UnaryOp { op: UnaryOp::Minus, expr: inner } => {
@@ -362,6 +368,24 @@ pub fn const_eval_with_params(expr: &Expr, param_vals: &HashMap<String, i64>) ->
                 }
             }
             Ok(0)
+        }
+        Expr::BitSelect { expr, index } => {
+            let base_val = const_eval_with_params(expr, param_vals)?;
+            let idx = const_eval_with_params(index, param_vals)?;
+            Ok((base_val >> idx) & 1)
+        }
+        Expr::RangeSelect { expr, msb, lsb } => {
+            let base_val = const_eval_with_params(expr, param_vals)?;
+            let m = const_eval_with_params(msb, param_vals)?;
+            let l = const_eval_with_params(lsb, param_vals)?;
+            let width = (m - l + 1) as usize;
+            if width >= 64 {
+                // For widths >= 64, return as is (can't mask)
+                Ok(base_val >> l)
+            } else {
+                let mask = (1i64 << width) - 1;
+                Ok((base_val >> l) & mask)
+            }
         }
         Expr::FuncCall { name, args } if name == "$clog2" => {
             if let Some(arg) = args.first() {

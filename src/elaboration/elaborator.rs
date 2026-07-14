@@ -1119,13 +1119,19 @@ impl Elaborator {
                             PortConnection::Positional(expr) => {
                                 if let Some(tm) = target_module {
                                     if let Some(port) = tm.ports.get(i) {
-                                        let sig_id = self.elaborate_expr_to_signal(expr, &signal_map)?;
+                                        let sig_id = self.instance_port_expr_to_signal(
+                                            expr, &signal_map, &mut signals, &mut next_id,
+                                            &mut processes, &format!("{}.{}", inst.instance_name, port.name)
+                                        )?;
                                         port_map.insert(port.name.clone(), sig_id);
                                     }
                                 }
                             }
                             PortConnection::Named { port, expr } => {
-                                let sig_id = self.elaborate_expr_to_signal(expr, &signal_map)?;
+                                let sig_id = self.instance_port_expr_to_signal(
+                                    expr, &signal_map, &mut signals, &mut next_id,
+                                    &mut processes, &format!("{}.{}", inst.instance_name, port)
+                                )?;
                                 port_map.insert(port.clone(), sig_id);
                             }
                         }
@@ -3004,6 +3010,67 @@ impl Elaborator {
             Expr::MemberAccess { .. } => Err("member access cannot resolve to a signal".to_string()),
             _ => Err("expected simple signal identifier".to_string())
         }
+    }
+
+    /// Create a signal from a port connection expression.
+    /// For simple identifiers, resolves directly.
+    /// For compound expressions (e.g. ~clk_i), creates an implicit wire + continuous assign.
+    fn instance_port_expr_to_signal(
+        &self,
+        expr: &Expr,
+        signal_map: &HashMap<String, SignalId>,
+        signals: &mut Vec<SignalInfo>,
+        next_id: &mut SignalId,
+        processes: &mut Vec<Process>,
+        hint_name: &str,
+    ) -> Result<SignalId, String> {
+        // Try simple signal resolution first
+        if let Ok(sid) = self.elaborate_expr_to_signal(expr, signal_map) {
+            return Ok(sid);
+        }
+        // For compound expressions, create an implicit wire
+        let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+        let width_val = compute_expr_width(expr, signal_map, signals, &self.param_vals)?;
+        let width = if width_val > 0 { width_val } else { 1 };
+        // Create a unique implicit signal name
+        let sig_name = format!("__port_{}", hint_name.replace('.', "_"));
+        let sid = *next_id;
+        *next_id += 1;
+        signals.push(SignalInfo {
+            name: sig_name.clone(),
+            width,
+            kind: SignalKind::Wire,
+            net_type: NetType::Wire,
+            multi_driver: false,
+            init_val: crate::ir::LogicVec::fill(crate::ir::LogicVal::Z, width),
+            array_depth: 1,
+            elem_width: width,
+            array_dims: vec![],
+            class_name: None,
+            is_string: false,
+            is_mailbox: false,
+            is_semaphore: false,
+            is_real: false,
+            is_2state: false,
+            is_dynamic: false,
+            is_queue: false,
+            is_signed: false,
+            msb: width - 1,
+            lsb: 0,
+            struct_fields: vec![],
+        });
+        // Add a continuous assignment process
+        let sensitivity = collect_sensitivity(expr, signal_map);
+        processes.push(Process::Combinational {
+            name: format!("port_assign_{}", hint_name.replace('.', "_")),
+            sensitivity,
+            body: vec![IrStmt::BlockingAssign {
+                lhs: IrLValue::Signal(sid, 0),
+                rhs: ir_expr,
+                delay: None,
+            }],
+        });
+        Ok(sid)
     }
 
     fn resolve_typedef_width(&self, dtype: &DataType, range: Option<&ExprRange>) -> usize {

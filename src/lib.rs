@@ -1339,7 +1339,7 @@ endclass
             if tok == Token::Eof { break; }
             tokens.push((tok, line, col));
         }
-        let mut parser = crate::parser::Parser::new(tokens);
+        let mut parser = crate::parser::Parser::new(tokens, "test");
         let design = parser.parse_design().unwrap();
         assert!(design.classes.len() >= 1, "should have parsed at least one class");
         let mod_names: Vec<_> = design.modules.iter().map(|m| m.name.clone()).collect();
