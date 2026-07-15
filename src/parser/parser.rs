@@ -103,6 +103,9 @@ impl Parser {
         let mut packages = Vec::new();
         let mut interfaces = Vec::new();
         let mut unit_imports = Vec::new();
+        let mut binds = Vec::new();
+        let mut clocking_blocks = Vec::new();
+        let mut configs = Vec::new();
         // First pass: collect all class names
         let saved_pos = self.pos;
                 while self.peek() != &Token::Eof {
@@ -163,6 +166,27 @@ impl Parser {
                 // Skip covergroup in first pass — collect name
                 let cg = self.parse_covergroup()?;
                 self.class_names.push(cg.name.clone());
+            } else if self.peek() == &Token::Bind {
+                // Skip bind in first pass
+                self.advance(); // consume 'bind'
+                while self.peek() != &Token::Semi && self.peek() != &Token::Eof {
+                    self.advance();
+                }
+                if self.peek() == &Token::Semi { self.advance(); }
+            } else if self.peek() == &Token::Clocking {
+                // Skip clocking block in first pass
+                self.advance(); // consume 'clocking'
+                while self.peek() != &Token::EndClocking && self.peek() != &Token::Eof {
+                    self.advance();
+                }
+                if self.peek() == &Token::EndClocking { self.advance(); }
+            } else if self.peek() == &Token::Config {
+                // Skip config in first pass
+                self.advance(); // consume 'config'
+                while self.peek() != &Token::EndConfig && self.peek() != &Token::Eof {
+                    self.advance();
+                }
+                if self.peek() == &Token::EndConfig { self.advance(); }
             } else {
                 // Gracefully skip unknown top-level constructs
                 eprintln!("warning: skipping top-level construct at line {}: {}", self.peek_line(), self.peek());
@@ -223,6 +247,21 @@ impl Parser {
                         m.items.push(ModuleItem::Covergroup(cg));
                     }
                 }
+                Token::Bind => {
+                    // bind target_module_name module_name #(...) inst_name (...);
+                    self.advance(); // consume 'bind'
+                    let target = self.expect_ident()?;
+                    let instance = self.parse_instance()?;
+                    binds.push(BindDecl { target, instance });
+                }
+                Token::Clocking => {
+                    let cb = self.parse_clocking_block()?;
+                    clocking_blocks.push(cb);
+                }
+                Token::Config => {
+                    let cfg = self.parse_config_decl()?;
+                    configs.push(cfg);
+                }
                 _ => {
                     if matches!(self.peek(), Token::Wire | Token::Wand | Token::Wor |
                         Token::Tri | Token::TriAnd | Token::TriOr | Token::Tri0 | Token::Tri1 |
@@ -240,7 +279,280 @@ impl Parser {
                 }
             }
         }
-        Ok(Design { modules, classes, packages, interfaces, top_module: None, unit_imports })
+        Ok(Design { modules, classes, packages, interfaces, binds, clocking_blocks, configs, top_module: None, unit_imports })
+    }
+
+    fn parse_clocking_block(&mut self) -> Result<ClockingBlock, String> {
+        self.advance(); // consume 'clocking'
+        let name = self.expect_ident()?;
+
+        // Parse clock event: @(posedge clk) or @(negedge clk) or @(clk)
+        self.expect(Token::At)?;
+        self.expect(Token::LParen)?;
+        let clock_event = if self.peek() == &Token::PosEdge {
+            self.advance();
+            let sig = self.expect_ident()?;
+            ClockEvent::Posedge(sig)
+        } else if self.peek() == &Token::NegEdge {
+            self.advance();
+            let sig = self.expect_ident()?;
+            ClockEvent::Negedge(sig)
+        } else {
+            let sig = self.expect_ident()?;
+            ClockEvent::Edge(sig)
+        };
+        self.expect(Token::RParen)?;
+        self.skip_semi();
+
+        let mut default_input_skew = None;
+        let mut default_output_skew = None;
+        let mut items = Vec::new();
+
+        loop {
+            match self.peek() {
+                Token::EndClocking => {
+                    self.advance();
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
+                    break;
+                }
+                Token::Default => {
+                    // default input/output #skew;
+                    self.advance();
+                    if self.peek() == &Token::Input {
+                        self.advance();
+                        if self.peek() == &Token::Hash {
+                            self.advance();
+                            if let Token::Number { value, .. } = self.peek().clone() {
+                                self.advance();
+                                default_input_skew = value.parse::<u64>().ok();
+                            }
+                        }
+                        self.skip_semi();
+                    } else if self.peek() == &Token::Output {
+                        self.advance();
+                        if self.peek() == &Token::Hash {
+                            self.advance();
+                            if let Token::Number { value, .. } = self.peek().clone() {
+                                self.advance();
+                                default_output_skew = value.parse::<u64>().ok();
+                            }
+                        }
+                        self.skip_semi();
+                    } else {
+                        self.skip_semi();
+                    }
+                }
+                Token::Input => {
+                    self.advance();
+                    let mut signals = Vec::new();
+                    loop {
+                        if self.peek() == &Token::Semi || self.peek() == &Token::Eof {
+                            break;
+                        }
+                        if self.peek() == &Token::Hash {
+                            // skew override
+                            self.advance();
+                            if let Token::Number { value, .. } = self.peek().clone() {
+                                self.advance();
+                                let _skew = value.parse::<u64>().ok();
+                            }
+                        }
+                        if let Token::Ident(s) = self.peek().clone() {
+                            self.advance();
+                            signals.push(s);
+                        } else {
+                            break;
+                        }
+                        if self.peek() == &Token::Comma {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.skip_semi();
+                    items.push(ClockingItem::Input { signals, skew: None });
+                }
+                Token::Output => {
+                    self.advance();
+                    let mut signals = Vec::new();
+                    loop {
+                        if self.peek() == &Token::Semi || self.peek() == &Token::Eof {
+                            break;
+                        }
+                        if self.peek() == &Token::Hash {
+                            self.advance();
+                            if let Token::Number { value, .. } = self.peek().clone() {
+                                self.advance();
+                                let _skew = value.parse::<u64>().ok();
+                            }
+                        }
+                        if let Token::Ident(s) = self.peek().clone() {
+                            self.advance();
+                            signals.push(s);
+                        } else {
+                            break;
+                        }
+                        if self.peek() == &Token::Comma {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.skip_semi();
+                    items.push(ClockingItem::Output { signals, skew: None });
+                }
+                Token::Inout => {
+                    self.advance();
+                    let mut signals = Vec::new();
+                    loop {
+                        if self.peek() == &Token::Semi || self.peek() == &Token::Eof {
+                            break;
+                        }
+                        if let Token::Ident(s) = self.peek().clone() {
+                            self.advance();
+                            signals.push(s);
+                        } else {
+                            break;
+                        }
+                        if self.peek() == &Token::Comma {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.skip_semi();
+                    items.push(ClockingItem::InputOutput { signals });
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        Ok(ClockingBlock {
+            name,
+            clock_event,
+            default_input_skew,
+            default_output_skew,
+            items,
+        })
+    }
+
+    fn parse_config_decl(&mut self) -> Result<ConfigDecl, String> {
+        self.advance(); // consume 'config'
+        let name = self.expect_ident()?;
+        self.skip_semi();
+
+        let mut design_top = None;
+        let mut default_liblist = None;
+        let mut rules = Vec::new();
+
+        loop {
+            match self.peek() {
+                Token::EndConfig => {
+                    self.advance();
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
+                    break;
+                }
+                Token::Design => {
+                    self.advance();
+                    if let Token::Ident(name) = self.peek().clone() {
+                        self.advance();
+                        design_top = Some(name);
+                    }
+                    self.skip_semi();
+                }
+                Token::Default => {
+                    self.advance();
+                    if self.peek() == &Token::Liblist {
+                        self.advance();
+                        if let Token::Ident(name) = self.peek().clone() {
+                            self.advance();
+                            default_liblist = Some(name);
+                        }
+                    }
+                    self.skip_semi();
+                }
+                Token::Instance => {
+                    self.advance();
+                    let mut instance_path = String::new();
+                    if let Token::Ident(s) = self.peek().clone() {
+                        self.advance();
+                        instance_path = s;
+                    }
+                    // Handle hierarchical paths: top.sub1
+                    while self.peek() == &Token::Dot {
+                        self.advance();
+                        if let Token::Ident(s) = self.peek().clone() {
+                            self.advance();
+                            instance_path.push('.');
+                            instance_path.push_str(&s);
+                        }
+                    }
+                    if self.peek() == &Token::Liblist {
+                        self.advance();
+                        if let Token::Ident(lib) = self.peek().clone() {
+                            self.advance();
+                            rules.push(ConfigRule::InstanceLiblist {
+                                instance: instance_path,
+                                liblist: lib,
+                            });
+                        }
+                    }
+                    self.skip_semi();
+                }
+                Token::Cell => {
+                    self.advance();
+                    let mut cell_name = String::new();
+                    if let Token::Ident(s) = self.peek().clone() {
+                        self.advance();
+                        cell_name = s;
+                    }
+                    if self.peek() == &Token::Liblist {
+                        self.advance();
+                        if let Token::Ident(lib) = self.peek().clone() {
+                            self.advance();
+                            rules.push(ConfigRule::CellLiblist {
+                                cell: cell_name,
+                                liblist: lib,
+                            });
+                        }
+                    }
+                    self.skip_semi();
+                }
+                Token::Use => {
+                    self.advance();
+                    if self.peek() == &Token::Liblist {
+                        self.advance();
+                        if let Token::Ident(lib) = self.peek().clone() {
+                            self.advance();
+                            rules.push(ConfigRule::UseLiblist { liblist: lib });
+                        }
+                    }
+                    self.skip_semi();
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        Ok(ConfigDecl {
+            name,
+            design_top,
+            default_liblist,
+            rules,
+        })
     }
 
     fn parse_package_decl(&mut self) -> Result<PackageDecl, String> {

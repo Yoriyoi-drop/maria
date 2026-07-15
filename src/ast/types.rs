@@ -12,8 +12,32 @@ pub struct Design {
     pub classes: Vec<ClassDecl>,
     pub packages: Vec<PackageDecl>,
     pub interfaces: Vec<Interface>,
+    pub binds: Vec<BindDecl>,
+    pub clocking_blocks: Vec<ClockingBlock>,
+    pub configs: Vec<ConfigDecl>,
     pub top_module: Option<String>,
     pub unit_imports: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConfigDecl {
+    pub name: String,
+    pub design_top: Option<String>,
+    pub default_liblist: Option<String>,
+    pub rules: Vec<ConfigRule>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConfigRule {
+    InstanceLiblist { instance: String, liblist: String },
+    CellLiblist { cell: String, liblist: String },
+    UseLiblist { liblist: String },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindDecl {
+    pub target: String,
+    pub instance: ModuleInstance,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -418,6 +442,7 @@ pub enum ModuleItem {
     Import { package: String, item: String },
     DpiImport(DpiImport),
     Param(ParamDecl),
+    Clocking(ClockingBlock),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -486,6 +511,39 @@ pub enum PackageItem {
     Typedef(TypedefDecl),
     Param(ParamDecl),
     Import { package: String, item: String },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClockingBlock {
+    pub name: String,
+    pub clock_event: ClockEvent,
+    pub default_input_skew: Option<u64>,
+    pub default_output_skew: Option<u64>,
+    pub items: Vec<ClockingItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClockEvent {
+    Posedge(String),
+    Negedge(String),
+    Edge(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClockingItem {
+    Input {
+        signals: Vec<String>,
+        skew: Option<u64>,
+    },
+    Output {
+        signals: Vec<String>,
+        skew: Option<u64>,
+    },
+    InputOutput {
+        signals: Vec<String>,
+    },
+    DefaultInputSkew(u64),
+    DefaultOutputSkew(u64),
 }
 
 #[derive(Debug, Clone, PartialEq)]

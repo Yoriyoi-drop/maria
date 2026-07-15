@@ -83,6 +83,12 @@ pub enum Token {
     // Package
     Package, EndPackage, Import,
     Mailbox, Semaphore,
+    // Bind
+    Bind,
+    // Clocking
+    Clocking, EndClocking,
+    // Config
+    Config, EndConfig, Design, Liblist, Cell, Use, Instance,
     // Coverage
     Covergroup, EndGroup, Coverpoint, Cross, Bins, IllegalBins, IgnoreBins, Option_,
     // Parameter type
@@ -180,6 +186,16 @@ impl fmt::Display for Token {
             Token::Package => write!(f, "package"),
             Token::EndPackage => write!(f, "endpackage"),
             Token::Import => write!(f, "import"),
+            Token::Bind => write!(f, "bind"),
+            Token::Clocking => write!(f, "clocking"),
+            Token::EndClocking => write!(f, "endclocking"),
+            Token::Config => write!(f, "config"),
+            Token::EndConfig => write!(f, "endconfig"),
+            Token::Design => write!(f, "design"),
+            Token::Liblist => write!(f, "liblist"),
+            Token::Cell => write!(f, "cell"),
+            Token::Use => write!(f, "use"),
+            Token::Instance => write!(f, "instance"),
             Token::Covergroup => write!(f, "covergroup"),
             Token::EndGroup => write!(f, "endgroup"),
             Token::Coverpoint => write!(f, "coverpoint"),
@@ -513,6 +529,16 @@ impl Lexer {
             "package" => Token::Package,
             "endpackage" => Token::EndPackage,
             "import" => Token::Import,
+            "bind" => Token::Bind,
+            "clocking" => Token::Clocking,
+            "endclocking" => Token::EndClocking,
+            "config" => Token::Config,
+            "endconfig" => Token::EndConfig,
+            "design" => Token::Design,
+            "liblist" => Token::Liblist,
+            "cell" => Token::Cell,
+            "use" => Token::Use,
+            "instance" => Token::Instance,
             "covergroup" => Token::Covergroup,
             "endgroup" => Token::EndGroup,
             "coverpoint" => Token::Coverpoint,

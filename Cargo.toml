@@ -7,6 +7,7 @@ description = "RTL Simulator untuk SystemVerilog - dibangun dengan Rust"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 rand = "0.8"
+wavefst = { version = "0.1", default-features = false, features = ["gzip"] }
 
 [profile.release]
 opt-level = 3

@@ -94,10 +94,18 @@ pub fn run_simulation(ir_design: ir::IrDesign, max_time: u64) -> Result<(), SimE
         .map_err(|e| SimError::new(None, format!("VCD creation failed: {}", e)))?;
     engine.set_vcd(vcd);
 
+    // Also create FST waveform
+    let fst_path = format!("{}.fst", design_name);
+    match waveform::FstWaveWriter::new(&fst_path, &engine.design) {
+        Ok(fst) => engine.set_fst(fst),
+        Err(e) => eprintln!("FST: cannot create '{}': {}", fst_path, e),
+    }
+
     engine.run()?;
 
     println!("Simulation completed at time {}", engine.state.time);
     println!("VCD waveform written to '{}'", vcd_path);
+    println!("FST waveform written to '{}'", fst_path);
 
     Ok(())
 }

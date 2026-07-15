@@ -172,7 +172,7 @@ impl Debugger {
         out.push_str(&"-".repeat(8 + w + 2));
         out.push('\n');
         let start = if history.len() > max_entries { history.len() - max_entries } else { 0 };
-        for (cycle, val) in &history[start..] {
+        for (cycle, val) in history.iter().skip(start) {
             out.push_str(&format!("{:<8} {:>width$}\n", cycle, format!("{}", val), width = w));
         }
         out

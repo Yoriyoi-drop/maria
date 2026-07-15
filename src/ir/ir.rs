@@ -176,6 +176,8 @@ pub struct SignalInfo {
     pub lsb: usize,
     pub struct_fields: Vec<StructFieldInfo>,
     pub packed_dims: Vec<usize>,
+    pub delay_rise: Option<u64>,
+    pub delay_fall: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

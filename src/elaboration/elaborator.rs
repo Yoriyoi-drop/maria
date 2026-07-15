@@ -86,6 +86,16 @@ impl Elaborator {
     }
 
     pub fn elaborate(&mut self, top_module: Option<&str>) -> Result<IrDesign, String> {
+        // Process bind declarations: add bound instances to target modules
+        let binds = std::mem::take(&mut self.design.binds);
+        for bind in &binds {
+            if let Some(target_module) = self.design.modules.iter_mut().find(|m| m.name == bind.target) {
+                target_module.items.push(ModuleItem::Instance(bind.instance.clone()));
+            } else {
+                eprintln!("warning: bind target '{}' not found", bind.target);
+            }
+        }
+
         // Inline function calls in all modules
         for module in &mut self.design.modules {
             let temps = crate::ast::inline::inline_func_calls_in_module(module)?;
@@ -170,7 +180,7 @@ impl Elaborator {
                         msb: if is_real { 63 } else { 0 },
                         lsb: 0,
                         struct_fields: vec![],
-                        packed_dims: vec![],
+                        packed_dims: vec![], delay_rise: None, delay_fall: None,
                     });
                     continue;
                     }
@@ -204,7 +214,7 @@ impl Elaborator {
                         msb: if elem_width > 0 { elem_width - 1 } else { 0 },
                         lsb: 0,
                         struct_fields: vec![],
-                        packed_dims: vec![],
+                        packed_dims: vec![], delay_rise: None, delay_fall: None,
                     });
                 }
             }
@@ -671,7 +681,7 @@ impl Elaborator {
                     msb,
                     lsb,
                     struct_fields: vec![],
-                    packed_dims: vec![],
+                    packed_dims: vec![], delay_rise: None, delay_fall: None,
                 });
                 sid
             }
@@ -757,7 +767,7 @@ impl Elaborator {
                         msb: if is_real { 63 } else { 0 },
                         lsb: 0,
                         struct_fields: vec![],
-                        packed_dims: vec![],
+                        packed_dims: vec![], delay_rise: None, delay_fall: None,
                     });
                     continue;
                 }
@@ -792,7 +802,7 @@ impl Elaborator {
                     msb: 0,
                     lsb: 0,
                     struct_fields: vec![],
-                    packed_dims: vec![],
+                    packed_dims: vec![], delay_rise: None, delay_fall: None,
                 });
             }
                 let dtype_width = self.resolve_type_width(&decl.dtype)?;
@@ -1521,6 +1531,8 @@ impl Elaborator {
                         lsb: sig.lsb,
                     struct_fields: sig.struct_fields.clone(),
                     packed_dims: sig.packed_dims.clone(),
+                    delay_rise: sig.delay_rise,
+                    delay_fall: sig.delay_fall,
                 });
                     // Also add to hier_signal_map: internal signals already have the right name in flat list
                     hier_signal_map.insert(
@@ -3138,7 +3150,7 @@ impl Elaborator {
             msb: width - 1,
             lsb: 0,
             struct_fields: vec![],
-            packed_dims: vec![],
+            packed_dims: vec![], delay_rise: None, delay_fall: None,
         });
         // Add a continuous assignment process
         let sensitivity = collect_sensitivity(expr, signal_map);

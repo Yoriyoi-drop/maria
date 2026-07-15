@@ -50,6 +50,10 @@ struct Cli {
     #[arg(short = 'f', long = "filelist")]
     filelist: Option<String>,
 
+    /// Pass plusarg (NAME=VALUE)
+    #[arg(long = "plusarg", num_args = 1)]
+    plusargs: Vec<String>,
+
     /// Dump all signal values at each timestep
     #[arg(long = "dump-all")]
     dump_all: bool,
@@ -119,6 +123,10 @@ struct Cli {
     /// Print timeline entries count
     #[arg(long = "timeline-len", default_value = "20")]
     timeline_len: usize,
+
+    /// Export coverage to UCIS XML file (default: <module>.ucis.xml)
+    #[arg(long = "coverage-ucis")]
+    coverage_ucis: Option<String>,
 }
 
 fn main() {
@@ -235,6 +243,15 @@ fn run(cli: Cli) -> Result<(), SimError> {
     engine.debug_mode = debug_mode;
     engine.snapshot_interval = cli.snap_interval;
 
+    // Apply plusargs
+    for pa in &cli.plusargs {
+        if let Some((key, val)) = pa.split_once('=') {
+            engine.plusargs.insert(key.to_string(), val.to_string());
+        } else {
+            engine.plusargs.insert(pa.clone(), String::new());
+        }
+    }
+
     // Apply breakpoints
     for c in &cli.break_cycle {
         engine.breakpoints.push(Breakpoint::Cycle(*c));
@@ -316,6 +333,19 @@ fn run(cli: Cli) -> Result<(), SimError> {
     }
 
     println!("VCD waveform written to '{}'", vcd_path);
+
+    // UCIS coverage export
+    if let Some(ref ucis_path) = cli.coverage_ucis {
+        let path = if ucis_path.is_empty() {
+            format!("{}.ucis.xml", debugger.engine.design.top.name)
+        } else {
+            ucis_path.clone()
+        };
+        match debugger.engine.export_coverage_ucis(&path) {
+            Ok(()) => println!("UCIS coverage written to '{}'", path),
+            Err(e) => eprintln!("UCIS export failed: {}", e),
+        }
+    }
 
     Ok(())
 }

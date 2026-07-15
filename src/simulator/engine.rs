@@ -2,14 +2,18 @@ use crate::ir::*;
 use crate::simulator::state::SimulationState;
 use crate::simulator::value::*;
 use crate::simulator::types::*;
+use crate::simulator::sdf::SdfData;
 use super::util::*;
 use crate::waveform::VcdWriter;
+use crate::waveform::FstWaveWriter;
 use crate::ast::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use rand::Rng;
 use rand::SeedableRng;
 use std::fmt;
+
+const MAX_LOOP_ITER: usize = 10_000_000;
 
 pub struct SimulationEngine {
     pub state: SimulationState,
@@ -19,6 +23,7 @@ pub struct SimulationEngine {
     events: Vec<Vec<RegionEvent>>,
     nba_pending: Vec<(IrLValue, LogicVec)>,
     vcd: Option<VcdWriter>,
+    fst: Option<FstWaveWriter>,
     current_this: Option<ObjId>,
     method_locals: Vec<HashMap<String, LogicVec>>,
     current_method: Option<String>,
@@ -51,6 +56,7 @@ pub struct SimulationEngine {
     uvm_analysis_port_data: HashMap<ObjId, UvmAnalysisPortData>,
     uvm_analysis_imp_data: HashMap<ObjId, UvmAnalysisImpData>,
     uvm_config_db_data: HashMap<(String, String), LogicVec>,
+    sdf_timing_checks: Vec<crate::simulator::sdf::TimingCheck>,
     uvm_resource_db_data: HashMap<(String, String), LogicVec>,
     factory_type_overrides: HashMap<String, String>,
     root_test_obj_id: Option<ObjId>,
@@ -60,10 +66,11 @@ pub struct SimulationEngine {
     pub(crate) cover_hits: HashMap<String, u64>,
     pub(crate) cover_total: HashMap<String, u64>,
     pub(crate) cover_bins: HashMap<String, HashMap<String, u64>>,
+    pub plusargs: HashMap<String, String>,
     pub debug_mode: DebugMode,
     pub breakpoints: Vec<Breakpoint>,
     pub watchpoints: Vec<Watchpoint>,
-    pub signal_history: HashMap<String, Vec<(u64, LogicVec)>>,
+    pub signal_history: HashMap<String, VecDeque<(u64, LogicVec)>>,
     pub snapshots: Vec<StateSnapshot>,
     pub paused: bool,
     pub step_mode: StepMode,
@@ -83,6 +90,7 @@ impl SimulationEngine {
             events: (0..max_t.max(1000)).map(|_| Vec::new()).collect(),
             nba_pending: Vec::new(),
             vcd: None,
+            fst: None,
             current_this: None,
             method_locals: Vec::new(),
             current_method: None,
@@ -115,6 +123,7 @@ impl SimulationEngine {
             uvm_analysis_port_data: HashMap::new(),
             uvm_analysis_imp_data: HashMap::new(),
             uvm_config_db_data: HashMap::new(),
+            sdf_timing_checks: Vec::new(),
             uvm_resource_db_data: HashMap::new(),
             factory_type_overrides: HashMap::new(),
             root_test_obj_id: None,
@@ -124,6 +133,7 @@ impl SimulationEngine {
             cover_hits: HashMap::new(),
             cover_total: HashMap::new(),
             cover_bins: HashMap::new(),
+            plusargs: HashMap::new(),
             debug_mode: DebugMode::Normal,
             breakpoints: Vec::new(),
             watchpoints: Vec::new(),
@@ -138,6 +148,10 @@ impl SimulationEngine {
 
     pub fn set_vcd(&mut self, vcd: VcdWriter) {
         self.vcd = Some(vcd);
+    }
+
+    pub fn set_fst(&mut self, fst: FstWaveWriter) {
+        self.fst = Some(fst);
     }
 
     pub fn run(&mut self) -> Result<(), String> {
@@ -156,6 +170,7 @@ impl SimulationEngine {
             self.signal_snapshot = Some(snapshot);
 
             self.dump_vcd_time()?;
+            self.dump_fst_time()?;
 
             // ── IEEE 1800 stratified event loop ──
             let mut delta_count = 0u64;
@@ -329,6 +344,7 @@ impl SimulationEngine {
             // ── Postponed region: $strobe, $monitor, VCD ──
             self.process_strobe()?;
             self.dump_vcd_state()?;
+            self.dump_fst_state()?;
             self.check_monitor()?;
 
             // ── Debug check at start of cycle ──
@@ -381,11 +397,11 @@ impl SimulationEngine {
             if let Some(id) = id {
                 let val = self.state.read_signal(id).clone();
                 self.signal_history.entry(sig.name.clone())
-                    .or_insert_with(Vec::new)
-                    .push((time, val));
+                    .or_insert_with(VecDeque::new)
+                    .push_back((time, val));
                 if let Some(hist) = self.signal_history.get(&sig.name) {
                     if hist.len() > 100000 {
-                        self.signal_history.get_mut(&sig.name).unwrap().remove(0);
+                        self.signal_history.get_mut(&sig.name).unwrap().pop_front();
                     }
                 }
             }
@@ -500,6 +516,13 @@ impl SimulationEngine {
         Ok(())
     }
 
+    fn dump_fst_time(&mut self) -> Result<(), String> {
+        if let Some(ref mut fst) = self.fst {
+            fst.write_time_header(self.state.time)?;
+        }
+        Ok(())
+    }
+
     fn check_monitor(&mut self) -> Result<(), String> {
         if let Some(ref args) = self.monitor_args.clone() {
             let new_vals: Vec<LogicVec> = args.iter()
@@ -552,6 +575,13 @@ impl SimulationEngine {
     fn dump_vcd_state(&mut self) -> Result<(), String> {
         if let Some(ref mut vcd) = self.vcd {
             vcd.dump_state(&self.design, &self.state.signals)?;
+        }
+        Ok(())
+    }
+
+    fn dump_fst_state(&mut self) -> Result<(), String> {
+        if let Some(ref mut fst) = self.fst {
+            fst.dump_state(&self.design, &self.state.signals)?;
         }
         Ok(())
     }
@@ -671,6 +701,109 @@ impl SimulationEngine {
                 }
             }
         }
+    }
+
+    pub fn annotate_sdf(&mut self, sdf: &SdfData) -> Result<(), String> {
+        // Apply cell delays to signals (simplified annotation)
+        for (_, cell_delay) in &sdf.cell_delays {
+            // Try to apply delays to the first matching signal
+            if let Some(rise) = cell_delay.rise {
+                if let Some(sig) = self.design.top.signals.first_mut() {
+                    sig.delay_rise = Some(rise as u64);
+                }
+            }
+            if let Some(fall) = cell_delay.fall {
+                if let Some(sig) = self.design.top.signals.first_mut() {
+                    sig.delay_fall = Some(fall as u64);
+                }
+            }
+        }
+
+        // Apply net delays to signals
+        for (net_name, net_delay) in &sdf.net_delays {
+            if let Some(rise) = net_delay.rise {
+                for sig in &mut self.design.top.signals {
+                    if sig.name == *net_name || sig.name.ends_with(&format!(".{}", net_name)) {
+                        sig.delay_rise = Some(rise as u64);
+                    }
+                }
+            }
+            if let Some(fall) = net_delay.fall {
+                for sig in &mut self.design.top.signals {
+                    if sig.name == *net_name || sig.name.ends_with(&format!(".{}", net_name)) {
+                        sig.delay_fall = Some(fall as u64);
+                    }
+                }
+            }
+        }
+
+        // Store timing checks for later use
+        self.sdf_timing_checks = sdf.timing_checks.clone();
+
+        Ok(())
+    }
+
+    pub fn export_coverage_ucis(&self, path: &str) -> Result<(), String> {
+        if self.design.covergroups.is_empty() {
+            return Ok(());
+        }
+
+        let mut xml = String::new();
+        xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        xml.push_str("<ucis xmlns=\"urn:ucis:0.1\">\n");
+        xml.push_str(&format!("  <scope name=\"{}\" type=\"module\">\n", self.design.top.name));
+
+        for cg in &self.design.covergroups {
+            xml.push_str(&format!("    <covergroup name=\"{}\">\n", cg.name));
+
+            for cp in &cg.coverpoints {
+                let key = format!("{}.{}", cg.name, cp.name);
+                let total = self.cover_total.get(&key).copied().unwrap_or(0);
+                let hits = self.cover_hits.get(&key).copied().unwrap_or(0);
+                let bins = self.cover_bins.get(&key);
+
+                xml.push_str(&format!("      <coverpoint name=\"{}\" total=\"{}\" hits=\"{}\">\n",
+                    cp.name, total, hits));
+
+                if let Some(bins) = bins {
+                    for (bin_key, count) in bins.iter() {
+                        xml.push_str(&format!("        <bin name=\"{}\" hits=\"{}\"/>\n",
+                            escape_xml(bin_key), count));
+                    }
+                }
+
+                xml.push_str("      </coverpoint>\n");
+            }
+
+            for cross in &cg.crosses {
+                let key = format!("{}.{}", cg.name, cross.name);
+                let total = self.cover_total.get(&key).copied().unwrap_or(0);
+                let hits = self.cover_hits.get(&key).copied().unwrap_or(0);
+                let bins = self.cover_bins.get(&key);
+
+                xml.push_str(&format!("      <cross name=\"{}\" total=\"{}\" hits=\"{}\">\n",
+                    cross.name, total, hits));
+
+                if let Some(bins) = bins {
+                    for (bin_key, count) in bins.iter() {
+                        xml.push_str(&format!("        <bin name=\"{}\" hits=\"{}\"/>\n",
+                            escape_xml(bin_key), count));
+                    }
+                }
+
+                xml.push_str("      </cross>\n");
+            }
+
+            xml.push_str("    </covergroup>\n");
+        }
+
+        xml.push_str("  </scope>\n");
+        xml.push_str("</ucis>\n");
+
+        std::fs::write(path, xml)
+            .map_err(|e| format!("cannot write UCIS file '{}': {}", path, e))?;
+
+        Ok(())
     }
 
     fn execute_final_blocks(&mut self) -> Result<(), String> {
@@ -991,6 +1124,33 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::SysCall { name, args: ir_args } => {
+                    // Handle wrapped $value$plusargs / $test$plusargs from elaborator
+                    if name.is_empty() {
+                        if let Some(IrExpr::SysFunc { name: fn_name, args: fn_args }) = ir_args.first() {
+                            if fn_name == "value$plusargs" {
+                                if let Ok(pat_val) = self.evaluate_expr(fn_args.first().unwrap_or(&IrExpr::Const(LogicVec::new(0)))) {
+                                    let pattern = logicvec_to_string(&pat_val);
+                                    let plusargs = self.plusargs.clone();
+                                    for (key, val) in &plusargs {
+                                        if key.starts_with(&pattern) {
+                                            if let Some(var_arg) = fn_args.get(1) {
+                                                let num = if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
+                                                    u64::from_str_radix(hex, 16).unwrap_or(0)
+                                                } else {
+                                                    val.parse::<u64>().unwrap_or(0)
+                                                };
+                                                if let IrExpr::Signal(id, _) = var_arg {
+                                                    self.state.write_signal(*id, LogicVec::from_u64(num, 32));
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                    }
                     if name == "display" || name == "write" {
                         let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, ir_args);
                         print!("{}", msg);
@@ -1234,6 +1394,46 @@ impl SimulationEngine {
                         if let Some(arg) = ir_args.first() {
                             self.evaluate_expr(arg)?;
                         }
+                    } else if name == "value$plusargs" {
+                        let pattern = ir_args.first().and_then(|a| self.evaluate_expr(a).ok()).map(|v| logicvec_to_string(&v)).unwrap_or_default();
+                        let plusargs = self.plusargs.clone();
+                        for (key, val) in &plusargs {
+                            if key.starts_with(&pattern) {
+                                if let Some(var_arg) = ir_args.get(1) {
+                                    let num = if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
+                                        u64::from_str_radix(hex, 16).unwrap_or(0)
+                                    } else {
+                                        val.parse::<u64>().unwrap_or(0)
+                                    };
+                                    if let IrExpr::Signal(id, _) = var_arg {
+                                        self.state.write_signal(*id, LogicVec::from_u64(num, 32));
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    } else if name == "test$plusargs" {
+                        // $test$plusargs in statement context — return value ignored
+                    } else if name == "value$plusargs" {
+                        let pattern = ir_args.first().and_then(|a| self.evaluate_expr(a).ok()).map(|v| logicvec_to_string(&v)).unwrap_or_default();
+                        let plusargs = self.plusargs.clone();
+                        for (key, val) in &plusargs {
+                            if key.starts_with(&pattern) {
+                                if let Some(var_arg) = ir_args.get(1) {
+                                    let num = if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
+                                        u64::from_str_radix(hex, 16).unwrap_or(0)
+                                    } else {
+                                        val.parse::<u64>().unwrap_or(0)
+                                    };
+                                    if let IrExpr::Signal(id, _) = var_arg {
+                                        self.state.write_signal(*id, LogicVec::from_u64(num, 32));
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    } else if name == "test$plusargs" {
+                        // $test$plusargs in statement context — return value ignored
                     } else {
                         eprintln!("warning: unknown system call '{}' ignored", name);
                     }
@@ -1290,7 +1490,13 @@ impl SimulationEngine {
                     if let Some(init_stmt) = init {
                         self.evaluate_block_with_delay_fork(&[*init_stmt.clone()], fork_id)?;
                     }
+                    let mut iter_count = 0usize;
                     loop {
+                        if iter_count >= MAX_LOOP_ITER {
+                            eprintln!("warning: for loop exceeded {} iterations, breaking", MAX_LOOP_ITER);
+                            break;
+                        }
+                        iter_count += 1;
                         if self.disable_pending.is_some() { break; }
                         if self.control_flow.is_some() { self.control_flow = None; break; }
                         let cond_val = self.evaluate_expr(cond)?;
@@ -1311,7 +1517,13 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::LoopWhile { cond, body } => {
+                    let mut iter_count = 0usize;
                     loop {
+                        if iter_count >= MAX_LOOP_ITER {
+                            eprintln!("warning: while loop exceeded {} iterations, breaking", MAX_LOOP_ITER);
+                            break;
+                        }
+                        iter_count += 1;
                         if self.disable_pending.is_some() { break; }
                         if self.control_flow.is_some() { self.control_flow = None; break; }
                         let cond_val = self.evaluate_expr(cond)?;
@@ -1327,7 +1539,13 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::LoopDoWhile { cond, body } => {
+                    let mut iter_count = 0usize;
                     loop {
+                        if iter_count >= MAX_LOOP_ITER {
+                            eprintln!("warning: do-while loop exceeded {} iterations, breaking", MAX_LOOP_ITER);
+                            break;
+                        }
+                        iter_count += 1;
                         if self.disable_pending.is_some() { break; }
                         if self.control_flow.is_some() { self.control_flow = None; break; }
                         let old_loop_cont = self.loop_continuation.take();
@@ -1344,7 +1562,7 @@ impl SimulationEngine {
                 }
                 IrStmt::Repeat { count, body } => {
                     let count_val = self.evaluate_expr(count)?;
-                    let n = count_val.to_u64() as usize;
+                    let n = (count_val.to_u64() as usize).min(MAX_LOOP_ITER);
                     for _ in 0..n {
                         if self.disable_pending.is_some() { break; }
                         if self.control_flow.is_some() { self.control_flow = None; break; }
@@ -2140,6 +2358,25 @@ impl SimulationEngine {
                         if let Some(arg) = ir_args.first() {
                             self.evaluate_expr(arg)?;
                         }
+                    } else if name == "value$plusargs" {
+                        let pattern = ir_args.first().and_then(|a| self.evaluate_expr(a).ok()).map(|v| logicvec_to_string(&v)).unwrap_or_default();
+                        let plusargs = self.plusargs.clone();
+                        for (key, val) in &plusargs {
+                            if key.starts_with(&pattern) {
+                                if let Some(var_arg) = ir_args.get(1) {
+                                    let num = if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
+                                        u64::from_str_radix(hex, 16).unwrap_or(0)
+                                    } else {
+                                        val.parse::<u64>().unwrap_or(0)
+                                    };
+                                    if let IrExpr::Signal(id, _) = var_arg {
+                                        self.state.write_signal(*id, LogicVec::from_u64(num, 32));
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    } else if name == "test$plusargs" {
                     } else {
                         eprintln!("warning: unknown system call '{}' ignored", name);
                     }
@@ -2222,7 +2459,13 @@ impl SimulationEngine {
                     if let Some(init_stmt) = init {
                         self.evaluate_stmt_block(&[*init_stmt.clone()])?;
                     }
+                    let mut iter_count = 0usize;
                     loop {
+                        if iter_count >= MAX_LOOP_ITER {
+                            eprintln!("warning: for loop exceeded {} iterations, breaking", MAX_LOOP_ITER);
+                            break;
+                        }
+                        iter_count += 1;
                         if self.disable_pending.is_some() { break; }
                         if self.control_flow.is_some() { self.control_flow = None; break; }
                         let cond_val = self.evaluate_expr(cond)?;
@@ -2243,7 +2486,13 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::LoopWhile { cond, body } => {
+                    let mut iter_count = 0usize;
                     loop {
+                        if iter_count >= MAX_LOOP_ITER {
+                            eprintln!("warning: while loop exceeded {} iterations, breaking", MAX_LOOP_ITER);
+                            break;
+                        }
+                        iter_count += 1;
                         if self.disable_pending.is_some() { break; }
                         if self.control_flow.is_some() { self.control_flow = None; break; }
                         let cond_val = self.evaluate_expr(cond)?;
@@ -2255,7 +2504,13 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::LoopDoWhile { cond, body } => {
+                    let mut iter_count = 0usize;
                     loop {
+                        if iter_count >= MAX_LOOP_ITER {
+                            eprintln!("warning: do-while loop exceeded {} iterations, breaking", MAX_LOOP_ITER);
+                            break;
+                        }
+                        iter_count += 1;
                         if self.disable_pending.is_some() { break; }
                         if self.control_flow.is_some() { self.control_flow = None; break; }
                         self.evaluate_stmt_block(body)?;
@@ -2268,7 +2523,7 @@ impl SimulationEngine {
                 }
                 IrStmt::Repeat { count, body } => {
                     let count_val = self.evaluate_expr(count)?;
-                    let n = count_val.to_u64() as usize;
+                    let n = (count_val.to_u64() as usize).min(MAX_LOOP_ITER);
                     for _ in 0..n {
                         if self.disable_pending.is_some() { break; }
                         if self.control_flow.is_some() { self.control_flow = None; break; }
@@ -2761,6 +3016,16 @@ impl SimulationEngine {
             }
             IrExpr::UnaryOp(op, inner) => {
                 let val = self.evaluate_expr(inner)?;
+                let inner_is_real = matches!(inner.as_ref(), IrExpr::Signal(id, _) if self.design.top.signals.get(*id).map(|s| s.is_real).unwrap_or(false));
+                if inner_is_real {
+                    let a = f64::from_bits(val.to_u64());
+                    let result = match op {
+                        UnaryIrOp::Minus => -a,
+                        UnaryIrOp::Plus => a,
+                        _ => return Ok(eval_unary(op.clone(), &val)),
+                    };
+                    return Ok(LogicVec::from_u64(result.to_bits(), 64));
+                }
                 Ok(eval_unary(op.clone(), &val))
             }
             IrExpr::BinaryOp(op, lhs, rhs) => {
@@ -2776,6 +3041,8 @@ impl SimulationEngine {
                         BinaryIrOp::Sub => a - b,
                         BinaryIrOp::Mul => a * b,
                         BinaryIrOp::Div => a / b,
+                        BinaryIrOp::Mod => a % b,
+                        BinaryIrOp::Power => a.powf(b),
                         BinaryIrOp::Lt => return Ok(LogicVec::from_u64(if a < b { 1 } else { 0 }, 32)),
                         BinaryIrOp::Le => return Ok(LogicVec::from_u64(if a <= b { 1 } else { 0 }, 32)),
                         BinaryIrOp::Gt => return Ok(LogicVec::from_u64(if a > b { 1 } else { 0 }, 32)),
@@ -3103,6 +3370,44 @@ impl SimulationEngine {
                         let override_type = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
                         self.factory_type_overrides.insert(orig, override_type);
                         Ok(LogicVec::from_u64(1, 1))
+                    }
+                    "$test$plusargs" => {
+                        if let Some(pattern) = args.first() {
+                            if let Ok(pat_val) = self.evaluate_expr(pattern) {
+                                let pat_str = logicvec_to_string(&pat_val);
+                                for key in self.plusargs.keys() {
+                                    if key.starts_with(&pat_str) {
+                                        return Ok(LogicVec::from_u64(1, 32));
+                                    }
+                                }
+                            }
+                        }
+                        Ok(LogicVec::from_u64(0, 32))
+                    }
+                    "$value$plusargs" => {
+                        if let Some(pattern) = args.first() {
+                            if let Ok(pat_val) = self.evaluate_expr(pattern) {
+                                let pat_str = logicvec_to_string(&pat_val);
+                                let plusargs = self.plusargs.clone();
+                                for (key, val) in &plusargs {
+                                    if key.starts_with(&pat_str) {
+                                        if let Some(var_arg) = args.get(1) {
+                                            let num = if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
+                                                u64::from_str_radix(hex, 16).unwrap_or(0)
+                                            } else {
+                                                val.parse::<u64>().unwrap_or(0)
+                                            };
+                                            let bits = LogicVec::from_u64(num, 32);
+                                            if let IrExpr::Signal(id, _) = var_arg {
+                                                self.state.write_signal(*id, bits);
+                                            }
+                                        }
+                                        return Ok(LogicVec::from_u64(1, 32));
+                                    }
+                                }
+                            }
+                        }
+                        Ok(LogicVec::from_u64(0, 32))
                     }
                     _ => {
                         eprintln!("warning: unsupported system function '{}'", name);
@@ -3494,7 +3799,7 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(r, return_width))
             }
             "$test$plusargs" | "svTestPlusArgs" => {
-                // Plusargs not supported — return 0
+                // Handled in SysFunc dispatch — fallback here
                 Ok(LogicVec::from_u64(0, return_width))
             }
             "$value$plusargs" | "svValuePlusArgs" => {
@@ -5524,10 +5829,32 @@ fn format_display(state: &SimulationState, signals: &[SignalInfo], hier_map: &Ha
     let mut chars = fmt_str.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '%' {
+            // Parse optional zero-fill and width
+            let mut zero_fill = false;
+            let mut width = 0usize;
+            if let Some(&next) = chars.peek() {
+                if next == '0' {
+                    zero_fill = true;
+                    chars.next();
+                }
+                while let Some(&next) = chars.peek() {
+                    if next.is_ascii_digit() {
+                        width = width * 10 + next.to_digit(10).unwrap() as usize;
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+            }
             match chars.next() {
                 Some('d') => {
                     if let Some(val) = value_args.get(value_idx) {
-                        result.push_str(&format!("{}", val.to_u64()));
+                        let s = format!("{}", val.to_u64());
+                        if width > s.len() {
+                            let pad = if zero_fill { '0' } else { ' ' };
+                            for _ in 0..(width - s.len()) { result.push(pad); }
+                        }
+                        result.push_str(&s);
                     }
                     value_idx += 1;
                 }
@@ -5535,19 +5862,30 @@ fn format_display(state: &SimulationState, signals: &[SignalInfo], hier_map: &Ha
                     if let Some(val) = value_args.get(value_idx) {
                         let s = format!("{}", val);
                         let trimmed = s.trim_start_matches('0');
-                        result.push_str(if trimmed.is_empty() { "0" } else { trimmed });
+                        let s = if trimmed.is_empty() { "0" } else { trimmed };
+                        if width > s.len() {
+                            let pad = if zero_fill { '0' } else { ' ' };
+                            for _ in 0..(width - s.len()) { result.push(pad); }
+                        }
+                        result.push_str(s);
                     }
                     value_idx += 1;
                 }
                 Some('h') => {
                     if let Some(val) = value_args.get(value_idx) {
-                        result.push_str(&format!("{:x}", val.to_u64()));
+                        let s = format!("{:x}", val.to_u64());
+                        if width > s.len() {
+                            let pad = if zero_fill { '0' } else { ' ' };
+                            for _ in 0..(width - s.len()) { result.push(pad); }
+                        }
+                        result.push_str(&s);
                     }
                     value_idx += 1;
                 }
                 Some('f') => {
                     if let Some(val) = value_args.get(value_idx) {
-                        result.push_str(&format!("{}", f64::from_bits(val.to_u64())));
+                        let s = format!("{}", f64::from_bits(val.to_u64()));
+                        result.push_str(&s);
                     }
                     value_idx += 1;
                 }
@@ -5559,6 +5897,8 @@ fn format_display(state: &SimulationState, signals: &[SignalInfo], hier_map: &Ha
                 }
                 Some(c2) => {
                     result.push('%');
+                    if zero_fill { result.push('0'); }
+                    if width > 0 { result.push_str(&format!("{}", width)); }
                     result.push(c2);
                 }
                 None => {
@@ -5730,6 +6070,14 @@ fn read_bin_file(filename: &str, elem_width: usize, array_depth: usize, start: O
         if data.len() >= len { break; }
     }
     Ok(data)
+}
+
+fn escape_xml(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 pub fn string_to_logicvec(s: &str) -> LogicVec {
