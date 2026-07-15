@@ -206,6 +206,21 @@ pub enum Stmt {
     RandCase {
         items: Vec<RandCaseItem>,
     },
+    RandSequence {
+        productions: Vec<RandSeqProduction>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RandSeqProduction {
+    pub name: String,
+    pub items: Vec<RandSeqItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RandSeqItem {
+    pub value: Box<Stmt>,
+    pub weight: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

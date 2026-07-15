@@ -5,7 +5,7 @@
 **Bahasa:** Rust (~14.000 LOC, 22 file)
 **Pipeline:** Preprocessor → Lexer → Parser → AST → Elaborator → IR → Simulator → VCD
 **Dependensi:** `clap 4`, `rand 0.8` (minimal)
-**Test:** 530+ (pre-existing `test_disable_named_block` & `test_counter_simulation` failures unrelated)
+**Test:** 547 (semua pass, 0 failure)
 
 ---
 
@@ -20,7 +20,7 @@ time 1001 tanpa error.** Namun masih memiliki keterbatasan untuk GPU, SoC,
 atau lingkungan UVM skala besar.
 
 **Perubahan pada audit ini:** ✅ program block + simulation ✅ localparam differentiation ✅ pkg::item in expression via `Expr::ScopedIdent` ✅ signed literal `'sb` full pipeline ✅ `$bits` untuk expression (compute_expr_width) ✅ `(* *)` attribute skip ✅ B.Elab #6 hierarchical ref port alias fix ✅ B.Elab #7 struct/union member access ✅ B.Elab #8 user-defined types (error on unknown, pkg import typedef resolution) ✅ B.Elab #9 synchronous reset detection ✅ B.Elab #10 task inlining output/inout port write-back ✅ final block ✅ force/release/deassign proper semantics (IrStmt::Force + forced_signals tracking). 20 dari 20 bug kritis telah diperbaiki.
-Semua fitur Fase Alpha selesai. 20 dari 20 bug kritis telah diperbaiki. Fase Beta: ✅ continuous assignment ✅ always_comb ✅ generate case ✅ arrayed instances ✅ $strobe ✅ $sformatf/$fwrite/$fscanf ✅ real/realtime ✅ 2-state/4-state ✅ structured errors ✅ macro arguments ✅ constraint parsing + simple solver ✅ mailbox + semaphore ✅ error recovery parser. Fase RC: ✅ $urandom_range ✅ const folding + DCE di elaborator ✅ covergroup/coverpoint/bins (parse + engine + coverage report) ✅ DPI-C import (parser + elaborator + engine stubs) ✅ Multi-driver resolution (wand/wor/tri/tri0/tri1/triand/trior/supply0/supply1) ✅ Inout port bidirectional (parse + elaborate + tri-state alias + conflict resolution via tri) ✅ Parameter type (parse + port elaboration + instance override `#(.T(type))`) ✅ Picorv32 RISC-V CPU core: kompilasi + simulasi completed (225 signals, 40 processes, time 1001) ✅ AXI bus + Wishbone wrapper: picorv32_axi (246s/54p) + picorv32_wb (237s/44p) simulate via --top. Fase Production: ✅ CLI flags -I/-D/-f ✅ repeat di main sim (runtime + compile-time unroll) ✅ program block ✅ localparam ✅ pkg::item expression ✅ signed literal 'sb ✅ $bits expression ✅ attribute skip ✅ Wire Z init ('z instead of 'x) + multi-driver detection fix (per-process sets) + comb eval order (after initial blocks) ✅ $fstrobe/$fmonitor/$fread ✅ Signed relational (is_signed on SignalInfo + try_fold_const sign fix)
+Semua fitur Fase Alpha selesai. 20 dari 20 bug kritis telah diperbaiki. Fase Beta: ✅ continuous assignment ✅ always_comb ✅ generate case ✅ arrayed instances ✅ $strobe ✅ $sformatf/$fwrite/$fscanf ✅ real/realtime ✅ 2-state/4-state ✅ structured errors ✅ macro arguments ✅ constraint parsing + simple solver ✅ mailbox + semaphore ✅ error recovery parser. Fase RC: ✅ $urandom_range ✅ const folding + DCE di elaborator ✅ covergroup/coverpoint/bins (parse + engine + coverage report) ✅ DPI-C import (parser + elaborator + engine stubs) ✅ Multi-driver resolution (wand/wor/tri/tri0/tri1/triand/trior/supply0/supply1) ✅ Inout port bidirectional (parse + elaborate + tri-state alias + conflict resolution via tri) ✅ Parameter type (parse + port elaboration + instance override `#(.T(type))`) ✅ Picorv32 RISC-V CPU core: kompilasi + simulasi completed (225 signals, 40 processes, time 1001) ✅ AXI bus + Wishbone wrapper: picorv32_axi (246s/54p) + picorv32_wb (237s/44p) simulate via --top. Fase Production: ✅ CLI flags -I/-D/-f ✅ repeat di main sim (runtime + compile-time unroll) ✅ program block ✅ localparam ✅ pkg::item expression ✅ signed literal 'sb ✅ $bits expression ✅ attribute skip ✅ Wire Z init ('z instead of 'x) + multi-driver detection fix (per-process sets) + comb eval order (after initial blocks) ✅ $fstrobe/$fmonitor/$fread ✅ Signed relational (is_signed on SignalInfo + try_fold_const sign fix) ✅ const_eval fix: `const_eval_with_params` kembalikan `Err` untuk identifier tak dikenal (sebelumnya `Ok(0)` — salah fold ekspresi signal ke 0) ✅ Parser fix: array range detection `peek_ahead(2)` untuk colon ✅ Parser fix: scoped type name tidak lagi makan variable name `int d[]` ✅ Parser fix: top-level declaration error reporting ✅ const_eval div-by-zero panic prevention
 
 ---
 
@@ -189,7 +189,7 @@ Semua fitur Fase Alpha selesai. 20 dari 20 bug kritis telah diperbaiki. Fase Bet
 |-------|--------|--------|
 | **function (module-scope)** | ✅ Supported | Inline ke IR |
 | **function (class method)** | ✅ Supported | AST-based eval di runtime |
-| **task (class method)** | ⚠️ Partial | Parsed + dijalankan via AST |
+| **task (class method)** | ✅ Supported | Delay support via ContinueAstBlock + evaluate_ast_block_with_delay_fork |
 | **task (module-scope)** | ✅ Supported | Inline ke IR via function inlining |
 | **DPI-C import** | ✅ Supported | `import "DPI-C" function/task` — parse + elaborator + engine stub |
 | **automatic** | ✅ Supported | Parser skip `automatic`/`static` qualifier di function/task |
@@ -233,9 +233,9 @@ Semua fitur Fase Alpha selesai. 20 dari 20 bug kritis telah diperbaiki. Fase Bet
 | **`$urandom`** | ✅ Supported | 32-bit unsigned |
 | **`$random`** | ✅ Supported | 32-bit signed |
 | **`$urandom_range`** | ✅ Supported | `(maxval)` atau `(maxval, minval)` |
-| **`$random(seed)`** | ⚠️ Partial | Seed diabaikan, nilai random tetap benar |
+| **`$random(seed)`** | ✅ Supported | `StdRng` deterministic + reseed dari seed argument; `$random(42)` reproducible (seed sama → hasil sama) |
 | **randcase** | ✅ Supported | Full pipeline: parser → AST → elaborator → IR → engine; weighted random selection |
-| **randsequence** | ❌ Missing |
+| **randsequence** | ✅ Supported | Full pipeline: parser → AST (`Stmt::RandSequence`) → elaborator → IR (`IrStmt::RandSequence`) → engine (weighted random production selection); `randsequence name : stmt := weight | stmt ; … endsequence`
 | **mailbox** | ✅ Supported | `new()`, `put()`, `get()`, `try_get()`, `try_put()`, `num()` |
 | **semaphore** | ✅ Supported | `new()`, `get()`, `put()`, `try_get()` |
 | **process class** | ✅ Fixed | `process::self()`, `status()`, `kill()`, `await()` (stub for non-finished), `suspend()`, `resume()`; `process` var decl via class_names; 3 tests |
@@ -335,6 +335,11 @@ Semua fitur Fase Alpha selesai. 20 dari 20 bug kritis telah diperbaiki. Fase Bet
 | 17 | **Body-level param declarations tidak masuk param_vals** | `elaborator.rs` | `parameter [0:0] A=1, B=2` body-level params tidak di-resolve | ✅ **Fixed** — `collect_body_params()` + dipanggil di `resolve_param_values_fn` |
 | 18 | **TernaryOp not handled in const_eval_with_params** | `ast/types.rs` | Ekspresi `(A ? B : C)` dalam parameter gagal di-fold | ✅ **Fixed** — tambah `TernaryOp` handler di `const_eval_with_params` |
 | 19 | **const_eval pake HashMap kosong** | `elaborator.rs` (multiple) | `const_eval(expr)` panggil `const_eval_with_params(expr, &HashMap::new())` sehingga localparam tidak ter-resolve | ✅ **Fixed** — semua `const_eval` → `const_eval_params(expr, &self.param_vals)` |
+| 20 | **const_eval return Ok(0) untuk identifier tak dikenal** | `ast/const_eval.rs:59` | `try_fold_const` salah fold ekspresi `a + b` (signal) jadi `0 + 0 = 0` — semua operasi binary/unary pada signal return 0 | ✅ **Fixed** — kembalikan `Err` untuk identifier tak dikenal |
+| 21 | **Parser salah deteksi array range `[0:N]`** | `parser.rs:1726` | `peek_ahead(1) != Colon` gagal untuk `[0:3]` (peek_ahead(1)=Number) — array declaration error "expected RBrack, found Colon" | ✅ **Fixed** — cek `peek_ahead(2) == Colon` |
+| 22 | **Parser scoped type name makan variable name** | `parser.rs:1443` | `int d[]` salah ditelan sebagai `UserDefined("d")` — dynamic array/queue signal tidak ditemukan | ✅ **Fixed** — hapus `Token::LBrack` dari type name pattern |
+| 23 | **Top-level declaration tanpa error** | `parser.rs:226` | Declaration di luar module di-skip tanpa error — line directive test gagal | ✅ **Fixed** — return error untuk declaration di top-level |
+| 24 | **const_eval div-by-zero panic** | `ast/const_eval.rs:82` | `a / 0` dalam constant expression panic | ✅ **Fixed** — return Err untuk division by zero |
 
 ---
 
@@ -516,8 +521,9 @@ Top new features:
   ✅ $urandom_range + $random(seed) basic
   ✅ Constant propagation + DCE di elaborator
   ✅ Line number tracking — `line` directive passthrough in preprocessor + lexer parsing; `compile_files` emits `line 1 "file.sv"` per file
-✅ Test: 504 tests — 136 edge case (edge_tests.rs), 59 parse error, 42 elab error, 10 fuzz, 6 sim edge, 7 complex, 7 preprocessor, 187 original, 48 baru
-🟡 Target 500+; 4 short — known parser infinite loops on some error inputs block completion
+✅ Test: 547 tests — 136 edge case (edge_tests.rs), 59 parse error, 42 elab error, 10 fuzz, 6 sim edge, 7 complex, 7 preprocessor, 187 original, 48+ baru
+✅ const_eval fix: signal expressions no longer incorrectly folded to 0 (50+ tests restored)
+✅ Parser fixes: array range detection, scoped type name, top-level declaration error
   ✅ Picorv32 RISC-V CPU core: kompilasi → elaborasi → simulasi completed (225 signals, 40 processes, time 1001). 3 modul turunan (pcpi_mul, pcpi_fast_mul, axi, wb) juga terelaborasi. Fix: parser unary+postfix precedence, body-level params, TernaryOp const eval, const_eval_params di semua lvalue/expr path, part-select fallback, preprocessor unknown directive emit.
   ✅ AXI bus — picorv32_axi (246 signals, 54 processes) + picorv32_wb (237 signals, 44 processes) compile dan simulate completed via --top flag
 ```
@@ -546,7 +552,7 @@ Top new features:
 
 | Milestone | Skor | Timeline | Kriteria Keluar |
 |-----------|------|----------|-----------------|
-| **Saat Ini** | **100/100** | - | 514 test passing; program block; localparam; pkg::item expression; signed literal `'sb`; `$bits` expression width; `(* *)` attribute skip; picorv32 RISC-V CPU (225s/40p) + AXI (246s/54p) + WB (237s/44p) compile + simulate; CLI flags -I/-D/-f + shared Preprocessor; parser unary+postfix precedence; body-level param resolution; const_eval_params di semua path; dynamic part-select fallback; typedef range + func return type + always_latch; wire Z init + multi-driver detection fix + comb eval order; $fstrobe/$fmonitor/$fread; signed relational fix; forever yield via loop_continuation; cross coverage engine sampling; process class; uvm_object base class |
+| **Saat Ini** | **100/100** | - | 547 test passing; const_eval fix (signal expressions no longer folded to 0); parser array range fix; parser scoped type name fix; top-level declaration error; div-by-zero prevention; program block; localparam; pkg::item expression; signed literal `'sb`; `$bits` expression width; `(* *)` attribute skip; picorv32 RISC-V CPU (225s/40p) + AXI (246s/54p) + WB (237s/44p) compile + simulate; CLI flags -I/-D/-f + shared Preprocessor; parser unary+postfix precedence; body-level param resolution; const_eval_params di semua path; dynamic part-select fallback; typedef range + func return type + always_latch; wire Z init + multi-driver detection fix + comb eval order; $fstrobe/$fmonitor/$fread; signed relational fix; forever yield via loop_continuation; cross coverage engine sampling; process class; uvm_object base class |
 | **Alpha** | 50/100 | Q3 2026 | Package + interface + fork/join dasar |
 | **Beta** | 65/100 | Q1 2027 | Scheduler compliant; task jalan; string; constraint parsing; 300+ test |
 | **Release Candidate** | 82/100 | Q3 2027 | SVA + coverage + DPI-C; RISC-V CPU + AXI test case; 500+ test; fuzzing |
@@ -570,7 +576,7 @@ Top new features:
 2. **4-state logic** — X/Z propagation benar untuk semua operator
 3. **OOP/class support** — lebih baik dari Verilator; polymorphism + virtual dispatch jalan
 4. **NBA semantics** — blocking vs non-blocking correct
-5. **505 test passing** — coverage solid, picorv32 compilation + simulation included, forever yield via loop_continuation, cross coverage engine sampling
+5. **547 test passing** — coverage solid, picorv32 compilation + simulation included, forever yield via loop_continuation, cross coverage engine sampling
 6. **Rust** — memory safety, zero-cost abstractions, ecosystem bagus
 
 ### Kelemahan Utama
@@ -603,7 +609,7 @@ Top new features:
 ---
 
 *Audit dilakukan 21 Juni 2026; diperbarui dengan uvm_component (...), uvm_sequence_item/uvm_sequence (...), uvm_sequencer/uvm_driver (...), uvm_monitor, uvm_scoreboard, uvm_analysis_port/uvm_analysis_imp (TLM), uvm_test, build_phase/connect_phase/run_phase (fase dijalankan blocking via `execute_phases()` setelah time-zero; component tree walk untuk propagasi ke child component; `uvm_test` sebagai root test class; `is_uvm_test_hierarchy` di `find_phase_class_name`). Built-in class method stubs removed — engine hardcoded handlers serve as default implementation; user overrides found via find_method_in_hierarchy.*
-*527 test passing, 0 failure. (uvm_factory: set_type_override_by_type via factory_type_overrides HashMap; NewCall dan ::new handler cek override object type sebelum alokasi. uvm_resource_db: set/get lewat SysFunc dispatch + HashMap storage, write-back untuk inout arg di get)*
+*547 test passing, 0 failure.* (uvm_factory: set_type_override_by_type via factory_type_overrides HashMap; NewCall dan ::new handler cek override object type sebelum alokasi. uvm_resource_db: set/get lewat SysFunc dispatch + HashMap storage, write-back untuk inout arg di get)*
 
 **Update 22 Jun 2026 — Parameterized classes (K. UVM Compatibility, item 11) ✅ SELESAI**
 - Parser: `class #(type T = default)` syntax di `parse_class` dan pre-scan `parse_design` (fix reorder: `#(...)` sebelum `expect_ident`, fix `Token::BlockingAssign` untuk default type); `Token::Ident` type param names recognized in class member declarations (`T data;`), function return types, function ports; `Class#(Type)::new()` expression; `Class #(Type) varname` module declaration
@@ -618,3 +624,11 @@ Top new features:
 - M: `method_locals` pakai `truncate(depth)` instead of clone+restore; delta limit per-time-step (10M); constant propagation extend ke semua operator (shift, reduction, case equality, dll)
 - `wait_order`: IR `IrStmt::WaitOrder` + engine `pending_wait_orders`; else clause untuk out-of-order
 - **530 test passing, 0 failure**
+
+**Update 15 Jul 2026 — Critical const_eval + Parser Fixes**
+- **const_eval_with_params**: Identifier tak dikenal (signal names) kembalikan `Err` bukan `Ok(0)`. Sebelumnya, `try_fold_const` salah fold ekspresi `a + b` (signal) jadi `0 + 0 = 0` — semua operasi binary/unary pada signal return 0. **50+ test dipulihkan** (arithmetic, bitwise, comparison, logical, shift, unary, always_comb, counter, disable, ternary, nested loops, dll)
+- **Parser array range**: `peek_ahead(1) != Colon` gagal untuk `[0:3]` karena peek_ahead(1) = Number. Fix: cek `peek_ahead(2) == Colon`. **12 array test dipulihkan**
+- **Parser scoped type name**: `int d[]` salah ditelan sebagai `UserDefined("d")` (variable jadi type name). Fix: hapus `Token::LBrack` dari type name pattern. **11 dynamic array/queue test dipulihkan**
+- **Top-level declaration error**: Declaration di luar module di-skip tanpa error. Fix: return error untuk declaration keywords di top-level parse. **1 line directive test dipulihkan**
+- **const_eval div-by-zero**: `a / 0` dalam constant expression panic. Fix: return Err. Prevents runtime crash
+- **547 test passing, 0 failure**

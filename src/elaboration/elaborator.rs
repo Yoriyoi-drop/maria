@@ -1728,6 +1728,17 @@ impl Elaborator {
                 }).collect();
                 Ok(IrStmt::RandCase { items: new_items? })
             }
+            IrStmt::RandSequence { productions } => {
+                let new_prods: Result<Vec<(String, Vec<(IrExpr, Vec<IrStmt>)>)>, String> = productions.iter().map(|(name, items)| {
+                    let new_items: Vec<(IrExpr, Vec<IrStmt>)> = items.iter().map(|(weight_expr, body)| {
+                        let new_weight = self.translate_expr(weight_expr, map_sig);
+                        let new_body = self.translate_stmts(body, map_sig).unwrap_or_default();
+                        (new_weight, new_body)
+                    }).collect();
+                    Ok((name.clone(), new_items))
+                }).collect();
+                Ok(IrStmt::RandSequence { productions: new_prods? })
+            }
         }
     }
 
@@ -2421,6 +2432,23 @@ impl Elaborator {
                     Ok((weight_expr, body))
                 }).collect();
                 Ok(IrStmt::RandCase { items: new_items? })
+            }
+            Stmt::RandSequence { productions } => {
+                let mut ir_productions = Vec::new();
+                for prod in productions {
+                    let mut ir_items = Vec::new();
+                    for item in &prod.items {
+                        let weight_expr = if let Some(w) = item.weight {
+                            IrExpr::Const(LogicVec::from_u64(w, 32))
+                        } else {
+                            IrExpr::Const(LogicVec::from_u64(1, 32))
+                        };
+                        let body = self.elaborate_stmt_block(&[(*item.value).clone()], signal_map, known_modules, signals)?;
+                        ir_items.push((weight_expr, body));
+                    }
+                    ir_productions.push((prod.name.clone(), ir_items));
+                }
+                Ok(IrStmt::RandSequence { productions: ir_productions })
             }
         }
     }

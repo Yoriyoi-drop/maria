@@ -372,6 +372,9 @@ pub enum IrStmt {
     RandCase {
         items: Vec<(IrExpr, Vec<IrStmt>)>,
     },
+    RandSequence {
+        productions: Vec<(String, Vec<(IrExpr, Vec<IrStmt>)>)>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

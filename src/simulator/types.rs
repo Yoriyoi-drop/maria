@@ -72,6 +72,7 @@ pub struct StateSnapshot {
 pub enum EventKind {
     EvalProcess(usize),
     ContinueBlock(Continuation),
+    ContinueAstBlock(Vec<crate::ast::Stmt>, Option<usize>),
     NbaCommit,
 }
 

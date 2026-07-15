@@ -477,6 +477,15 @@ fn inline_funcs_in_stmt(
                 }
             }).collect(),
         },
+        Stmt::RandSequence { productions } => Stmt::RandSequence {
+            productions: productions.into_iter().map(|p| crate::ast::stmt::RandSeqProduction {
+                name: p.name,
+                items: p.items.into_iter().map(|item| crate::ast::stmt::RandSeqItem {
+                    value: Box::new(inline_funcs_in_stmt(*item.value, funcs, prefix, counter, temp_signals)),
+                    weight: item.weight,
+                }).collect(),
+            }).collect(),
+        },
         // New variants: pass through unchanged (no function call rewriting needed yet)
         other @ Stmt::UniqueCase { .. }
         | other @ Stmt::PriorityCase { .. }
@@ -825,6 +834,15 @@ fn rename_in_stmt(stmt: &Stmt, rename_map: &HashMap<String, String>) -> Stmt {
             items: items.into_iter().map(|rc| crate::ast::stmt::RandCaseItem {
                 weight: rc.weight,
                 stmt: Box::new(rename_in_stmt(&rc.stmt, rename_map)),
+            }).collect(),
+        },
+        Stmt::RandSequence { productions } => Stmt::RandSequence {
+            productions: productions.into_iter().map(|p| crate::ast::stmt::RandSeqProduction {
+                name: p.name,
+                items: p.items.into_iter().map(|item| crate::ast::stmt::RandSeqItem {
+                    value: Box::new(rename_in_stmt(&item.value, rename_map)),
+                    weight: item.weight,
+                }).collect(),
             }).collect(),
         },
     }

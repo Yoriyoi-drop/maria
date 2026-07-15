@@ -1503,7 +1503,68 @@ endmodule
         assert_eq!(val.to_u64(), 0, "c.count should be 0 after new()");
     }
 
+    
     #[test]
+    fn test_class_task_with_delay() {
+        // Class task with #delay should suspend, resume, and complete correctly
+        let source = r#"
+class my_driver;
+    int count;
+    task run();
+        count = 1;
+        #5;
+        count = 2;
+        #5;
+        count = 3;
+    endtask
+endclass
+
+module tb;
+    my_driver d;
+    int result;
+    initial begin
+        d = new();
+        d.run();
+        #12;
+        result = d.count;  // after both #5 delays complete
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 30).unwrap();
+        let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
+        assert_eq!(val.to_u64(), 3, "class task with delays should set count=3 after both delays");
+    }
+
+    #[test]
+    fn test_class_task_no_delay() {
+        // Class task without delay should still work (synchronous)
+        let source = r#"
+class my_driver;
+    int count;
+    task run();
+        count = 42;
+    endtask
+endclass
+
+module tb;
+    my_driver d;
+    int result;
+    initial begin
+        d = new();
+        d.run();
+        result = d.count;
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
+        assert_eq!(val.to_u64(), 42, "class task without delay should set count=42");
+    }
+
+
+#[test]
     fn test_uvm_lite_polymorphic_dispatch() {
         let source = r#"
 class my_base;
@@ -3786,7 +3847,8 @@ endmodule
     }
 
     #[test]
-    fn test_random_seed_no_crash() {
+    fn test_random_seed_reproducible() {
+        // Same seed should produce same random value (reproducibility)
         let source = r#"
 module tb;
     reg [31:0] a;
@@ -3796,8 +3858,16 @@ module tb;
     end
 endmodule
 "#;
-        // Should not crash — $random with seed argument is accepted
-        let _ = simulate_signals(source, 5);
+        let sigs1 = simulate_signals(source, 5).unwrap();
+        let v1 = sigs1.iter().find(|(n, _)| n == "a")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        
+        // Second simulation with same seed should produce same value
+        let sigs2 = simulate_signals(source, 5).unwrap();
+        let v2 = sigs2.iter().find(|(n, _)| n == "a")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        
+        assert_eq!(v1, v2, "$random(42) with same seed should produce same value: {} != {}", v1, v2);
     }
 
     #[test]

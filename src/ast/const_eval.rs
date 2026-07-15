@@ -53,11 +53,7 @@ pub fn const_eval_with_params(expr: &Expr, param_vals: &HashMap<String, i64>) ->
             } else if name.starts_with('$') {
                 Err(format!("cannot evaluate system function '{}' in constant context", name))
             } else {
-                // Unknown identifier - return 0 with a warning
-                // This allows generate blocks and parameter expressions to proceed
-                // even when imported package parameters are not available.
-                eprintln!("warning: '{}' not found in parameter context, using 0", name);
-                Ok(0)
+                Err(format!("'{}' not found in parameter context", name))
             }
         }
         Expr::UnaryOp { op: UnaryOp::Minus, expr: inner } => {
@@ -79,7 +75,9 @@ pub fn const_eval_with_params(expr: &Expr, param_vals: &HashMap<String, i64>) ->
             Ok(const_eval_with_params(lhs, param_vals)? * const_eval_with_params(rhs, param_vals)?)
         }
         Expr::BinaryOp { op: BinaryOp::Div, lhs, rhs } => {
-            Ok(const_eval_with_params(lhs, param_vals)? / const_eval_with_params(rhs, param_vals)?)
+            let r = const_eval_with_params(rhs, param_vals)?;
+            if r == 0 { return Err("division by zero in constant expression".to_string()); }
+            Ok(const_eval_with_params(lhs, param_vals)? / r)
         }
         Expr::BinaryOp { op: BinaryOp::Power, lhs, rhs } => {
             let base = const_eval_with_params(lhs, param_vals)?;

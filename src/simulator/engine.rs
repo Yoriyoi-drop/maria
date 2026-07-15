@@ -8,6 +8,7 @@ use crate::ast::*;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use rand::Rng;
+use rand::SeedableRng;
 use std::fmt;
 
 pub struct SimulationEngine {
@@ -21,7 +22,7 @@ pub struct SimulationEngine {
     current_this: Option<ObjId>,
     method_locals: Vec<HashMap<String, LogicVec>>,
     current_method: Option<String>,
-    rng: rand::rngs::ThreadRng,
+    rng: rand::rngs::StdRng,
     file_handles: HashMap<u32, std::fs::File>,
     file_read_pos: HashMap<u32, u64>,
     next_file_handle: u32,
@@ -85,7 +86,7 @@ impl SimulationEngine {
             current_this: None,
             method_locals: Vec::new(),
             current_method: None,
-            rng: rand::thread_rng(),
+            rng: rand::rngs::StdRng::seed_from_u64(42),
             file_handles: HashMap::new(),
             file_read_pos: HashMap::new(),
             next_file_handle: 1,
@@ -740,6 +741,24 @@ impl SimulationEngine {
                     }
                 }
             }
+            EventKind::ContinueAstBlock(stmts, fork_id) => {
+                if t < self.events.len() {
+                    let all_consumed = self.evaluate_ast_block_with_delay_fork(&stmts, fork_id)?;
+                    if let Some(fid) = fork_id {
+                        if fid < self.fork_groups.len() && all_consumed {
+                            if self.fork_groups[fid].remaining > 0 {
+                                self.fork_groups[fid].remaining -= 1;
+                            }
+                            if self.fork_groups[fid].remaining == 0 {
+                                let group = self.fork_groups[fid].clone();
+                                if !group.continuation.is_empty() {
+                                    self.evaluate_block_with_delay_fork(&group.continuation, None)?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             EventKind::NbaCommit => {
                 self.commit_nba();
             }
@@ -952,6 +971,25 @@ impl SimulationEngine {
                         }
                     }
                 }
+                                IrStmt::RandSequence { productions } => {
+                    if let Some((_, items)) = productions.first() {
+                        let total: u64 = items.iter().map(|(w, _)| {
+                            self.evaluate_expr(w).unwrap_or(LogicVec::from_u64(1, 32)).to_u64()
+                        }).sum();
+                        if total > 0 {
+                            let r = self.rng.gen::<u64>() % total;
+                            let mut acc = 0u64;
+                            for (w, body) in items {
+                                acc += self.evaluate_expr(w).unwrap_or(LogicVec::from_u64(1, 32)).to_u64();
+                                if r < acc {
+                                    let completed = self.evaluate_block_with_delay_fork(body, fork_id)?;
+                                    if !completed { return Ok(false); }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
                 IrStmt::SysCall { name, args: ir_args } => {
                     if name == "display" || name == "write" {
                         let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, ir_args);
@@ -1004,6 +1042,14 @@ impl SimulationEngine {
                             self.state.write_signal(sig_id, packed);
                         }
                     } else if name == "random" {
+                        // If seed argument provided (second arg after dest signal),
+                        // reseed RNG for reproducibility
+                        if let Some(seed_arg) = ir_args.get(1) {
+                            if let Ok(seed_val) = self.evaluate_expr(seed_arg) {
+                                let seed = seed_val.to_u64();
+                                self.rng = rand::rngs::StdRng::seed_from_u64(seed);
+                            }
+                        }
                         let val: i32 = self.rng.gen();
                         let sig_id = ir_args.first().and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
                         if let Some(sid) = sig_id {
@@ -1386,6 +1432,24 @@ impl SimulationEngine {
                         }
                     }
                 }
+                                IrStmt::RandSequence { productions } => {
+                    if let Some((_, items)) = productions.first() {
+                        let total: u64 = items.iter().map(|(w, _)| {
+                            self.evaluate_expr(w).unwrap_or(LogicVec::from_u64(1, 32)).to_u64()
+                        }).sum();
+                        if total > 0 {
+                            let r = self.rng.gen::<u64>() % total;
+                            let mut acc = 0u64;
+                            for (w, body) in items {
+                                acc += self.evaluate_expr(w).unwrap_or(LogicVec::from_u64(1, 32)).to_u64();
+                                if r < acc {
+                                    self.evaluate_stmt_block(body)?;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
                 IrStmt::Fork { processes, join_type } => {
                     let fid = self.fork_groups.len();
                     let remaining: Vec<IrStmt> = stmts[i + 1..].to_vec();
@@ -1446,6 +1510,367 @@ impl SimulationEngine {
                         }
                     }
                     return Ok(true);
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    fn evaluate_ast_block_with_delay_fork(
+        &mut self, stmts: &[crate::ast::Stmt], fork_id: Option<usize>
+    ) -> Result<bool, String> {
+        for (i, stmt) in stmts.iter().enumerate() {
+            if self.disable_pending.is_some() { return Ok(true); }
+            if self.control_flow.is_some() { return Ok(true); }
+            match stmt {
+                crate::ast::Stmt::Block { stmts: inner } => {
+                    self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                }
+                crate::ast::Stmt::NamedBlock { name, stmts: inner, decls: _ } => {
+                    if self.disable_pending.as_deref() == Some(name) {
+                        self.disable_pending = None;
+                        return Ok(true);
+                    }
+                    let old = self.disable_pending.take();
+                    self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                    if let Some(ref n) = self.disable_pending {
+                        if n == name {
+                            self.disable_pending = None;
+                        }
+                    }
+                    self.disable_pending = self.disable_pending.take().or(old);
+                }
+                crate::ast::Stmt::BlockingAssign { lhs, rhs, delay: _ } => {
+                    let val = self.evaluate_ast_expr(rhs)?;
+                    self.write_ast_lvalue(lhs, val)?;
+                }
+                crate::ast::Stmt::NonBlockingAssign { lhs, rhs, delay: _ } => {
+                    let val = self.evaluate_ast_expr(rhs)?;
+                    // Convert AST lvalue to IrLValue for nba tracking
+                    if let Some(ir_lv) = self.ast_lvalue_to_ir(lhs) {
+                        self.nba_pending.push((ir_lv, val));
+                    } else {
+                        self.write_ast_lvalue(lhs, val)?;
+                    }
+                }
+                crate::ast::Stmt::IfElse { cond, true_branch, false_branch } => {
+                    let cond_val = self.evaluate_ast_expr(cond)?;
+                    if cond_val.to_bool().unwrap_or(false) {
+                        self.evaluate_ast_block_with_delay_fork(&[*true_branch.clone()], fork_id)?;
+                    } else if let Some(fb) = false_branch {
+                        self.evaluate_ast_block_with_delay_fork(&[*fb.clone()], fork_id)?;
+                    }
+                }
+                crate::ast::Stmt::Case { expr, items, default } => {
+                    let case_val = self.evaluate_ast_expr(expr)?;
+                    let mut matched = false;
+                    for item in items {
+                        let mut item_matched = false;
+                        for pat in &item.labels {
+                            let pat_val = self.evaluate_ast_expr(pat)?;
+                            if case_val.eq(&pat_val) {
+                                self.evaluate_ast_block_with_delay_fork(&[*item.stmt.clone()], fork_id)?;
+                                if self.disable_pending.is_some() { return Ok(true); }
+                                item_matched = true;
+                                matched = true;
+                                break;
+                            }
+                        }
+                        if item_matched { break; }
+                    }
+                    if !matched {
+                        if let Some(def) = default {
+                            self.evaluate_ast_block_with_delay_fork(&[*def.clone()], fork_id)?;
+                        }
+                    }
+                }
+                crate::ast::Stmt::CaseX { expr, items, default } => {
+                    let case_val = self.evaluate_ast_expr(expr)?;
+                    let mut matched = false;
+                    for item in items {
+                        for pat in &item.labels {
+                            let pat_val = self.evaluate_ast_expr(pat)?;
+                            if case_val.casex_eq(&pat_val) {
+                                self.evaluate_ast_block_with_delay_fork(&[*item.stmt.clone()], fork_id)?;
+                                matched = true; break;
+                            }
+                        }
+                        if matched { break; }
+                    }
+                    if !matched {
+                        if let Some(def) = default {
+                            self.evaluate_ast_block_with_delay_fork(&[*def.clone()], fork_id)?;
+                        }
+                    }
+                }
+                crate::ast::Stmt::CaseZ { expr, items, default } => {
+                    let case_val = self.evaluate_ast_expr(expr)?;
+                    let mut matched = false;
+                    for item in items {
+                        for pat in &item.labels {
+                            let pat_val = self.evaluate_ast_expr(pat)?;
+                            if case_val.casez_eq(&pat_val) {
+                                self.evaluate_ast_block_with_delay_fork(&[*item.stmt.clone()], fork_id)?;
+                                matched = true; break;
+                            }
+                        }
+                        if matched { break; }
+                    }
+                    if !matched {
+                        if let Some(def) = default {
+                            self.evaluate_ast_block_with_delay_fork(&[*def.clone()], fork_id)?;
+                        }
+                    }
+                }
+                crate::ast::Stmt::LoopForever { stmts: inner } => {
+                    loop {
+                        if self.disable_pending.is_some() { break; }
+                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                        let cf = self.control_flow.take();
+                        if cf == Some(FlowControl::Break) { break; }
+                        if cf == Some(FlowControl::Continue) { continue; }
+                    }
+                }
+                crate::ast::Stmt::LoopWhile { cond, stmts: inner } => {
+                    loop {
+                        if self.disable_pending.is_some() { break; }
+                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        let cond_val = self.evaluate_ast_expr(cond)?;
+                        if !cond_val.to_bool().unwrap_or(false) { break; }
+                        self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                        let cf = self.control_flow.take();
+                        if cf == Some(FlowControl::Break) { break; }
+                        if cf == Some(FlowControl::Continue) { continue; }
+                    }
+                }
+                crate::ast::Stmt::DoWhile { cond, stmts: inner } => {
+                    loop {
+                        if self.disable_pending.is_some() { break; }
+                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                        let cf = self.control_flow.take();
+                        if cf == Some(FlowControl::Continue) { continue; }
+                        if cf == Some(FlowControl::Break) { break; }
+                        let cond_val = self.evaluate_ast_expr(cond)?;
+                        if !cond_val.to_bool().unwrap_or(false) { break; }
+                    }
+                }
+                crate::ast::Stmt::LoopFor { init, cond, step, stmts: inner } => {
+                    if let Some(init_stmt) = init {
+                        self.evaluate_ast_block_with_delay_fork(&[*init_stmt.clone()], fork_id)?;
+                    }
+                    loop {
+                        if self.disable_pending.is_some() { break; }
+                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        if let Some(ref c) = cond {
+                            let cv = self.evaluate_ast_expr(c)?;
+                            if !cv.to_bool().unwrap_or(false) { break; }
+                        }
+                        self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                        let cf = self.control_flow.take();
+                        if cf == Some(FlowControl::Continue) {
+                            if let Some(s) = step {
+                                self.evaluate_ast_block_with_delay_fork(&[*s.clone()], fork_id)?;
+                            }
+                            continue;
+                        }
+                        if cf == Some(FlowControl::Break) { break; }
+                        if self.disable_pending.is_some() { break; }
+                        if let Some(s) = step {
+                            self.evaluate_ast_block_with_delay_fork(&[*s.clone()], fork_id)?;
+                        }
+                    }
+                }
+                crate::ast::Stmt::Repeat { count, stmts: inner } => {
+                    let count_val = self.evaluate_ast_expr(count)?;
+                    let n = count_val.to_u64() as usize;
+                    for _ in 0..n {
+                        if self.disable_pending.is_some() { break; }
+                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                        let cf = self.control_flow.take();
+                        if cf == Some(FlowControl::Continue) { continue; }
+                        if cf == Some(FlowControl::Break) { break; }
+                    }
+                }
+                crate::ast::Stmt::Delay { delay, stmt: body } => {
+                    let delay_val = self.evaluate_ast_expr(delay)?;
+                    let d = delay_val.to_u64() as usize;
+                    let delay_t = self.state.time as usize + d;
+                    if delay_t < self.events.len() {
+                        let remaining: Vec<crate::ast::Stmt> = {
+                            let mut v = Vec::new();
+                            v.push(*body.clone());
+                            if i + 1 < stmts.len() {
+                                v.extend(stmts[i + 1..].iter().cloned());
+                            }
+                            v
+                        };
+                        let region = if d == 0 { EventRegion::Inactive } else { EventRegion::Active };
+                        self.events[delay_t].push(RegionEvent {
+                            region,
+                            event: EventKind::ContinueAstBlock(remaining, fork_id),
+                        });
+                    }
+                    return Ok(false);
+                }
+                crate::ast::Stmt::EventControl { events, stmt: body } => {
+                    // For class tasks, handle event control by evaluating signal
+                    // For now, execute immediately (simple edge handling)
+                    // In a full implementation, we would schedule a continuation
+                    if let Some(event) = events.first() {
+                        let triggered = match event {
+                            crate::ast::SensitivityEvent::PosEdge(expr) => {
+                                if let Some(id) = self.find_ast_signal_id(expr) {
+                                    let sig_val = self.state.read_signal(id);
+                                    sig_val.to_bool() == Some(true)
+                                } else {
+                                    true
+                                }
+                            }
+                            crate::ast::SensitivityEvent::NegEdge(expr) => {
+                                if let Some(id) = self.find_ast_signal_id(expr) {
+                                    let sig_val = self.state.read_signal(id);
+                                    sig_val.to_bool() == Some(false)
+                                } else {
+                                    true
+                                }
+                            }
+                            _ => true,
+                        };
+                        if triggered {
+                            if let Some(b) = body {
+                                self.evaluate_ast_block_with_delay_fork(&[*b.clone()], fork_id)?;
+                            }
+                            if i + 1 < stmts.len() {
+                                self.evaluate_ast_block_with_delay_fork(&stmts[i + 1..], fork_id)?;
+                            }
+                        } else {
+                            // Not triggered — schedule a wake-up when the signal changes
+                            // For now: just don't execute and return
+                            return Ok(true);
+                        }
+                    }
+                }
+                crate::ast::Stmt::Wait { cond, stmt: body } => {
+                    let cond_val = self.evaluate_ast_expr(cond)?;
+                    if cond_val.to_bool().unwrap_or(false) {
+                        if let Some(b) = body {
+                            self.evaluate_ast_block_with_delay_fork(&[*b.clone()], fork_id)?;
+                        }
+                        if i + 1 < stmts.len() {
+                            self.evaluate_ast_block_with_delay_fork(&stmts[i + 1..], fork_id)?;
+                        }
+                    } else {
+                        // Condition not met yet — skip
+                        return Ok(true);
+                    }
+                }
+                crate::ast::Stmt::SysCall { name, args } => {
+                    // For task context, delegate to SysCall handler
+                    self.handle_ast_syscall(name, args)?;
+                }
+                crate::ast::Stmt::SysFinish => {
+                    self.running = false;
+                    return Ok(true);
+                }
+                crate::ast::Stmt::Expr { expr } => {
+                    self.evaluate_ast_expr(expr)?;
+                }
+                crate::ast::Stmt::Break => {
+                    self.control_flow = Some(FlowControl::Break);
+                    return Ok(true);
+                }
+                crate::ast::Stmt::Continue => {
+                    self.control_flow = Some(FlowControl::Continue);
+                    return Ok(true);
+                }
+                crate::ast::Stmt::Return(_) => {
+                    return Ok(true);
+                }
+                crate::ast::Stmt::Null => {}
+                crate::ast::Stmt::Force { lhs, rhs } => {
+                    let val = self.evaluate_ast_expr(rhs)?;
+                    self.write_ast_lvalue(lhs, val)?;
+                }
+                crate::ast::Stmt::Release { expr } => {
+                    // Release variable — just a no-op in AST context
+                }
+                crate::ast::Stmt::EventTrigger { name } => {
+                    // Find signal by name and toggle it
+                    if let Some(id) = self.find_signal(name) {
+                        let val = self.state.read_signal(id);
+                        let toggled = if val.to_bool().unwrap_or(false) {
+                            LogicVec::from_u64(0, val.width.max(1))
+                        } else {
+                            LogicVec::from_u64(1, val.width.max(1))
+                        };
+                        self.state.write_signal(id, toggled);
+                    }
+                }
+                crate::ast::Stmt::Disable { name } => {
+                    self.disable_pending = Some(name.clone());
+                    return Ok(true);
+                }
+                crate::ast::Stmt::Fork { processes, join_type } => {
+                    let fid = self.fork_groups.len();
+                    let remaining: Vec<crate::ast::Stmt> = if i + 1 < stmts.len() {
+                        stmts[i + 1..].to_vec()
+                    } else { Vec::new() };
+                    // Convert join type
+                    let ir_join = match join_type {
+                        crate::ast::JoinType::Join => IrJoinType::Join,
+                        crate::ast::JoinType::JoinAny => IrJoinType::JoinAny,
+                        crate::ast::JoinType::JoinNone => IrJoinType::JoinNone,
+                    };
+                    // We need to work with IR Fork here — for AST fork inside a task, we execute immediately
+                    // This is a simplification — full fork support in AST tasks would need more work
+                    // processes is Vec<Stmt> (each branch is a Stmt::Block or single stmt)
+                    for p in processes {
+                        self.evaluate_ast_block_with_delay_fork(&[p.clone()], Some(fid))?;
+                    }
+                    if !remaining.is_empty() {
+                        self.evaluate_ast_block_with_delay_fork(&remaining, None)?;
+                    }
+                    return Ok(true);
+                }
+                crate::ast::Stmt::Assert { cond, pass_stmt, fail_stmt } => {
+                    let ok = self.evaluate_ast_expr(cond)?.to_bool().unwrap_or(false);
+                    if ok {
+                        if let Some(ps) = pass_stmt {
+                            self.evaluate_ast_block_with_delay_fork(&[*ps.clone()], fork_id)?;
+                        }
+                    } else {
+                        eprintln!("assertion failed");
+                        if let Some(fs) = fail_stmt {
+                            self.evaluate_ast_block_with_delay_fork(&[*fs.clone()], fork_id)?;
+                        }
+                    }
+                }
+                crate::ast::Stmt::Assume { cond, pass_stmt, fail_stmt } => {
+                    let ok = self.evaluate_ast_expr(cond)?.to_bool().unwrap_or(false);
+                    if ok {
+                        if let Some(ps) = pass_stmt {
+                            self.evaluate_ast_block_with_delay_fork(&[*ps.clone()], fork_id)?;
+                        }
+                    } else {
+                        eprintln!("assumption violated");
+                        if let Some(fs) = fail_stmt {
+                            self.evaluate_ast_block_with_delay_fork(&[*fs.clone()], fork_id)?;
+                        }
+                    }
+                }
+                crate::ast::Stmt::Cover { cond, pass_stmt } => {
+                    let ok = self.evaluate_ast_expr(cond)?.to_bool().unwrap_or(false);
+                    if ok {
+                        if let Some(ps) = pass_stmt {
+                            self.evaluate_ast_block_with_delay_fork(&[*ps.clone()], fork_id)?;
+                        }
+                    }
+                }
+                _ => {
+                    // Unhandled statement types in task method context
                 }
             }
         }
@@ -1550,6 +1975,14 @@ impl SimulationEngine {
                             self.state.write_signal(sid, LogicVec::from_u64(val, 32));
                         }
                     } else if name == "random" {
+                        // If seed argument provided (second arg after dest signal),
+                        // reseed RNG for reproducibility
+                        if let Some(seed_arg) = ir_args.get(1) {
+                            if let Ok(seed_val) = self.evaluate_expr(seed_arg) {
+                                let seed = seed_val.to_u64();
+                                self.rng = rand::rngs::StdRng::seed_from_u64(seed);
+                            }
+                        }
                         let val: i32 = self.rng.gen();
                         let sig_id = ir_args.first().and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
                         if let Some(sid) = sig_id {
@@ -1858,6 +2291,24 @@ impl SimulationEngine {
                             if r < cumulative {
                                 self.evaluate_stmt_block(body)?;
                                 break;
+                            }
+                        }
+                    }
+                }
+                                IrStmt::RandSequence { productions } => {
+                    if let Some((_, items)) = productions.first() {
+                        let total: u64 = items.iter().map(|(w, _)| {
+                            self.evaluate_expr(w).unwrap_or(LogicVec::from_u64(1, 32)).to_u64()
+                        }).sum();
+                        if total > 0 {
+                            let r = self.rng.gen::<u64>() % total;
+                            let mut acc = 0u64;
+                            for (w, body) in items {
+                                acc += self.evaluate_expr(w).unwrap_or(LogicVec::from_u64(1, 32)).to_u64();
+                                if r < acc {
+                                    self.evaluate_stmt_block(body)?;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -2365,6 +2816,13 @@ impl SimulationEngine {
             IrExpr::SysFunc { name, args } => {
                 match name.as_str() {
                     "$random" => {
+                        // If seed argument provided, reseed RNG for reproducibility
+                        if let Some(seed_arg) = args.first() {
+                            if let Ok(seed_val) = self.evaluate_expr(seed_arg) {
+                                let seed = seed_val.to_u64();
+                                self.rng = rand::rngs::StdRng::seed_from_u64(seed);
+                            }
+                        }
                         let val: i32 = self.rng.gen();
                         Ok(LogicVec::from_u64(val as u64, 32))
                     }
@@ -3079,6 +3537,55 @@ impl SimulationEngine {
         if let Some(scope) = self.method_locals.last_mut() {
             scope.insert(name.to_string(), val);
         }
+    }
+
+    fn write_ast_lvalue(&mut self, lhs: &crate::ast::Expr, val: LogicVec) -> Result<(), String> {
+        match lhs {
+            crate::ast::Expr::Ident(name) => {
+                self.write_local_or_field(name, val)
+            }
+            crate::ast::Expr::MemberAccess { obj, field } => {
+                let obj_val = self.evaluate_ast_expr(obj)?;
+                let obj_id = obj_val.to_u64() as ObjId;
+                if let Some(obj_data) = self.state.get_object_mut(obj_id) {
+                    obj_data.fields.insert(field.clone(), val);
+                    Ok(())
+                } else {
+                    Err(format!("object {} not found for field '{}'", obj_id, field))
+                }
+            }
+            _ => Err(format!("unsupported lvalue type in task method: {:?}", lhs))
+        }
+    }
+
+    fn ast_lvalue_to_ir(&self, lhs: &crate::ast::Expr) -> Option<IrLValue> {
+        match lhs {
+            crate::ast::Expr::Ident(name) => {
+                let sig_id = self.find_signal(name)?;
+                Some(IrLValue::Signal(sig_id, 0))
+            }
+            _ => None
+        }
+    }
+
+    fn find_ast_signal_id(&self, expr: &crate::ast::Expr) -> Option<SignalId> {
+        match expr {
+            crate::ast::Expr::Ident(name) => self.find_signal(name),
+            _ => None
+        }
+    }
+
+    fn handle_ast_syscall(&mut self, name: &str, args: &[crate::ast::Expr]) -> Result<(), String> {
+        if name == "display" || name == "write" {
+            let ir_args: Vec<IrExpr> = args.iter()
+                .map(|a| IrExpr::Const(self.evaluate_ast_expr(a).unwrap_or(LogicVec::new(32))))
+                .collect();
+            let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, &ir_args);
+            print!("{}", msg);
+        } else if name == "finish" {
+            self.running = false;
+        }
+        Ok(())
     }
 
     fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), String> {
@@ -4894,8 +5401,17 @@ impl SimulationEngine {
         self.current_method = Some(method.to_string());
 
         if !method_def.stmts.is_empty() {
-            let body = Stmt::Block { stmts: method_def.stmts.clone() };
-            self.evaluate_ast_stmt(&body)?;
+            if method_def.is_task {
+                let completed = self.evaluate_ast_block_with_delay_fork(&method_def.stmts, None)?;
+                if !completed {
+                    // Task suspended by delay — keep scope & context alive for continuation
+                    self.current_method = old_method;
+                    return Ok(LogicVec::new(0));
+                }
+            } else {
+                let body = Stmt::Block { stmts: method_def.stmts.clone() };
+                self.evaluate_ast_stmt(&body)?;
+            }
         }
 
         let return_val = if method_def.is_task {

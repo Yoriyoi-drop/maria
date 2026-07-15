@@ -224,6 +224,15 @@ impl Parser {
                     }
                 }
                 _ => {
+                    if matches!(self.peek(), Token::Wire | Token::Wand | Token::Wor |
+                        Token::Tri | Token::TriAnd | Token::TriOr | Token::Tri0 | Token::Tri1 |
+                        Token::Supply0 | Token::Supply1 | Token::Reg | Token::Logic |
+                        Token::Int | Token::Integer | Token::Bit | Token::Byte |
+                        Token::Shortint | Token::Longint | Token::Time |
+                        Token::Real | Token::RealTime | Token::String |
+                        Token::Enum | Token::Struct | Token::Union) {
+                        return Err(format!("line {}: declaration outside of module", self.peek_line()));
+                    }
                     let line = self.peek_line();
                     // Gracefully skip unknown constructs at top level
                     self.advance();
@@ -1440,7 +1449,7 @@ impl Parser {
                 } else {
                     None
                 }
-            } else if matches!(ahead, Token::Ident(_) | Token::LBrack) {
+            } else if matches!(ahead, Token::Ident(_)) {
                 self.advance();
                 Some(DataType::UserDefined(s))
             } else {
@@ -1723,12 +1732,8 @@ impl Parser {
                                 is_associative = true;
                                 assoc_key_type = Some(DataType::Int);
                                 None
-                            } else if self.peek_ahead(1) != &Token::Colon {
-                                self.advance(); // [
-                                self.parse_expr(0)?;
-                                self.expect(Token::RBrack)?;
-                                None
-                            } else {
+                            } else if self.peek_ahead(1) == &Token::Colon
+                                || self.peek_ahead(2) == &Token::Colon {
                                 let er = self.parse_range()?;
                                 er.as_ref().and_then(|er| {
                                     if let (Ok(m), Ok(l)) = (const_eval_simple(&er.msb), const_eval_simple(&er.lsb)) {
@@ -1737,6 +1742,11 @@ impl Parser {
                                         None
                                     }
                                 })
+                            } else {
+                                self.advance(); // [
+                                self.parse_expr(0)?;
+                                self.expect(Token::RBrack)?;
+                                None
                             }
                         } else {
                             None
@@ -3513,6 +3523,47 @@ impl Parser {
                     });
                 }
                 Ok(Stmt::RandCase { items })
+            }
+            Token::Ident(ref s) if s == "randsequence" => {
+                self.advance();
+                let mut productions = Vec::new();
+                loop {
+                    let is_endseq = matches!(self.peek(), Token::Ident(s) if s == "endsequence");
+                    if is_endseq || self.peek() == &Token::Eof {
+                        if matches!(self.peek(), Token::Ident(s) if s == "endsequence") {
+                            self.advance();
+                        }
+                        break;
+                    }
+                    let prod_name = self.expect_ident()?;
+                    self.expect(Token::Colon)?;
+                    let mut items = Vec::new();
+                    loop {
+                        let stmt = self.parse_stmt()?;
+                        let weight = if self.peek() == &Token::BlockingAssign {
+                            self.advance();
+                            let w_expr = self.parse_expr(0)?;
+                            Some(const_eval_simple(&w_expr).unwrap_or(1) as u64)
+                        } else {
+                            None
+                        };
+                        items.push(RandSeqItem {
+                            value: Box::new(stmt),
+                            weight,
+                        });
+                        if self.peek() == &Token::Pipe {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.skip_semi();
+                    productions.push(RandSeqProduction {
+                        name: prod_name,
+                        items,
+                    });
+                }
+                Ok(Stmt::RandSequence { productions })
             }
             Token::Semi => {
                 self.advance();
