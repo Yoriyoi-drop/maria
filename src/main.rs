@@ -164,15 +164,18 @@ fn run(cli: Cli) -> Result<(), SimError> {
             base_pp.define(def, "");
         }
     }
-    // Auto-detect include paths: walk up from each source looking for hw/ip/*/rtl
+    // Auto-detect include paths: walk up from each source looking for common SV directories
+    let common_dirs = ["include", "includes", "rtl", "dv", "sv", "src","svh"];
     for src in &sources {
         if let Some(dir) = std::path::Path::new(src).parent() {
             let mut candidate = Some(dir.to_path_buf());
+            let mut seen = std::collections::HashSet::new();
             while let Some(d) = candidate {
-                let rtl_dir = d.join("hw").join("ip").join("prim").join("rtl");
-                if rtl_dir.join("prim_assert.sv").exists() {
-                    base_pp.add_search_path(rtl_dir.to_str().unwrap());
-                    break;
+                for sub in &common_dirs {
+                    let p = d.join(sub);
+                    if p.is_dir() && seen.insert(p.clone()) {
+                        base_pp.add_search_path(p.to_str().unwrap());
+                    }
                 }
                 candidate = d.parent().map(|p| p.to_path_buf());
             }

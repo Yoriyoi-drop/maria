@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -13,15 +13,20 @@ struct MacroDef {
     params: Vec<String>,
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct Preprocessor {
     defines: HashMap<String, MacroDef>,
     search_paths: Vec<PathBuf>,
+    warned_includes: HashSet<String>,
 }
 
 impl Preprocessor {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            defines: HashMap::new(),
+            search_paths: Vec::new(),
+            warned_includes: HashSet::new(),
+        }
     }
 
     pub fn define(&mut self, name: &str, value: &str) {
@@ -72,9 +77,6 @@ impl Preprocessor {
             if !trimmed.starts_with('`') {
                 if self.is_emitting(&cond_stack) {
                     let expanded = self.expand_inline_macros(&raw_line);
-                    if expanded.contains("$rose") {
-                        eprintln!("  ** EMITTING $rose at iteration i={}, raw_line=[{:?}] **", i+1, &raw_line[..std::cmp::min(80, raw_line.len())]);
-                    }
                     output.push_str(&expanded);
                     output.push('\n');
                 }
@@ -88,6 +90,11 @@ impl Preprocessor {
             match cmd {
                 "include" => {
                     if self.is_emitting(&cond_stack) {
+                        if rest.trim().starts_with('`') {
+                            // Not actually an include — misparsed due to nested backtick
+                            i += 1;
+                            continue;
+                        }
                         let inc_path = match self.parse_include_path(rest) {
                             Ok(p) => p,
                             Err(e) => {
@@ -98,6 +105,7 @@ impl Preprocessor {
                         };
                         match self.resolve_path(&inc_path, current_dir) {
                             Ok(resolved) => {
+                                self.warned_includes.remove(&inc_path);
                                 match fs::read_to_string(&resolved) {
                                     Ok(inc_source) => {
                                         let inc_dir = resolved.parent().map(|p| p.to_path_buf());
@@ -120,7 +128,9 @@ impl Preprocessor {
                                 }
                             }
                             Err(e) => {
-                                eprintln!("  ** WARNING: {}", e);
+                                if self.warned_includes.insert(inc_path.clone()) {
+                                    eprintln!("  ** WARNING: {}", e);
+                                }
                             }
                         }
                     }

@@ -1130,9 +1130,10 @@ impl SimulationEngine {
                             if fn_name == "value$plusargs" {
                                 if let Ok(pat_val) = self.evaluate_expr(fn_args.first().unwrap_or(&IrExpr::Const(LogicVec::new(0)))) {
                                     let pattern = logicvec_to_string(&pat_val);
+                                    let plusarg_name = pattern.split('%').next().unwrap_or(&pattern).trim_end_matches('=');
                                     let plusargs = self.plusargs.clone();
                                     for (key, val) in &plusargs {
-                                        if key.starts_with(&pattern) {
+                                        if key == plusarg_name {
                                             if let Some(var_arg) = fn_args.get(1) {
                                                 let num = if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
                                                     u64::from_str_radix(hex, 16).unwrap_or(0)
@@ -1394,31 +1395,12 @@ impl SimulationEngine {
                         if let Some(arg) = ir_args.first() {
                             self.evaluate_expr(arg)?;
                         }
-                    } else if name == "value$plusargs" {
+                     } else if name == "value$plusargs" {
                         let pattern = ir_args.first().and_then(|a| self.evaluate_expr(a).ok()).map(|v| logicvec_to_string(&v)).unwrap_or_default();
+                        let plusarg_name = pattern.split('%').next().unwrap_or(&pattern).trim_end_matches('=');
                         let plusargs = self.plusargs.clone();
                         for (key, val) in &plusargs {
-                            if key.starts_with(&pattern) {
-                                if let Some(var_arg) = ir_args.get(1) {
-                                    let num = if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
-                                        u64::from_str_radix(hex, 16).unwrap_or(0)
-                                    } else {
-                                        val.parse::<u64>().unwrap_or(0)
-                                    };
-                                    if let IrExpr::Signal(id, _) = var_arg {
-                                        self.state.write_signal(*id, LogicVec::from_u64(num, 32));
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    } else if name == "test$plusargs" {
-                        // $test$plusargs in statement context — return value ignored
-                    } else if name == "value$plusargs" {
-                        let pattern = ir_args.first().and_then(|a| self.evaluate_expr(a).ok()).map(|v| logicvec_to_string(&v)).unwrap_or_default();
-                        let plusargs = self.plusargs.clone();
-                        for (key, val) in &plusargs {
-                            if key.starts_with(&pattern) {
+                            if key == plusarg_name {
                                 if let Some(var_arg) = ir_args.get(1) {
                                     let num = if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
                                         u64::from_str_radix(hex, 16).unwrap_or(0)
@@ -2360,9 +2342,10 @@ impl SimulationEngine {
                         }
                     } else if name == "value$plusargs" {
                         let pattern = ir_args.first().and_then(|a| self.evaluate_expr(a).ok()).map(|v| logicvec_to_string(&v)).unwrap_or_default();
+                        let plusarg_name = pattern.split('%').next().unwrap_or(&pattern).trim_end_matches('=');
                         let plusargs = self.plusargs.clone();
                         for (key, val) in &plusargs {
-                            if key.starts_with(&pattern) {
+                            if key == plusarg_name {
                                 if let Some(var_arg) = ir_args.get(1) {
                                     let num = if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
                                         u64::from_str_radix(hex, 16).unwrap_or(0)
@@ -3388,9 +3371,10 @@ impl SimulationEngine {
                         if let Some(pattern) = args.first() {
                             if let Ok(pat_val) = self.evaluate_expr(pattern) {
                                 let pat_str = logicvec_to_string(&pat_val);
+                                let plusarg_name = pat_str.split('%').next().unwrap_or(&pat_str).trim_end_matches('=');
                                 let plusargs = self.plusargs.clone();
                                 for (key, val) in &plusargs {
-                                    if key.starts_with(&pat_str) {
+                                    if key == plusarg_name {
                                         if let Some(var_arg) = args.get(1) {
                                             let num = if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
                                                 u64::from_str_radix(hex, 16).unwrap_or(0)
