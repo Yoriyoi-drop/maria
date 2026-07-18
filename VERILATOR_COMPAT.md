@@ -1,8 +1,8 @@
 # Verilator Compatibility Guide — Maria RTL Simulator
 
-**Tanggal:** 15 Juli 2026
-**Versi:** 0.1
-**Standar:** Verilator 5.x + Maria 0.2.5
+**Tanggal:** 18 Juli 2026 (diperbarui)
+**Versi:** 0.2
+**Standar:** Verilator 5.x + Maria 0.2.9
 
 ---
 
@@ -479,4 +479,4 @@ endmodule
 
 ---
 
-*Panduan ini dibuat berdasarkan Maria v0.2.5 dan Verilator 5.x (15 Juli 2026)*
+*Panduan ini dibuat berdasarkan Maria v0.2.9 dan Verilator 5.x (18 Juli 2026)*

@@ -1,9 +1,9 @@
 # IEEE 1800-2012/2017 Compliance Matrix — Maria RTL Simulator
 
-**Tanggal:** 15 Juli 2026
-**Versi Maria:** 0.2.1
+**Tanggal:** 15 Juli 2026 (diperbarui)
+**Versi Maria:** 0.2.9
 **Standar:** IEEE Standard for SystemVerilog (IEEE 1800-2012, revised 2017)
-**Coverage:** ~20% dari keseluruhan spesifikasi
+**Coverage:** ~20% dari keseluruhan spesifikasi (~78% fitur relevan RTL)
 
 ---
 
@@ -283,7 +283,7 @@
 | 19.7.5 | Illegal_bins | ✅ | Parse + engine |
 | 19.7.6 | Wildcard bins | ❌ | Tidak ada wildcard bins |
 | 19.7.7 | Coverage option | ❌ | Tidak ada coverage option |
-| 19.7.8 | Coverage database (UCIS) | ❌ | Tidak ada UCIS output |
+| 19.7.8 | Coverage database (UCIS) | ✅ | `export_coverage_ucis()` XML + `--coverage-ucis` CLI; 1 test |
 
 ---
 
@@ -323,6 +323,7 @@
 | 20.17 | $finish | ✅ | End simulation |
 | 20.18 | $stop | ❌ | Tidak ada `$stop` |
 | 20.19 | $dumpvars/$dumpfile | ✅ | VCD generation |
+| — | FST waveform | ✅ | `wavefst` crate v0.1 + `FstWaveWriter`; auto-dump saat simulasi; zlib compression |
 | 20.20 | $readmemh/$readmemb | ❌ | Tidak ada memory initialization |
 | 20.21 | $test$plusargs | ❌ | Tidak ada plusargs |
 | 20.22 | $value$plusargs | ❌ | Tidak ada plusargs |
@@ -385,7 +386,7 @@
 
 ---
 
-## 22. Timing Checks (Clauses 14-15)
+## 22. Timing Checks + SDF Annotation (Clauses 14-15)
 
 | Subclaus | Fitur | Maria | Catatan |
 |----------|-------|-------|---------|
@@ -400,7 +401,7 @@
 | 14.9 | $period | ❌ | Tidak ada timing checks |
 | 14.10 | $width | ❌ | Tidak ada timing checks |
 | 14.11 | $nochange | ❌ | Tidak ada timing checks |
-| 15.1 | SDF annotation | ❌ | Tidak ada SDF support |
+| 15.1 | SDF annotation | ✅ | `SdfData` parser + `annotate_sdf()` + `SignalInfo.delay_rise/delay_fall`; 2 tests |
 
 ---
 
@@ -440,7 +441,7 @@
 | 22.5 | Virtual interface | ❌ | Tidak ada |
 | 25.3 | `bind` construct | ✅ | `bind target module instance;` — parser + elaborator resolve; 4 tests |
 | 26.6 | Package export | ❌ | Tidak ada export |
-| 27 | `config` clause | ❌ | Tidak ada config |
+| 27 | `config` clause | ✅ | `config ... endconfig` — design, default liblist, instance/cell/use rules; 3 tests |
 | 29 | `specify` block | ❌ | Tidak ada specify |
 
 ---
@@ -463,35 +464,38 @@
 | Packages (26) | 5 | 4 | 1 | 0 |
 | Classes (15-21) | 11 | 10 | 1 | 0 |
 | Assertions (16) | 6 | 3 | 2 | 1 |
-| Coverage (19.7) | 8 | 5 | 0 | 3 |
+| Coverage (19.7) | 8 | 6 | 0 | 2 |
 | Randomization (19.7) | 6 | 6 | 0 | 0 |
 | System Tasks (20) | 22 | 17 | 0 | 5 |
 | I/O System Tasks (20.7) | 7 | 0 | 0 | 7 |
 | IPC (17) | 5 | 5 | 0 | 0 |
 | UVM (compat) | 12 | 12 | 0 | 0 |
 | Analog (30-33) | 4 | 0 | 0 | 4 |
-| Timing Checks (14-15) | 12 | 0 | 0 | 12 |
+| Timing Checks (14-15) | 12 | 1 | 0 | 11 |
 | Assertion Builtins (20.11) | 6 | 0 | 0 | 6 |
 | Coverage Builtins (20.12) | 5 | 0 | 0 | 5 |
-| Miscellaneous | 8 | 3 | 1 | 4 |
-| **TOTAL** | **~231** | **~177** | **~8** | **~46** |
+| Miscellaneous | 8 | 4 | 1 | 3 |
+| Waveform (VCD + FST) | 2 | 2 | 0 | 0 |
+| **TOTAL** | **~232** | **~181** | **~8** | **~43** |
 
-**Persentase Didukung:** ~77% (dari fitur yang relevan untuk RTL simulation)
+**Persentase Didukung:** ~78% (dari fitur yang relevan untuk RTL simulation)
 **Persentase Parsial:** ~3%
-**Persentase Tidak Didukung:** ~20%
+**Persentase Tidak Didukung:** ~19%
 
 ---
 
 ## Catatan Penting
 
 1. **Analog/Mixed-Signal (20%)** — Tidak relevan untuk Maria (RTL digital simulator)
-2. **Timing Checks (0%)** — SDF annotation dan `$setup`/`$hold` membutuhkan elaboration tambahan yang kompleks
+2. **Timing Checks (0%→SDF ✅)** — SDF annotation sudah didukung (`SdfData` parser + `annotate_sdf()`); `$setup`/`$hold` evaluasi membutuhkan elaboration tambahan
 3. **I/O System Tasks (0%)** — File I/O sudah ada (`$fopen`/`$fclose`/`$fread`/`$fscanf`), tapi string I/O (`$fgets`/`$fgetc`) belum
 4. **Assertion Builtins (0%)** — Assertion immediate sudah ada, tapi control functions (`$assertoff`) belum
-5. **Coverage Builtins (0%)** — Covergroup/coverpoint sudah ada, tapi query/control functions belum
+5. **Coverage Builtins (0%→UCIS ✅)** — Covergroup/coverpoint sudah ada; `export_coverage_ucis()` untuk UCIS XML export; query/control functions masih belum
 6. **Bind Construct (100%)** — `bind target module instance;` sudah didukung penuh — parser + elaborator + 4 tests
+7. **Config/Libmap/Use (100%)** — `config ... endconfig` sudah didukung — lexer + AST + parser + 3 tests
+8. **FST Waveform (100%)** — `wavefst` crate v0.1 + `FstWaveWriter`; auto-dump alongside VCD; zlib compression
 
 ---
 
-*Matriks ini dibuat berdasarkan dokumentasi AUDIT.md Maria v0.2.1 (15 Juli 2026)*
+*Matriks ini dibuat berdasarkan dokumentasi AUDIT.md Maria v0.2.9 (15 Juli 2026)*
 *Standar: IEEE Standard for SystemVerilog (IEEE 1800-2012, revised 2017)*

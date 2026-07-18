@@ -3559,6 +3559,7 @@ impl Parser {
             self.advance();
             None
         } else if let Some(dt) = self.try_parse_dpi_type() {
+            self.skip_dpi_range();
             Some(Box::new(dt))
         } else {
             None
@@ -3581,6 +3582,7 @@ impl Parser {
                     PortDirection::Input // default direction per SV spec
                 };
                 let dtype = self.try_parse_dpi_type().unwrap_or(DataType::Logic);
+                self.skip_dpi_range();
                 let arg_name = self.expect_ident()?;
                 args.push(DpiArg { direction, dtype, name: arg_name });
                 if self.peek() == &Token::Comma {
@@ -3595,6 +3597,27 @@ impl Parser {
         Ok(DpiImport { name, return_type, args, is_task })
     }
 
+    fn skip_dpi_range(&mut self) {
+        if self.peek() == &Token::LBrack {
+            self.advance();
+            let mut depth = 1;
+            while depth > 0 && self.peek() != &Token::Eof {
+                match self.peek() {
+                    Token::LBrack => depth += 1,
+                    Token::RBrack => {
+                        depth -= 1;
+                        if depth == 0 {
+                            self.advance();
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                self.advance();
+            }
+        }
+    }
+
     fn try_parse_dpi_type(&mut self) -> Option<DataType> {
         let dt = match self.peek() {
             Token::Byte => { self.advance(); DataType::Byte }
@@ -3607,6 +3630,7 @@ impl Parser {
             Token::Bit => { self.advance(); DataType::Bit }
             Token::Logic => { self.advance(); DataType::Logic }
             Token::String => { self.advance(); DataType::String }
+            Token::Ident(s) if s == "chandle" => { self.advance(); DataType::Longint }
             _ => return None,
         };
         Some(dt)

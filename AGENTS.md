@@ -11,7 +11,7 @@ cargo test --lib              # same, excludes main.rs
 cargo test <test_name>        # single test (no --lib needed if unique)
 ```
 
-No CI, no lint, no typecheck shortcuts. Just `cargo test`. 569 tests pass.
+No CI, no lint, no typecheck shortcuts. Just `cargo test`. 577 tests pass.
 
 ## Pipeline architecture
 
