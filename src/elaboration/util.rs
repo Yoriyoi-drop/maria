@@ -854,7 +854,8 @@ pub fn resolve_expr_signal(expr: &Expr, signal_map: &HashMap<String, SignalId>) 
 }
 
 pub fn compute_expr_width(expr: &Expr, signal_map: &HashMap<String, SignalId>,
-                      signals: &[SignalInfo], param_vals: &HashMap<String, i64>) -> Result<usize, String> {
+                      signals: &[SignalInfo], param_vals: &HashMap<String, i64>,
+                      package_symbols: &HashMap<String, HashMap<String, PackageItem>>) -> Result<usize, String> {
     match expr {
         Expr::Ident(name) => {
             if let Some(sig_id) = signal_map.get(name) {
@@ -881,39 +882,54 @@ pub fn compute_expr_width(expr: &Expr, signal_map: &HashMap<String, SignalId>,
             if let Some(width) = param_vals.get(name) {
                 let abs = width.unsigned_abs();
                 Ok(if *width == 0 { 1 } else { 64 - (abs.leading_zeros() as usize) }.max(1))
+            } else if let Some((pkg_name, func_name)) = name.split_once("::") {
+                if let Some(pkg) = package_symbols.get(pkg_name) {
+                    if let Some(PackageItem::Function(f)) = pkg.get(func_name) {
+                        let ret_width = if let Some(r) = &f.range {
+                            if let (Ok(msb), Ok(lsb)) = (const_eval_with_params(&r.msb, param_vals), const_eval_with_params(&r.lsb, param_vals)) {
+                                (msb.abs_diff(lsb) + 1) as usize
+                            } else { 1 }
+                        } else { 1 };
+                        Ok(ret_width)
+                    } else {
+                        Err(format!("cannot determine width of function '{}'", name))
+                    }
+                } else {
+                    Err(format!("cannot determine width of function '{}'", name))
+                }
             } else {
                 Err(format!("cannot determine width of function '{}'", name))
             }
         }
-        Expr::Paren(inner) => compute_expr_width(inner, signal_map, signals, param_vals),
+        Expr::Paren(inner) => compute_expr_width(inner, signal_map, signals, param_vals, package_symbols),
         Expr::UnaryOp { op, expr: inner } => {
             match op {
                 UnaryOp::ReductionAnd | UnaryOp::ReductionNand | UnaryOp::ReductionOr
                 | UnaryOp::ReductionNor | UnaryOp::ReductionXor | UnaryOp::ReductionXnor
                 | UnaryOp::Not => Ok(1),
-                _ => compute_expr_width(inner, signal_map, signals, param_vals),
+                _ => compute_expr_width(inner, signal_map, signals, param_vals, package_symbols),
             }
         }
         Expr::BinaryOp { lhs, rhs, .. } => {
-            let lw = compute_expr_width(lhs, signal_map, signals, param_vals)?;
-            let rw = compute_expr_width(rhs, signal_map, signals, param_vals)?;
+            let lw = compute_expr_width(lhs, signal_map, signals, param_vals, package_symbols)?;
+            let rw = compute_expr_width(rhs, signal_map, signals, param_vals, package_symbols)?;
             Ok(lw.max(rw))
         }
         Expr::Concat(items) => {
             let mut total = 0;
             for item in items {
-                total += compute_expr_width(item, signal_map, signals, param_vals)?;
+                total += compute_expr_width(item, signal_map, signals, param_vals, package_symbols)?;
             }
             Ok(total)
         }
         Expr::Replicate { count, expr: inner } => {
             let c = const_eval_with_params(count, param_vals).unwrap_or(1) as usize;
-            let w = compute_expr_width(inner, signal_map, signals, param_vals)?;
+            let w = compute_expr_width(inner, signal_map, signals, param_vals, package_symbols)?;
             Ok(c * w)
         }
         Expr::TernaryOp { true_expr, false_expr, .. } => {
-            let tw = compute_expr_width(true_expr, signal_map, signals, param_vals)?;
-            let fw = compute_expr_width(false_expr, signal_map, signals, param_vals)?;
+            let tw = compute_expr_width(true_expr, signal_map, signals, param_vals, package_symbols)?;
+            let fw = compute_expr_width(false_expr, signal_map, signals, param_vals, package_symbols)?;
             Ok(tw.max(fw))
         }
         Expr::RangeSelect { msb, lsb, .. } => {
@@ -938,7 +954,7 @@ pub fn compute_expr_width(expr: &Expr, signal_map: &HashMap<String, SignalId>,
                     }
                 }
             }
-            compute_expr_width(obj, signal_map, signals, param_vals)
+            compute_expr_width(obj, signal_map, signals, param_vals, package_symbols)
         }
         Expr::Cast { dtype, .. } => {
             match super::parse_type_spec_str(dtype) {

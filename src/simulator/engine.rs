@@ -71,6 +71,8 @@ pub struct SimulationEngine {
     pub breakpoints: Vec<Breakpoint>,
     pub watchpoints: Vec<Watchpoint>,
     pub signal_history: HashMap<String, VecDeque<(u64, LogicVec)>>,
+    sysfunc_prev: HashMap<String, LogicVec>,
+    sysfunc_history: HashMap<String, VecDeque<LogicVec>>,
     pub snapshots: Vec<StateSnapshot>,
     pub paused: bool,
     pub step_mode: StepMode,
@@ -138,6 +140,8 @@ impl SimulationEngine {
             breakpoints: Vec::new(),
             watchpoints: Vec::new(),
             signal_history: HashMap::new(),
+            sysfunc_prev: HashMap::new(),
+            sysfunc_history: HashMap::new(),
             snapshots: Vec::new(),
             paused: false,
             step_mode: StepMode::Running,
@@ -3392,6 +3396,75 @@ impl SimulationEngine {
                             }
                         }
                         Ok(LogicVec::from_u64(0, 32))
+                    }
+                    "$rose" => {
+                        if let Some(arg) = args.first() {
+                            let val = self.evaluate_expr(arg)?;
+                            let key = format!("$rose({:?})", arg);
+                            let prev = self.sysfunc_prev.entry(key).or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
+                            let rose = prev.to_bool().unwrap_or(false) == false && val.to_bool().unwrap_or(false) == true;
+                            *prev = val;
+                            Ok(LogicVec::from_u64(if rose { 1 } else { 0 }, 1))
+                        } else {
+                            Ok(LogicVec::from_u64(0, 1))
+                        }
+                    }
+                    "$fell" => {
+                        if let Some(arg) = args.first() {
+                            let val = self.evaluate_expr(arg)?;
+                            let key = format!("$fell({:?})", arg);
+                            let prev = self.sysfunc_prev.entry(key).or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
+                            let fell = prev.to_bool().unwrap_or(false) == true && val.to_bool().unwrap_or(false) == false;
+                            *prev = val;
+                            Ok(LogicVec::from_u64(if fell { 1 } else { 0 }, 1))
+                        } else {
+                            Ok(LogicVec::from_u64(0, 1))
+                        }
+                    }
+                    "$stable" => {
+                        if let Some(arg) = args.first() {
+                            let val = self.evaluate_expr(arg)?;
+                            let key = format!("$stable({:?})", arg);
+                            let prev = self.sysfunc_prev.entry(key).or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
+                            let stable = *prev == val;
+                            *prev = val;
+                            Ok(LogicVec::from_u64(if stable { 1 } else { 0 }, 1))
+                        } else {
+                            Ok(LogicVec::from_u64(0, 1))
+                        }
+                    }
+                    "$changed" => {
+                        if let Some(arg) = args.first() {
+                            let val = self.evaluate_expr(arg)?;
+                            let key = format!("$changed({:?})", arg);
+                            let prev = self.sysfunc_prev.entry(key).or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
+                            let changed = *prev != val;
+                            *prev = val;
+                            Ok(LogicVec::from_u64(if changed { 1 } else { 0 }, 1))
+                        } else {
+                            Ok(LogicVec::from_u64(0, 1))
+                        }
+                    }
+                    "$past" => {
+                        if let Some(arg) = args.first() {
+                            let val = self.evaluate_expr(arg)?;
+                            let n = if args.len() > 1 {
+                                if let Ok(nv) = self.evaluate_expr(&args[1]) {
+                                    nv.to_u64().max(1) as usize
+                                } else { 1 }
+                            } else { 1 };
+                            let key = format!("$past({:?})", arg);
+                            let hist = self.sysfunc_history.entry(key).or_insert_with(|| VecDeque::new());
+                            hist.push_back(val);
+                            if hist.len() > n {
+                                let past = hist[hist.len() - 1 - n].clone();
+                                Ok(past)
+                            } else {
+                                Ok(LogicVec::fill(LogicVal::Zero, hist[0].width))
+                            }
+                        } else {
+                            Ok(LogicVec::from_u64(0, 32))
+                        }
                     }
                     _ => {
                         eprintln!("warning: unsupported system function '{}'", name);

@@ -2823,7 +2823,7 @@ impl Elaborator {
                                     let info = &signals[sig_id];
                                     info.width * if info.array_depth > 0 { info.array_depth } else { 1 }
                                 })
-                                .or_else(|| compute_expr_width(arg, signal_map, signals, &self.param_vals).ok())
+                                .or_else(|| compute_expr_width(arg, signal_map, signals, &self.param_vals, &self.package_symbols).ok())
                                 .ok_or_else(|| "$bits argument must resolve to a signal or computable expression".to_string())?;
                             Ok(IrExpr::Const(LogicVec::from_u64(width as u64, 32)))
                         } else {
@@ -3066,6 +3066,9 @@ impl Elaborator {
                 // Use SysFunc variant for engine dispatch
                 Ok(IrExpr::SysFunc { name: name.clone(), args: ir_args? })
             }
+            Expr::FuncCall { name, args } if name != "new" && name.contains("::") => {
+                self.elaborate_package_func_call(name, args, signal_map, signals)
+            }
             Expr::FuncCall { name, args } if name != "new" => {
                 let is_dpi = self.design.modules.iter().flat_map(|m| m.items.iter())
                     .any(|item| matches!(item, ModuleItem::DpiImport(d) if d.name == *name));
@@ -3085,6 +3088,156 @@ impl Elaborator {
                 }
             }
             _ => Err(format!("expression type not yet supported")),
+        }
+    }
+
+    fn elaborate_package_func_call(
+        &self,
+        name: &str,
+        args: &[Expr],
+        signal_map: &HashMap<String, SignalId>,
+        signals: &[SignalInfo],
+    ) -> Result<IrExpr, String> {
+        let (pkg_name, func_name) = name.split_once("::")
+            .ok_or_else(|| format!("invalid function name '{}'", name))?;
+
+        let func = self.package_symbols.get(pkg_name)
+            .and_then(|items| items.get(func_name))
+            .and_then(|item| if let PackageItem::Function(f) = item { Some(f) } else { None })
+            .ok_or_else(|| format!("function '{}' not found in package '{}'", func_name, pkg_name))?;
+
+        // Find return expression
+        let ret_expr = func.stmts.iter().find_map(|s| {
+            if let Stmt::Return(Some(e)) = s { Some(e.clone()) } else { None }
+        }).ok_or_else(|| format!("function '{}' has no return expression", name))?;
+
+        // Substitute formal parameters with actual arguments
+        let mut result = *ret_expr;
+
+        // First: resolve package-scoped identifiers (e.g. MuBi4True → constant value)
+        let pkg_symbols = self.package_symbols.get(pkg_name);
+        if let Some(items) = pkg_symbols {
+            // Collect all enum member names and their values from typedefs
+            let mut enum_member_values: HashMap<String, Expr> = HashMap::new();
+            for item in items.values() {
+                if let PackageItem::Typedef(td) = item {
+                    if let DataType::EnumType { members, .. } = &td.dtype {
+                        for (member_name, member_expr) in members {
+                            if let Some(expr) = member_expr {
+                                enum_member_values.insert(member_name.clone(), expr.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            for (item_name, item) in items {
+                if let PackageItem::Param(p) = item {
+                    if let Some(expr) = &p.default {
+                        result = Self::substitute_ident_in_expr(
+                            result, item_name, expr.clone()
+                        );
+                    }
+                }
+            }
+            // Substitute enum member names with their constant values
+            for (member_name, member_value) in &enum_member_values {
+                result = Self::substitute_ident_in_expr(
+                    result, member_name, member_value.clone()
+                );
+            }
+        }
+
+        // Then: substitute formal parameters with actual arguments
+        for (i, param) in func.ports.iter().enumerate() {
+            if let Some(arg) = args.get(i) {
+                result = Self::substitute_ident_in_expr(result, &param.name, arg.clone());
+            }
+        }
+
+        self.elaborate_expr(&result, signal_map, signals)
+    }
+
+    fn substitute_ident_in_expr(expr: Expr, target: &str, replacement: Expr) -> Expr {
+        match expr {
+            Expr::Ident(ref name) if name == target => replacement,
+            Expr::Ident(_) => expr,
+            Expr::Value(_) | Expr::String(_) | Expr::Null | Expr::FillLit(_) => expr,
+            Expr::BinaryOp { op, lhs, rhs } => Expr::BinaryOp {
+                op,
+                lhs: Box::new(Self::substitute_ident_in_expr(*lhs, target, replacement.clone())),
+                rhs: Box::new(Self::substitute_ident_in_expr(*rhs, target, replacement.clone())),
+            },
+            Expr::UnaryOp { op, expr: inner } => Expr::UnaryOp {
+                op,
+                expr: Box::new(Self::substitute_ident_in_expr(*inner, target, replacement.clone())),
+            },
+            Expr::Paren(inner) => Expr::Paren(Box::new(Self::substitute_ident_in_expr(*inner, target, replacement.clone()))),
+            Expr::Concat(exprs) => Expr::Concat(
+                exprs.into_iter().map(|e| Self::substitute_ident_in_expr(e, target, replacement.clone())).collect()
+            ),
+            Expr::Replicate { count, expr: inner } => Expr::Replicate {
+                count: Box::new(Self::substitute_ident_in_expr(*count, target, replacement.clone())),
+                expr: Box::new(Self::substitute_ident_in_expr(*inner, target, replacement.clone())),
+            },
+            Expr::RangeSelect { expr: inner, msb, lsb } => Expr::RangeSelect {
+                expr: Box::new(Self::substitute_ident_in_expr(*inner, target, replacement.clone())),
+                msb: Box::new(Self::substitute_ident_in_expr(*msb, target, replacement.clone())),
+                lsb: Box::new(Self::substitute_ident_in_expr(*lsb, target, replacement.clone())),
+            },
+            Expr::BitSelect { expr: inner, index } => Expr::BitSelect {
+                expr: Box::new(Self::substitute_ident_in_expr(*inner, target, replacement.clone())),
+                index: Box::new(Self::substitute_ident_in_expr(*index, target, replacement.clone())),
+            },
+            Expr::PartSelect { expr: inner, base, width } => Expr::PartSelect {
+                expr: Box::new(Self::substitute_ident_in_expr(*inner, target, replacement.clone())),
+                base: Box::new(Self::substitute_ident_in_expr(*base, target, replacement.clone())),
+                width: Box::new(Self::substitute_ident_in_expr(*width, target, replacement.clone())),
+            },
+            Expr::ScopedIdent { package, item } => {
+                if package == target {
+                    match &replacement {
+                        Expr::Ident(name) => Expr::ScopedIdent { package: name.clone(), item },
+                        _ => Expr::ScopedIdent { package, item },
+                    }
+                } else {
+                    Expr::ScopedIdent { package, item }
+                }
+            }
+            Expr::Cast { dtype, expr: inner } => Expr::Cast {
+                expr: Box::new(Self::substitute_ident_in_expr(*inner, target, replacement.clone())),
+                dtype,
+            },
+            Expr::MemberAccess { obj, field } => Expr::MemberAccess {
+                obj: Box::new(Self::substitute_ident_in_expr(*obj, target, replacement.clone())),
+                field,
+            },
+            Expr::TernaryOp { cond, true_expr, false_expr } => Expr::TernaryOp {
+                cond: Box::new(Self::substitute_ident_in_expr(*cond, target, replacement.clone())),
+                true_expr: Box::new(Self::substitute_ident_in_expr(*true_expr, target, replacement.clone())),
+                false_expr: Box::new(Self::substitute_ident_in_expr(*false_expr, target, replacement.clone())),
+            },
+            Expr::FuncCall { name: n, args: a } => Expr::FuncCall {
+                name: n,
+                args: a.into_iter().map(|e| Self::substitute_ident_in_expr(e, target, replacement.clone())).collect(),
+            },
+            Expr::MethodCall { obj, method, args, with_clause } => Expr::MethodCall {
+                obj: Box::new(Self::substitute_ident_in_expr(*obj, target, replacement.clone())),
+                method,
+                args: args.into_iter().map(|e| Self::substitute_ident_in_expr(e, target, replacement.clone())).collect(),
+                with_clause,
+            },
+            Expr::Inside { expr: inner, range_list } => Expr::Inside {
+                expr: Box::new(Self::substitute_ident_in_expr(*inner, target, replacement.clone())),
+                range_list: range_list.into_iter().map(|e| Self::substitute_ident_in_expr(e, target, replacement.clone())).collect(),
+            },
+            Expr::StreamingConcat { op, slices } => Expr::StreamingConcat {
+                op,
+                slices: slices.into_iter().map(|e| Self::substitute_ident_in_expr(e, target, replacement.clone())).collect(),
+            },
+            Expr::Dist { expr: inner, items } => Expr::Dist {
+                expr: Box::new(Self::substitute_ident_in_expr(*inner, target, replacement.clone())),
+                items,
+            },
         }
     }
 
@@ -3121,7 +3274,7 @@ impl Elaborator {
         }
         // For compound expressions, create an implicit wire
         let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
-        let width_val = compute_expr_width(expr, signal_map, signals, &self.param_vals)?;
+        let width_val = compute_expr_width(expr, signal_map, signals, &self.param_vals, &self.package_symbols)?;
         let width = if width_val > 0 { width_val } else { 1 };
         // Create a unique implicit signal name
         let sig_name = format!("__port_{}", hint_name.replace('.', "_"));

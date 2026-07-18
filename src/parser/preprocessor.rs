@@ -18,6 +18,7 @@ pub struct Preprocessor {
     defines: HashMap<String, MacroDef>,
     search_paths: Vec<PathBuf>,
     warned_includes: HashSet<String>,
+    pub quiet: bool,
 }
 
 impl Preprocessor {
@@ -26,6 +27,7 @@ impl Preprocessor {
             defines: HashMap::new(),
             search_paths: Vec::new(),
             warned_includes: HashSet::new(),
+            quiet: false,
         }
     }
 
@@ -98,7 +100,7 @@ impl Preprocessor {
                         let inc_path = match self.parse_include_path(rest) {
                             Ok(p) => p,
                             Err(e) => {
-                                eprintln!("  ** WARNING: {}", e);
+                                if !self.quiet { eprintln!("  ** WARNING: {}", e); }
                                 i += 1;
                                 continue;
                             }
@@ -118,17 +120,17 @@ impl Preprocessor {
                                                 }
                                             }
                                             Err(e) => {
-                                                eprintln!("  ** WARNING: error processing include '{}': {}", resolved.display(), e);
+                                                if !self.quiet { eprintln!("  ** WARNING: error processing include '{}': {}", resolved.display(), e); }
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        eprintln!("  ** WARNING: cannot read include '{}': {}", resolved.display(), e);
+                                        if !self.quiet { eprintln!("  ** WARNING: cannot read include '{}': {}", resolved.display(), e); }
                                     }
                                 }
                             }
                             Err(e) => {
-                                if self.warned_includes.insert(inc_path.clone()) {
+                                if !self.quiet && self.warned_includes.insert(inc_path.clone()) {
                                     eprintln!("  ** WARNING: {}", e);
                                 }
                             }
@@ -221,7 +223,7 @@ impl Preprocessor {
             i += 1;
         }
 
-        if !cond_stack.is_empty() {
+        if !cond_stack.is_empty() && !self.quiet {
             eprintln!("  ** WARNING: unterminated `ifdef/`ifndef ({} level(s) remaining at end of file)", cond_stack.len());
         }
 
@@ -242,6 +244,9 @@ impl Preprocessor {
 
     fn parse_include_path(&self, rest: &str) -> Result<String, String> {
         let s = rest.trim();
+        if s.starts_with('`') {
+            return Err(format!("include path is a macro reference (not a string literal): {}", s));
+        }
         if s.starts_with('"') {
             let end = s[1..].find('"').ok_or_else(|| format!("unterminated include path"))?;
             Ok(s[1..=end].to_string())

@@ -1,4 +1,5 @@
 use std::process;
+use std::path::PathBuf;
 use clap::Parser as ClapParser;
 
 use maria::parser::lexer::Lexer;
@@ -127,6 +128,10 @@ struct Cli {
     /// Export coverage to UCIS XML file (default: <module>.ucis.xml)
     #[arg(long = "coverage-ucis")]
     coverage_ucis: Option<String>,
+
+    /// Suppress preprocessor warnings (missing include files, etc.)
+    #[arg(short = 'q', long = "quiet")]
+    quiet: bool,
 }
 
 fn main() {
@@ -154,6 +159,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
 
     // Create shared preprocessor with CLI config
     let mut base_pp = Preprocessor::new();
+    base_pp.quiet = cli.quiet;
     for path in &cli.incdirs {
         base_pp.add_search_path(path);
     }
@@ -164,22 +170,66 @@ fn run(cli: Cli) -> Result<(), SimError> {
             base_pp.define(def, "");
         }
     }
-    // Auto-detect include paths: walk up from each source looking for common SV directories
-    let common_dirs = ["include", "includes", "rtl", "dv", "sv", "src","svh"];
-    for src in &sources {
-        if let Some(dir) = std::path::Path::new(src).parent() {
-            let mut candidate = Some(dir.to_path_buf());
-            let mut seen = std::collections::HashSet::new();
-            while let Some(d) = candidate {
-                for sub in &common_dirs {
-                    let p = d.join(sub);
-                    if p.is_dir() && seen.insert(p.clone()) {
-                        base_pp.add_search_path(p.to_str().unwrap());
+    // Auto-detect include paths:
+    //   1. Walk up from each source, at each ancestor scan subdirs for .svh/.sv files
+    //   2. Scan each source dir's own subtree (depth ≤ 3) for SV include files
+    let mut auto_seen = std::collections::HashSet::new();
+    fn scan_for_includes(dir: &std::path::Path, seen: &mut std::collections::HashSet<PathBuf>, pp: &mut Preprocessor, depth: usize) {
+        if depth > 3 { return; }
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if let Ok(ft) = entry.file_type() {
+                    let path = entry.path();
+                    if ft.is_dir() {
+                        scan_for_includes(&path, seen, pp, depth + 1);
+                    } else if ft.is_file() {
+                        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                        if (ext == "svh" || ext == "sv") && seen.insert(path.clone()) {
+                            if let Some(parent) = path.parent() {
+                                pp.add_search_path(parent.to_str().unwrap());
+                            }
+                        }
                     }
                 }
-                candidate = d.parent().map(|p| p.to_path_buf());
             }
         }
+    }
+    let mut src_dirs = std::collections::HashSet::new();
+    for src in &sources {
+        if let Some(dir) = std::path::Path::new(src).parent() {
+            let canonical = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+            if !src_dirs.insert(canonical.clone()) { continue; }
+            // Walk up from source dir, at each level scan ALL subdirs for SV files
+            let mut anc = Some(canonical.clone());
+            while let Some(ref d) = anc {
+                if let Ok(entries) = std::fs::read_dir(d) {
+                    for entry in entries.flatten() {
+                        if let Ok(ft) = entry.file_type() {
+                            if ft.is_dir() {
+                                let subdir = entry.path();
+                                if auto_seen.insert(subdir.clone()) {
+                                    if let Ok(sub_entries) = std::fs::read_dir(&subdir) {
+                                        let has_sv = sub_entries.flatten().any(|e| {
+                                            let p = e.path();
+                                            let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("");
+                                            ext == "svh" || ext == "sv"
+                                        });
+                                        if has_sv {
+                                            base_pp.add_search_path(subdir.to_str().unwrap());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                anc = d.parent().map(|p| p.to_path_buf());
+            }
+        }
+    }
+    // Also scan each unique source dir's own subtree (depth ≤ 2) for SV files
+    for src_dir in src_dirs.iter() {
+        scan_for_includes(src_dir, &mut auto_seen, &mut base_pp, 0);
     }
 
     // Combine all sources
