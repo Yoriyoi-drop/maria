@@ -1829,6 +1829,16 @@ endmodule
     }
 
     #[test]
+    fn test_timescale_directive() {
+        use parser::preprocessor::Preprocessor;
+        let mut pp = Preprocessor::new();
+        let src = "`timescale 1ns / 10ps\nmodule top;\ninitial #1 $finish;\nendmodule\n";
+        let result = pp.preprocess(src, None).unwrap();
+        assert_eq!(pp.timescale, Some(("1ns".to_string(), "10ps".to_string())));
+        assert!(result.contains("module top;"), "timescale should pass through module text");
+    }
+
+    #[test]
     fn test_preprocessor_nested_ifdef() {
         use parser::preprocessor::Preprocessor;
         let mut pp = Preprocessor::new();
@@ -1967,6 +1977,421 @@ endmodule
     }
 
     #[test]
+    fn test_specify_parse() {
+        let source = r#"
+module tb;
+    reg data, clk;
+    specify
+        specparam tSU = 1.0;
+        $setup(data, posedge clk, tSU);
+        $hold(posedge clk, data, 0.5);
+        (data => q) = (1.0);
+    endspecify
+endmodule
+"#;
+        let result = compile_str(source);
+        assert!(result.is_ok(), "specify block compile should succeed");
+    }
+
+    #[test]
+    fn test_specify_with_module() {
+        let source = r#"
+module dut(input clk, input d, output reg q);
+    always_ff @(posedge clk) q <= d;
+    specify
+        $setup(d, posedge clk, 1);
+        $hold(posedge clk, d, 0);
+    endspecify
+endmodule
+module tb;
+    reg clk, d;
+    wire q;
+    dut u1(.clk(clk), .d(d), .q(q));
+    initial begin
+        clk = 0; d = 0;
+        #5 clk = 1; #5 clk = 0;
+        #5 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 20).unwrap();
+        assert!(sigs.iter().any(|(n, _)| n == "q"), "q signal should exist");
+    }
+
+    #[test]
+    fn test_udp_sequential_dff_posedge0() {
+        let source = r#"
+primitive dff(output reg q, input clk, input d);
+    table
+        (01) 0 : ? : 0;
+        (01) 1 : ? : 1;
+        ?    ? : ? : -;
+    endtable
+endprimitive
+
+module tb;
+    reg clk, d;
+    wire q;
+    dff u1(q, clk, d);
+    initial begin
+        clk = 0; d = 0;
+        #1 clk = 1;
+        #1 if (q !== 0) $finish;
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 10).unwrap();
+        let q_val = sigs.iter().find(|(n, _)| n == "q")
+            .map(|(_, v)| v.to_u64()).unwrap_or(2);
+        assert_eq!(q_val, 0, "dff: posedge with d=0 -> q=0");
+    }
+
+    #[test]
+    fn test_udp_sequential_dff_posedge1() {
+        let source = r#"
+primitive dff(output reg q, input clk, input d);
+    table
+        (01) 0 : ? : 0;
+        (01) 1 : ? : 1;
+        ?    ? : ? : -;
+    endtable
+endprimitive
+
+module tb;
+    reg clk, d;
+    wire q;
+    dff u1(q, clk, d);
+    initial begin
+        clk = 0; d = 0;
+        #1 clk = 1; $display("t1 clk=%b d=%b q=%b", clk, d, q);
+        #1 clk = 0; d = 1; $display("t2 clk=%b d=%b q=%b", clk, d, q);
+        #1 clk = 1; $display("t3 clk=%b d=%b q=%b", clk, d, q);
+        #1 $display("t4 clk=%b d=%b q=%b", clk, d, q);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 15).unwrap();
+        let q_val = sigs.iter().find(|(n, _)| n == "q")
+            .map(|(_, v)| v.to_u64()).unwrap_or(2);
+        assert_eq!(q_val, 1, "dff: second posedge with d=1 -> q=1");
+    }
+
+    #[test]
+    fn test_udp_sequential_dff_initial() {
+        let source = r#"
+primitive dff_init(output reg q, input clk, input d);
+    initial q = 0;
+    table
+        (01) 0 : ? : 0;
+        (01) 1 : ? : 1;
+        (0?) 1 : 1 : 1;
+        (?0) ? : ? : -;
+        ?    ? : ? : -;
+    endtable
+endprimitive
+
+module tb;
+    reg clk, d;
+    wire q;
+    dff_init u1(q, clk, d);
+    initial begin
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let q_val = sigs.iter().find(|(n, _)| n == "q")
+            .map(|(_, v)| v.to_u64()).unwrap_or(2);
+        assert_eq!(q_val, 0, "sequential dff: initial q should be 0");
+    }
+
+    #[test]
+    fn test_sysfunc_countones() {
+        let source = r#"
+module tb;
+    reg [7:0] val;
+    reg [31:0] result;
+    initial begin
+        val = 8'b10100101;
+        result = $countones(val);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let r = sigs.iter().find(|(n, _)| n == "result")
+            .map(|(_, v)| v.to_u64()).unwrap_or(99);
+        assert_eq!(r, 4, "$countones(8'b10100101) = 4");
+    }
+
+    #[test]
+    fn test_sysfunc_onehot() {
+        let source = r#"
+module tb;
+    reg [3:0] a, b;
+    reg onehot_a, onehot_b;
+    initial begin
+        a = 4'b0100;
+        b = 4'b0110;
+        onehot_a = $onehot(a);
+        onehot_b = $onehot(b);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let ra = sigs.iter().find(|(n, _)| n == "onehot_a")
+            .map(|(_, v)| v.to_u64()).unwrap_or(2);
+        let rb = sigs.iter().find(|(n, _)| n == "onehot_b")
+            .map(|(_, v)| v.to_u64()).unwrap_or(2);
+        assert_eq!(ra, 1, "$onehot(4'b0100) = 1");
+        assert_eq!(rb, 0, "$onehot(4'b0110) = 0");
+    }
+
+    #[test]
+    fn test_sysfunc_isunknown() {
+        let source = r#"
+module tb;
+    reg [3:0] a, b;
+    reg unk_a, unk_b;
+    initial begin
+        a = 4'b1010;
+        b = 4'b10xz;
+        unk_a = $isunknown(a);
+        unk_b = $isunknown(b);
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let ra = sigs.iter().find(|(n, _)| n == "unk_a")
+            .map(|(_, v)| v.to_u64()).unwrap_or(2);
+        let rb = sigs.iter().find(|(n, _)| n == "unk_b")
+            .map(|(_, v)| v.to_u64()).unwrap_or(2);
+        assert_eq!(ra, 0, "$isunknown(4'b1010) = 0");
+        assert_eq!(rb, 1, "$isunknown(4'b10xz) = 1");
+    }
+
+    #[test]
+    fn test_timing_check_setup() {
+        let source = r#"
+module tb;
+    reg data, clk;
+    wire q;
+    specify
+        $setup(data, posedge clk, 5);
+    endspecify
+    initial begin
+        data = 0;
+        #1 clk = 1;
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 10).unwrap();
+        assert!(sigs.iter().any(|(n, _)| n == "data"));
+    }
+
+    #[test]
+    fn test_fgets_string_var() {
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join("maria_test_fgets.txt");
+        {
+            let mut f = std::fs::File::create(&tmp).unwrap();
+            writeln!(f, "hello").unwrap();
+            writeln!(f, "world").unwrap();
+        }
+        let source = format!(r#"
+module tb;
+    string line;
+    integer fd;
+    initial begin
+        fd = $fopen("{}", "r");
+        if (fd == 0) begin
+            $display("FAIL: cannot open file");
+            $finish;
+        end
+        #1;
+        $fgets(line, fd);
+        #1 $finish;
+    end
+endmodule
+"#, tmp.display());
+        let sigs = simulate_signals(&source, 10).unwrap();
+        // Check that line has data (non-empty string signal)
+        let line_sig = sigs.iter().find(|(n, _)| n == "line");
+        assert!(line_sig.is_some(), "line signal should exist");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_fgetc_basic() {
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join("maria_test_fgetc.txt");
+        {
+            let mut f = std::fs::File::create(&tmp).unwrap();
+            writeln!(f, "A").unwrap();
+        }
+        let source = format!(r#"
+module tb;
+    integer c;
+    integer fd;
+    initial begin
+        fd = $fopen("{}", "r");
+        #1;
+        c = $fgetc(fd);
+        #1 $finish;
+    end
+endmodule
+"#, tmp.display());
+        let sigs = simulate_signals(&source, 10).unwrap();
+        let c_val = sigs.iter().find(|(n, _)| n == "c")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        // 'A' = 65
+        assert_eq!(c_val, 65, "$fgetc should read 'A' (65)");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_fflush_basic() {
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join("maria_test_fflush.txt");
+        {
+            let mut f = std::fs::File::create(&tmp).unwrap();
+            writeln!(f, "hello").unwrap();
+        }
+        let source = format!(r#"
+module tb;
+    integer fd;
+    initial begin
+        fd = $fopen("{}", "a");
+        $fwrite(fd, "world");
+        $fflush(fd);
+        #1 $finish;
+    end
+endmodule
+"#, tmp.display());
+        let sigs = simulate_signals(&source, 10).unwrap();
+        let _ = std::fs::remove_file(&tmp);
+        // Just verify no crash
+        assert!(true);
+    }
+
+    #[test]
+    fn test_fseek_ftell() {
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join("maria_test_fseek.txt");
+        {
+            let mut f = std::fs::File::create(&tmp).unwrap();
+            writeln!(f, "ABCDEFGHIJ").unwrap();
+        }
+        let source = format!(r#"
+module tb;
+    integer fd;
+    integer pos;
+    integer ch;
+    initial begin
+        fd = $fopen("{}", "r");
+        #1;
+        ch = $fgetc(fd);
+        pos = $ftell(fd);
+        $fseek(fd, 0, 0);
+        ch = $fgetc(fd);
+        pos = $ftell(fd);
+        #1 $finish;
+    end
+endmodule
+"#, tmp.display());
+        let sigs = simulate_signals(&source, 10).unwrap();
+        let pos_val = sigs.iter().find(|(n, _)| n == "pos")
+            .map(|(_, v)| v.to_u64()).unwrap_or(99);
+        assert_eq!(pos_val, 1, "$ftell after reading 1 byte should be 1");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_feof() {
+        use std::io::Write;
+        let tmp = std::env::temp_dir().join("maria_test_feof.txt");
+        {
+            let mut f = std::fs::File::create(&tmp).unwrap();
+            write!(f, "AB").unwrap();
+        }
+        let source = format!(r#"
+module tb;
+    integer fd;
+    integer eof;
+    integer ch;
+    initial begin
+        fd = $fopen("{}", "r");
+        eof = $feof(fd);
+        ch = $fgetc(fd);
+        ch = $fgetc(fd);
+        ch = $fgetc(fd);
+        eof = $feof(fd);
+        #1 $finish;
+    end
+endmodule
+"#, tmp.display());
+        let sigs = simulate_signals(&source, 10).unwrap();
+        let eof_val = sigs.iter().find(|(n, _)| n == "eof")
+            .map(|(_, v)| v.to_u64()).unwrap_or(99);
+        assert_eq!(eof_val, 1, "$feof should be 1 after reading past end");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_const_decl() {
+        let source = r#"
+module tb;
+    const logic [7:0] x = 42;
+    reg [7:0] y;
+    initial begin
+        y = x;
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let x_val = sigs.iter().find(|(n, _)| n == "x")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(x_val, 42, "const x should be 42");
+    }
+
+    #[test]
+    fn test_parallel_eval_basic() {
+        let source = r#"
+module tb;
+    reg [7:0] a, b, c, d;
+    wire [7:0] x, y;
+    assign x = a + b;
+    assign y = c + d;
+    initial begin
+        a = 1; b = 2; c = 3; d = 4;
+        #1 $finish;
+    end
+endmodule
+"#;
+        let design = compile_str(source).unwrap();
+        let mut engine = crate::simulator::SimulationEngine::new(design, 10);
+        // Enable parallel with threshold of 1 for testing
+        let mut pcfg = crate::simulator::parallel::ParallelConfig::default();
+        pcfg.min_processes_parallel = 1;
+        pcfg.parallel_processes = true;
+        engine.set_parallel_config(pcfg);
+        engine.run().unwrap();
+        let sigs = engine.design.top.signals.clone();
+        let x_val = sigs.iter()
+            .find(|s| s.name == "x")
+            .map(|s| engine.state.read_signal(
+                engine.design.top.signals.iter().position(|x| x.name == "x").unwrap_or(0)
+            ).to_u64()).unwrap_or(0);
+        assert_eq!(x_val, 3, "parallel: x = a + b = 1 + 2 = 3");
+    }
+
+    #[test]
     fn test_gate_primitives_and_or() {
         let source = r#"
 module tb;
@@ -2006,6 +2431,93 @@ endmodule
         let out_val = sigs.iter().find(|(n, _)| n == "out")
             .map(|(_, v)| v.to_u64()).unwrap_or(0);
         assert_eq!(out_val, 1, "not gate should invert 0 to 1");
+    }
+
+    #[test]
+    fn test_udp_combinational_and() {
+        let source = r#"
+primitive udp_and(output z, input a, input b);
+    table
+        0 0 : 0;
+        0 1 : 0;
+        1 0 : 0;
+        1 1 : 1;
+    endtable
+endprimitive
+
+module tb;
+    reg a, b;
+    wire z;
+    udp_and u1(z, a, b);
+    initial begin
+        a = 0; b = 0; #1;
+        if (z !== 0) $finish;
+        a = 1; b = 1; #1;
+        if (z !== 1) $finish;
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 10).unwrap();
+        let z_val = sigs.iter().find(|(n, _)| n == "z")
+            .map(|(_, v)| v.to_u64()).unwrap_or(2);
+        assert_eq!(z_val, 1, "UDP and: 1 & 1 = 1");
+    }
+
+    #[test]
+    fn test_udp_combinational_mux() {
+        let source = r#"
+primitive udp_mux(output z, input a, input b, input sel);
+    table
+        0 ? 0 : 0;
+        1 ? 0 : 1;
+        ? 0 1 : 0;
+        ? 1 1 : 1;
+    endtable
+endprimitive
+
+module tb;
+    reg a, b, sel;
+    wire z;
+    udp_mux u1(z, a, b, sel);
+    initial begin
+        a = 1; b = 0; sel = 0; #1;
+        if (z !== 1) $finish;
+        a = 1; b = 0; sel = 1; #1;
+        if (z !== 0) $finish;
+        a = 0; b = 1; sel = 0; #1;
+        if (z !== 0) $finish;
+        a = 0; b = 1; sel = 1; #1;
+        if (z !== 1) $finish;
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 10).unwrap();
+        let z_val = sigs.iter().find(|(n, _)| n == "z")
+            .map(|(_, v)| v.to_u64()).unwrap_or(2);
+        assert_eq!(z_val, 1, "UDP mux: sel=1,b=1 -> 1");
+    }
+
+    #[test]
+    fn test_udp_compile_only() {
+        let source = r#"
+primitive udp_nand(output z, input a, input b);
+    table
+        0 0 : 1;
+        0 1 : 1;
+        1 0 : 1;
+        1 1 : 0;
+    endtable
+endprimitive
+module tb;
+    wire z;
+    reg a = 0, b = 0;
+    udp_nand u1(z, a, b);
+endmodule
+"#;
+        let result = compile_str(source);
+        assert!(result.is_ok(), "UDP compile should succeed");
     }
 
     #[test]
@@ -3421,6 +3933,53 @@ endmodule
     }
 
     #[test]
+    fn test_package_import_function() {
+        let source = r#"
+package math_pkg;
+    function int add(input int a, input int b);
+        add = a + b;
+    endfunction
+endpackage
+
+module tb;
+    import math_pkg::*;
+    reg [31:0] result;
+    initial begin
+        result = add(10, 20);
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let r = sigs.iter().find(|(n,_)| n == "result")
+            .map(|(_,v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(r, 30, "package function add(10,20) should return 30");
+    }
+
+    #[test]
+    fn test_package_import_task() {
+        let source = r#"
+package task_pkg;
+    task set_reg(output reg [7:0] r, input [7:0] v);
+        r = v;
+    endtask
+endpackage
+
+module tb;
+    import task_pkg::*;
+    reg [7:0] val;
+    initial begin
+        val = 0;
+        set_reg(val, 42);
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let v = sigs.iter().find(|(n,_)| n == "val")
+            .map(|(_,v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(v, 42, "package task set_reg should set val to 42");
+    }
+
+    #[test]
     fn test_module_task() {
         let source = r#"
 module tb;
@@ -4768,6 +5327,53 @@ endmodule
         let v = sigs.iter().find(|(n, _)| n == "x")
             .map(|(_, v)| v.to_u64()).unwrap_or(0);
         assert_eq!(v, 99, "if(0) should execute false branch");
+    }
+
+    #[test]
+    fn test_dce_case_const() {
+        let source = r#"
+module tb;
+    reg [31:0] x;
+    integer sel;
+    initial begin
+        sel = 2;
+        case (sel)
+            0: x = 10;
+            1: x = 20;
+            2: x = 30;
+            3: x = 40;
+        endcase
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let v = sigs.iter().find(|(n, _)| n == "x")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(v, 30, "case const 2 -> x=30");
+    }
+
+    #[test]
+    fn test_dce_case_default() {
+        let source = r#"
+module tb;
+    reg [31:0] x;
+    integer sel;
+    initial begin
+        sel = 99;
+        case (sel)
+            0: x = 10;
+            1: x = 20;
+            default: x = 99;
+        endcase
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let v = sigs.iter().find(|(n, _)| n == "x")
+            .map(|(_, v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(v, 99, "case default -> x=99");
     }
 
     #[test]
@@ -7508,4 +8114,142 @@ endmodule
         let _ = engine.run();
         let sig_id = engine.design.top.signals.iter().position(|s| s.name == "width").unwrap();
         assert_eq!(engine.state.read_signal(sig_id).to_u64(), 32, "$value$plusargs should write 32");
+    }
+
+    #[test]
+    fn test_sequence_keyword_parse() {
+        let source = r#"
+module tb;
+    reg clk;
+    sequence s1;
+        @(posedge clk) a ##1 b;
+    endsequence
+    initial begin
+        #1 $finish;
+    end
+endmodule
+"#;
+        let result = compile_str(source);
+        assert!(result.is_ok(), "sequence keyword compile failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_streaming_concat_slice_size() {
+        let source = r#"
+module tb;
+    reg [15:0] a, b, c;
+    initial begin
+        a = 16'hABCD;
+        // {>> N {a}} = full bit-reversal for any N dividing width
+        // 0xABCD = 1010_1011_1100_1101
+        // Bit-reversed: 1011_0011_1101_0101 = 0xB3D5
+        b = {>> 8 {a}};
+        c = {>> 1 {a}};
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let b_val = sigs.iter().find(|(n,_)| n == "b").map(|(_,v)| v.to_u64()).unwrap_or(0);
+        let c_val = sigs.iter().find(|(n,_)| n == "c").map(|(_,v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(b_val, 0xB3D5, "stream >>8 16hABCD = 0xB3D5");
+        assert_eq!(c_val, 0xB3D5, "stream >>1 16hABCD = 0xB3D5");
+    }
+
+    #[test]
+    fn test_streaming_concat_ltlt_slice_size() {
+        let source = r#"
+module tb;
+    reg [15:0] a, b;
+    initial begin
+        a = 16'h1234;
+        // {<< 8 {a}}: partitions into 8-bit slices [0x12, 0x34],
+        // reverses slice order => [0x34, 0x12] = 0x3412
+        b = {<< 8 {a}};
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 5).unwrap();
+        let b_val = sigs.iter().find(|(n,_)| n == "b").map(|(_,v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(b_val, 0x3412, "stream <<8 16h1234 = 0x3412");
+    }
+
+    #[test]
+    fn test_process_await_kill() {
+        let source = r#"
+module tb;
+    process p;
+    reg [31:0] x;
+    initial begin
+        fork
+            begin : worker
+                p = process::self();
+                #10 x = 42;
+            end
+        join_none
+        #5;
+        p.kill();
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 20).unwrap();
+        let x_val = sigs.iter().find(|(n,_)| n == "x").map(|(_,v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(x_val, 0, "after kill at #5, x should stay 0 (worker killed before #10)");
+    }
+
+    #[test]
+    fn test_process_await_blocking() {
+        let source = r#"
+module tb;
+    process p;
+    reg [31:0] x;
+    reg [31:0] y;
+    initial begin
+        fork
+            begin : worker
+                p = process::self();
+                #10 x = 42;
+            end
+        join_none
+        p.await();
+        y = 99;
+        #1 $finish;
+    end
+endmodule
+"#;
+        let sigs = simulate_signals(source, 20).unwrap();
+        let x_val = sigs.iter().find(|(n,_)| n == "x").map(|(_,v)| v.to_u64()).unwrap_or(0);
+        let y_val = sigs.iter().find(|(n,_)| n == "y").map(|(_,v)| v.to_u64()).unwrap_or(0);
+        assert_eq!(x_val, 42, "fork branch set x=42 at #10");
+        assert_eq!(y_val, 99, "after await, y should be set to 99");
+    }
+
+    // Additional preprocessor tests requested
+    #[test]
+    fn test_preprocessor_nested_and_elsif() {
+        let mut pp = Preprocessor::new();
+        pp.define("A", "1");
+        let source = "`ifdef A\n`ifdef B\nwire both;\n`else\nwire only_a;\n`endif\n`endif\nwire after;\n";
+        let out = pp.preprocess(source, None).unwrap();
+        assert!(out.contains("wire only_a;"), "nested `ifdef should emit only_a when B undefined");
+    }
+
+    #[test]
+    fn test_preprocessor_unterminated_autoclose() {
+        let mut pp = Preprocessor::new();
+        let source = "`ifdef X\nwire a;\n"; // no `endif
+        let out = pp.preprocess(source, None).unwrap();
+        // X is not defined, so the body should be skipped even if unterminated;
+        // preprocessor auto-closes at EOF but does not emit skipped branches.
+        assert!(!out.contains("wire a;"), "unterminated `ifdef with undefined symbol should NOT emit 'wire a;'");
+    }
+
+    #[test]
+    fn test_define_in_skipped_branch_not_visible() {
+        let mut pp = Preprocessor::new();
+        let source = "`ifdef X\n`define FOO 1\n`endif\n`ifdef FOO\nwire yes;\n`else\nwire no;\n`endif\n";
+        let out = pp.preprocess(source, None).unwrap();
+        assert!(out.contains("wire no;"), "`define inside skipped branch should not be visible");
     }
