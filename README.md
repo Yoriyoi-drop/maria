@@ -1,6 +1,6 @@
 # maria — RTL Simulator untuk SystemVerilog
 
-**Versi 0.2.9** | Rust | 577 tests | MIT
+**Versi 0.2.9** | Rust | 609 tests | MIT
 
 A Rust-based RTL simulator for SystemVerilog. Compiles `.sv` files through a pipeline of preprocessor → lexer → parser → AST → elaborator → IR → simulation engine → VCD/FST output.
 

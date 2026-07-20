@@ -77,7 +77,7 @@ impl Parser {
             Token::Ident(s) => { self.advance(); Ok(s.clone()) }
             Token::New => { self.advance(); Ok("new".to_string()) }
             Token::This => { self.advance(); Ok("this".to_string()) }
-            _ => Err(SimError::parse(format!("line {}: expected identifier, found {}", self.peek_line(), self.peek())),
+            _ => Err(SimError::parse(format!("line {}: expected identifier, found {}", self.peek_line(), self.peek()))),
         }
     }
 
@@ -289,7 +289,7 @@ impl Parser {
                         Token::Shortint | Token::Longint | Token::Time |
                         Token::Real | Token::RealTime | Token::String |
                         Token::Enum | Token::Struct | Token::Union) {
-                        return Err(SimError::parse(format!("line {}: declaration outside of module", self.peek_line()));
+                        return Err(SimError::parse(format!("line {}: declaration outside of module", self.peek_line())));
                     }
                     let line = self.peek_line();
                     // Gracefully skip unknown constructs at top level
@@ -602,7 +602,7 @@ impl Parser {
                         let edge = trimmed[1..end].to_string();
                         Ok(UdpSymbol::Edge(edge))
                     }
-                    _ => Err(SimError::parse(format!("line {}: invalid UDP table symbol '{}'", self.peek_line(), trimmed)),
+                    _ => Err(SimError::parse(format!("line {}: invalid UDP table symbol '{}'", self.peek_line(), trimmed))),
                 }
             }
             Token::Number { value, .. } if value == "0" || value == "1" => {
@@ -678,7 +678,7 @@ impl Parser {
                 self.advance();
                 Ok(UdpSymbol::Edge("??".to_string()))
             }
-            _ => Err(SimError::parse(format!("line {}: unexpected token in UDP table: {}", self.peek_line(), tok)),
+            _ => Err(SimError::parse(format!("line {}: unexpected token in UDP table: {}", self.peek_line(), tok))),
         }
     }
 
@@ -769,7 +769,7 @@ impl Parser {
                 if self.peek() == &Token::Comma { self.advance(); }
                 continue;
             } else {
-                return Err(SimError::parse(format!("line {}: expected direction (input/output) in UDP port list", self.peek_line()));
+                return Err(SimError::parse(format!("line {}: expected direction (input/output) in UDP port list", self.peek_line())));
             };
 
             let name = self.expect_ident()?;
@@ -1161,7 +1161,7 @@ impl Parser {
                         Token::Task => {
                             members.push(ClassMember::Task(self.parse_task(true)?));
                         }
-                        _ => return Err(SimError::parse(format!("line {}: expected function/task after virtual", self.peek_line())),
+                        _ => return Err(SimError::parse(format!("line {}: expected function/task after virtual", self.peek_line()))),
                     }
                 }
                 Token::Task => {
@@ -1257,7 +1257,7 @@ impl Parser {
                 self.advance();
                 s.clone()
             }
-            _ => return Err(SimError::parse(format!("line {}: expected module name", self.peek_line())),
+            _ => return Err(SimError::parse(format!("line {}: expected module name", self.peek_line()))),
         };
 
         let mut ports = Vec::new();
@@ -1427,7 +1427,7 @@ impl Parser {
 
         let name = match self.peek() {
             Token::Ident(s) => { let n = s.clone(); self.advance(); n }
-            _ => return Err(SimError::parse(format!("line {}: expected interface name", self.peek_line())),
+            _ => return Err(SimError::parse(format!("line {}: expected interface name", self.peek_line()))),
         };
         self.skip_semi();
 
@@ -1456,7 +1456,7 @@ impl Parser {
         }
         match self.peek() {
             Token::EndInterface => { self.advance(); }
-            _ => { return Err(SimError::parse(format!("line {}: expected endinterface", self.peek_line())); }
+            _ => { return Err(SimError::parse(format!("line {}: expected endinterface", self.peek_line()))); }
         }
         if self.peek() == &Token::Colon {
             self.advance();
@@ -1472,7 +1472,7 @@ impl Parser {
         self.advance(); // consume 'modport'
         let name = match self.peek() {
             Token::Ident(s) => { let n = s.clone(); self.advance(); n }
-            _ => return Err(SimError::parse(format!("line {}: expected modport name", self.peek_line())),
+            _ => return Err(SimError::parse(format!("line {}: expected modport name", self.peek_line()))),
         };
         self.expect(Token::LParen)?;
         let mut items = Vec::new();
@@ -1481,13 +1481,13 @@ impl Parser {
                 Token::Input => { self.advance(); PortDirection::Input }
                 Token::Output => { self.advance(); PortDirection::Output }
                 Token::Inout => { self.advance(); PortDirection::Inout }
-                _ => return Err(SimError::parse(format!("line {}: expected direction in modport", self.peek_line())),
+                _ => return Err(SimError::parse(format!("line {}: expected direction in modport", self.peek_line()))),
             };
             // Collect all signals under this direction, comma-separated
             loop {
                 let sig_name = match self.peek() {
                     Token::Ident(s) => { let n = s.clone(); self.advance(); n }
-                    _ => return Err(SimError::parse(format!("line {}: expected signal name in modport", self.peek_line())),
+                    _ => return Err(SimError::parse(format!("line {}: expected signal name in modport", self.peek_line()))),
                 };
                 items.push(ModportItem { name: sig_name, direction: dir.clone() });
                 match self.peek() {
@@ -1654,7 +1654,7 @@ impl Parser {
                 let name = self.expect_ident()?;
                 DataType::UserDefined(name)
             }
-            _ => return Err(SimError::parse(format!("expected type")),
+            _ => return Err(SimError::parse(format!("expected type"))),
         };
         self.advance();
         if self.peek() == &Token::Signed {
@@ -1677,7 +1677,7 @@ impl Parser {
                     self.advance();
                     match self.peek() {
                         Token::Ident(_) => { self.advance(); }
-                        _ => return Err(SimError::parse(format!("line {}: expected port name", self.peek_line())),
+                        _ => return Err(SimError::parse(format!("line {}: expected port name", self.peek_line()))),
                     }
                     self.expect(Token::LParen)?;
                     if self.peek() != &Token::RParen {
@@ -1919,7 +1919,7 @@ impl Parser {
                     Ok(None)
                 } else {
                     let line = self.peek_line();
-                    Err(SimError::parse(format!("line {}: unexpected token in module body: {}", line, self.peek()))
+                    Err(SimError::parse(format!("line {}: unexpected token in module body: {}", line, self.peek())))
                 }
             }
             Token::For | Token::If | Token::Case | Token::CaseX | Token::CaseZ => {
@@ -2322,7 +2322,7 @@ impl Parser {
                 self.skip_semi();
                 return Ok(Decl { dtype, kind: DeclKind::Logic, names });
             }
-            _ => return Err(SimError::parse(format!("line {}: expected wire/reg/logic/int/byte/shortint/longint/enum/struct/union/wand/wor/tri", self.peek_line())),
+            _ => return Err(SimError::parse(format!("line {}: expected wire/reg/logic/int/byte/shortint/longint/enum/struct/union/wand/wor/tri", self.peek_line()))),
         };
         self.advance();
 
@@ -2561,7 +2561,7 @@ impl Parser {
                     };
                     members.push((name, val));
                 }
-                _ => return Err(SimError::parse(format!("line {}: expected identifier in enum", self.peek_line())),
+                _ => return Err(SimError::parse(format!("line {}: expected identifier in enum", self.peek_line()))),
             }
             if self.peek() == &Token::Comma {
                 self.advance();
@@ -2623,7 +2623,7 @@ impl Parser {
                         DataType::UserDefined(name)
                     }
                 }
-                _ => return Err(SimError::parse(format!("line {}: expected type in struct/union member", self.peek_line())),
+                _ => return Err(SimError::parse(format!("line {}: expected type in struct/union member", self.peek_line()))),
             };
             let range = if self.peek() == &Token::LBrack {
                 let er = self.parse_range()?;
@@ -2676,7 +2676,7 @@ impl Parser {
                     self.advance();
                     (name, DataType::EnumType { base, members }, None)
                 } else {
-                    return Err(SimError::parse(format!("line {}: expected name after typedef enum", self.peek_line()));
+                    return Err(SimError::parse(format!("line {}: expected name after typedef enum", self.peek_line())));
                 }
             }
             Token::Bit => {
@@ -2690,7 +2690,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!("line {}: expected name after typedef bit", self.peek_line()));
+                    return Err(SimError::parse(format!("line {}: expected name after typedef bit", self.peek_line())));
                 }
             }
             Token::Byte => {
@@ -2704,7 +2704,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!("line {}: expected name after typedef byte", self.peek_line()));
+                    return Err(SimError::parse(format!("line {}: expected name after typedef byte", self.peek_line())));
                 }
             }
             Token::Shortint => {
@@ -2718,7 +2718,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!("line {}: expected name after typedef shortint", self.peek_line()));
+                    return Err(SimError::parse(format!("line {}: expected name after typedef shortint", self.peek_line())));
                 }
             }
             Token::Longint => {
@@ -2732,7 +2732,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!("line {}: expected name after typedef longint", self.peek_line()));
+                    return Err(SimError::parse(format!("line {}: expected name after typedef longint", self.peek_line())));
                 }
             }
             Token::Time => {
@@ -2743,7 +2743,7 @@ impl Parser {
                     self.advance();
                     (name, DataType::Time, range)
                 } else {
-                    return Err(SimError::parse(format!("line {}: expected name after typedef time", self.peek_line()));
+                    return Err(SimError::parse(format!("line {}: expected name after typedef time", self.peek_line())));
                 }
             }
             Token::Int => {
@@ -2757,7 +2757,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!("line {}: expected name after typedef int", self.peek_line()));
+                    return Err(SimError::parse(format!("line {}: expected name after typedef int", self.peek_line())));
                 }
             }
             Token::Integer => {
@@ -2771,7 +2771,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!("line {}: expected name after typedef integer", self.peek_line()));
+                    return Err(SimError::parse(format!("line {}: expected name after typedef integer", self.peek_line())));
                 }
             }
             Token::Logic => {
@@ -2785,7 +2785,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!("line {}: expected name after typedef logic", self.peek_line()));
+                    return Err(SimError::parse(format!("line {}: expected name after typedef logic", self.peek_line())));
                 }
             }
             Token::Reg => {
@@ -2797,7 +2797,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!("line {}: expected name after typedef reg", self.peek_line()));
+                    return Err(SimError::parse(format!("line {}: expected name after typedef reg", self.peek_line())));
                 }
             }
             Token::Struct => {
@@ -2809,7 +2809,7 @@ impl Parser {
                     self.advance();
                     (name, DataType::StructType { members }, None)
                 } else {
-                    return Err(SimError::parse(format!("line {}: expected name after typedef struct", self.peek_line()));
+                    return Err(SimError::parse(format!("line {}: expected name after typedef struct", self.peek_line())));
                 }
             }
             Token::Union => {
@@ -2821,10 +2821,10 @@ impl Parser {
                     self.advance();
                     (name, DataType::UnionType { members }, None)
                 } else {
-                    return Err(SimError::parse(format!("line {}: expected name after typedef union", self.peek_line()));
+                    return Err(SimError::parse(format!("line {}: expected name after typedef union", self.peek_line())));
                 }
             }
-            _ => return Err(SimError::parse(format!("line {}: expected type after typedef", self.peek_line())),
+            _ => return Err(SimError::parse(format!("line {}: expected type after typedef", self.peek_line()))),
         };
         self.skip_semi();
         Ok(TypedefDecl { name, dtype, range })
@@ -2876,7 +2876,7 @@ impl Parser {
                 let var_tok = self.peek().clone();
                 let var = match &var_tok {
                     Token::Ident(n) => { self.advance(); n.clone() }
-                    _ => return Err(SimError::parse(format!("line {}: expected genvar name", self.peek_line())),
+                    _ => return Err(SimError::parse(format!("line {}: expected genvar name", self.peek_line()))),
                 };
                 // Parse init: i = <expr>
                 let _init = if self.peek() != &Token::Semi {
@@ -3050,7 +3050,7 @@ impl Parser {
         let name = match &name_tok {
             Token::Ident(n) => { self.advance(); n.clone() }
             Token::New => { self.advance(); "new".to_string() }
-            _ => return Err(SimError::parse(format!("line {}: expected function name", self.peek_line())),
+            _ => return Err(SimError::parse(format!("line {}: expected function name", self.peek_line()))),
         };
         // Parse ANSI-style port list in parens (e.g., function new(int level, string name))
         let mut ports = Vec::new();
@@ -3163,7 +3163,7 @@ impl Parser {
                     if let Ok(decl) = self.parse_decl() {
                         decls.push(decl);
                     } else {
-                        return Err(SimError::parse(format!("line {}: expected declaration after automatic/static", self.peek_line()));
+                        return Err(SimError::parse(format!("line {}: expected declaration after automatic/static", self.peek_line())));
                     }
                 }
                 Token::Begin => {
@@ -3196,7 +3196,7 @@ impl Parser {
         }
         match self.peek() {
             Token::EndFunction => { self.advance(); }
-            _ => { return Err(SimError::parse(format!("line {}: expected endfunction", self.peek_line())); }
+            _ => { return Err(SimError::parse(format!("line {}: expected endfunction", self.peek_line()))); }
         }
         if self.peek() == &Token::Colon {
             self.advance();
@@ -3340,7 +3340,7 @@ impl Parser {
         }
         match self.peek() {
             Token::EndTask => { self.advance(); }
-            _ => { return Err(SimError::parse(format!("line {}: expected endtask", self.peek_line())); }
+            _ => { return Err(SimError::parse(format!("line {}: expected endtask", self.peek_line()))); }
         }
         if self.peek() == &Token::Colon {
             self.advance();
@@ -3477,7 +3477,7 @@ impl Parser {
                 self.advance();
                 s.clone()
             }
-            _ => return Err(SimError::parse(format!("line {}: expected module name", self.peek_line())),
+            _ => return Err(SimError::parse(format!("line {}: expected module name", self.peek_line()))),
         };
 
         let mut param_assigns = std::collections::HashMap::new();
@@ -3493,7 +3493,7 @@ impl Parser {
                         let pname_tok = self.peek().clone();
                         let pname = match &pname_tok {
                             Token::Ident(s) => { self.advance(); s.clone() }
-                            _ => return Err(SimError::parse(format!("line {}: expected parameter name", self.peek_line())),
+                            _ => return Err(SimError::parse(format!("line {}: expected parameter name", self.peek_line()))),
                         };
                         self.expect(Token::LParen)?;
                         if self.is_type_token() {
@@ -3526,7 +3526,7 @@ impl Parser {
                 self.advance();
                 s.clone()
             }
-            _ => return Err(SimError::parse(format!("line {}: expected instance name", self.peek_line())),
+            _ => return Err(SimError::parse(format!("line {}: expected instance name", self.peek_line()))),
         };
 
         // Parse optional array range [msb:lsb] for arrayed instances
@@ -3552,7 +3552,7 @@ impl Parser {
                         let port_tok = self.peek().clone();
                         let port_name = match &port_tok {
                             Token::Ident(s) => { self.advance(); s.clone() }
-                            _ => return Err(SimError::parse(format!("line {}: expected port name", self.peek_line())),
+                            _ => return Err(SimError::parse(format!("line {}: expected port name", self.peek_line()))),
                         };
 
                         if self.peek() == &Token::LParen {
@@ -3624,7 +3624,7 @@ impl Parser {
                 let weight = const_eval_simple(&val).unwrap_or(0) as u64;
                 Ok(DistItem::Range(Box::new(lo), Box::new(hi), DistWeight::Range(weight)))
             } else {
-                return Err(SimError::parse(format!("line {}: expected := or :/ after dist range", self.peek_line()));
+                return Err(SimError::parse(format!("line {}: expected := or :/ after dist range", self.peek_line())));
             }
         } else {
             // Single value: expr := weight or expr :/ weight
@@ -3642,7 +3642,7 @@ impl Parser {
                 let weight = const_eval_simple(&val).unwrap_or(0) as u64;
                 Ok(DistItem::Value(Box::new(expr), DistWeight::Range(weight)))
             } else {
-                return Err(SimError::parse(format!("line {}: expected := or :/ after dist item", self.peek_line()));
+                return Err(SimError::parse(format!("line {}: expected := or :/ after dist item", self.peek_line())));
             }
         }
     }
@@ -3657,14 +3657,14 @@ impl Parser {
             Token::Xnor => { self.advance(); GateType::Xnor }
             Token::Buf => { self.advance(); GateType::Buf }
             Token::NotGate => { self.advance(); GateType::Not }
-            _ => return Err(SimError::parse(format!("line {}: expected gate type", self.peek_line())),
+            _ => return Err(SimError::parse(format!("line {}: expected gate type", self.peek_line()))),
         };
         let instance_name = if self.peek() == &Token::LParen {
             None
         } else {
             let name = match self.peek().clone() {
                 Token::Ident(s) => { self.advance(); Some(s) }
-                _ => return Err(SimError::parse(format!("line {}: expected gate instance name", self.peek_line())),
+                _ => return Err(SimError::parse(format!("line {}: expected gate instance name", self.peek_line()))),
             };
             name
         };
@@ -3930,11 +3930,11 @@ impl Parser {
                                 crosses.push(CrossDef { name: ident, coverpoints: cps });
                             }
                             _ => {
-                                return Err(SimError::parse(format!("line {}: unexpected token after ':' in covergroup body", self.peek_line()));
+                                return Err(SimError::parse(format!("line {}: unexpected token after ':' in covergroup body", self.peek_line())));
                             }
                         }
                     } else {
-                        return Err(SimError::parse(format!("line {}: unexpected token after identifier in covergroup body", self.peek_line()));
+                        return Err(SimError::parse(format!("line {}: unexpected token after identifier in covergroup body", self.peek_line())));
                     }
                 }
                 Token::Option_ => {
@@ -3942,7 +3942,7 @@ impl Parser {
                     self.skip_until_semi_or_end()?;
                 }
                 _ => {
-                    return Err(SimError::parse(format!("line {}: unexpected token in covergroup body: {}", self.peek_line(), self.peek()));
+                    return Err(SimError::parse(format!("line {}: unexpected token in covergroup body: {}", self.peek_line(), self.peek())));
                 }
             }
         }
@@ -3958,7 +3958,7 @@ impl Parser {
             self.advance();
             false
         } else {
-            return Err(SimError::parse(format!("line {}: expected 'function' or 'task' after import \"DPI-C\"", self.peek_line()));
+            return Err(SimError::parse(format!("line {}: expected 'function' or 'task' after import \"DPI-C\"", self.peek_line())));
         };
         if matches!(self.peek(), Token::Auto | Token::Static) {
             self.advance();
@@ -4101,7 +4101,7 @@ impl Parser {
                             _ => Ok(stmt),
                         }
                     }
-                    _ => Err(SimError::parse(format!("line {}: expected case or if after unique/priority/unique0", self.peek_line())),
+                    _ => Err(SimError::parse(format!("line {}: expected case or if after unique/priority/unique0", self.peek_line()))),
                 }
             }
             Token::Begin => {
@@ -4168,7 +4168,7 @@ impl Parser {
                 let tok = self.peek().clone();
                 let name = match &tok {
                     Token::Ident(s) => { self.advance(); s.clone() }
-                    _ => return Err(SimError::parse(format!("line {}: expected identifier after disable", self.peek_line())),
+                    _ => return Err(SimError::parse(format!("line {}: expected identifier after disable", self.peek_line()))),
                 };
                 self.skip_semi();
                 Ok(Stmt::Disable { name })
@@ -4244,7 +4244,7 @@ impl Parser {
                 let tok = self.peek().clone();
                 let name = match tok {
                     Token::Ident(s) => { self.advance(); s }
-                    _ => return Err(SimError::parse(format!("line {}: expected event name after ->", self.peek_line())),
+                    _ => return Err(SimError::parse(format!("line {}: expected event name after ->", self.peek_line()))),
                 };
                 self.skip_semi();
                 Ok(Stmt::EventTrigger { name })
@@ -4742,7 +4742,7 @@ impl Parser {
                 Token::Join => { self.advance(); return Ok(Stmt::Fork { processes, join_type: JoinType::Join }); }
                 Token::JoinAny => { self.advance(); return Ok(Stmt::Fork { processes, join_type: JoinType::JoinAny }); }
                 Token::JoinNone => { self.advance(); return Ok(Stmt::Fork { processes, join_type: JoinType::JoinNone }); }
-                Token::Eof => return Err(SimError::parse(format!("line {}: unexpected EOF in fork block", self.peek_line())),
+                Token::Eof => return Err(SimError::parse(format!("line {}: unexpected EOF in fork block", self.peek_line()))),
                 _ => {
                     let stmt = self.parse_stmt()?;
                     processes.push(stmt);
@@ -4759,7 +4759,7 @@ impl Parser {
                 self.advance();
                 s.clone()
             }
-            _ => return Err(SimError::parse(format!("line {}: expected system call name after $", self.peek_line())),
+            _ => return Err(SimError::parse(format!("line {}: expected system call name after $", self.peek_line()))),
         };
 
         match name.as_str() {
@@ -5038,7 +5038,7 @@ impl Parser {
                     Token::RealTime => { self.advance(); "realtime".to_string() }
                     Token::Signed => { self.advance(); "signed".to_string() }
                     Token::Unsigned => { self.advance(); "unsigned".to_string() }
-                    _ => return Err(SimError::parse(format!("line {}: expected system function name", self.peek_line())),
+                    _ => return Err(SimError::parse(format!("line {}: expected system function name", self.peek_line()))),
                 };
                 let full_name = format!("${}", name);
                 if self.peek() == &Token::LParen {
@@ -5428,7 +5428,7 @@ impl Parser {
                     Ok(Expr::Ident(type_name.to_string()))
                 }
             }
-            _ => Err(SimError::parse(format!("line {}: expected expression, found {}", self.peek_line(), tok)),
+            _ => Err(SimError::parse(format!("line {}: expected expression, found {}", self.peek_line(), tok))),
         }
     }
 }

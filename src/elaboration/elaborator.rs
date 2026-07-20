@@ -5,6 +5,7 @@ use crate::ast::types::const_eval_simple;
 use crate::ast::types::const_eval_with_params;
 use crate::ir::*;
 use super::util::*;
+use crate::error::SimError;
 
 const BUILTIN_UVM_CLASSES: &[&str] = &[
     "uvm_object", "uvm_component", "uvm_sequence_item", "uvm_sequence",
@@ -84,7 +85,7 @@ impl Elaborator {
         }
     }
 
-    pub fn elaborate(&mut self, top_module: Option<&str>) -> Result<IrDesign, String> {
+    pub fn elaborate(&mut self, top_module: Option<&str>) -> Result<IrDesign, SimError> {
         // Process bind declarations: add bound instances to target modules
         let binds = std::mem::take(&mut self.design.binds);
         for bind in &binds {
@@ -293,12 +294,12 @@ impl Elaborator {
             None => {
                 self.design.modules.first()
                     .map(|m| m.name.clone())
-                    .ok_or_else(|| "no modules in design".to_string())?
+                    .ok_or_else(|| SimError::elaborate("no modules in design"))?
             }
         };
 
         let mut top = self.modules.remove(&top_name)
-            .ok_or_else(|| format!("top module '{}' not found", top_name))?;
+            .ok_or_else(|| SimError::elaborate(format!("top module '{}' not found", top_name)))?;
 
         // Flatten instances: merge child module processes into the top module
         let hier_signal_map = self.flatten_instances(&mut top)?;
@@ -428,8 +429,8 @@ impl Elaborator {
         })
     }
 
-    fn resolve_param_values(&self, module: &Module, instance_overrides: &HashMap<String, i64>) -> Result<HashMap<String, i64>, String> {
-        resolve_param_values_fn(module, instance_overrides)
+    fn resolve_param_values(&self, module: &Module, instance_overrides: &HashMap<String, i64>) -> Result<HashMap<String, i64>, SimError> {
+        resolve_param_values_fn(module, instance_overrides).map_err(|e| SimError::elaborate(e))
     }
 
     fn store_typedef_fields(&mut self, name: &str, dtype: &DataType) {
@@ -439,7 +440,7 @@ impl Elaborator {
         }
     }
 
-    fn resolve_type_width(&self, dtype: &DataType) -> Result<usize, String> {
+    fn resolve_type_width(&self, dtype: &DataType) -> Result<usize, SimError> {
         match dtype {
             DataType::UserDefined(name) if name == "__mailbox" || name == "__semaphore" => Ok(64),
             DataType::UserDefined(name) if name == "process" => Ok(64),
@@ -455,7 +456,7 @@ impl Elaborator {
                 }
                 self.typedef_map.get(name)
                     .copied()
-                    .ok_or_else(|| format!("unknown type '{}' is not defined in this scope", name))
+                    .ok_or_else(|| SimError::elaborate(format!("unknown type '{}' is not defined in this scope", name)))
             }
             DataType::Signed(inner) => self.resolve_type_width(inner),
             _ => Ok(dtype.width()),
@@ -502,19 +503,19 @@ impl Elaborator {
         dtype.width()
     }
 
-    fn elaborate_module(&mut self, module: &Module, known_modules: &[String]) -> Result<IrModule, String> {
+    fn elaborate_module(&mut self, module: &Module, known_modules: &[String]) -> Result<IrModule, SimError> {
         let param_vals = self.resolve_param_values(module, &HashMap::new())?;
         self.elaborate_module_with_params(module, known_modules, &param_vals)
     }
 
     fn elaborate_module_with_params(&mut self, module: &Module, known_modules: &[String],
-                                    param_vals: &HashMap<String, i64>) -> Result<IrModule, String> {
+                                    param_vals: &HashMap<String, i64>) -> Result<IrModule, SimError> {
         self.elaborate_module_with_params_and_type(module, known_modules, param_vals, &HashMap::new())
     }
 
     fn elaborate_module_with_params_and_type(&mut self, module: &Module, known_modules: &[String],
                                     param_vals: &HashMap<String, i64>,
-                                    type_param_overrides: &HashMap<String, usize>) -> Result<IrModule, String> {
+                                    type_param_overrides: &HashMap<String, usize>) -> Result<IrModule, SimError> {
         let mut effective_params = param_vals.clone();
 
         // Process $unit imports
@@ -1156,7 +1157,7 @@ impl Elaborator {
                             sig_ids.push(sid);
                         }
                         if sig_ids.len() < 2 {
-                            return Err(format!("UDP '{}' requires at least 2 ports (1 output + 1+ inputs)", udp.name));
+                            return Err(SimError::elaborate(format!("UDP '{}' requires at least 2 ports (1 output + 1+ inputs)", udp.name)));
                         }
                         let out_id = sig_ids[0];
                         let in_ids: Vec<SignalId> = sig_ids[1..].to_vec();
@@ -1267,13 +1268,13 @@ impl Elaborator {
                     for port in &gate.ports {
                         let sid = match port {
                             Expr::Ident(name) => signal_map.get(name).copied()
-                                .ok_or_else(|| format!("signal '{}' not found for gate", name))?,
-                            _ => return Err(format!("gate port must be a simple signal (port expression: {:?})", port)),
+                                .ok_or_else(|| SimError::elaborate(format!("signal '{}' not found for gate", name)))?,
+                            _ => return Err(SimError::elaborate(format!("gate port must be a simple signal (port expression: {:?})", port))),
                         };
                         sig_ids.push(sid);
                     }
                     if sig_ids.len() < 2 {
-                        return Err(format!("gate requires at least 2 ports (gate type: {:?}, got {} ports)", gate.gate_type, sig_ids.len()));
+                        return Err(SimError::elaborate(format!("gate requires at least 2 ports (gate type: {:?}, got {} ports)", gate.gate_type, sig_ids.len())));
                     }
                     let (out_ids, in_ids) = match gate.gate_type {
                         GateType::And | GateType::Or | GateType::Nand | GateType::Nor | GateType::Xor | GateType::Xnor => {
@@ -1341,7 +1342,7 @@ impl Elaborator {
         })
     }
 
-    fn elaborate_classes(&self) -> Result<HashMap<String, IrClassDef>, String> {
+    fn elaborate_classes(&self) -> Result<HashMap<String, IrClassDef>, SimError> {
         let mut classes = HashMap::new();
         for cd in &self.design.classes {
             let mut fields = Vec::new();
@@ -1453,7 +1454,7 @@ impl Elaborator {
     }
 
     fn elaborate_covergroups(&self, top_name: &str, signal_map: &HashMap<String, SignalId>,
-                              signals: &[SignalInfo]) -> Result<Vec<IrCovergroup>, String> {
+                              signals: &[SignalInfo]) -> Result<Vec<IrCovergroup>, SimError> {
         let mut covergroups = Vec::new();
         let top_module = if let Some(m) = self.design.modules.iter().find(|m| m.name == top_name) {
             m
@@ -1476,7 +1477,7 @@ impl Elaborator {
         Ok(covergroups)
     }
 
-    fn elaborate_dpi_imports(&self) -> Result<Vec<IrDpiImport>, String> {
+    fn elaborate_dpi_imports(&self) -> Result<Vec<IrDpiImport>, SimError> {
         let mut dpi_imports = Vec::new();
         for module in &self.design.modules {
             for item in &module.items {
@@ -1497,7 +1498,7 @@ impl Elaborator {
         Ok(dpi_imports)
     }
 
-    fn detect_multi_driver_signals(&self, top: &mut IrModule) -> Result<(), String> {
+    fn detect_multi_driver_signals(&self, top: &mut IrModule) -> Result<(), SimError> {
         let mut driver_count: Vec<usize> = vec![0; top.signals.len()];
         for process in &top.processes {
             match process {
@@ -1564,7 +1565,7 @@ impl Elaborator {
         }
     }
 
-    fn flatten_instances(&mut self, top: &mut IrModule) -> Result<HashMap<String, SignalId>, String> {
+    fn flatten_instances(&mut self, top: &mut IrModule) -> Result<HashMap<String, SignalId>, SimError> {
         let mut hier_signal_map: HashMap<String, SignalId> = HashMap::new();
         let instances = std::mem::take(&mut top.sub_instances);
         for inst in &instances {
@@ -1581,8 +1582,8 @@ impl Elaborator {
                     items: vec![],
                 }
             } else {
-                return Err(format!("module or interface '{}' not found for instance '{}'",
-                    inst.module_name, inst.instance_name));
+                return Err(SimError::elaborate(format!("module or interface '{}' not found for instance '{}'",
+                    inst.module_name, inst.instance_name)));
             };
 
             let needs_custom_params = !ast_module_clone.params.is_empty() && !inst.param_map.is_empty();
@@ -1594,7 +1595,7 @@ impl Elaborator {
             } else {
                 // Use pre-elaborated module (default params)
                 self.modules.get(&inst.module_name)
-                    .ok_or_else(|| format!("module '{}' not found", inst.module_name))?
+                    .ok_or_else(|| SimError::elaborate(format!("module '{}' not found", inst.module_name)))?
                     .clone()
             };
 
@@ -1612,22 +1613,22 @@ impl Elaborator {
                     let child_width = child.signals[child_sig].width;
                     let parent_width = top.signals[parent_sig].elem_width;
                     if child_width != parent_width {
-                        return Err(format!(
+                        return Err(SimError::elaborate(format!(
                             "port width mismatch on instance '{}': port '{}' expects width {}, connected signal '{}' has width {}",
                             inst.instance_name, port_name, child_width,
                             top.signals[parent_sig].name, parent_width
-                        ));
+                        )));
                     }
                     // Port type checking: inout must connect to tri
                     if child.signals[child_sig].kind == SignalKind::Inout
                         && top.signals[parent_sig].net_type != NetType::Tri
                     {
-                        return Err(format!(
+                        return Err(SimError::elaborate(format!(
                             "port type mismatch on instance '{}': inout port '{}' must connect to a tri signal, but '{}' has net type {:?}",
                             inst.instance_name, port_name,
                             top.signals[parent_sig].name,
                             top.signals[parent_sig].net_type
-                        ));
+                        )));
                     }
                     sig_remap[child_sig] = Some(parent_sig);
                     // Add hierarchical alias: inst_name.port_name -> parent signal ID
@@ -1692,7 +1693,7 @@ impl Elaborator {
         Ok(hier_signal_map)
     }
 
-    fn translate_process(&self, process: &Process, map_sig: &dyn Fn(SignalId) -> SignalId) -> Result<Process, String> {
+    fn translate_process(&self, process: &Process, map_sig: &dyn Fn(SignalId) -> SignalId) -> Result<Process, SimError> {
         match process {
             Process::Combinational { name, sensitivity, body } => {
                 let new_sens = sensitivity.iter().map(|s| map_sig(*s)).collect();
@@ -1733,11 +1734,11 @@ impl Elaborator {
         }
     }
 
-    fn translate_stmts(&self, stmts: &[IrStmt], map_sig: &dyn Fn(SignalId) -> SignalId) -> Result<Vec<IrStmt>, String> {
+    fn translate_stmts(&self, stmts: &[IrStmt], map_sig: &dyn Fn(SignalId) -> SignalId) -> Result<Vec<IrStmt>, SimError> {
         stmts.iter().map(|s| self.translate_stmt(s, map_sig)).collect()
     }
 
-    fn translate_stmt(&self, stmt: &IrStmt, map_sig: &dyn Fn(SignalId) -> SignalId) -> Result<IrStmt, String> {
+    fn translate_stmt(&self, stmt: &IrStmt, map_sig: &dyn Fn(SignalId) -> SignalId) -> Result<IrStmt, SimError> {
         match stmt {
             IrStmt::Block { stmts } => {
                 let new = self.translate_stmts(stmts, map_sig)?;
@@ -1769,7 +1770,7 @@ impl Elaborator {
                     let labels = item.labels.iter().map(|l| self.translate_expr(l, map_sig)).collect();
                     let body = self.translate_stmts(&item.body, map_sig)?;
                     Ok(IrCaseItem { labels, body })
-                }).collect::<Result<Vec<_>, String>>()?;
+                }).collect::<Result<Vec<_>, SimError>>()?;
                 let new_default = self.translate_stmts(default, map_sig)?;
                 Ok(IrStmt::Case { case_type: case_type.clone(), expr: new_expr, items: new_items, default: new_default })
             }
@@ -1845,7 +1846,7 @@ impl Elaborator {
                 Ok(IrStmt::Deassign { lvalue: self.translate_lvalue(lvalue, map_sig) })
             }
             IrStmt::Fork { processes, join_type } => {
-                let new_proc = processes.iter().map(|p| self.translate_stmts(p, map_sig)).collect::<Result<Vec<_>, String>>()?;
+                let new_proc = processes.iter().map(|p| self.translate_stmts(p, map_sig)).collect::<Result<Vec<_>, SimError>>()?;
                 Ok(IrStmt::Fork { processes: new_proc, join_type: join_type.clone() })
             }
             IrStmt::Assert { cond, pass_stmt, fail_stmt } => {
@@ -1871,7 +1872,7 @@ impl Elaborator {
                 Ok(IrStmt::WaitOrder { events: new_events, failure_stmts: new_failure })
             }
             IrStmt::RandCase { items } => {
-                let new_items: Result<Vec<(IrExpr, Vec<IrStmt>)>, String> = items.iter().map(|(weight_expr, body)| {
+                let new_items: Result<Vec<(IrExpr, Vec<IrStmt>)>, SimError> = items.iter().map(|(weight_expr, body)| {
                     let new_weight = self.translate_expr(weight_expr, map_sig);
                     let new_body = self.translate_stmts(body, map_sig)?;
                     Ok((new_weight, new_body))
@@ -1879,7 +1880,7 @@ impl Elaborator {
                 Ok(IrStmt::RandCase { items: new_items? })
             }
             IrStmt::RandSequence { productions } => {
-                let new_prods: Result<Vec<(String, Vec<(IrExpr, Vec<IrStmt>)>)>, String> = productions.iter().map(|(name, items)| {
+                let new_prods: Result<Vec<(String, Vec<(IrExpr, Vec<IrStmt>)>)>, SimError> = productions.iter().map(|(name, items)| {
                     let new_items: Vec<(IrExpr, Vec<IrStmt>)> = items.iter().map(|(weight_expr, body)| {
                         let new_weight = self.translate_expr(weight_expr, map_sig);
                         let new_body = self.translate_stmts(body, map_sig).unwrap_or_default();
@@ -2011,7 +2012,7 @@ impl Elaborator {
 
     fn elaborate_always(&self, always: &AlwaysBlock, signal_map: &HashMap<String, SignalId>,
                          signals: &[SignalInfo])
-        -> Result<Process, String>
+        -> Result<Process, SimError>
     {
         let name = format!("always_{}", 0);
 
@@ -2078,11 +2079,11 @@ impl Elaborator {
 
     fn extract_clock_reset(&self, sensitivity: &Option<SensitivityList>,
                            signal_map: &HashMap<String, SignalId>)
-        -> Result<(ClockEdge, Option<ResetInfo>), String>
+        -> Result<(ClockEdge, Option<ResetInfo>), SimError>
     {
         let events = match sensitivity {
             Some(sl) => &sl.events,
-            None => return Err("always_ff requires sensitivity list".to_string()),
+            None => return Err(SimError::elaborate("always_ff requires sensitivity list")),
         };
 
         let mut clock_edge = None;
@@ -2114,7 +2115,7 @@ impl Elaborator {
             }
         }
 
-        clock_edge.ok_or_else(|| "always_ff must have at least one clock edge".to_string())
+        clock_edge.ok_or_else(|| SimError::elaborate("always_ff must have at least one clock edge"))
             .map(|ce| (ce, reset))
     }
 
@@ -2122,7 +2123,7 @@ impl Elaborator {
                             signal_map: &HashMap<String, SignalId>,
                             _known_modules: &[String],
                             signals: &[SignalInfo])
-        -> Result<Vec<IrStmt>, String>
+        -> Result<Vec<IrStmt>, SimError>
     {
         let mut ir_stmts = Vec::new();
         for stmt in stmts {
@@ -2135,7 +2136,7 @@ impl Elaborator {
                       signal_map: &HashMap<String, SignalId>,
                       known_modules: &[String],
                       signals: &[SignalInfo])
-        -> Result<IrStmt, String>
+        -> Result<IrStmt, SimError>
     {
         match stmt {
             Stmt::Block { stmts } => {
@@ -2338,14 +2339,14 @@ impl Elaborator {
                             };
                             Ok(IrStmt::EventControl { sig_id, edge: Some(edge), body })
                         } else {
-                            Err(format!("cannot resolve signal in @(...)"))
+                            Err(SimError::elaborate(format!("cannot resolve signal in @(...)")))
                         }
                     }
                     SensitivityEvent::Level(expr) => {
                         if let Some(sig_id) = resolve_expr_signal(expr, signal_map) {
                             Ok(IrStmt::EventControl { sig_id, edge: None, body })
                         } else {
-                            Err(format!("cannot resolve signal in @(...)"))
+                            Err(SimError::elaborate(format!("cannot resolve signal in @(...)")))
                         }
                     }
                     SensitivityEvent::Wildcard => {
@@ -2439,6 +2440,7 @@ impl Elaborator {
                     &|stmts, var_name, iter_val| {
                         let subst_stmts = substitute_loop_var_in_stmts(stmts, var_name, iter_val);
                         self.elaborate_stmt_block(&subst_stmts, signal_map, known_modules, signals)
+                            .map_err(|e| e.to_string())
                     },
                     &self.param_vals,
                 ) {
@@ -2480,9 +2482,9 @@ impl Elaborator {
             }
             Stmt::ForeachLoop { array_var, index_vars, stmts } => {
                 let sig_id = signal_map.get(array_var)
-                    .ok_or_else(|| format!("array '{}' not found for foreach", array_var))?;
+                    .ok_or_else(|| SimError::elaborate(format!("array '{}' not found for foreach", array_var)))?;
                 let sig_info = signals.get(*sig_id)
-                    .ok_or_else(|| format!("signal info not found for '{}'", array_var))?;
+                    .ok_or_else(|| SimError::elaborate(format!("signal info not found for '{}'", array_var)))?;
                 if sig_info.is_dynamic || sig_info.is_queue {
                     let ir_body = self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
                     let iv = index_vars.first().cloned().unwrap_or_else(|| "i".to_string());
@@ -2494,7 +2496,7 @@ impl Elaborator {
                 } else {
                     let n = sig_info.array_depth;
                     if n == 0 {
-                        return Err(format!("'{}' is not an array, cannot use foreach", array_var));
+                        return Err(SimError::elaborate(format!("'{}' is not an array, cannot use foreach", array_var)));
                     }
                     let mut all_stmts = Vec::new();
                     let iv = index_vars.first().cloned().unwrap_or_else(|| "i".to_string());
@@ -2598,7 +2600,7 @@ impl Elaborator {
                     if let Some(idx) = signal_map.get(name) {
                         sig_ids.push(*idx);
                     } else {
-                        return Err(format!("wait_order: signal '{}' not found", name));
+                        return Err(SimError::elaborate(format!("wait_order: signal '{}' not found", name)));
                     }
                 }
                 let failure = match fail_stmt {
@@ -2621,7 +2623,7 @@ impl Elaborator {
                 Ok(IrStmt::Fork { processes: ir_processes, join_type: ir_join })
             }
             Stmt::RandCase { items } => {
-                let new_items: Result<Vec<(IrExpr, Vec<IrStmt>)>, String> = items.iter().map(|rc| {
+                let new_items: Result<Vec<(IrExpr, Vec<IrStmt>)>, SimError> = items.iter().map(|rc| {
                     let weight_expr = IrExpr::Const(LogicVec::from_u64(rc.weight as u64, 32));
                     let body = self.elaborate_stmt_block(&[*rc.stmt.clone()], signal_map, known_modules, signals)?;
                     Ok((weight_expr, body))
@@ -2648,11 +2650,11 @@ impl Elaborator {
         }
     }
 
-    fn elaborate_lvalue(&self, expr: &Expr, signal_map: &HashMap<String, SignalId>, signals: &[SignalInfo]) -> Result<IrLValue, String> {
+    fn elaborate_lvalue(&self, expr: &Expr, signal_map: &HashMap<String, SignalId>, signals: &[SignalInfo]) -> Result<IrLValue, SimError> {
         match expr {
             Expr::Ident(name) => {
                 let sig_id = signal_map.get(name)
-                    .ok_or_else(|| format!("signal '{}' not found", name))?;
+                    .ok_or_else(|| SimError::elaborate(format!("signal '{}' not found", name)))?;
                 Ok(IrLValue::Signal(*sig_id, 0))
             }
             Expr::RangeSelect { expr: inner, msb, lsb } => {
@@ -2672,7 +2674,7 @@ impl Elaborator {
                     IrLValue::ArrayIndex { sig_id, index, elem_width } => {
                         Ok(IrLValue::ArrayRangeSelect { sig_id, index, elem_width, msb: msb_c, lsb: lsb_c })
                     }
-                    _ => Err("nested range select not supported".to_string()),
+                    _ => Err(SimError::elaborate("nested range select not supported")),
                 }
             }
             Expr::BitSelect { expr: inner, index: bs_index } => {
@@ -2716,10 +2718,10 @@ impl Elaborator {
                         if let Ok(idx) = const_eval_params(bs_index, &self.param_vals) {
                             Ok(IrLValue::ArrayBitSelect { sig_id, index, elem_width, bit: idx as usize })
                         } else {
-                            Err("dynamic bit-select on array element not supported".to_string())
+                            Err(SimError::elaborate("dynamic bit-select on array element not supported"))
                         }
                     }
-                    _ => Err("nested bit select not supported".to_string()),
+                    _ => Err(SimError::elaborate("nested bit select not supported")),
                 }
             }
             Expr::PartSelect { expr: inner, base, width } => {
@@ -2728,7 +2730,7 @@ impl Elaborator {
                 let width_r = const_eval_params(width, &self.param_vals);
                 let (base_c, width_c) = match (base_r, width_r) {
                     (Ok(b), Ok(w)) => (b as usize, w as usize),
-                    _ => return Err("dynamic part-select not supported".to_string()),
+                    _ => return Err(SimError::elaborate("dynamic part-select not supported")),
                 };
                 match inner_lv {
                     IrLValue::Signal(sid, _) => {
@@ -2754,16 +2756,16 @@ impl Elaborator {
                             Ok(IrLValue::ArrayRangeSelect { sig_id, index, elem_width, msb: base_c, lsb: base_c })
                         }
                     }
-                    _ => Err("nested part-select in lvalue not supported".to_string()),
+                    _ => Err(SimError::elaborate("nested part-select in lvalue not supported")),
                 }
             }
             Expr::Concat(exprs) => {
-                let parts: Result<Vec<IrLValue>, String> = exprs.iter()
+                let parts: Result<Vec<IrLValue>, SimError> = exprs.iter()
                     .map(|e| self.elaborate_lvalue(e, signal_map, signals))
                     .collect();
                 Ok(IrLValue::Concat(parts?))
             }
-            Expr::MethodCall { .. } => Err("method calls cannot be used as lvalues".to_string()),
+            Expr::MethodCall { .. } => Err(SimError::elaborate("method calls cannot be used as lvalues")),
             Expr::MemberAccess { obj, field } => {
                 // Try struct/union field write
                 let hier_name = Self::build_hier_name(obj, field);
@@ -2779,14 +2781,14 @@ impl Elaborator {
                                 let msb = f.offset + f.width - 1;
                                 return Ok(IrLValue::RangeSelect(sig_id, lsb, msb));
                             }
-                            return Err(format!("field '{}' not found in struct type", field));
+                            return Err(SimError::elaborate(format!("field '{}' not found in struct type", field)));
                         }
-                        Err(format!("member access on signal '{:?}' that has no struct fields (cannot use as lvalue)", obj))
+                        Err(SimError::elaborate(format!("member access on signal '{:?}' that has no struct fields (cannot use as lvalue)", obj)))
                     }
-                    _ => Err("member access cannot be used as lvalues".to_string()),
+                    _ => Err(SimError::elaborate("member access cannot be used as lvalues")),
                 }
             }
-            _ => Err(format!("invalid lvalue expression: {:?}", expr)),
+            _ => Err(SimError::elaborate(format!("invalid lvalue expression: {:?}", expr))),
         }
     }
 
@@ -2800,7 +2802,7 @@ impl Elaborator {
         }
     }
 
-    fn elaborate_expr(&self, expr: &Expr, signal_map: &HashMap<String, SignalId>, signals: &[SignalInfo]) -> Result<IrExpr, String> {
+    fn elaborate_expr(&self, expr: &Expr, signal_map: &HashMap<String, SignalId>, signals: &[SignalInfo]) -> Result<IrExpr, SimError> {
         match expr {
             Expr::Ident(name) if name == "this" => Ok(IrExpr::This),
             Expr::Value(v) => {
@@ -2825,7 +2827,7 @@ impl Elaborator {
                     return Ok(IrExpr::Const(LogicVec::from_u64(val as u64, 64)));
                 }
                 let sig_id = signal_map.get(name)
-                    .ok_or_else(|| format!("signal '{}' not found", name))?;
+                    .ok_or_else(|| SimError::elaborate(format!("signal '{}' not found", name)))?;
                 Ok(IrExpr::Signal(*sig_id, 0))
             }
             Expr::ScopedIdent { package, item } => {
@@ -2838,13 +2840,13 @@ impl Elaborator {
                                         return Ok(IrExpr::Const(LogicVec::from_u64(val as u64, 64)));
                                     }
                                 }
-                                return Err(format!("package param '{}.{}' has no default", package, item));
+                                return Err(SimError::elaborate(format!("package param '{}.{}' has no default", package, item)));
                             }
-                            _ => return Err(format!("'{}' is not a constant in package '{}'", item, package)),
+                            _ => return Err(SimError::elaborate(format!("'{}' is not a constant in package '{}'", item, package))),
                         }
                     }
                 }
-                return Err(format!("'{}' not found in package '{}'", item, package));
+                return Err(SimError::elaborate(format!("'{}' not found in package '{}'", item, package)));
             }
             Expr::RangeSelect { expr: inner, msb, lsb } => {
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
@@ -2857,7 +2859,7 @@ impl Elaborator {
                         Ok(IrExpr::ExprRangeSelect(Box::new(inner_expr), msb_c, lsb_c))
                     }
                 } else {
-                    Err("dynamic range select not supported".to_string())
+                    Err(SimError::elaborate("dynamic range select not supported"))
                 }
             }
             Expr::BitSelect { expr: inner, index } => {
@@ -2895,14 +2897,14 @@ impl Elaborator {
                 } else if let Ok(idx) = const_eval_params(index, &self.param_vals) {
                     Ok(IrExpr::ExprBitSelect(Box::new(inner_expr), idx as usize))
                 } else {
-                    Err("dynamic bit-select on non-signal not supported".to_string())
+                    Err(SimError::elaborate("dynamic bit-select on non-signal not supported"))
                 }
             }
             Expr::Concat(exprs) => {
                 if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
                     return Ok(folded);
                 }
-                let parts: Result<Vec<IrExpr>, String> = exprs.iter()
+                let parts: Result<Vec<IrExpr>, SimError> = exprs.iter()
                     .map(|e| self.elaborate_expr(e, signal_map, signals))
                     .collect();
                 Ok(IrExpr::Concat(parts?))
@@ -2976,14 +2978,14 @@ impl Elaborator {
                 match name.as_str() {
                     "$signed" => {
                         if args.len() != 1 {
-                            return Err("$signed requires exactly one argument".to_string());
+                            return Err(SimError::elaborate("$signed requires exactly one argument"));
                         }
                         let inner = self.elaborate_expr(&args[0], signal_map, signals)?;
                         Ok(IrExpr::Signed(Box::new(inner)))
                     }
                     "$unsigned" => {
                         if args.len() != 1 {
-                            return Err("$unsigned requires exactly one argument".to_string());
+                            return Err(SimError::elaborate("$unsigned requires exactly one argument"));
                         }
                         self.elaborate_expr(&args[0], signal_map, signals)
                     }
@@ -2996,7 +2998,7 @@ impl Elaborator {
                             let result = if n.is_power_of_two() { msb - 1 } else { msb };
                             Ok(IrExpr::Const(LogicVec::from_u64(result, 32)))
                         } else {
-                            Err("$clog2 requires one argument".to_string())
+                            Err(SimError::elaborate("$clog2 requires one argument"))
                         }
                     }
                     "$bits" => {
@@ -3007,62 +3009,62 @@ impl Elaborator {
                                     info.width * if info.array_depth > 0 { info.array_depth } else { 1 }
                                 })
                                 .or_else(|| compute_expr_width(arg, signal_map, signals, &self.param_vals, &self.package_symbols).ok())
-                                .ok_or_else(|| "$bits argument must resolve to a signal or computable expression".to_string())?;
+                                .ok_or_else(|| SimError::elaborate("$bits argument must resolve to a signal or computable expression"))?;
                             Ok(IrExpr::Const(LogicVec::from_u64(width as u64, 32)))
                         } else {
-                            Err("$bits requires one argument".to_string())
+                            Err(SimError::elaborate("$bits requires one argument"))
                         }
                     }
                     "$high" => {
                         if let Some(arg) = args.first() {
                             let sig_id = resolve_expr_signal(arg, signal_map)
-                                .ok_or_else(|| "$high argument must resolve to a signal".to_string())?;
+                                .ok_or_else(|| SimError::elaborate("$high argument must resolve to a signal"))?;
                             let info = &signals[sig_id];
                             let high = info.msb.max(info.lsb);
                             Ok(IrExpr::Const(LogicVec::from_u64(high as u64, 32)))
                         } else {
-                            Err("$high requires one argument".to_string())
+                            Err(SimError::elaborate("$high requires one argument"))
                         }
                     }
                     "$low" => {
                         if let Some(arg) = args.first() {
                             let sig_id = resolve_expr_signal(arg, signal_map)
-                                .ok_or_else(|| "$low argument must resolve to a signal".to_string())?;
+                                .ok_or_else(|| SimError::elaborate("$low argument must resolve to a signal"))?;
                             let info = &signals[sig_id];
                             let low = info.msb.min(info.lsb);
                             Ok(IrExpr::Const(LogicVec::from_u64(low as u64, 32)))
                         } else {
-                            Err("$low requires one argument".to_string())
+                            Err(SimError::elaborate("$low requires one argument"))
                         }
                     }
                     "$left" => {
                         if let Some(arg) = args.first() {
                             let sig_id = resolve_expr_signal(arg, signal_map)
-                                .ok_or_else(|| "$left argument must resolve to a signal".to_string())?;
+                                .ok_or_else(|| SimError::elaborate("$left argument must resolve to a signal"))?;
                             let info = &signals[sig_id];
                             Ok(IrExpr::Const(LogicVec::from_u64(info.msb as u64, 32)))
                         } else {
-                            Err("$left requires one argument".to_string())
+                            Err(SimError::elaborate("$left requires one argument"))
                         }
                     }
                     "$right" => {
                         if let Some(arg) = args.first() {
                             let sig_id = resolve_expr_signal(arg, signal_map)
-                                .ok_or_else(|| "$right argument must resolve to a signal".to_string())?;
+                                .ok_or_else(|| SimError::elaborate("$right argument must resolve to a signal"))?;
                             let info = &signals[sig_id];
                             Ok(IrExpr::Const(LogicVec::from_u64(info.lsb as u64, 32)))
                         } else {
-                            Err("$right requires one argument".to_string())
+                            Err(SimError::elaborate("$right requires one argument"))
                         }
                     }
                     "$size" => {
                         if let Some(arg) = args.first() {
                             let sig_id = resolve_expr_signal(arg, signal_map)
-                                .ok_or_else(|| "$size argument must resolve to a signal".to_string())?;
+                                .ok_or_else(|| SimError::elaborate("$size argument must resolve to a signal"))?;
                             let info = &signals[sig_id];
                             Ok(IrExpr::Const(LogicVec::from_u64(info.width as u64, 32)))
                         } else {
-                            Err("$size requires one argument".to_string())
+                            Err(SimError::elaborate("$size requires one argument"))
                         }
                     }
                     "$countones" => {
@@ -3075,7 +3077,7 @@ impl Elaborator {
                                 Ok(IrExpr::SysFunc { name: "$countones".to_string(), args: vec![ir_arg] })
                             }
                         } else {
-                            Err("$countones requires one argument".to_string())
+                            Err(SimError::elaborate("$countones requires one argument"))
                         }
                     }
                     "$onehot" => {
@@ -3088,7 +3090,7 @@ impl Elaborator {
                                 Ok(IrExpr::SysFunc { name: "$onehot".to_string(), args: vec![ir_arg] })
                             }
                         } else {
-                            Err("$onehot requires one argument".to_string())
+                            Err(SimError::elaborate("$onehot requires one argument"))
                         }
                     }
                     "$isunknown" => {
@@ -3101,11 +3103,11 @@ impl Elaborator {
                                 Ok(IrExpr::SysFunc { name: "$isunknown".to_string(), args: vec![ir_arg] })
                             }
                         } else {
-                            Err("$isunknown requires one argument".to_string())
+                            Err(SimError::elaborate("$isunknown requires one argument"))
                         }
                     }
                     _ => {
-                        let ir_args: Result<Vec<IrExpr>, String> = args.iter()
+                        let ir_args: Result<Vec<IrExpr>, SimError> = args.iter()
                             .map(|a| self.elaborate_expr(a, signal_map, signals))
                             .collect();
                         Ok(IrExpr::SysFunc { name: name.to_string(), args: ir_args? })
@@ -3113,7 +3115,7 @@ impl Elaborator {
                 }
             }
             Expr::FuncCall { name, args } if name == "new" => {
-                let ir_args: Result<Vec<IrExpr>, String> = args.iter()
+                let ir_args: Result<Vec<IrExpr>, SimError> = args.iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
                     .collect();
                 Ok(IrExpr::NewCall { class_name: String::new(), args: ir_args? })
@@ -3121,7 +3123,7 @@ impl Elaborator {
             Expr::String(s) => Ok(IrExpr::String(s.clone())),
             Expr::MethodCall { obj, method, args, with_clause } => {
                 let ir_obj = self.elaborate_expr(obj, signal_map, signals)?;
-                let ir_args: Result<Vec<IrExpr>, String> = args.iter()
+                let ir_args: Result<Vec<IrExpr>, SimError> = args.iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
                     .collect();
                 let ir_with = match with_clause {
@@ -3153,7 +3155,7 @@ impl Elaborator {
                             let msb = f.offset + f.width - 1;
                             return Ok(IrExpr::RangeSelect(sig_id, lsb, msb));
                         }
-                        return Err(format!("field '{}' not found in struct type (width {})", field, sig_info.width));
+                        return Err(SimError::elaborate(format!("field '{}' not found in struct type (width {})", field, sig_info.width)));
                     }
                     Ok(IrExpr::MemberAccess {
                         obj: Box::new(IrExpr::Signal(sig_id, 0)),
@@ -3188,8 +3190,8 @@ impl Elaborator {
                 let ir_slice_size = if let Some(ss) = slice_size {
                     match const_eval_params(ss, &self.param_vals) {
                         Ok(v) if v > 0 => Some(v as usize),
-                        Ok(_) => return Err("streaming slice_size must be > 0".to_string()),
-                        Err(_) => return Err("slice_size must be a constant expression".to_string()),
+                        Ok(_) => return Err(SimError::elaborate("streaming slice_size must be > 0")),
+                        Err(_) => return Err(SimError::elaborate("slice_size must be a constant expression")),
                     }
                 } else {
                     None
@@ -3243,7 +3245,7 @@ impl Elaborator {
                 Ok(IrExpr::Cast { width: cast_width, expr: Box::new(inner_ir) })
             }
             Expr::FuncCall { name, args } if name.starts_with("process::") => {
-                let ir_args: Result<Vec<IrExpr>, String> = args.iter()
+                let ir_args: Result<Vec<IrExpr>, SimError> = args.iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
                     .collect();
                 Ok(IrExpr::SysFunc { name: name.clone(), args: ir_args? })
@@ -3279,20 +3281,20 @@ impl Elaborator {
                 } else {
                     raw_name.clone()
                 };
-                let ir_args: Result<Vec<IrExpr>, String> = args.iter()
+                let ir_args: Result<Vec<IrExpr>, SimError> = args.iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
                     .collect();
                 Ok(IrExpr::NewCall { class_name, args: ir_args? })
             }
             Expr::FuncCall { name, args } if name == "uvm_factory::set_type_override_by_type" => {
-                let ir_args: Result<Vec<IrExpr>, String> = args.iter()
+                let ir_args: Result<Vec<IrExpr>, SimError> = args.iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
                     .collect();
                 Ok(IrExpr::SysFunc { name: name.clone(), args: ir_args? })
             }
             Expr::FuncCall { name, args } if name == "uvm_config_db::set" || name == "uvm_config_db::get"
                 || name == "uvm_resource_db::set" || name == "uvm_resource_db::get" => {
-                let ir_args: Result<Vec<IrExpr>, String> = args.iter()
+                let ir_args: Result<Vec<IrExpr>, SimError> = args.iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
                     .collect();
                 // Use SysFunc variant for engine dispatch
@@ -3305,7 +3307,7 @@ impl Elaborator {
                 let is_dpi = self.design.modules.iter().flat_map(|m| m.items.iter())
                     .any(|item| matches!(item, ModuleItem::DpiImport(d) if d.name == *name));
                 if is_dpi {
-                    let ir_args: Result<Vec<IrExpr>, String> = args.iter()
+                    let ir_args: Result<Vec<IrExpr>, SimError> = args.iter()
                         .map(|a| self.elaborate_expr(a, signal_map, signals))
                         .collect();
                     let return_width = self.design.modules.iter().flat_map(|m| m.items.iter())
@@ -3316,10 +3318,10 @@ impl Elaborator {
                         .unwrap_or(32);
                     Ok(IrExpr::DpiCall { name: name.clone(), args: ir_args?, return_width })
                 } else {
-                    Err(format!("function '{}' not found (not a DPI import)", name))
+                    Err(SimError::elaborate(format!("function '{}' not found (not a DPI import)", name)))
                 }
             }
-            _ => Err(format!("expression type not yet supported")),
+            _ => Err(SimError::elaborate(format!("expression type not yet supported"))),
         }
     }
 
@@ -3329,19 +3331,19 @@ impl Elaborator {
         args: &[Expr],
         signal_map: &HashMap<String, SignalId>,
         signals: &[SignalInfo],
-    ) -> Result<IrExpr, String> {
+    ) -> Result<IrExpr, SimError> {
         let (pkg_name, func_name) = name.split_once("::")
-            .ok_or_else(|| format!("invalid function name '{}'", name))?;
+            .ok_or_else(|| SimError::elaborate(format!("invalid function name '{}'", name)))?;
 
         let func = self.package_symbols.get(pkg_name)
             .and_then(|items| items.get(func_name))
             .and_then(|item| if let PackageItem::Function(f) = item { Some(f) } else { None })
-            .ok_or_else(|| format!("function '{}' not found in package '{}'", func_name, pkg_name))?;
+            .ok_or_else(|| SimError::elaborate(format!("function '{}' not found in package '{}'", func_name, pkg_name)))?;
 
         // Find return expression
         let ret_expr = func.stmts.iter().find_map(|s| {
             if let Stmt::Return(Some(e)) = s { Some(e.clone()) } else { None }
-        }).ok_or_else(|| format!("function '{}' has no return expression", name))?;
+        }).ok_or_else(|| SimError::elaborate(format!("function '{}' has no return expression", name)))?;
 
         // Substitute formal parameters with actual arguments
         let mut result = *ret_expr;
@@ -3475,17 +3477,17 @@ impl Elaborator {
     }
 
     fn elaborate_expr_to_signal(&self, expr: &Expr, signal_map: &HashMap<String, SignalId>)
-        -> Result<SignalId, String>
+        -> Result<SignalId, SimError>
     {
         match expr {
             Expr::Ident(name) => {
                 signal_map.get(name)
-                    .ok_or_else(|| format!("signal '{}' not found", name))
+                    .ok_or_else(|| SimError::elaborate(format!("signal '{}' not found", name)))
                     .copied()
             }
-            Expr::MethodCall { .. } => Err("method calls cannot resolve to a signal".to_string()),
-            Expr::MemberAccess { .. } => Err("member access cannot resolve to a signal".to_string()),
-            _ => Err("expected simple signal identifier".to_string())
+            Expr::MethodCall { .. } => Err(SimError::elaborate("method calls cannot resolve to a signal")),
+            Expr::MemberAccess { .. } => Err(SimError::elaborate("member access cannot resolve to a signal")),
+            _ => Err(SimError::elaborate("expected simple signal identifier"))
         }
     }
 
@@ -3500,7 +3502,7 @@ impl Elaborator {
         next_id: &mut SignalId,
         processes: &mut Vec<Process>,
         hint_name: &str,
-    ) -> Result<SignalId, String> {
+    ) -> Result<SignalId, SimError> {
         // Try simple signal resolution first
         if let Ok(sid) = self.elaborate_expr_to_signal(expr, signal_map) {
             return Ok(sid);

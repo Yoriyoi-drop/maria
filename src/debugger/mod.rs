@@ -1,3 +1,4 @@
+use crate::error::SimError;
 use crate::ir::*;
 use crate::simulator::*;
 
@@ -12,19 +13,19 @@ impl Debugger {
         Debugger { engine }
     }
 
-    pub fn run(&mut self) -> Result<(), String> {
+    pub fn run(&mut self) -> Result<(), SimError> {
         self.engine.paused = false;
         self.engine.step_mode = StepMode::Running;
         self.engine.run()
     }
 
-    pub fn step_cycle(&mut self) -> Result<(), String> {
+    pub fn step_cycle(&mut self) -> Result<(), SimError> {
         self.engine.paused = false;
         self.engine.step_mode = StepMode::StepCycle;
         self.engine.run()
     }
 
-    pub fn continue_run(&mut self) -> Result<(), String> {
+    pub fn continue_run(&mut self) -> Result<(), SimError> {
         self.engine.paused = false;
         self.engine.step_mode = StepMode::Running;
         self.engine.run()
@@ -222,7 +223,7 @@ impl Debugger {
         out
     }
 
-    pub fn reverse_step(&mut self) -> Result<(), String> {
+    pub fn reverse_step(&mut self) -> Result<(), SimError> {
         if let Some(snap) = self.engine.snapshots.pop() {
             self.engine.state.signals = snap.signals;
             self.engine.state.next_signals = snap.next_signals;
@@ -232,11 +233,11 @@ impl Debugger {
             self.engine.step_mode = StepMode::Paused;
             Ok(())
         } else {
-            Err("no snapshot available for reverse step".to_string())
+            Err(SimError::debugger("no snapshot available for reverse step"))
         }
     }
 
-    pub fn reverse_continue(&mut self, target_time: u64) -> Result<(), String> {
+    pub fn reverse_continue(&mut self, target_time: u64) -> Result<(), SimError> {
         while let Some(snap) = self.engine.snapshots.last() {
             if snap.time <= target_time {
                 let snap = self.engine.snapshots.pop().unwrap();
@@ -250,7 +251,7 @@ impl Debugger {
             }
             self.engine.snapshots.pop();
         }
-        Err(format!("no snapshot at or before time {}", target_time))
+        Err(SimError::debugger(format!("no snapshot at or before time {}", target_time)))
     }
 
     pub fn get_module_names(&self) -> Vec<String> {

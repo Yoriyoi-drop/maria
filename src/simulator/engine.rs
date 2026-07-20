@@ -320,7 +320,7 @@ impl SimulationEngine {
                 }
 
                 if delta_count > 10_000_000 {
-                    return Err(SimError::runtime("simulation exceeded max delta cycles per time step (10M)");
+                    return Err(SimError::runtime("simulation exceeded max delta cycles per time step (10M)"));
                 }
                 delta_count += 1;
 
@@ -819,7 +819,7 @@ impl SimulationEngine {
         xml.push_str("</ucis>\n");
 
         std::fs::write(path, xml)
-            .map_err(|e| format!("cannot write UCIS file '{}': {}", path, e))?;
+            .map_err(|e| SimError::waveform(format!("cannot write UCIS file '{}': {}", path, e)))?;
 
         Ok(())
     }
@@ -2897,7 +2897,7 @@ impl SimulationEngine {
                                 // Apply writes from parallel eval
                                 Ok(writes)
                             }
-                            Err(e) => Err(SimError::runtime(format!("parallel eval error: {}", e)),
+                            Err(e) => Err(SimError::runtime(format!("parallel eval error: {}", e))),
                         }
                     } else {
                         Ok(Vec::new())
@@ -3039,7 +3039,7 @@ impl SimulationEngine {
                 let val = self.evaluate_expr(inner)?;
                 let (start, end) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
                 if end >= val.width {
-                    return Err(SimError::runtime(format!("range select out of bounds: {}:{} on width {}", msb, lsb, val.width));
+                    return Err(SimError::runtime(format!("range select out of bounds: {}:{} on width {}", msb, lsb, val.width)));
                 }
                 let mut bits = val.bits[start..=end].to_vec();
                 if *msb > *lsb { bits.reverse(); }
@@ -3217,7 +3217,7 @@ impl SimulationEngine {
                                 Ok(val)
                             }
                         } else {
-                            Err(SimError::runtime("$signed expects 1 argument")
+                            Err(SimError::runtime("$signed expects 1 argument"))
                         }
                     }
                     "$unsigned" => {
@@ -3226,7 +3226,7 @@ impl SimulationEngine {
                             // Unsigned: zero-extend (already the default)
                             Ok(val)
                         } else {
-                            Err(SimError::runtime("$unsigned expects 1 argument")
+                            Err(SimError::runtime("$unsigned expects 1 argument"))
                         }
                     }
                     "$countones" => {
@@ -3235,7 +3235,7 @@ impl SimulationEngine {
                             let count = val.bits.iter().filter(|b| **b == LogicVal::One).count() as u64;
                             Ok(LogicVec::from_u64(count, 32))
                         } else {
-                            Err(SimError::runtime("$countones expects 1 argument")
+                            Err(SimError::runtime("$countones expects 1 argument"))
                         }
                     }
                     "$onehot" => {
@@ -3245,7 +3245,7 @@ impl SimulationEngine {
                             let is_onehot = ones == 1;
                             Ok(LogicVec::from_u64(if is_onehot { 1 } else { 0 }, 1))
                         } else {
-                            Err(SimError::runtime("$onehot expects 1 argument")
+                            Err(SimError::runtime("$onehot expects 1 argument"))
                         }
                     }
                     "$isunknown" => {
@@ -3254,7 +3254,7 @@ impl SimulationEngine {
                             let has_x_or_z = val.bits.iter().any(|b| *b == LogicVal::X || *b == LogicVal::Z);
                             Ok(LogicVec::from_u64(if has_x_or_z { 1 } else { 0 }, 1))
                         } else {
-                            Err(SimError::runtime("$isunknown expects 1 argument")
+                            Err(SimError::runtime("$isunknown expects 1 argument"))
                         }
                     }
                     "$fopen" => {
@@ -3771,7 +3771,7 @@ impl SimulationEngine {
                 if let Some(obj_id) = self.current_this {
                     Ok(LogicVec::from_u64(obj_id as u64, 64))
                 } else {
-                    Err(SimError::runtime("'this' used outside of class method")
+                    Err(SimError::runtime("'this' used outside of class method"))
                 }
             }
             IrExpr::MethodCall { obj, method, args, with_clause } => {
@@ -3854,7 +3854,7 @@ impl SimulationEngine {
                     sanitize_for_2state(&self.design.top.signals, sig_id, &mut val);
                     Ok(val)
                 } else {
-                    Err(SimError::runtime(format!("hierarchical signal '{}' not found", name))
+                    Err(SimError::runtime(format!("hierarchical signal '{}' not found", name)))
                 }
             }
             IrExpr::Inside { expr, list } => {
@@ -3904,7 +3904,7 @@ impl SimulationEngine {
                 let all_bits: Vec<LogicVal> = vals.iter().flat_map(|v| v.bits.iter().copied()).collect();
                 let slen = slice_size.unwrap_or(1);
                 if slen == 0 {
-                    return Err(SimError::runtime("streaming slice size must be > 0");
+                    return Err(SimError::runtime("streaming slice size must be > 0"));
                 }
                 let mut result = Vec::new();
                 if op == ">>" {
@@ -4009,7 +4009,7 @@ impl SimulationEngine {
         if let Some(id) = self.signal_id_from_lvalue(lvalue) {
             if let Some(sig) = self.design.top.signals.get(id) {
                 if sig.is_const {
-                    return Err(SimError::runtime(format!("cannot write to const signal '{}'", sig.name));
+                    return Err(SimError::runtime(format!("cannot write to const signal '{}'", sig.name)));
                 }
             }
         }
@@ -4287,10 +4287,10 @@ impl SimulationEngine {
                     obj_data.fields.insert(field.clone(), val);
                     Ok(())
                 } else {
-                    Err(SimError::runtime(format!("object {} not found for field '{}'", obj_id, field))
+                    Err(SimError::runtime(format!("object {} not found for field '{}'", obj_id, field)))
                 }
             }
-            _ => Err(SimError::runtime(format!("unsupported lvalue type in task method: {:?}", lhs))
+            _ => Err(SimError::runtime(format!("unsupported lvalue type in task method: {:?}", lhs)))
         }
     }
 
@@ -4335,7 +4335,7 @@ impl SimulationEngine {
                 return Ok(());
             }
         }
-        Err(SimError::runtime(format!("cannot resolve '{}' in method context (not a local or field)", name))
+        Err(SimError::runtime(format!("cannot resolve '{}' in method context (not a local or field)", name)))
     }
 
     fn evaluate_ast_expr(&mut self, expr: &Expr) -> Result<LogicVec, SimError> {
@@ -4343,9 +4343,9 @@ impl SimulationEngine {
             Expr::Value(v) => {
                 match v {
                     Value::Decimal(i) => Ok(LogicVec::from_u64(*i as u64, 32)),
-                    Value::Binary { bits, .. } => LogicVec::from_bin(bits),
-                    Value::Hex { bits, .. } => LogicVec::from_hex(bits),
-                    Value::Octal { bits, .. } => LogicVec::from_hex(bits),
+                    Value::Binary { bits, .. } => LogicVec::from_bin(bits).map_err(|e| SimError::runtime(e)),
+                    Value::Hex { bits, .. } => LogicVec::from_hex(bits).map_err(|e| SimError::runtime(e)),
+                    Value::Octal { bits, .. } => LogicVec::from_hex(bits).map_err(|e| SimError::runtime(e)),
                     Value::Real(r) => Ok(LogicVec::from_u64(r.to_bits(), 64)),
                 }
             }
@@ -4354,7 +4354,7 @@ impl SimulationEngine {
                     if let Some(obj_id) = self.current_this {
                         return Ok(LogicVec::from_u64(obj_id as u64, 64));
                     } else {
-                        return Err(SimError::runtime("'this' used outside of class method");
+                        return Err(SimError::runtime("'this' used outside of class method"));
                     }
                 }
                 if let Some(local) = self.get_local(name) {
@@ -4371,7 +4371,7 @@ impl SimulationEngine {
                     return Ok(self.state.read_signal(sig_id).clone());
                 }
                 let ctx = self.current_this.map(|id| format!("obj_id={}", id)).unwrap_or_else(|| "no current_this".to_string());
-                Err(SimError::runtime(format!("cannot resolve identifier '{}' in method context ({})", name, ctx))
+                Err(SimError::runtime(format!("cannot resolve identifier '{}' in method context ({})", name, ctx)))
             }
             Expr::BinaryOp { op, lhs, rhs } => {
                 let lval = self.evaluate_ast_expr(lhs)?;
@@ -4548,7 +4548,7 @@ impl SimulationEngine {
                         return Ok(LogicVec::from_u64(result, 32));
                     }
                 }
-                Err(SimError::runtime(format!("unknown function '{}' in method context", name))
+                Err(SimError::runtime(format!("unknown function '{}' in method context", name)))
             }
             Expr::MethodCall { obj, method, args, with_clause: _ } => {
                 if let Expr::Ident(s) = obj.as_ref() {
@@ -4623,7 +4623,7 @@ impl SimulationEngine {
                 } else if w == 0 {
                     Ok(LogicVec::from_u64(0, 1))
                 } else {
-                    Err(SimError::runtime(format!("part-select out of range"))
+                    Err(SimError::runtime(format!("part-select out of range")))
                 }
             }
             Expr::Paren(inner) => self.evaluate_ast_expr(inner),
@@ -4659,7 +4659,7 @@ impl SimulationEngine {
                 let slen = if let Some(ss_expr) = slice_size {
                     let ss_val = self.evaluate_ast_expr(ss_expr)?;
                     let n = ss_val.to_u64() as usize;
-                    if n == 0 { return Err(SimError::runtime("streaming slice size must be > 0"); }
+                    if n == 0 { return Err(SimError::runtime("streaming slice size must be > 0")); }
                     n
                 } else {
                     1
@@ -4722,7 +4722,7 @@ impl SimulationEngine {
                 Ok(val.resize(cast_width))
             }
             Expr::ScopedIdent { package, item } => {
-                Err(SimError::runtime(format!("scoped identifier '{}.{}' not resolved at runtime", package, item))
+                Err(SimError::runtime(format!("scoped identifier '{}.{}' not resolved at runtime", package, item)))
             }
         }
     }
@@ -4763,7 +4763,7 @@ impl SimulationEngine {
                             obj.fields.insert(field.clone(), val);
                             Ok(())
                         } else {
-                            Err(SimError::runtime(format!("object {} not found for field write", obj_id))
+                            Err(SimError::runtime(format!("object {} not found for field write", obj_id)))
                         }
                     }
                     Expr::BitSelect { expr: inner, index } => {
@@ -4842,7 +4842,7 @@ impl SimulationEngine {
                         }
                         Ok(())
                     }
-                    _ => Err(SimError::runtime(format!("unsupported LHS in method: {:?}", lhs)),
+                    _ => Err(SimError::runtime(format!("unsupported LHS in method: {:?}", lhs))),
                 }
             }
             Stmt::NonBlockingAssign { lhs, rhs, delay: _ } => {
@@ -4858,7 +4858,7 @@ impl SimulationEngine {
                             obj.fields.insert(field.clone(), val);
                             Ok(())
                         } else {
-                            Err(SimError::runtime(format!("object {} not found for field write", obj_id))
+                            Err(SimError::runtime(format!("object {} not found for field write", obj_id)))
                         }
                     }
                     Expr::BitSelect { expr: inner, index } => {
@@ -4937,7 +4937,7 @@ impl SimulationEngine {
                         }
                         Ok(())
                     }
-                    _ => Err(SimError::runtime(format!("unsupported LHS in method: {:?}", lhs)),
+                    _ => Err(SimError::runtime(format!("unsupported LHS in method: {:?}", lhs))),
                 }
             }
             Stmt::IfElse { cond, true_branch, false_branch } => {
@@ -5122,13 +5122,13 @@ impl SimulationEngine {
                             obj.fields.insert(field.clone(), val);
                             Ok(())
                         } else {
-                            Err(SimError::runtime(format!("object {} not found for field write", obj_id))
+                            Err(SimError::runtime(format!("object {} not found for field write", obj_id)))
                         }
                     }
-                    _ => Err(SimError::runtime(format!("unsupported LHS in StmtAssign: {:?}", lhs)),
+                    _ => Err(SimError::runtime(format!("unsupported LHS in StmtAssign: {:?}", lhs))),
                 }
             }
-            _ => Err(SimError::runtime(format!("unsupported statement in method context: {:?}", stmt)),
+            _ => Err(SimError::runtime(format!("unsupported statement in method context: {:?}", stmt))),
         }
     }
 
@@ -5369,7 +5369,7 @@ impl SimulationEngine {
             .map(|o| o.class_name.clone())
             .unwrap_or_default();
         if class_name.is_empty() {
-            return Err(SimError::runtime(format!("cannot call method '{}' on object with unknown class", method));
+            return Err(SimError::runtime(format!("cannot call method '{}' on object with unknown class", method)));
         }
         if class_name == "__mailbox" {
             return self.execute_mailbox_method(obj_id, method, args);
@@ -5553,26 +5553,26 @@ impl SimulationEngine {
         }
 
         self.current_this = old_this;
-        Err(SimError::runtime(format!("randomize failed: could not satisfy all constraints after {} attempts", max_attempts))
+        Err(SimError::runtime(format!("randomize failed: could not satisfy all constraints after {} attempts", max_attempts)))
     }
 
     fn execute_mailbox_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
         match method {
             "new" => Ok(LogicVec::from_u64(1, 1)),
             "put" => {
-                if args.is_empty() { return Err(SimError::runtime("mailbox::put expects 1 argument"); }
+                if args.is_empty() { return Err(SimError::runtime("mailbox::put expects 1 argument")); }
                 self.mailbox_queues.entry(obj_id).or_default().push(args[0].clone());
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get" => {
                 let q = self.mailbox_queues.get_mut(&obj_id)
-                    .ok_or_else(|| "mailbox not initialized".to_string())?;
+                    .ok_or_else(|| SimError::runtime("mailbox not initialized"))?;
                 if q.is_empty() { return Ok(LogicVec::default()); }
                 Ok(q.remove(0))
             }
             "try_get" => {
                 let q = self.mailbox_queues.get_mut(&obj_id)
-                    .ok_or_else(|| "mailbox not initialized".to_string())?;
+                    .ok_or_else(|| SimError::runtime("mailbox not initialized"))?;
                 if q.is_empty() {
                     return Ok(LogicVec::from_u64(0, 1));
                 }
@@ -5580,16 +5580,16 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "try_put" => {
-                if args.is_empty() { return Err(SimError::runtime("mailbox::try_put expects 1 argument"); }
+                if args.is_empty() { return Err(SimError::runtime("mailbox::try_put expects 1 argument")); }
                 self.mailbox_queues.entry(obj_id).or_default().push(args[0].clone());
                 Ok(LogicVec::from_u64(1, 1))
             }
             "num" => {
                 let q = self.mailbox_queues.get(&obj_id)
-                    .ok_or_else(|| "mailbox not initialized".to_string())?;
+                    .ok_or_else(|| SimError::runtime("mailbox not initialized"))?;
                 Ok(LogicVec::from_u64(q.len() as u64, 32))
             }
-            _ => Err(SimError::runtime(format!("unknown mailbox method: {}", method)),
+            _ => Err(SimError::runtime(format!("unknown mailbox method: {}", method))),
         }
     }
 
@@ -5603,22 +5603,22 @@ impl SimulationEngine {
             "get" => {
                 let key_count = if !args.is_empty() { args[0].to_u64() as u32 } else { 1 };
                 let c = self.semaphore_counts.get_mut(&obj_id)
-                    .ok_or_else(|| "semaphore not initialized".to_string())?;
-                if *c < key_count { return Err(SimError::runtime("semaphore::get: insufficient keys"); }
+                    .ok_or_else(|| SimError::runtime("semaphore not initialized"))?;
+                if *c < key_count { return Err(SimError::runtime("semaphore::get: insufficient keys")); }
                 *c -= key_count;
                 Ok(LogicVec::from_u64(*c as u64, 32))
             }
             "put" => {
                 let key_count = if !args.is_empty() { args[0].to_u64() as u32 } else { 1 };
                 let c = self.semaphore_counts.get_mut(&obj_id)
-                    .ok_or_else(|| "semaphore not initialized".to_string())?;
+                    .ok_or_else(|| SimError::runtime("semaphore not initialized"))?;
                 *c += key_count;
                 Ok(LogicVec::from_u64(*c as u64, 32))
             }
             "try_get" => {
                 let key_count = if !args.is_empty() { args[0].to_u64() as u32 } else { 1 };
                 let c = self.semaphore_counts.get_mut(&obj_id)
-                    .ok_or_else(|| "semaphore not initialized".to_string())?;
+                    .ok_or_else(|| SimError::runtime("semaphore not initialized"))?;
                 if *c >= key_count {
                     *c -= key_count;
                     Ok(LogicVec::from_u64(1, 1))
@@ -5626,7 +5626,7 @@ impl SimulationEngine {
                     Ok(LogicVec::from_u64(0, 1))
                 }
             }
-            _ => Err(SimError::runtime(format!("unknown semaphore method: {}", method)),
+            _ => Err(SimError::runtime(format!("unknown semaphore method: {}", method))),
         }
     }
 
@@ -5672,7 +5672,7 @@ impl SimulationEngine {
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
-            _ => Err(SimError::runtime(format!("unknown process method: {}", method)),
+            _ => Err(SimError::runtime(format!("unknown process method: {}", method))),
         }
     }
 
@@ -5685,7 +5685,7 @@ impl SimulationEngine {
             }
             "get_name" => {
                 let data = self.uvm_object_data.get(&obj_id)
-                    .ok_or_else(|| "uvm_object not initialized".to_string())?;
+                    .ok_or_else(|| SimError::runtime("uvm_object not initialized"))?;
                 Ok(string_to_logicvec(&data.name))
             }
             "set_name" => {
@@ -5703,14 +5703,14 @@ impl SimulationEngine {
             }
             "print" => {
                 let data = self.uvm_object_data.get(&obj_id)
-                    .ok_or_else(|| "uvm_object not initialized".to_string())?;
+                    .ok_or_else(|| SimError::runtime("uvm_object not initialized"))?;
                 let class_name = self.state.get_object(obj_id)
                     .map(|o| o.class_name.clone())
                     .unwrap_or_default();
                 println!("UVM_INFO @ {}: {} [{}]", self.current_time, data.name, class_name);
                 Ok(LogicVec::from_u64(1, 1))
             }
-            _ => Err(SimError::runtime(format!("uvm_object::{} not implemented", method)),
+            _ => Err(SimError::runtime(format!("uvm_object::{} not implemented", method))),
         }
     }
 
@@ -5921,7 +5921,7 @@ impl SimulationEngine {
             }
             "get_next_item" => {
                 let data = self.uvm_sequencer_data.get_mut(&obj_id)
-                    .ok_or_else(|| "sequencer not initialized".to_string())?;
+                    .ok_or_else(|| SimError::runtime("sequencer not initialized"))?;
                 let item = data.item_queue.first().copied().unwrap_or(0);
                 data.current_item = data.item_queue.first().copied();
                 Ok(LogicVec::from_u64(item as u64, 64))
@@ -5965,7 +5965,7 @@ impl SimulationEngine {
             }
             "get_next_item" => {
                 let data = self.uvm_driver_data.get(&obj_id)
-                    .ok_or_else(|| "driver not initialized".to_string())?;
+                    .ok_or_else(|| SimError::runtime("driver not initialized"))?;
                 let seqr_id = data.sequencer_id.unwrap_or(0);
                 if seqr_id != 0 {
                     self.execute_uvm_sequencer_method(seqr_id, "get_next_item", args)
@@ -5975,7 +5975,7 @@ impl SimulationEngine {
             }
             "item_done" => {
                 let data = self.uvm_driver_data.get(&obj_id)
-                    .ok_or_else(|| "driver not initialized".to_string())?;
+                    .ok_or_else(|| SimError::runtime("driver not initialized"))?;
                 let seqr_id = data.sequencer_id.unwrap_or(0);
                 if seqr_id != 0 {
                     self.execute_uvm_sequencer_method(seqr_id, "item_done", args)
@@ -6070,13 +6070,13 @@ impl SimulationEngine {
 
     fn execute_super_method(&mut self, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
         let obj_id = self.current_this
-            .ok_or_else(|| "'super' used outside class method".to_string())?;
+            .ok_or_else(|| SimError::runtime("'super' used outside class method"))?;
         let class_name = self.state.get_object(obj_id)
             .map(|o| o.class_name.clone())
             .unwrap_or_default();
         let parent = self.design.classes.get(&class_name)
             .and_then(|c| c.extends.clone())
-            .ok_or_else(|| format!("class '{}' has no parent for super call", class_name))?;
+            .ok_or_else(|| SimError::runtime(format!("class '{}' has no parent for super call", class_name)))?;
         // Check hierarchy from most specific to least
         if parent == "__uvm_driver" || self.is_uvm_driver_hierarchy(&parent) {
             return self.execute_uvm_driver_method(obj_id, method, args);
@@ -6246,7 +6246,7 @@ fn get_field_elem_width(&self, expr: &Expr) -> Option<usize> {
                 break;
             }
         }
-        Err(SimError::runtime(format!("method '{}' not found in class '{}' or its parents", method, class_name))
+        Err(SimError::runtime(format!("method '{}' not found in class '{}' or its parents", method, class_name)))
     }
 }
 
@@ -6370,7 +6370,7 @@ fn eval_display_arg(state: &SimulationState, signals: &[SignalInfo], hier_map: &
             } else if let Some(&pos) = hier_map.get(name) {
                 Ok(state.read_signal(pos).clone())
             } else {
-                Err(SimError::runtime(format!("hierarchical signal '{}' not found", name))
+                Err(SimError::runtime(format!("hierarchical signal '{}' not found", name)))
             }
         }
         IrExpr::String(s) => {
@@ -6484,7 +6484,7 @@ fn resolve_net_values(net_type: NetType, current: &LogicVec, incoming: &LogicVec
 }
 
 fn read_hex_file(filename: &str, elem_width: usize, array_depth: usize, start: Option<usize>, end: Option<usize>) -> Result<Vec<LogicVec>, SimError> {
-    let content = std::fs::read_to_string(filename).map_err(|e| format!("cannot read {}: {}", filename, e))?;
+    let content = std::fs::read_to_string(filename).map_err(|e| SimError::waveform(format!("cannot read {}: {}", filename, e)))?;
     let start_addr = start.unwrap_or(0);
     let end_addr = end.unwrap_or(array_depth - 1);
     let len = end_addr - start_addr + 1;
@@ -6492,7 +6492,7 @@ fn read_hex_file(filename: &str, elem_width: usize, array_depth: usize, start: O
     for line in content.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with("//") || line.starts_with('#') { continue; }
-        let val = i64::from_str_radix(line, 16).map_err(|e| format!("bad hex value '{}': {}", line, e))?;
+        let val = i64::from_str_radix(line, 16).map_err(|e| SimError::waveform(format!("bad hex value '{}': {}", line, e)))?;
         data.push(LogicVec::from_u64(val as u64, elem_width));
         if data.len() >= len { break; }
     }
@@ -6500,7 +6500,7 @@ fn read_hex_file(filename: &str, elem_width: usize, array_depth: usize, start: O
 }
 
 fn read_bin_file(filename: &str, elem_width: usize, array_depth: usize, start: Option<usize>, end: Option<usize>) -> Result<Vec<LogicVec>, SimError> {
-    let content = std::fs::read_to_string(filename).map_err(|e| format!("cannot read {}: {}", filename, e))?;
+    let content = std::fs::read_to_string(filename).map_err(|e| SimError::waveform(format!("cannot read {}: {}", filename, e)))?;
     let start_addr = start.unwrap_or(0);
     let end_addr = end.unwrap_or(array_depth - 1);
     let len = end_addr - start_addr + 1;
@@ -6562,23 +6562,45 @@ fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<Lo
             Ok(LogicVec::from_u64(s.len() as u64, 32))
         }
         "substr" => {
-            if args.len() != 2 {
-                return Err(SimError::runtime(format!("substr expects 2 arguments, got {}", args.len()));
-            }
-            let i = args[0].to_u64() as usize;
-            let j = args[1].to_u64() as usize;
-            if i > j || j >= s.len() {
-                return Err(SimError::runtime(format!("substr({}, {}) out of range for string of len {}", i, j, s.len()));
-            }
-            let sub = &s[i..=j];
-            let mut bits = Vec::with_capacity(sub.len() * 8);
-            for c in sub.chars() {
-                let byte = c as u8;
-                for b in 0..8 {
-                    bits.push(if (byte >> b) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
-                }
-            }
-            Ok(LogicVec { width: bits.len(), bits })
+    if args.len() != 2 {
+        return Err(SimError::runtime(format!(
+            "substr expects 2 arguments, got {}",
+            args.len()
+        )));
+    }
+
+    let i = args[0].to_u64() as usize;
+    let j = args[1].to_u64() as usize;
+
+    if i > j || j >= s.len() {
+        return Err(SimError::runtime(format!(
+            "substr({}, {}) out of range for string of len {}",
+            i,
+            j,
+            s.len()
+        )));
+    }
+
+    let sub = &s[i..=j];
+
+    let mut bits = Vec::with_capacity(sub.len() * 8);
+
+    for c in sub.chars() {
+        let byte = c as u8;
+        for b in 0..8 {
+            bits.push(if (byte >> b) & 1 == 1 {
+                LogicVal::One
+            } else {
+                LogicVal::Zero
+            });
+        }
+    }
+
+    Ok(LogicVec {
+        width: bits.len(),
+        bits,
+    })
+
         }
         "atoi" => {
             let val: i64 = s.trim().parse().unwrap_or(0);
@@ -6623,7 +6645,7 @@ fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<Lo
         }
         "compare" | "icompare" => {
             if args.len() < 1 {
-                return Err(SimError::runtime(format!("{} expects 1 argument", method));
+                return Err(SimError::runtime(format!("{} expects 1 argument", method)));
             }
             let other_val = &args[0];
             let other = logicvec_to_string(other_val);
@@ -6639,7 +6661,7 @@ fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<Lo
             };
             Ok(LogicVec::from_u64(result as u64, 32))
         }
-        _ => Err(SimError::runtime(format!("unknown string method: {}", method)),
+        _ => Err(SimError::runtime(format!("unknown string method: {}", method))),
     }
 }
 
@@ -6745,7 +6767,7 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                     let elem_width = sig.elem_width;
                     let count = if elem_width > 0 { lv.width / elem_width } else { 0 };
                     if idx >= count {
-                        return Err(SimError::runtime(format!("delete index {} out of range (size {})", idx, count));
+                        return Err(SimError::runtime(format!("delete index {} out of range (size {})", idx, count)));
                     }
                     let before = lv.bits[..idx * elem_width].to_vec();
                     let after = lv.bits[(idx + 1) * elem_width..].to_vec();
@@ -6764,7 +6786,7 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 let lv = self.state.read_signal(sig_id);
                 let elem_width = sig.elem_width;
                 if lv.width < elem_width {
-                    return Err(SimError::runtime("pop_front on empty queue");
+                    return Err(SimError::runtime("pop_front on empty queue"));
                 }
                 let mut bits = Vec::with_capacity(elem_width);
                 for i in 0..elem_width {
@@ -6782,7 +6804,7 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 let lv = self.state.read_signal(sig_id);
                 let elem_width = sig.elem_width;
                 if lv.width < elem_width {
-                    return Err(SimError::runtime("pop_back on empty queue");
+                    return Err(SimError::runtime("pop_back on empty queue"));
                 }
                 let start = lv.width - elem_width;
                 let mut bits = Vec::with_capacity(elem_width);
@@ -6801,7 +6823,7 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 let arg_val = if let Some(a) = args.first() {
                     self.evaluate_expr(a)?
                 } else {
-                    return Err(SimError::runtime("push_front expects 1 argument");
+                    return Err(SimError::runtime("push_front expects 1 argument"));
                 };
                 let elem_width = sig.elem_width;
                 let padded = if arg_val.width >= elem_width {
@@ -6822,7 +6844,7 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 Ok(LogicVec::new(0))
             }
             "exists" => {
-                let index_expr = args.first().ok_or_else(|| "exists expects 1 argument".to_string())?;
+                let index_expr = args.first().ok_or_else(|| SimError::runtime("exists expects 1 argument"))?;
                 let idx_val = self.evaluate_expr(index_expr)?;
                 let idx = idx_val.to_u64() as usize;
                 let lv = self.state.read_signal(sig_id);
@@ -6834,7 +6856,7 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 let arg_val = if let Some(a) = args.first() {
                     self.evaluate_expr(a)?
                 } else {
-                    return Err(SimError::runtime("push_back expects 1 argument");
+                    return Err(SimError::runtime("push_back expects 1 argument"));
                 };
                 let elem_width = sig.elem_width;
                 let padded = if arg_val.width >= elem_width {
@@ -6853,7 +6875,7 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
             }
             "insert" => {
                 if args.len() < 2 {
-                    return Err(SimError::runtime("insert expects 2 arguments (index, value)");
+                    return Err(SimError::runtime("insert expects 2 arguments (index, value)"));
                 }
                 let idx_val = self.evaluate_expr(&args[0])?;
                 let idx = idx_val.to_u64() as usize;
@@ -7266,7 +7288,7 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 }
                 Ok(LogicVec::new(0))
             }
-            _ => Err(SimError::runtime(format!("unknown array/queue method: {}", method)),
+            _ => Err(SimError::runtime(format!("unknown array/queue method: {}", method))),
         }
     }
 }

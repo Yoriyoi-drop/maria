@@ -38,7 +38,6 @@ pub fn collect_body_params(module: &Module) -> Vec<ParamDecl> {
 
 pub fn resolve_param_values_fn(module: &Module, instance_overrides: &HashMap<String, i64>) -> Result<HashMap<String, i64>, String> {
     let mut vals = HashMap::new();
-    // First, collect positional overrides indexed by position in module's param list
     let mut positional_overrides: Vec<i64> = Vec::new();
     for (name, val) in instance_overrides {
         if name.starts_with("__param") {
@@ -50,9 +49,6 @@ pub fn resolve_param_values_fn(module: &Module, instance_overrides: &HashMap<Str
         }
     }
 
-    // Collect body-level parameter declarations and add them to vals first
-    // so they can be referenced by module.params expressions
-    // Helper to evaluate a parameter's default value, handling string defaults
     let eval_param_default = |e: &Expr, existing_vals: &HashMap<String, i64>| -> i64 {
         match e {
             Expr::String(s) => string_to_i64(s),
@@ -60,8 +56,6 @@ pub fn resolve_param_values_fn(module: &Module, instance_overrides: &HashMap<Str
         }
     };
 
-    // Collect body-level parameter declarations and add them to vals first
-    // so they can be referenced by module.params expressions
     for param in collect_body_params(module) {
         if !vals.contains_key(&param.name) {
             match &param.default {
@@ -193,7 +187,7 @@ pub fn expand_generate_block(gen: &GenerateBlock, param_vals: &HashMap<String, i
                     }
                 }
             }
-            GenerateItem::Case { case_type: _case_type, expr, items, default } => {
+            GenerateItem::Case { expr, items, default, .. } => {
                 let case_val = const_eval_with_params(expr, param_vals)
                     .map_err(|_| format!("non-constant expression in generate case"))?;
                 let mut matched = false;
@@ -386,7 +380,6 @@ pub fn try_unroll_for_loop<'a, F>(init: Option<&'a Stmt>, cond: Option<&'a Expr>
     -> Result<Option<Vec<IrStmt>>, String>
     where F: Fn(&[Stmt], &str, i64) -> Result<Vec<IrStmt>, String>
 {
-    // Extract loop variable name and initial value from init statement
     let (var_name, init_val) = match init {
         Some(Stmt::BlockingAssign { lhs: Expr::Ident(name), rhs, .. }) => {
             (name.clone(), const_eval_with_params(rhs, params)?)
@@ -394,7 +387,6 @@ pub fn try_unroll_for_loop<'a, F>(init: Option<&'a Stmt>, cond: Option<&'a Expr>
         _ => return Ok(None),
     };
 
-    // Extract step function from step statement
     let step_fn: Box<dyn Fn(i64) -> Result<i64, String>> = match step {
         Some(Stmt::BlockingAssign { lhs: Expr::Ident(n), rhs, .. }) if *n == var_name => {
             match rhs {
@@ -417,7 +409,6 @@ pub fn try_unroll_for_loop<'a, F>(init: Option<&'a Stmt>, cond: Option<&'a Expr>
         _ => return Ok(None),
     };
 
-    // Extract loop limit from condition: var < limit
     let limit = match cond {
         Some(Expr::BinaryOp { op: BinaryOp::Lt, lhs, rhs }) => {
             match lhs.as_ref() {
@@ -428,7 +419,6 @@ pub fn try_unroll_for_loop<'a, F>(init: Option<&'a Stmt>, cond: Option<&'a Expr>
         _ => return Ok(None),
     };
 
-    // Unroll the loop
     let mut all_stmts = Vec::new();
     let mut ivar = init_val;
     while ivar < limit {
@@ -950,7 +940,6 @@ pub fn compute_expr_width(expr: &Expr, signal_map: &HashMap<String, SignalId>,
             Ok(const_eval_with_params(width, param_vals).unwrap_or(1) as usize)
         }
         Expr::MemberAccess { obj, field } => {
-            // Check if obj resolves to a struct signal
             if let Expr::Ident(name) = obj.as_ref() {
                 if let Some(&sig_id) = signal_map.get(name) {
                     if !signals[sig_id].struct_fields.is_empty() {
@@ -1055,7 +1044,6 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
             let width = min_width.max(32);
             let mut lv = LogicVec::from_u64(abs, width);
             if *n < 0 {
-                // Two's complement
                 for b in lv.bits.iter_mut() {
                     *b = match b {
                         LogicVal::Zero => LogicVal::One,
@@ -1063,7 +1051,6 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
                         _ => LogicVal::X,
                     };
                 }
-                // Add 1
                 let mut carry = true;
                 for b in lv.bits.iter_mut() {
                     if carry {
@@ -1312,4 +1299,3 @@ pub fn substitute_expr_types(e: Expr, param_name: &str, replacement: &DataType) 
         other => other,
     }
 }
-
