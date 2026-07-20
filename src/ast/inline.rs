@@ -486,17 +486,101 @@ fn inline_funcs_in_stmt(
                 }).collect(),
             }).collect(),
         },
-        // New variants: pass through unchanged (no function call rewriting needed yet)
-        other @ Stmt::UniqueCase { .. }
-        | other @ Stmt::PriorityCase { .. }
-        | other @ Stmt::CaseInside { .. }
-        | other @ Stmt::Assert { .. }
-        | other @ Stmt::Assume { .. }
-        | other @ Stmt::Cover { .. }
-        | other @ Stmt::Expect { .. }
-        | other @ Stmt::WaitOrder { .. }
-        | other @ Stmt::UniqueIf { .. }
-        | other @ Stmt::PriorityIf { .. } => other,
+        Stmt::UniqueCase { expr, items, default } => {
+            let mut preamble = Vec::new();
+            let new_expr = replace_func_calls_in_expr(expr, funcs, prefix, counter, &mut preamble, temp_signals);
+            let new_items = items.into_iter().map(|item| {
+                let new_labels = item.labels.into_iter()
+                    .map(|l| replace_func_calls_in_expr(l, funcs, prefix, counter, &mut Vec::new(), temp_signals))
+                    .collect();
+                let new_stmt = inline_funcs_in_stmt(*item.stmt, funcs, prefix, counter, temp_signals);
+                super::stmt::CaseItem { labels: new_labels, stmt: Box::new(new_stmt) }
+            }).collect();
+            let new_default = default.map(|d| Box::new(inline_funcs_in_stmt(*d, funcs, prefix, counter, temp_signals)));
+            let main = Stmt::UniqueCase { expr: new_expr, items: new_items, default: new_default };
+            if preamble.is_empty() { main } else { preamble.push(main); Stmt::Block { stmts: preamble } }
+        }
+        Stmt::PriorityCase { expr, items, default } => {
+            let mut preamble = Vec::new();
+            let new_expr = replace_func_calls_in_expr(expr, funcs, prefix, counter, &mut preamble, temp_signals);
+            let new_items = items.into_iter().map(|item| {
+                let new_labels = item.labels.into_iter()
+                    .map(|l| replace_func_calls_in_expr(l, funcs, prefix, counter, &mut Vec::new(), temp_signals))
+                    .collect();
+                let new_stmt = inline_funcs_in_stmt(*item.stmt, funcs, prefix, counter, temp_signals);
+                super::stmt::CaseItem { labels: new_labels, stmt: Box::new(new_stmt) }
+            }).collect();
+            let new_default = default.map(|d| Box::new(inline_funcs_in_stmt(*d, funcs, prefix, counter, temp_signals)));
+            let main = Stmt::PriorityCase { expr: new_expr, items: new_items, default: new_default };
+            if preamble.is_empty() { main } else { preamble.push(main); Stmt::Block { stmts: preamble } }
+        }
+        Stmt::CaseInside { expr, items, default } => {
+            let mut preamble = Vec::new();
+            let new_expr = replace_func_calls_in_expr(expr, funcs, prefix, counter, &mut preamble, temp_signals);
+            let new_items = items.into_iter().map(|item| {
+                let new_labels = item.labels.into_iter()
+                    .map(|l| replace_func_calls_in_expr(l, funcs, prefix, counter, &mut Vec::new(), temp_signals))
+                    .collect();
+                let new_stmt = inline_funcs_in_stmt(*item.stmt, funcs, prefix, counter, temp_signals);
+                super::stmt::CaseItem { labels: new_labels, stmt: Box::new(new_stmt) }
+            }).collect();
+            let new_default = default.map(|d| Box::new(inline_funcs_in_stmt(*d, funcs, prefix, counter, temp_signals)));
+            let main = Stmt::CaseInside { expr: new_expr, items: new_items, default: new_default };
+            if preamble.is_empty() { main } else { preamble.push(main); Stmt::Block { stmts: preamble } }
+        }
+        Stmt::Assert { cond, pass_stmt, fail_stmt } => {
+            let new_cond = replace_func_calls_in_expr(cond, funcs, prefix, counter, &mut vec![], temp_signals);
+            Stmt::Assert {
+                cond: new_cond,
+                pass_stmt: pass_stmt.map(|s| Box::new(inline_funcs_in_stmt(*s, funcs, prefix, counter, temp_signals))),
+                fail_stmt: fail_stmt.map(|s| Box::new(inline_funcs_in_stmt(*s, funcs, prefix, counter, temp_signals))),
+            }
+        }
+        Stmt::Assume { cond, pass_stmt, fail_stmt } => {
+            let new_cond = replace_func_calls_in_expr(cond, funcs, prefix, counter, &mut vec![], temp_signals);
+            Stmt::Assume {
+                cond: new_cond,
+                pass_stmt: pass_stmt.map(|s| Box::new(inline_funcs_in_stmt(*s, funcs, prefix, counter, temp_signals))),
+                fail_stmt: fail_stmt.map(|s| Box::new(inline_funcs_in_stmt(*s, funcs, prefix, counter, temp_signals))),
+            }
+        }
+        Stmt::Cover { cond, pass_stmt } => {
+            let new_cond = replace_func_calls_in_expr(cond, funcs, prefix, counter, &mut vec![], temp_signals);
+            Stmt::Cover {
+                cond: new_cond,
+                pass_stmt: pass_stmt.map(|s| Box::new(inline_funcs_in_stmt(*s, funcs, prefix, counter, temp_signals))),
+            }
+        }
+        Stmt::Expect { cond, pass_stmt, fail_stmt } => {
+            let new_cond = replace_func_calls_in_expr(cond, funcs, prefix, counter, &mut vec![], temp_signals);
+            Stmt::Expect {
+                cond: new_cond,
+                pass_stmt: pass_stmt.map(|s| Box::new(inline_funcs_in_stmt(*s, funcs, prefix, counter, temp_signals))),
+                fail_stmt: fail_stmt.map(|s| Box::new(inline_funcs_in_stmt(*s, funcs, prefix, counter, temp_signals))),
+            }
+        }
+        Stmt::WaitOrder { events, fail_stmt } => {
+            Stmt::WaitOrder {
+                events,
+                fail_stmt: fail_stmt.map(|s| Box::new(inline_funcs_in_stmt(*s, funcs, prefix, counter, temp_signals))),
+            }
+        }
+        Stmt::UniqueIf { cond, true_branch, false_branch } => {
+            let new_cond = replace_func_calls_in_expr(cond, funcs, prefix, counter, &mut vec![], temp_signals);
+            Stmt::UniqueIf {
+                cond: new_cond,
+                true_branch: Box::new(inline_funcs_in_stmt(*true_branch, funcs, prefix, counter, temp_signals)),
+                false_branch: false_branch.map(|s| Box::new(inline_funcs_in_stmt(*s, funcs, prefix, counter, temp_signals))),
+            }
+        }
+        Stmt::PriorityIf { cond, true_branch, false_branch } => {
+            let new_cond = replace_func_calls_in_expr(cond, funcs, prefix, counter, &mut vec![], temp_signals);
+            Stmt::PriorityIf {
+                cond: new_cond,
+                true_branch: Box::new(inline_funcs_in_stmt(*true_branch, funcs, prefix, counter, temp_signals)),
+                false_branch: false_branch.map(|s| Box::new(inline_funcs_in_stmt(*s, funcs, prefix, counter, temp_signals))),
+            }
+        }
     }
 }
 
@@ -815,17 +899,63 @@ fn rename_in_stmt(stmt: &Stmt, rename_map: &HashMap<String, String>) -> Stmt {
             cond: rename_in_expr(cond, rename_map),
             stmts: stmts.into_iter().map(|s| rename_in_stmt(&s, rename_map)).collect(),
         },
-        // New variants: pass through unchanged
-        other @ Stmt::UniqueCase { .. }
-        | other @ Stmt::PriorityCase { .. }
-        | other @ Stmt::CaseInside { .. }
-        | other @ Stmt::Assert { .. }
-        | other @ Stmt::Assume { .. }
-        | other @ Stmt::Cover { .. }
-        | other @ Stmt::Expect { .. }
-        | other @ Stmt::WaitOrder { .. }
-        | other @ Stmt::UniqueIf { .. }
-        | other @ Stmt::PriorityIf { .. } => other,
+        Stmt::UniqueCase { expr, items, default } => Stmt::UniqueCase {
+            expr: rename_in_expr(expr, rename_map),
+            items: items.iter().map(|item| super::stmt::CaseItem {
+                labels: item.labels.iter().map(|l| rename_in_expr(l.clone(), rename_map)).collect(),
+                stmt: Box::new(rename_in_stmt(&item.stmt, rename_map)),
+            }).collect(),
+            default: default.map(|d| Box::new(rename_in_stmt(&d, rename_map))),
+        },
+        Stmt::PriorityCase { expr, items, default } => Stmt::PriorityCase {
+            expr: rename_in_expr(expr, rename_map),
+            items: items.iter().map(|item| super::stmt::CaseItem {
+                labels: item.labels.iter().map(|l| rename_in_expr(l.clone(), rename_map)).collect(),
+                stmt: Box::new(rename_in_stmt(&item.stmt, rename_map)),
+            }).collect(),
+            default: default.map(|d| Box::new(rename_in_stmt(&d, rename_map))),
+        },
+        Stmt::CaseInside { expr, items, default } => Stmt::CaseInside {
+            expr: rename_in_expr(expr, rename_map),
+            items: items.iter().map(|item| super::stmt::CaseItem {
+                labels: item.labels.iter().map(|l| rename_in_expr(l.clone(), rename_map)).collect(),
+                stmt: Box::new(rename_in_stmt(&item.stmt, rename_map)),
+            }).collect(),
+            default: default.map(|d| Box::new(rename_in_stmt(&d, rename_map))),
+        },
+        Stmt::Assert { cond, pass_stmt, fail_stmt } => Stmt::Assert {
+            cond: rename_in_expr(cond, rename_map),
+            pass_stmt: pass_stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
+            fail_stmt: fail_stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
+        },
+        Stmt::Assume { cond, pass_stmt, fail_stmt } => Stmt::Assume {
+            cond: rename_in_expr(cond, rename_map),
+            pass_stmt: pass_stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
+            fail_stmt: fail_stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
+        },
+        Stmt::Cover { cond, pass_stmt } => Stmt::Cover {
+            cond: rename_in_expr(cond, rename_map),
+            pass_stmt: pass_stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
+        },
+        Stmt::Expect { cond, pass_stmt, fail_stmt } => Stmt::Expect {
+            cond: rename_in_expr(cond, rename_map),
+            pass_stmt: pass_stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
+            fail_stmt: fail_stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
+        },
+        Stmt::WaitOrder { events, fail_stmt } => Stmt::WaitOrder {
+            events,
+            fail_stmt: fail_stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
+        },
+        Stmt::UniqueIf { cond, true_branch, false_branch } => Stmt::UniqueIf {
+            cond: rename_in_expr(cond, rename_map),
+            true_branch: Box::new(rename_in_stmt(&true_branch, rename_map)),
+            false_branch: false_branch.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
+        },
+        Stmt::PriorityIf { cond, true_branch, false_branch } => Stmt::PriorityIf {
+            cond: rename_in_expr(cond, rename_map),
+            true_branch: Box::new(rename_in_stmt(&true_branch, rename_map)),
+            false_branch: false_branch.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
+        },
         Stmt::Fork { processes, join_type } => Stmt::Fork {
             processes: processes.into_iter().map(|s| rename_in_stmt(&s, rename_map)).collect(),
             join_type,

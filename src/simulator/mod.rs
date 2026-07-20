@@ -5,6 +5,7 @@ pub mod value;
 pub mod util;
 pub mod sdf;
 pub mod jit;
+pub mod parallel;
 
 pub use engine::*;
 pub use state::*;

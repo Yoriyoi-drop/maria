@@ -37,14 +37,22 @@ pub fn read_project_file(path: &str) -> Result<Vec<String>, SimError> {
 /// Compile multiple .sv files into IR design
 pub fn compile_files(paths: &[String]) -> Result<ir::IrDesign, SimError> {
     let mut combined = String::new();
+    let mut last_timescale = None;
     for path in paths {
         let mut pp = Preprocessor::new();
         let processed = pp.preprocess_file(path)?;
+        if pp.timescale.is_some() {
+            last_timescale = pp.timescale.clone();
+        }
         combined.push_str(&format!("`line 1 \"{}\"\n", path));
         combined.push_str(&processed);
         combined.push('\n');
     }
-    compile_str(&combined)
+    let mut result = compile_str(&combined)?;
+    if last_timescale.is_some() && result.timescale.is_none() {
+        result.timescale = last_timescale;
+    }
+    Ok(result)
 }
 
 /// Compile a SystemVerilog source file and run simulation
@@ -65,6 +73,7 @@ pub fn compile_str(source: &str) -> Result<ir::IrDesign, SimError> {
     let mut pp = Preprocessor::new();
     let preprocessed = pp.preprocess(source, None)
         .map_err(|e| SimError::new(None, format!("preprocessor: {}", e)))?;
+    let timescale = pp.timescale.clone();
     let mut lexer = Lexer::new(&preprocessed);
     let mut tokens = Vec::new();
     loop {
@@ -76,7 +85,8 @@ pub fn compile_str(source: &str) -> Result<ir::IrDesign, SimError> {
     }
 
     let mut parser = Parser::new(tokens, "<string>");
-    let design = parser.parse_design()?;
+    let mut design = parser.parse_design()?;
+    design.timescale = timescale;
 
     let mut elaborator = elaboration::Elaborator::new(design);
     let ir_design = elaborator.elaborate(None)?;

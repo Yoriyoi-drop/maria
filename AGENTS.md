@@ -21,9 +21,10 @@ No CI, no lint, no typecheck shortcuts. Just `cargo test`. 577 tests pass.
 4. **`src/ast/`** — `expr.rs`, `stmt.rs`, `types.rs`, `const_eval.rs`, `inline.rs` (function inlining for `loop_unroll` and `substitute_loop_var`).
 5. **`src/elaboration/elaborator.rs`** — AST → IR, signal collection, type resolution, loop unrolling, constant folding for `$clog2`/`$bits`/`$size`/`$left`/`$right`/`$low`/`$high`.
 6. **`src/ir/ir.rs`** — IR types (`IrStmt`, `IrExpr`, `LogicVec`).
-7. **`src/simulator/`** — `engine.rs` (event-driven scheduler), `types.rs` (debug/event/UVM types), `state.rs` (signal storage), `value.rs` (`eval_binary`, `eval_unary`).
-8. **`src/waveform/vcd.rs`** — VCD dump.
+7. **`src/simulator/`** — `engine.rs` (event-driven scheduler), `types.rs` (debug/event/UVM types), `state.rs` (signal storage), `value.rs` (`eval_binary`, `eval_unary`), `sdf.rs` (SDF annotation), `jit.rs` (JIT stubs), `parallel.rs` (parallel eval), `util.rs`.
+8. **`src/waveform/`** — `vcd.rs` (VCD dump), `fst.rs` (FST waveform via wavefst crate).
 9. **`src/debugger/mod.rs`** — `Debugger` struct wrapping `SimulationEngine`. Step, breakpoint, watchpoint, timeline, hierarchy tree, reverse debug, memory inspect. 21 unit tests inline.
+10. **`uvm_macros.svh`** — UVM macro definitions (info/warning/error/fatal, factory utils).
 
 ## Key conventions & gotchas
 
@@ -65,6 +66,9 @@ File proyek mendaftar file `.sv` (satu per baris, `#` untuk komentar). Dibaca vi
 - `src/simulator/engine.rs:6622` — largest file. Event loop, all statement handlers, loop unrolling, `$display`/`$fopen`/`$urandom`, fork/join tracking, `execute_randomize`, debug hook.
 - `src/parser/parser.rs:4997` — second largest. Operator precedence table at line ~1968.
 - `src/elaboration/elaborator.rs:3267` — AST→IR translation, constant folding, signal resolution, multidimensional packed array support.
+- `src/simulator/parallel.rs:448` — Parallel eval framework (rayon-based).
+- `src/simulator/sdf.rs:369` — SDF annotation parser + annotator.
+- `src/waveform/fst.rs:244` — FST waveform writer via wavefst crate.
 - `src/debugger/mod.rs:585` — Debugger struct + 21 unit tests.
 
 ## Run

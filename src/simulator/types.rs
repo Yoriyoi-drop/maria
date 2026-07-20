@@ -124,6 +124,7 @@ pub struct Continuation {
     pub stmts_to_exec: Vec<IrStmt>,
     pub stmts_remaining: Vec<IrStmt>,
     pub fork_id: Option<usize>,
+    pub process_id: Option<ObjId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

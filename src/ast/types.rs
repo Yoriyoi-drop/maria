@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::expr::{Expr, Value};
+use super::expr::Expr;
 use super::stmt::{AlwaysBlock, InitialBlock, Stmt};
 
 // Re-export constant evaluation functions
@@ -15,8 +15,10 @@ pub struct Design {
     pub binds: Vec<BindDecl>,
     pub clocking_blocks: Vec<ClockingBlock>,
     pub configs: Vec<ConfigDecl>,
+    pub udp_defs: Vec<UdpDef>,
     pub top_module: Option<String>,
     pub unit_imports: Vec<(String, String)>,
+    pub timescale: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -229,6 +231,7 @@ pub struct DeclVar {
     pub is_associative: bool,
     pub assoc_key_type: Option<DataType>,
     pub is_rand: bool,
+    pub is_const: bool,
     pub expr: Option<Expr>,
 }
 
@@ -443,6 +446,7 @@ pub enum ModuleItem {
     DpiImport(DpiImport),
     Param(ParamDecl),
     Clocking(ClockingBlock),
+    Specify(SpecifyBlock),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -567,6 +571,38 @@ impl FunctionPort {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct UdpPort {
+    pub direction: PortDirection,
+    pub name: String,
+    pub is_reg: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum UdpSymbol {
+    Zero,
+    One,
+    X,
+    DontCare,
+    Edge(String),
+    NoChange,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UdpTableEntry {
+    pub inputs: Vec<UdpSymbol>,
+    pub output: UdpSymbol,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UdpDef {
+    pub name: String,
+    pub ports: Vec<UdpPort>,
+    pub table: Vec<UdpTableEntry>,
+    pub is_sequential: bool,
+    pub initial_output: Option<UdpSymbol>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ContinuousAssign {
     pub lhs: Expr,
     pub rhs: Expr,
@@ -594,6 +630,41 @@ pub struct Delay {
     pub rise: Option<Expr>,
     pub fall: Option<Expr>,
     pub turnoff: Option<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SpecifyItem {
+    PathDelay {
+        src: String,
+        dst: String,
+        rise: Option<Expr>,
+        fall: Option<Expr>,
+    },
+    SpecParam {
+        name: String,
+        value: Expr,
+    },
+    SetupCheck {
+        data: Expr,
+        ref_event: Expr,
+        limit: Expr,
+    },
+    HoldCheck {
+        ref_event: Expr,
+        data: Expr,
+        limit: Expr,
+    },
+    SetupHoldCheck {
+        ref_event: Expr,
+        data: Expr,
+        setup_limit: Expr,
+        hold_limit: Expr,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpecifyBlock {
+    pub items: Vec<SpecifyItem>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

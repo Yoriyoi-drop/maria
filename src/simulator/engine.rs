@@ -1,8 +1,10 @@
+use crate::error::SimError;
 use crate::ir::*;
 use crate::simulator::state::SimulationState;
 use crate::simulator::value::*;
 use crate::simulator::types::*;
 use crate::simulator::sdf::SdfData;
+use crate::simulator::parallel::{self, ParallelConfig};
 use super::util::*;
 use crate::waveform::VcdWriter;
 use crate::waveform::FstWaveWriter;
@@ -11,7 +13,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 use rand::Rng;
 use rand::SeedableRng;
-use std::fmt;
 
 const MAX_LOOP_ITER: usize = 10_000_000;
 
@@ -38,6 +39,7 @@ pub struct SimulationEngine {
     forced_signals: HashSet<SignalId>,
     signal_snapshot: Option<Vec<LogicVec>>,
     pending_waits: Vec<(Vec<SignalId>, Vec<IrStmt>)>,
+    pending_await_target: Option<ObjId>,
     pending_wait_orders: Vec<WaitOrderState>,
     loop_continuation: Option<Vec<IrStmt>>,
     current_time: usize,
@@ -61,7 +63,7 @@ pub struct SimulationEngine {
     factory_type_overrides: HashMap<String, String>,
     root_test_obj_id: Option<ObjId>,
     process_map: HashMap<ObjId, ProcessInfo>,
-    next_process_id: ObjId,
+    _next_process_id: ObjId,
     current_process_id: Option<ObjId>,
     pub(crate) cover_hits: HashMap<String, u64>,
     pub(crate) cover_total: HashMap<String, u64>,
@@ -75,6 +77,9 @@ pub struct SimulationEngine {
     sysfunc_history: HashMap<String, VecDeque<LogicVec>>,
     pub snapshots: Vec<StateSnapshot>,
     pub paused: bool,
+    signal_last_change: HashMap<SignalId, u64>,
+    udp_prev_args: HashMap<String, Vec<LogicVec>>,
+    parallel_config: ParallelConfig,
     pub step_mode: StepMode,
     pub event_log: Vec<DebugEvent>,
     pub snapshot_interval: u64,
@@ -107,6 +112,7 @@ impl SimulationEngine {
             forced_signals: HashSet::new(),
             signal_snapshot: None,
             pending_waits: Vec::new(),
+            pending_await_target: None,
             pending_wait_orders: Vec::new(),
             loop_continuation: None,
             current_time: 0,
@@ -130,7 +136,7 @@ impl SimulationEngine {
             factory_type_overrides: HashMap::new(),
             root_test_obj_id: None,
             process_map: HashMap::new(),
-            next_process_id: 1,
+            _next_process_id: 1,
             current_process_id: None,
             cover_hits: HashMap::new(),
             cover_total: HashMap::new(),
@@ -140,6 +146,9 @@ impl SimulationEngine {
             breakpoints: Vec::new(),
             watchpoints: Vec::new(),
             signal_history: HashMap::new(),
+            signal_last_change: HashMap::new(),
+            udp_prev_args: HashMap::new(),
+            parallel_config: ParallelConfig::default(),
             sysfunc_prev: HashMap::new(),
             sysfunc_history: HashMap::new(),
             snapshots: Vec::new(),
@@ -158,7 +167,11 @@ impl SimulationEngine {
         self.fst = Some(fst);
     }
 
-    pub fn run(&mut self) -> Result<(), String> {
+    pub fn set_parallel_config(&mut self, config: ParallelConfig) {
+        self.parallel_config = config;
+    }
+
+    pub fn run(&mut self) -> Result<(), SimError> {
         self.initialize_time_zero()?;
         self.execute_phases()?;
 
@@ -307,7 +320,7 @@ impl SimulationEngine {
                 }
 
                 if delta_count > 10_000_000 {
-                    return Err("simulation exceeded max delta cycles per time step (10M)".to_string());
+                    return Err(SimError::runtime("simulation exceeded max delta cycles per time step (10M)");
                 }
                 delta_count += 1;
 
@@ -345,11 +358,12 @@ impl SimulationEngine {
                 }
             }
 
-            // ── Postponed region: $strobe, $monitor, VCD ──
+            // ── Postponed region: $strobe, $monitor, VCD, timing checks ──
             self.process_strobe()?;
             self.dump_vcd_state()?;
             self.dump_fst_state()?;
             self.check_monitor()?;
+            self.check_timing_constraints()?;
 
             // ── Debug check at start of cycle ──
             if self.debug_mode != DebugMode::Normal {
@@ -379,7 +393,7 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn debug_check(&mut self) -> Result<(), String> {
+    fn debug_check(&mut self) -> Result<(), SimError> {
         let time = self.state.time;
 
         // Save snapshot for reverse debug
@@ -513,21 +527,21 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn dump_vcd_time(&mut self) -> Result<(), String> {
+    fn dump_vcd_time(&mut self) -> Result<(), SimError> {
         if let Some(ref mut vcd) = self.vcd {
             vcd.write_time_header(self.state.time)?;
         }
         Ok(())
     }
 
-    fn dump_fst_time(&mut self) -> Result<(), String> {
+    fn dump_fst_time(&mut self) -> Result<(), SimError> {
         if let Some(ref mut fst) = self.fst {
             fst.write_time_header(self.state.time)?;
         }
         Ok(())
     }
 
-    fn check_monitor(&mut self) -> Result<(), String> {
+    fn check_monitor(&mut self) -> Result<(), SimError> {
         if let Some(ref args) = self.monitor_args.clone() {
             let new_vals: Vec<LogicVec> = args.iter()
                 .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
@@ -560,7 +574,7 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn process_strobe(&mut self) -> Result<(), String> {
+    fn process_strobe(&mut self) -> Result<(), SimError> {
         let events = std::mem::take(&mut self.strobe_events);
         for args in &events {
             let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, args);
@@ -576,21 +590,21 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn dump_vcd_state(&mut self) -> Result<(), String> {
+    fn dump_vcd_state(&mut self) -> Result<(), SimError> {
         if let Some(ref mut vcd) = self.vcd {
             vcd.dump_state(&self.design, &self.state.signals)?;
         }
         Ok(())
     }
 
-    fn dump_fst_state(&mut self) -> Result<(), String> {
+    fn dump_fst_state(&mut self) -> Result<(), SimError> {
         if let Some(ref mut fst) = self.fst {
             fst.dump_state(&self.design, &self.state.signals)?;
         }
         Ok(())
     }
 
-    fn initialize_time_zero(&mut self) -> Result<(), String> {
+    fn initialize_time_zero(&mut self) -> Result<(), SimError> {
         let t = 0usize;
         let processes = self.design.top.processes.clone();
         for (pid, process) in processes.iter().enumerate() {
@@ -630,7 +644,7 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn sample_covergroup(&mut self, cg_name: &str) -> Result<(), String> {
+    fn sample_covergroup(&mut self, cg_name: &str) -> Result<(), SimError> {
         // Clone covergroup data to avoid borrow conflict with evaluate_expr
         let cg = self.design.covergroups.iter()
             .find(|c| c.name == cg_name)
@@ -707,7 +721,7 @@ impl SimulationEngine {
         }
     }
 
-    pub fn annotate_sdf(&mut self, sdf: &SdfData) -> Result<(), String> {
+    pub fn annotate_sdf(&mut self, sdf: &SdfData) -> Result<(), SimError> {
         // Apply cell delays to signals (simplified annotation)
         for (_, cell_delay) in &sdf.cell_delays {
             // Try to apply delays to the first matching signal
@@ -747,7 +761,7 @@ impl SimulationEngine {
         Ok(())
     }
 
-    pub fn export_coverage_ucis(&self, path: &str) -> Result<(), String> {
+    pub fn export_coverage_ucis(&self, path: &str) -> Result<(), SimError> {
         if self.design.covergroups.is_empty() {
             return Ok(());
         }
@@ -810,7 +824,7 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn execute_final_blocks(&mut self) -> Result<(), String> {
+    fn execute_final_blocks(&mut self) -> Result<(), SimError> {
         let bodies: Vec<Vec<IrStmt>> = self.design.top.processes.iter()
             .filter_map(|p| {
                 if let Process::Final { body, .. } = p {
@@ -826,7 +840,7 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn process_event(&mut self, event: EventKind, t: usize) -> Result<(), String> {
+    fn process_event(&mut self, event: EventKind, t: usize) -> Result<(), SimError> {
         self.current_time = t;
         match event {
             EventKind::EvalProcess(pid) => {
@@ -863,6 +877,21 @@ impl SimulationEngine {
             EventKind::ContinueBlock(cont) => {
                 if t < self.events.len() {
                     let all_consumed = self.evaluate_block_with_delay_fork(&cont.stmts_to_exec, cont.fork_id)?;
+                    // Detect natural process completion: when a continuation runs to completion (all_consumed)
+                    // and has a stored process_id, mark that process as Finished and trigger await continuations
+                    if all_consumed {
+                        if let Some(pid) = cont.process_id {
+                            if let Some(pi) = self.process_map.get_mut(&pid) {
+                                if pi.status == ProcessStatus::Running {
+                                    pi.status = ProcessStatus::Finished;
+                                    let conts = std::mem::take(&mut pi.await_continuations);
+                                    for c in conts {
+                                        self.evaluate_block_with_delay(&c)?;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if let Some(fid) = cont.fork_id {
                         if fid < self.fork_groups.len() && all_consumed {
                             if self.fork_groups[fid].remaining > 0 {
@@ -905,13 +934,13 @@ impl SimulationEngine {
 
     fn evaluate_block_with_delay(
         &mut self, stmts: &[IrStmt]
-    ) -> Result<bool, String> {
+    ) -> Result<bool, SimError> {
         self.evaluate_block_with_delay_fork(stmts, None)
     }
 
     fn evaluate_block_with_delay_fork(
         &mut self, stmts: &[IrStmt], fork_id: Option<usize>
-    ) -> Result<bool, String> {
+    ) -> Result<bool, SimError> {
         for (i, stmt) in stmts.iter().enumerate() {
             if self.disable_pending.is_some() { return Ok(true); }
             if self.control_flow.is_some() { return Ok(true); }
@@ -1002,12 +1031,14 @@ impl SimulationEngine {
                             } else {
                                 EventRegion::Active
                             };
+                            let pid = self.current_process_id;
                             self.events[delay_t].push(RegionEvent {
                                 region,
                                 event: EventKind::ContinueBlock(Continuation {
                                     stmts_to_exec: later,
                                     stmts_remaining: vec![],
                                     fork_id,
+                                    process_id: pid,
                                 }),
                             });
                         }
@@ -1395,6 +1426,31 @@ impl SimulationEngine {
                         if let Some(h) = handle {
                             self.file_handles.remove(&h);
                         }
+                    } else if name == "fflush" {
+                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        if let Some(h) = handle {
+                            if let Some(f) = self.file_handles.get_mut(&h) {
+                                let _ = f.flush();
+                            }
+                        }
+                    } else if name == "fseek" {
+                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let offset = ir_args.get(1).and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as i64));
+                        let op = ir_args.get(2).and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64()));
+                        if let (Some(h), Some(off)) = (handle, offset) {
+                            if let Some(f) = self.file_handles.get_mut(&h) {
+                                use std::io::{Seek, SeekFrom};
+                                let seek_from = match op {
+                                    Some(1) => SeekFrom::Current(off),
+                                    Some(2) => SeekFrom::End(off),
+                                    _ => SeekFrom::Start(off as u64),
+                                };
+                                let _ = f.seek(seek_from);
+                                if let Some(pos) = f.stream_position().ok() {
+                                    self.file_read_pos.insert(h, pos);
+                                }
+                            }
+                        }
                     } else if name == "__dpi_stmt" {
                         if let Some(arg) = ir_args.first() {
                             self.evaluate_expr(arg)?;
@@ -1425,6 +1481,12 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::SysFinish => {
+                    // Flush all pending await continuations before stopping
+                    for (_, pi) in self.process_map.iter_mut() {
+                        if pi.status == ProcessStatus::Running || pi.status == ProcessStatus::Waiting {
+                            pi.status = ProcessStatus::Finished;
+                        }
+                    }
                     self.running = false;
                     return Ok(true);
                 }
@@ -1619,41 +1681,6 @@ impl SimulationEngine {
                         .collect::<Result<_, _>>()?;
                     self.execute_method(obj_id, method, &arg_vals)?;
                 }
-                IrStmt::RandCase { items } => {
-                    let total: u64 = items.iter().map(|(w_expr, _)| {
-                        self.evaluate_expr(w_expr).unwrap_or(LogicVec::from_u64(1, 32)).to_u64()
-                    }).sum();
-                    if total > 0 {
-                        let r = self.rng.gen::<u64>() % total;
-                        let mut cumulative = 0u64;
-                        for (w_expr, body) in items {
-                            let weight = self.evaluate_expr(w_expr).unwrap_or(LogicVec::from_u64(1, 32)).to_u64();
-                            cumulative += weight;
-                            if r < cumulative {
-                                self.evaluate_stmt_block(body)?;
-                                break;
-                            }
-                        }
-                    }
-                }
-                                IrStmt::RandSequence { productions } => {
-                    if let Some((_, items)) = productions.first() {
-                        let total: u64 = items.iter().map(|(w, _)| {
-                            self.evaluate_expr(w).unwrap_or(LogicVec::from_u64(1, 32)).to_u64()
-                        }).sum();
-                        if total > 0 {
-                            let r = self.rng.gen::<u64>() % total;
-                            let mut acc = 0u64;
-                            for (w, body) in items {
-                                acc += self.evaluate_expr(w).unwrap_or(LogicVec::from_u64(1, 32)).to_u64();
-                                if r < acc {
-                                    self.evaluate_stmt_block(body)?;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
                 IrStmt::Fork { processes, join_type } => {
                     let fid = self.fork_groups.len();
                     let remaining: Vec<IrStmt> = stmts[i + 1..].to_vec();
@@ -1716,13 +1743,26 @@ impl SimulationEngine {
                     return Ok(true);
                 }
             }
+            // Post-statement check: if process::await() was called on a running process,
+            // capture remaining statements as await continuation and yield
+            if let Some(target_id) = self.pending_await_target.take() {
+                let remaining: Vec<IrStmt> = stmts[i + 1..].to_vec();
+                let mut cont = remaining;
+                if let Some(lc) = &self.loop_continuation {
+                    cont.extend(lc.clone());
+                }
+                if let Some(pi) = self.process_map.get_mut(&target_id) {
+                    pi.await_continuations.push(cont);
+                }
+                return Ok(false);
+            }
         }
         Ok(true)
     }
 
     fn evaluate_ast_block_with_delay_fork(
         &mut self, stmts: &[crate::ast::Stmt], fork_id: Option<usize>
-    ) -> Result<bool, String> {
+    ) -> Result<bool, SimError> {
         for (i, stmt) in stmts.iter().enumerate() {
             if self.disable_pending.is_some() { return Ok(true); }
             if self.control_flow.is_some() { return Ok(true); }
@@ -1998,7 +2038,7 @@ impl SimulationEngine {
                     let val = self.evaluate_ast_expr(rhs)?;
                     self.write_ast_lvalue(lhs, val)?;
                 }
-                crate::ast::Stmt::Release { expr } => {
+                crate::ast::Stmt::Release { expr: _ } => {
                     // Release variable — just a no-op in AST context
                 }
                 crate::ast::Stmt::EventTrigger { name } => {
@@ -2023,7 +2063,7 @@ impl SimulationEngine {
                         stmts[i + 1..].to_vec()
                     } else { Vec::new() };
                     // Convert join type
-                    let ir_join = match join_type {
+                    let _ir_join = match join_type {
                         crate::ast::JoinType::Join => IrJoinType::Join,
                         crate::ast::JoinType::JoinAny => IrJoinType::JoinAny,
                         crate::ast::JoinType::JoinNone => IrJoinType::JoinNone,
@@ -2081,7 +2121,7 @@ impl SimulationEngine {
         Ok(true)
     }
 
-    fn evaluate_stmt_block(&mut self, stmts: &[IrStmt]) -> Result<(), String> {
+    fn evaluate_stmt_block(&mut self, stmts: &[IrStmt]) -> Result<(), SimError> {
         for (i, stmt) in stmts.iter().enumerate() {
             if self.disable_pending.is_some() { return Ok(()); }
             if self.control_flow.is_some() { return Ok(()); }
@@ -2339,12 +2379,20 @@ impl SimulationEngine {
                         let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             self.file_handles.remove(&h);
+                            self.file_read_pos.remove(&h);
+                        }
+                    } else if name == "fflush" {
+                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        if let Some(h) = handle {
+                            if let Some(f) = self.file_handles.get_mut(&h) {
+                                let _ = f.flush();
+                            }
                         }
                     } else if name == "__dpi_stmt" {
                         if let Some(arg) = ir_args.first() {
                             self.evaluate_expr(arg)?;
                         }
-                    } else if name == "value$plusargs" {
+                     } else if name == "value$plusargs" {
                         let pattern = ir_args.first().and_then(|a| self.evaluate_expr(a).ok()).map(|v| logicvec_to_string(&v)).unwrap_or_default();
                         let plusarg_name = pattern.split('%').next().unwrap_or(&pattern).trim_end_matches('=');
                         let plusargs = self.plusargs.clone();
@@ -2628,12 +2676,14 @@ impl SimulationEngine {
                             } else {
                                 EventRegion::Active
                             };
+                            let pid = self.current_process_id;
                             self.events[delay_t].push(RegionEvent {
                                 region,
                                 event: EventKind::ContinueBlock(Continuation {
                                     stmts_to_exec: later,
                                     stmts_remaining: vec![],
                                     fork_id: None,
+                                    process_id: pid,
                                 }),
                             });
                         }
@@ -2756,7 +2806,7 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn process_pending_waits(&mut self, deltas: &[SignalId]) -> Result<bool, String> {
+    fn process_pending_waits(&mut self, deltas: &[SignalId]) -> Result<bool, SimError> {
         let mut matched = false;
         let mut remaining = Vec::new();
         let waits = std::mem::take(&mut self.pending_waits);
@@ -2774,7 +2824,7 @@ impl SimulationEngine {
         Ok(matched)
     }
 
-    fn process_pending_wait_orders(&mut self, deltas: &[SignalId]) -> Result<bool, String> {
+    fn process_pending_wait_orders(&mut self, deltas: &[SignalId]) -> Result<bool, SimError> {
         let mut any_done = false;
         let mut remaining = Vec::new();
         let orders = std::mem::take(&mut self.pending_wait_orders);
@@ -2812,17 +2862,68 @@ impl SimulationEngine {
         Ok(any_done)
     }
 
-    fn trigger_sensitive_processes(&mut self, changed: &[(usize, LogicVec, LogicVec)], _t: usize) -> Result<(), String> {
+    fn trigger_sensitive_processes(&mut self, changed: &[(usize, LogicVec, LogicVec)], _t: usize) -> Result<(), SimError> {
         let processes = self.design.top.processes.clone();
+
+        // Collect triggered combinational processes for potential parallel execution
+        let mut comb_indices: Vec<usize> = Vec::new();
+        for (pid, process) in processes.iter().enumerate() {
+            if let Process::Combinational { sensitivity, .. } = process {
+                let should_trigger = sensitivity.is_empty()
+                    || changed.iter().any(|(id, _, _)| sensitivity.contains(id));
+                if should_trigger {
+                    comb_indices.push(pid);
+                }
+            }
+        }
+
+        // If enough processes to parallelize and config allows it, use parallel eval
+        if comb_indices.len() >= self.parallel_config.min_processes_parallel
+            && self.parallel_config.parallel_processes
+        {
+            use rayon::prelude::*;
+            let signal_count = self.state.signals.len();
+            let snapshot: Vec<LogicVec> = (0..signal_count)
+                .map(|i| self.state.read_signal(i).clone())
+                .collect();
+            let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = comb_indices.par_iter()
+                .map(|&pid| {
+                    let process = &processes[pid];
+                    if let Process::Combinational { body, .. } = process {
+                        let mut local_signals = snapshot.clone();
+                        let mut writes = Vec::new();
+                        match parallel::evaluate_stmt_block_parallel(body, &mut local_signals, &mut writes) {
+                            Ok(()) => {
+                                // Apply writes from parallel eval
+                                Ok(writes)
+                            }
+                            Err(e) => Err(SimError::runtime(format!("parallel eval error: {}", e)),
+                        }
+                    } else {
+                        Ok(Vec::new())
+                    }
+                })
+                .collect();
+
+            for result in results {
+                let writes = result?;
+                for (sig_id, val) in writes {
+                    self.state.write_signal(sig_id, val);
+                }
+            }
+        } else {
+            // Sequential path: evaluate triggered comb processes inline
+            for &pid in &comb_indices {
+                let process = &processes[pid];
+                if let Process::Combinational { body, .. } = process {
+                    self.evaluate_stmt_block(body)?;
+                }
+            }
+        }
+
+        // Handle CombReactive, Sequential, and other process types (always sequential)
         for (pid, process) in processes.iter().enumerate() {
             match process {
-                Process::Combinational { sensitivity, body, .. } => {
-                    let should_trigger = sensitivity.is_empty()
-                        || changed.iter().any(|(id, _, _)| sensitivity.contains(id));
-                    if should_trigger {
-                        self.evaluate_stmt_block(body)?;
-                    }
-                }
                 Process::CombReactive { sensitivity, .. } => {
                     let should_trigger = sensitivity.is_empty()
                         || changed.iter().any(|(id, _, _)| sensitivity.contains(id));
@@ -2882,7 +2983,7 @@ impl SimulationEngine {
         self.signal_id_from_lvalue(lvalue).map_or(false, |id| self.forced_signals.contains(&id))
     }
 
-    fn eval_assign_rhs(&mut self, expr: &IrExpr, lhs: &IrLValue) -> Result<LogicVec, String> {
+    fn eval_assign_rhs(&mut self, expr: &IrExpr, lhs: &IrLValue) -> Result<LogicVec, SimError> {
         if let IrExpr::FillLit(v) = expr {
             let w = self.get_lvalue_width(lhs);
             Ok(LogicVec::fill(*v, w))
@@ -2913,7 +3014,7 @@ impl SimulationEngine {
         }
     }
 
-    fn evaluate_expr(&mut self, expr: &IrExpr) -> Result<LogicVec, String> {
+    fn evaluate_expr(&mut self, expr: &IrExpr) -> Result<LogicVec, SimError> {
         match expr {
             IrExpr::Const(val) => Ok(val.clone()),
             IrExpr::FillLit(val) => Ok(LogicVec::fill(*val, 1)),
@@ -2938,7 +3039,7 @@ impl SimulationEngine {
                 let val = self.evaluate_expr(inner)?;
                 let (start, end) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
                 if end >= val.width {
-                    return Err(format!("range select out of bounds: {}:{} on width {}", msb, lsb, val.width));
+                    return Err(SimError::runtime(format!("range select out of bounds: {}:{} on width {}", msb, lsb, val.width));
                 }
                 let mut bits = val.bits[start..=end].to_vec();
                 if *msb > *lsb { bits.reverse(); }
@@ -3116,7 +3217,7 @@ impl SimulationEngine {
                                 Ok(val)
                             }
                         } else {
-                            Err("$signed expects 1 argument".to_string())
+                            Err(SimError::runtime("$signed expects 1 argument")
                         }
                     }
                     "$unsigned" => {
@@ -3125,7 +3226,35 @@ impl SimulationEngine {
                             // Unsigned: zero-extend (already the default)
                             Ok(val)
                         } else {
-                            Err("$unsigned expects 1 argument".to_string())
+                            Err(SimError::runtime("$unsigned expects 1 argument")
+                        }
+                    }
+                    "$countones" => {
+                        if let Some(arg) = args.first() {
+                            let val = self.evaluate_expr(arg)?;
+                            let count = val.bits.iter().filter(|b| **b == LogicVal::One).count() as u64;
+                            Ok(LogicVec::from_u64(count, 32))
+                        } else {
+                            Err(SimError::runtime("$countones expects 1 argument")
+                        }
+                    }
+                    "$onehot" => {
+                        if let Some(arg) = args.first() {
+                            let val = self.evaluate_expr(arg)?;
+                            let ones = val.bits.iter().filter(|b| **b == LogicVal::One).count();
+                            let is_onehot = ones == 1;
+                            Ok(LogicVec::from_u64(if is_onehot { 1 } else { 0 }, 1))
+                        } else {
+                            Err(SimError::runtime("$onehot expects 1 argument")
+                        }
+                    }
+                    "$isunknown" => {
+                        if let Some(arg) = args.first() {
+                            let val = self.evaluate_expr(arg)?;
+                            let has_x_or_z = val.bits.iter().any(|b| *b == LogicVal::X || *b == LogicVal::Z);
+                            Ok(LogicVec::from_u64(if has_x_or_z { 1 } else { 0 }, 1))
+                        } else {
+                            Err(SimError::runtime("$isunknown expects 1 argument")
                         }
                     }
                     "$fopen" => {
@@ -3195,8 +3324,111 @@ impl SimulationEngine {
                         let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             self.file_handles.remove(&h);
+                            self.file_read_pos.remove(&h);
                         }
                         Ok(LogicVec::from_u64(0, 1))
+                    }
+                    "$fflush" => {
+                        let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        if let Some(h) = handle {
+                            if let Some(f) = self.file_handles.get_mut(&h) {
+                                use std::io::Write;
+                                let _ = f.flush();
+                            }
+                        }
+                        Ok(LogicVec::from_u64(0, 1))
+                    }
+                    "$fseek" => {
+                        let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let offset = args.get(1).and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as i64));
+                        let op = args.get(2).and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64()));
+                        if let (Some(h), Some(off)) = (handle, offset) {
+                            if let Some(f) = self.file_handles.get_mut(&h) {
+                                use std::io::{Seek, SeekFrom};
+                                let seek_from = match op {
+                                    Some(1) => SeekFrom::Current(off),
+                                    Some(2) => SeekFrom::End(off),
+                                    _ => SeekFrom::Start(off as u64),
+                                };
+                                let _ = f.seek(seek_from);
+                                if let Some(pos) = f.stream_position().ok() {
+                                    self.file_read_pos.insert(h, pos);
+                                }
+                            }
+                        }
+                        Ok(LogicVec::from_u64(0, 1))
+                    }
+                    "$ftell" => {
+                        let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        if let Some(h) = handle {
+                            if let Some(f) = self.file_handles.get_mut(&h) {
+                                use std::io::Seek;
+                                let pos = f.stream_position().unwrap_or(0);
+                                return Ok(LogicVec::from_u64(pos, 32));
+                            }
+                        }
+                        Ok(LogicVec::from_u64(0, 32))
+                    }
+                    "$feof" => {
+                        let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        if let Some(h) = handle {
+                            if let Some(f) = self.file_handles.get_mut(&h) {
+                                use std::io::{Seek, Read};
+                                let pos = f.stream_position().unwrap_or(0);
+                                let mut byte = [0u8; 1];
+                                let n = f.read(&mut byte).unwrap_or(0);
+                                f.seek(std::io::SeekFrom::Start(pos)).ok();
+                                return Ok(LogicVec::from_u64(if n == 0 { 1 } else { 0 }, 1));
+                            }
+                        }
+                        Ok(LogicVec::from_u64(1, 1))
+                    }
+                    "$fgets" => {
+                        // $fgets(str_var, fd) — read a line from file handle into string var
+                        let str_arg = args.first();
+                        let handle = args.get(1).and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        if let Some(h) = handle {
+                            if let Some(f) = self.file_handles.get_mut(&h) {
+                                use std::io::{BufRead, BufReader};
+                                let mut reader = BufReader::new(f.by_ref());
+                                let mut line = String::new();
+                                let bytes = reader.read_line(&mut line).unwrap_or(0);
+                                if bytes > 0 {
+                                    // Trim trailing newline for Verilog string compatibility
+                                    if line.ends_with('\n') { line.pop(); }
+                                    if line.ends_with('\r') { line.pop(); }
+                                    // Convert string to LogicVec
+                                    let mut bits = Vec::with_capacity(line.len() * 8);
+                                    for c in line.chars() {
+                                        let byte = c as u8;
+                                        for i in 0..8 {
+                                            bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                                        }
+                                    }
+                                    // Write into the string variable
+                                    if let Some(IrExpr::Signal(sid, _)) = str_arg {
+                                        self.state.write_signal(*sid, LogicVec { width: bits.len(), bits });
+                                    }
+                                    return Ok(LogicVec::from_u64(bytes as u64, 32));
+                                }
+                            }
+                        }
+                        Ok(LogicVec::from_u64(0, 32))
+                    }
+                    "$fgetc" => {
+                        // $fgetc(fd) — read a single character from file handle
+                        let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        if let Some(h) = handle {
+                            if let Some(f) = self.file_handles.get_mut(&h) {
+                                use std::io::Read;
+                                let mut byte = [0u8; 1];
+                                let bytes = f.read(&mut byte).unwrap_or(0);
+                                if bytes > 0 {
+                                    return Ok(LogicVec::from_u64(byte[0] as u64, 32));
+                                }
+                            }
+                        }
+                        Ok(LogicVec::from_u64(!0u64, 32)) // EOF: returns 32'hFFFFFFFF
                     }
                     "$fscanf" => {
                         let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
@@ -3539,7 +3771,7 @@ impl SimulationEngine {
                 if let Some(obj_id) = self.current_this {
                     Ok(LogicVec::from_u64(obj_id as u64, 64))
                 } else {
-                    Err("'this' used outside of class method".to_string())
+                    Err(SimError::runtime("'this' used outside of class method")
                 }
             }
             IrExpr::MethodCall { obj, method, args, with_clause } => {
@@ -3622,7 +3854,7 @@ impl SimulationEngine {
                     sanitize_for_2state(&self.design.top.signals, sig_id, &mut val);
                     Ok(val)
                 } else {
-                    Err(format!("hierarchical signal '{}' not found", name))
+                    Err(SimError::runtime(format!("hierarchical signal '{}' not found", name))
                 }
             }
             IrExpr::Inside { expr, list } => {
@@ -3664,30 +3896,123 @@ impl SimulationEngine {
                 let val = self.evaluate_expr(expr)?;
                 Ok(val.resize(*width))
             }
-            IrExpr::StreamingConcat { op, slices } => {
+            IrExpr::StreamingConcat { op, slice_size, slices } => {
                 let mut vals = Vec::new();
                 for sl in slices {
                     vals.push(self.evaluate_expr(sl)?);
                 }
-                if op == ">>" {
-                    let mut all_bits = Vec::new();
-                    for v in &vals {
-                        all_bits.extend(v.bits.iter());
-                    }
-                    all_bits.reverse();
-                    Ok(LogicVec { width: all_bits.len(), bits: all_bits })
-                } else {
-                    let mut result = LogicVec::new(0);
-                    for v in vals.iter().rev() {
-                        result = result.extend(v);
-                    }
-                    Ok(result)
+                let all_bits: Vec<LogicVal> = vals.iter().flat_map(|v| v.bits.iter().copied()).collect();
+                let slen = slice_size.unwrap_or(1);
+                if slen == 0 {
+                    return Err(SimError::runtime("streaming slice size must be > 0");
                 }
+                let mut result = Vec::new();
+                if op == ">>" {
+                    // reverse bits within each slice, then reverse slice order
+                    for chunk in all_bits.chunks(slen).rev() {
+                        result.extend(chunk.iter().rev());
+                    }
+                } else {
+                    // reverse slice order only
+                    for chunk in all_bits.chunks(slen).rev() {
+                        result.extend(chunk.iter());
+                    }
+                }
+                Ok(LogicVec { width: result.len(), bits: result })
+            }
+            IrExpr::UdpLookup { udp_name, args } => {
+                let udp = self.design.udp_defs.iter()
+                    .find(|u| u.name == *udp_name)
+                    .cloned()
+                    .ok_or_else(|| format!("UDP '{}' not found", udp_name))?;
+                let arg_vals: Vec<LogicVec> = args.iter()
+                    .map(|a| self.evaluate_expr(a))
+                    .collect::<Result<_, _>>()?;
+
+                // Get previous arg values for edge detection
+                let prev_vals = self.udp_prev_args.get(udp_name.as_str());
+                let current_bits: Vec<LogicVal> = arg_vals.iter()
+                    .map(|v| v.bits.first().copied().unwrap_or(LogicVal::X))
+                    .collect();
+                let prev_bits: Option<Vec<LogicVal>> = prev_vals.map(|pv|
+                    pv.iter().map(|v| v.bits.first().copied().unwrap_or(LogicVal::X)).collect()
+                );
+
+                // Scan table entries for first match
+                'table: for entry in &udp.table {
+                    for (i, sym) in entry.inputs.iter().enumerate() {
+                        let bit = current_bits.get(i).copied().unwrap_or(LogicVal::X);
+                        let matched = match sym {
+                            UdpSymbol::Zero => bit == LogicVal::Zero,
+                            UdpSymbol::One => bit == LogicVal::One,
+                            UdpSymbol::X => bit == LogicVal::X,
+                            UdpSymbol::DontCare => true,
+                            UdpSymbol::Edge(edge_str) => {
+                                // Edge detection: compare prev vs current
+                                if let Some(ref pb) = prev_bits {
+                                    let prev_bit = pb.get(i).copied().unwrap_or(LogicVal::X);
+                                    let chars: Vec<char> = edge_str.chars().collect();
+                                    if chars.len() == 2 {
+                                        sym_char_matches(chars[0], prev_bit) && sym_char_matches(chars[1], bit)
+                                    } else {
+                                        // Abbreviated edge: r, f, p, n, *
+                                        edge_matches_abbrev(edge_str, prev_bit, bit)
+                                    }
+                                } else {
+                                    // No previous value — can't detect edge
+                                    false
+                                }
+                            }
+                            UdpSymbol::NoChange => true,
+                        };
+                        if !matched {
+                            continue 'table;
+                        }
+                    }
+                    // All inputs matched — determine output
+                    let result = match &entry.output {
+                        UdpSymbol::Zero => LogicVec::fill(LogicVal::Zero, 1),
+                        UdpSymbol::One => LogicVec::fill(LogicVal::One, 1),
+                        UdpSymbol::X => LogicVec::fill(LogicVal::X, 1),
+                        UdpSymbol::DontCare => LogicVec::fill(LogicVal::X, 1),
+                        UdpSymbol::NoChange => {
+                            // For sequential UDP, return the current output value (last arg = state)
+                            arg_vals.last().cloned().unwrap_or(LogicVec::fill(LogicVal::X, 1))
+                        }
+                        UdpSymbol::Edge(s) => {
+                            let v = s.chars().last().map(|c| match c {
+                                '0' => LogicVal::Zero,
+                                '1' => LogicVal::One,
+                                _ => LogicVal::X,
+                            }).unwrap_or(LogicVal::X);
+                            LogicVec::fill(v, 1)
+                        }
+                    };
+                    // Store current arg values for next evaluation
+                    self.udp_prev_args.insert(udp_name.clone(), arg_vals.clone());
+                    return Ok(result);
+                }
+                // No match — return X (or retain current value for sequential)
+                let result = if udp.is_sequential {
+                    arg_vals.last().cloned().unwrap_or(LogicVec::fill(LogicVal::X, 1))
+                } else {
+                    LogicVec::fill(LogicVal::X, 1)
+                };
+                self.udp_prev_args.insert(udp_name.clone(), arg_vals.clone());
+                Ok(result)
             }
         }
     }
 
-    fn write_lvalue(&mut self, lvalue: &IrLValue, mut val: LogicVec) -> Result<(), String> {
+    fn write_lvalue(&mut self, lvalue: &IrLValue, mut val: LogicVec) -> Result<(), SimError> {
+        // Check for const violation
+        if let Some(id) = self.signal_id_from_lvalue(lvalue) {
+            if let Some(sig) = self.design.top.signals.get(id) {
+                if sig.is_const {
+                    return Err(SimError::runtime(format!("cannot write to const signal '{}'", sig.name));
+                }
+            }
+        }
         match lvalue {
             IrLValue::Signal(id, _) => {
                 sanitize_for_2state(&self.design.top.signals, *id, &mut val);
@@ -3714,6 +4039,7 @@ impl SimulationEngine {
                     }
                 }
                 self.state.write_signal(*id, resized);
+                self.signal_last_change.insert(*id, self.state.time);
             }
             IrLValue::RangeSelect(sig_id, msb, lsb) => {
                 sanitize_for_2state(&self.design.top.signals, *sig_id, &mut val);
@@ -3725,6 +4051,7 @@ impl SimulationEngine {
                     }
                 }
                 self.state.write_signal(*sig_id, existing);
+                self.signal_last_change.insert(*sig_id, self.state.time);
             }
             IrLValue::BitSelect(sig_id, idx) => {
                 sanitize_for_2state(&self.design.top.signals, *sig_id, &mut val);
@@ -3735,6 +4062,7 @@ impl SimulationEngine {
                     }
                 }
                 self.state.write_signal(*sig_id, existing);
+                self.signal_last_change.insert(*sig_id, self.state.time);
             }
             IrLValue::ArrayIndex { sig_id, index, elem_width } => {
                 let key_val = self.evaluate_expr(index)?;
@@ -3761,6 +4089,7 @@ impl SimulationEngine {
                     }
                 }
                 self.state.write_signal(*sig_id, existing);
+                self.signal_last_change.insert(*sig_id, self.state.time);
             }
             IrLValue::ArrayRangeSelect { sig_id, index, elem_width, msb, lsb } => {
                 let mut existing = self.state.read_signal(*sig_id).clone();
@@ -3775,6 +4104,7 @@ impl SimulationEngine {
                     }
                 }
                 self.state.write_signal(*sig_id, existing);
+                self.signal_last_change.insert(*sig_id, self.state.time);
             }
             IrLValue::ArrayBitSelect { sig_id, index, elem_width, bit } => {
                 let mut existing = self.state.read_signal(*sig_id).clone();
@@ -3787,6 +4117,7 @@ impl SimulationEngine {
                     }
                 }
                 self.state.write_signal(*sig_id, existing);
+                self.signal_last_change.insert(*sig_id, self.state.time);
             }
             IrLValue::Concat(parts) => {
                 let mut offset = 0;
@@ -3808,7 +4139,50 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn evaluate_dpi_call(&mut self, name: &str, args: &[IrExpr], return_width: usize) -> Result<LogicVec, String> {
+    fn check_timing_constraints(&mut self) -> Result<(), SimError> {
+        let current_time = self.state.time;
+        let signal_names: Vec<(String, SignalId)> = self.design.top.signals.iter()
+            .enumerate().map(|(i, s)| (s.name.clone(), i))
+            .collect();
+        let items = self.design.specify_items.clone();
+        for item in &items {
+            match item {
+                SpecifyItem::SetupCheck { data, ref_event: _ref_event, limit } => {
+                    // _ref_event is parsed but runtime edge detection is simplified
+                    let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
+                    if let Expr::Ident(data_sig) = data {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                            if let Some(&last_change) = self.signal_last_change.get(sid) {
+                                let delta = current_time - last_change;
+                                if delta <= limit_val && delta > 0 {
+                                    eprintln!("TIMING WARNING: $setup violation: data '{}' changed {}ns before ref (limit={}ns)",
+                                        data_sig, delta, limit_val);
+                                }
+                            }
+                        }
+                    }
+                }
+                SpecifyItem::HoldCheck { ref_event: _ref_event, data, limit } => {
+                    let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
+                    if let Expr::Ident(data_sig) = data {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                            if let Some(&last_change) = self.signal_last_change.get(sid) {
+                                let delta = current_time - last_change;
+                                if delta > 0 && delta <= limit_val {
+                                    eprintln!("TIMING WARNING: $hold violation: data '{}' changed {}ns before ref (limit={}ns)",
+                                        data_sig, delta, limit_val);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn evaluate_dpi_call(&mut self, name: &str, args: &[IrExpr], return_width: usize) -> Result<LogicVec, SimError> {
         // Check if we have a matching DPI import
         let dpi = self.design.dpi_imports.iter()
             .find(|d| d.name == name)
@@ -3901,7 +4275,7 @@ impl SimulationEngine {
         }
     }
 
-    fn write_ast_lvalue(&mut self, lhs: &crate::ast::Expr, val: LogicVec) -> Result<(), String> {
+    fn write_ast_lvalue(&mut self, lhs: &crate::ast::Expr, val: LogicVec) -> Result<(), SimError> {
         match lhs {
             crate::ast::Expr::Ident(name) => {
                 self.write_local_or_field(name, val)
@@ -3913,10 +4287,10 @@ impl SimulationEngine {
                     obj_data.fields.insert(field.clone(), val);
                     Ok(())
                 } else {
-                    Err(format!("object {} not found for field '{}'", obj_id, field))
+                    Err(SimError::runtime(format!("object {} not found for field '{}'", obj_id, field))
                 }
             }
-            _ => Err(format!("unsupported lvalue type in task method: {:?}", lhs))
+            _ => Err(SimError::runtime(format!("unsupported lvalue type in task method: {:?}", lhs))
         }
     }
 
@@ -3937,7 +4311,7 @@ impl SimulationEngine {
         }
     }
 
-    fn handle_ast_syscall(&mut self, name: &str, args: &[crate::ast::Expr]) -> Result<(), String> {
+    fn handle_ast_syscall(&mut self, name: &str, args: &[crate::ast::Expr]) -> Result<(), SimError> {
         if name == "display" || name == "write" {
             let ir_args: Vec<IrExpr> = args.iter()
                 .map(|a| IrExpr::Const(self.evaluate_ast_expr(a).unwrap_or(LogicVec::new(32))))
@@ -3950,7 +4324,7 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), String> {
+    fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), SimError> {
         if self.get_local(name).is_some() {
             self.set_local(name, val);
             return Ok(());
@@ -3961,10 +4335,10 @@ impl SimulationEngine {
                 return Ok(());
             }
         }
-        Err(format!("cannot resolve '{}' in method context (not a local or field)", name))
+        Err(SimError::runtime(format!("cannot resolve '{}' in method context (not a local or field)", name))
     }
 
-    fn evaluate_ast_expr(&mut self, expr: &Expr) -> Result<LogicVec, String> {
+    fn evaluate_ast_expr(&mut self, expr: &Expr) -> Result<LogicVec, SimError> {
         match expr {
             Expr::Value(v) => {
                 match v {
@@ -3980,7 +4354,7 @@ impl SimulationEngine {
                     if let Some(obj_id) = self.current_this {
                         return Ok(LogicVec::from_u64(obj_id as u64, 64));
                     } else {
-                        return Err("'this' used outside of class method".to_string());
+                        return Err(SimError::runtime("'this' used outside of class method");
                     }
                 }
                 if let Some(local) = self.get_local(name) {
@@ -3997,7 +4371,7 @@ impl SimulationEngine {
                     return Ok(self.state.read_signal(sig_id).clone());
                 }
                 let ctx = self.current_this.map(|id| format!("obj_id={}", id)).unwrap_or_else(|| "no current_this".to_string());
-                Err(format!("cannot resolve identifier '{}' in method context ({})", name, ctx))
+                Err(SimError::runtime(format!("cannot resolve identifier '{}' in method context ({})", name, ctx))
             }
             Expr::BinaryOp { op, lhs, rhs } => {
                 let lval = self.evaluate_ast_expr(lhs)?;
@@ -4174,9 +4548,9 @@ impl SimulationEngine {
                         return Ok(LogicVec::from_u64(result, 32));
                     }
                 }
-                Err(format!("unknown function '{}' in method context", name))
+                Err(SimError::runtime(format!("unknown function '{}' in method context", name))
             }
-            Expr::MethodCall { obj, method, args, with_clause } => {
+            Expr::MethodCall { obj, method, args, with_clause: _ } => {
                 if let Expr::Ident(s) = obj.as_ref() {
                     if s == "super" {
                         let arg_vals: Vec<LogicVec> = args.iter()
@@ -4249,7 +4623,7 @@ impl SimulationEngine {
                 } else if w == 0 {
                     Ok(LogicVec::from_u64(0, 1))
                 } else {
-                    Err(format!("part-select out of range"))
+                    Err(SimError::runtime(format!("part-select out of range"))
                 }
             }
             Expr::Paren(inner) => self.evaluate_ast_expr(inner),
@@ -4276,27 +4650,31 @@ impl SimulationEngine {
                 }
                 Ok(LogicVec::from_u64(0, 1))
             }
-            Expr::StreamingConcat { op, slices } => {
+            Expr::StreamingConcat { op, slice_size, slices } => {
                 let mut vals = Vec::new();
                 for sl in slices {
                     vals.push(self.evaluate_ast_expr(sl)?);
                 }
-                let mut result = LogicVec::new(0);
-                if op == ">>" {
-                    // Right-to-left: reverse bit order of concatenated result
-                    let mut all_bits = Vec::new();
-                    for v in &vals {
-                        all_bits.extend(v.bits.iter());
-                    }
-                    all_bits.reverse();
-                    result = LogicVec { width: all_bits.len(), bits: all_bits };
+                let all_bits: Vec<LogicVal> = vals.iter().flat_map(|v| v.bits.iter().copied()).collect();
+                let slen = if let Some(ss_expr) = slice_size {
+                    let ss_val = self.evaluate_ast_expr(ss_expr)?;
+                    let n = ss_val.to_u64() as usize;
+                    if n == 0 { return Err(SimError::runtime("streaming slice size must be > 0"); }
+                    n
                 } else {
-                    // Left-to-right: reverse slice order
-                    for v in vals.iter().rev() {
-                        result = result.extend(v);
+                    1
+                };
+                let mut result = Vec::new();
+                if op == ">>" {
+                    for chunk in all_bits.chunks(slen).rev() {
+                        result.extend(chunk.iter().rev());
+                    }
+                } else {
+                    for chunk in all_bits.chunks(slen).rev() {
+                        result.extend(chunk.iter());
                     }
                 }
-                Ok(result)
+                Ok(LogicVec { width: result.len(), bits: result })
             }
             Expr::Dist { expr: inner, items } => {
                 let inner_val = self.evaluate_ast_expr(inner)?;
@@ -4344,7 +4722,7 @@ impl SimulationEngine {
                 Ok(val.resize(cast_width))
             }
             Expr::ScopedIdent { package, item } => {
-                Err(format!("scoped identifier '{}.{}' not resolved at runtime", package, item))
+                Err(SimError::runtime(format!("scoped identifier '{}.{}' not resolved at runtime", package, item))
             }
         }
     }
@@ -4364,7 +4742,7 @@ impl SimulationEngine {
         }
     }
 
-    fn evaluate_ast_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+    fn evaluate_ast_stmt(&mut self, stmt: &Stmt) -> Result<(), SimError> {
         match stmt {
             Stmt::Block { stmts } => {
                 for s in stmts {
@@ -4385,7 +4763,7 @@ impl SimulationEngine {
                             obj.fields.insert(field.clone(), val);
                             Ok(())
                         } else {
-                            Err(format!("object {} not found for field write", obj_id))
+                            Err(SimError::runtime(format!("object {} not found for field write", obj_id))
                         }
                     }
                     Expr::BitSelect { expr: inner, index } => {
@@ -4464,7 +4842,7 @@ impl SimulationEngine {
                         }
                         Ok(())
                     }
-                    _ => Err(format!("unsupported LHS in method: {:?}", lhs)),
+                    _ => Err(SimError::runtime(format!("unsupported LHS in method: {:?}", lhs)),
                 }
             }
             Stmt::NonBlockingAssign { lhs, rhs, delay: _ } => {
@@ -4480,7 +4858,7 @@ impl SimulationEngine {
                             obj.fields.insert(field.clone(), val);
                             Ok(())
                         } else {
-                            Err(format!("object {} not found for field write", obj_id))
+                            Err(SimError::runtime(format!("object {} not found for field write", obj_id))
                         }
                     }
                     Expr::BitSelect { expr: inner, index } => {
@@ -4559,7 +4937,7 @@ impl SimulationEngine {
                         }
                         Ok(())
                     }
-                    _ => Err(format!("unsupported LHS in method: {:?}", lhs)),
+                    _ => Err(SimError::runtime(format!("unsupported LHS in method: {:?}", lhs)),
                 }
             }
             Stmt::IfElse { cond, true_branch, false_branch } => {
@@ -4744,13 +5122,13 @@ impl SimulationEngine {
                             obj.fields.insert(field.clone(), val);
                             Ok(())
                         } else {
-                            Err(format!("object {} not found for field write", obj_id))
+                            Err(SimError::runtime(format!("object {} not found for field write", obj_id))
                         }
                     }
-                    _ => Err(format!("unsupported LHS in StmtAssign: {:?}", lhs)),
+                    _ => Err(SimError::runtime(format!("unsupported LHS in StmtAssign: {:?}", lhs)),
                 }
             }
-            _ => Err(format!("unsupported statement in method context: {:?}", stmt)),
+            _ => Err(SimError::runtime(format!("unsupported statement in method context: {:?}", stmt)),
         }
     }
 
@@ -4794,7 +5172,7 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_phases(&mut self) -> Result<(), String> {
+    fn execute_phases(&mut self) -> Result<(), SimError> {
         let class_name = match self.find_phase_class_name() {
             Some(c) => c,
             None => return Ok(()),
@@ -4826,7 +5204,7 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn call_phase_on_children(&mut self, obj_id: ObjId, phase: &str) -> Result<(), String> {
+    fn call_phase_on_children(&mut self, obj_id: ObjId, phase: &str) -> Result<(), SimError> {
         if let Some(cdata) = self.uvm_component_data.get(&obj_id) {
             let children = cdata.children.clone();
             for child_id in children {
@@ -4985,13 +5363,13 @@ impl SimulationEngine {
     }
 
     fn execute_method(&mut self, obj_id: ObjId, method: &str,
-                      args: &[LogicVec]) -> Result<LogicVec, String>
+                      args: &[LogicVec]) -> Result<LogicVec, SimError>
     {
         let class_name = self.state.get_object(obj_id)
             .map(|o| o.class_name.clone())
             .unwrap_or_default();
         if class_name.is_empty() {
-            return Err(format!("cannot call method '{}' on object with unknown class", method));
+            return Err(SimError::runtime(format!("cannot call method '{}' on object with unknown class", method));
         }
         if class_name == "__mailbox" {
             return self.execute_mailbox_method(obj_id, method, args);
@@ -5092,7 +5470,7 @@ impl SimulationEngine {
         self.execute_method_body(Some(obj_id), &method_def, args, method)
     }
 
-    fn execute_randomize(&mut self, obj_id: ObjId, class_name: &str) -> Result<LogicVec, String> {
+    fn execute_randomize(&mut self, obj_id: ObjId, class_name: &str) -> Result<LogicVec, SimError> {
         // Clone all data we need to avoid borrow conflicts
         let class_def = self.design.classes.get(class_name)
             .ok_or_else(|| format!("class '{}' not found", class_name))?.clone();
@@ -5175,14 +5553,14 @@ impl SimulationEngine {
         }
 
         self.current_this = old_this;
-        Err(format!("randomize failed: could not satisfy all constraints after {} attempts", max_attempts))
+        Err(SimError::runtime(format!("randomize failed: could not satisfy all constraints after {} attempts", max_attempts))
     }
 
-    fn execute_mailbox_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+    fn execute_mailbox_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
         match method {
             "new" => Ok(LogicVec::from_u64(1, 1)),
             "put" => {
-                if args.is_empty() { return Err("mailbox::put expects 1 argument".into()); }
+                if args.is_empty() { return Err(SimError::runtime("mailbox::put expects 1 argument"); }
                 self.mailbox_queues.entry(obj_id).or_default().push(args[0].clone());
                 Ok(LogicVec::from_u64(1, 1))
             }
@@ -5202,7 +5580,7 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "try_put" => {
-                if args.is_empty() { return Err("mailbox::try_put expects 1 argument".into()); }
+                if args.is_empty() { return Err(SimError::runtime("mailbox::try_put expects 1 argument"); }
                 self.mailbox_queues.entry(obj_id).or_default().push(args[0].clone());
                 Ok(LogicVec::from_u64(1, 1))
             }
@@ -5211,11 +5589,11 @@ impl SimulationEngine {
                     .ok_or_else(|| "mailbox not initialized".to_string())?;
                 Ok(LogicVec::from_u64(q.len() as u64, 32))
             }
-            _ => Err(format!("unknown mailbox method: {}", method)),
+            _ => Err(SimError::runtime(format!("unknown mailbox method: {}", method)),
         }
     }
 
-    fn execute_semaphore_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+    fn execute_semaphore_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
                 let init = if !args.is_empty() { args[0].to_u64() as u32 } else { 0 };
@@ -5226,7 +5604,7 @@ impl SimulationEngine {
                 let key_count = if !args.is_empty() { args[0].to_u64() as u32 } else { 1 };
                 let c = self.semaphore_counts.get_mut(&obj_id)
                     .ok_or_else(|| "semaphore not initialized".to_string())?;
-                if *c < key_count { return Err("semaphore::get: insufficient keys".to_string()); }
+                if *c < key_count { return Err(SimError::runtime("semaphore::get: insufficient keys"); }
                 *c -= key_count;
                 Ok(LogicVec::from_u64(*c as u64, 32))
             }
@@ -5248,19 +5626,25 @@ impl SimulationEngine {
                     Ok(LogicVec::from_u64(0, 1))
                 }
             }
-            _ => Err(format!("unknown semaphore method: {}", method)),
+            _ => Err(SimError::runtime(format!("unknown semaphore method: {}", method)),
         }
     }
 
-    fn execute_process_method(&mut self, _obj_id: ObjId, method: &str, _args: &[LogicVec]) -> Result<LogicVec, String> {
+    fn execute_process_method(&mut self, _obj_id: ObjId, method: &str, _args: &[LogicVec]) -> Result<LogicVec, SimError> {
         match method {
             "status" => {
                 let status = self.process_map.get(&_obj_id).map(|p| p.status as u64).unwrap_or(0);
                 Ok(LogicVec::from_u64(status, 32))
             }
             "kill" => {
-                if let Some(pi) = self.process_map.get_mut(&_obj_id) {
+                let conts = if let Some(pi) = self.process_map.get_mut(&_obj_id) {
                     pi.status = ProcessStatus::Killed;
+                    std::mem::take(&mut pi.await_continuations)
+                } else {
+                    Vec::new()
+                };
+                for cont in conts {
+                    self.evaluate_block_with_delay(&cont)?;
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
@@ -5269,7 +5653,9 @@ impl SimulationEngine {
                 if status == ProcessStatus::Finished || status == ProcessStatus::Killed {
                     return Ok(LogicVec::from_u64(1, 1));
                 }
-                Err("process::await() not yet implemented for non-finished processes".to_string())
+                // Mark target as awaited — current process will yield at post-statement check
+                self.pending_await_target = Some(_obj_id);
+                Ok(LogicVec::from_u64(1, 1))
             }
             "self" => {
                 Ok(LogicVec::from_u64(_obj_id as u64, 64))
@@ -5286,11 +5672,11 @@ impl SimulationEngine {
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
-            _ => Err(format!("unknown process method: {}", method)),
+            _ => Err(SimError::runtime(format!("unknown process method: {}", method)),
         }
     }
 
-    fn execute_uvm_object_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+    fn execute_uvm_object_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
                 let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
@@ -5324,11 +5710,11 @@ impl SimulationEngine {
                 println!("UVM_INFO @ {}: {} [{}]", self.current_time, data.name, class_name);
                 Ok(LogicVec::from_u64(1, 1))
             }
-            _ => Err(format!("uvm_object::{} not implemented", method)),
+            _ => Err(SimError::runtime(format!("uvm_object::{} not implemented", method)),
         }
     }
 
-    fn execute_uvm_report_object_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+    fn execute_uvm_report_object_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
         match method {
             "uvm_report_info" => {
                 let id = args.get(0).map(|a| logicvec_to_string(a)).unwrap_or_default();
@@ -5359,7 +5745,7 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_uvm_component_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+    fn execute_uvm_component_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
                 let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
@@ -5429,7 +5815,7 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_uvm_sequence_item_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+    fn execute_uvm_sequence_item_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
                 let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
@@ -5446,7 +5832,7 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_uvm_sequence_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+    fn execute_uvm_sequence_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
                 let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
@@ -5516,7 +5902,7 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_uvm_sequencer_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+    fn execute_uvm_sequencer_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
                 let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
@@ -5553,7 +5939,7 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_uvm_driver_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+    fn execute_uvm_driver_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
                 let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
@@ -5601,7 +5987,7 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_uvm_monitor_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+    fn execute_uvm_monitor_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
                 let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
@@ -5621,7 +6007,7 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_uvm_analysis_port_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+    fn execute_uvm_analysis_port_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
                 let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
@@ -5651,7 +6037,7 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_uvm_analysis_imp_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+    fn execute_uvm_analysis_imp_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
                 let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
@@ -5682,7 +6068,7 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_super_method(&mut self, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+    fn execute_super_method(&mut self, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
         let obj_id = self.current_this
             .ok_or_else(|| "'super' used outside class method".to_string())?;
         let class_name = self.state.get_object(obj_id)
@@ -5731,7 +6117,7 @@ impl SimulationEngine {
     }
 
     fn execute_method_body(&mut self, obj_id: Option<ObjId>, method_def: &IrClassMethod,
-                           args: &[LogicVec], method: &str) -> Result<LogicVec, String>
+                           args: &[LogicVec], method: &str) -> Result<LogicVec, SimError>
     {
         let old_this = self.current_this;
         if let Some(oid) = obj_id {
@@ -5843,7 +6229,7 @@ fn get_field_elem_width(&self, expr: &Expr) -> Option<usize> {
 }
 
     fn find_method_in_hierarchy(&self, class_name: &str, method: &str)
-        -> Result<IrClassMethod, String>
+        -> Result<IrClassMethod, SimError>
     {
         let mut current = class_name;
         loop {
@@ -5860,7 +6246,7 @@ fn get_field_elem_width(&self, expr: &Expr) -> Option<usize> {
                 break;
             }
         }
-        Err(format!("method '{}' not found in class '{}' or its parents", method, class_name))
+        Err(SimError::runtime(format!("method '{}' not found in class '{}' or its parents", method, class_name))
     }
 }
 
@@ -5976,7 +6362,7 @@ fn format_display(state: &SimulationState, signals: &[SignalInfo], hier_map: &Ha
     result
 }
 
-fn eval_display_arg(state: &SimulationState, signals: &[SignalInfo], hier_map: &HashMap<String, SignalId>, assoc_data: &HashMap<SignalId, HashMap<LogicVec, LogicVec>>, arg: &IrExpr) -> Result<LogicVec, String> {
+fn eval_display_arg(state: &SimulationState, signals: &[SignalInfo], hier_map: &HashMap<String, SignalId>, assoc_data: &HashMap<SignalId, HashMap<LogicVec, LogicVec>>, arg: &IrExpr) -> Result<LogicVec, SimError> {
     match arg {
         IrExpr::HierRef(name) => {
             if let Some(pos) = signals.iter().position(|s| s.name == *name) {
@@ -5984,7 +6370,7 @@ fn eval_display_arg(state: &SimulationState, signals: &[SignalInfo], hier_map: &
             } else if let Some(&pos) = hier_map.get(name) {
                 Ok(state.read_signal(pos).clone())
             } else {
-                Err(format!("hierarchical signal '{}' not found", name))
+                Err(SimError::runtime(format!("hierarchical signal '{}' not found", name))
             }
         }
         IrExpr::String(s) => {
@@ -6097,7 +6483,7 @@ fn resolve_net_values(net_type: NetType, current: &LogicVec, incoming: &LogicVec
     LogicVec { bits, width }
 }
 
-fn read_hex_file(filename: &str, elem_width: usize, array_depth: usize, start: Option<usize>, end: Option<usize>) -> Result<Vec<LogicVec>, String> {
+fn read_hex_file(filename: &str, elem_width: usize, array_depth: usize, start: Option<usize>, end: Option<usize>) -> Result<Vec<LogicVec>, SimError> {
     let content = std::fs::read_to_string(filename).map_err(|e| format!("cannot read {}: {}", filename, e))?;
     let start_addr = start.unwrap_or(0);
     let end_addr = end.unwrap_or(array_depth - 1);
@@ -6113,7 +6499,7 @@ fn read_hex_file(filename: &str, elem_width: usize, array_depth: usize, start: O
     Ok(data)
 }
 
-fn read_bin_file(filename: &str, elem_width: usize, array_depth: usize, start: Option<usize>, end: Option<usize>) -> Result<Vec<LogicVec>, String> {
+fn read_bin_file(filename: &str, elem_width: usize, array_depth: usize, start: Option<usize>, end: Option<usize>) -> Result<Vec<LogicVec>, SimError> {
     let content = std::fs::read_to_string(filename).map_err(|e| format!("cannot read {}: {}", filename, e))?;
     let start_addr = start.unwrap_or(0);
     let end_addr = end.unwrap_or(array_depth - 1);
@@ -6170,19 +6556,19 @@ pub fn logicvec_to_string(lv: &LogicVec) -> String {
     s
 }
 
-fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<LogicVec, String> {
+fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
     match method {
         "len" => {
             Ok(LogicVec::from_u64(s.len() as u64, 32))
         }
         "substr" => {
             if args.len() != 2 {
-                return Err(format!("substr expects 2 arguments, got {}", args.len()));
+                return Err(SimError::runtime(format!("substr expects 2 arguments, got {}", args.len()));
             }
             let i = args[0].to_u64() as usize;
             let j = args[1].to_u64() as usize;
             if i > j || j >= s.len() {
-                return Err(format!("substr({}, {}) out of range for string of len {}", i, j, s.len()));
+                return Err(SimError::runtime(format!("substr({}, {}) out of range for string of len {}", i, j, s.len()));
             }
             let sub = &s[i..=j];
             let mut bits = Vec::with_capacity(sub.len() * 8);
@@ -6237,7 +6623,7 @@ fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<Lo
         }
         "compare" | "icompare" => {
             if args.len() < 1 {
-                return Err(format!("{} expects 1 argument", method));
+                return Err(SimError::runtime(format!("{} expects 1 argument", method));
             }
             let other_val = &args[0];
             let other = logicvec_to_string(other_val);
@@ -6253,13 +6639,13 @@ fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<Lo
             };
             Ok(LogicVec::from_u64(result as u64, 32))
         }
-        _ => Err(format!("unknown string method: {}", method)),
+        _ => Err(SimError::runtime(format!("unknown string method: {}", method)),
     }
 }
 
 impl SimulationEngine {
 
-fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -> Result<bool, String> {
+fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -> Result<bool, SimError> {
     if let Some(wc) = with_clause {
         let depth = self.method_locals.len();
         let mut scope = std::collections::HashMap::new();
@@ -6273,13 +6659,13 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
     }
 }
 
-    fn evaluate_array_method(&mut self, sig_id: SignalId, sig: &SignalInfo, method: &str, args: &[IrExpr], with_clause: Option<&IrExpr>) -> Result<LogicVec, String> {
+    fn evaluate_array_method(&mut self, sig_id: SignalId, sig: &SignalInfo, method: &str, args: &[IrExpr], with_clause: Option<&IrExpr>) -> Result<LogicVec, SimError> {
         // Check if this is an associative array method
         if sig.is_associative {
             // Evaluate args first to avoid borrow conflicts with assoc_data access
             let args_eval: Vec<LogicVec> = args.iter()
                 .map(|a| self.evaluate_expr(a))
-                .collect::<Result<Vec<_>, String>>()?;
+                .collect::<Result<Vec<_>, SimError>>()?;
             let assoc_map = self.assoc_data.entry(sig_id).or_insert_with(HashMap::new);
             match method {
                 "num" => {
@@ -6359,7 +6745,7 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                     let elem_width = sig.elem_width;
                     let count = if elem_width > 0 { lv.width / elem_width } else { 0 };
                     if idx >= count {
-                        return Err(format!("delete index {} out of range (size {})", idx, count));
+                        return Err(SimError::runtime(format!("delete index {} out of range (size {})", idx, count));
                     }
                     let before = lv.bits[..idx * elem_width].to_vec();
                     let after = lv.bits[(idx + 1) * elem_width..].to_vec();
@@ -6378,7 +6764,7 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 let lv = self.state.read_signal(sig_id);
                 let elem_width = sig.elem_width;
                 if lv.width < elem_width {
-                    return Err("pop_front on empty queue".to_string());
+                    return Err(SimError::runtime("pop_front on empty queue");
                 }
                 let mut bits = Vec::with_capacity(elem_width);
                 for i in 0..elem_width {
@@ -6396,7 +6782,7 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 let lv = self.state.read_signal(sig_id);
                 let elem_width = sig.elem_width;
                 if lv.width < elem_width {
-                    return Err("pop_back on empty queue".to_string());
+                    return Err(SimError::runtime("pop_back on empty queue");
                 }
                 let start = lv.width - elem_width;
                 let mut bits = Vec::with_capacity(elem_width);
@@ -6415,7 +6801,7 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 let arg_val = if let Some(a) = args.first() {
                     self.evaluate_expr(a)?
                 } else {
-                    return Err("push_front expects 1 argument".to_string());
+                    return Err(SimError::runtime("push_front expects 1 argument");
                 };
                 let elem_width = sig.elem_width;
                 let padded = if arg_val.width >= elem_width {
@@ -6448,7 +6834,7 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 let arg_val = if let Some(a) = args.first() {
                     self.evaluate_expr(a)?
                 } else {
-                    return Err("push_back expects 1 argument".to_string());
+                    return Err(SimError::runtime("push_back expects 1 argument");
                 };
                 let elem_width = sig.elem_width;
                 let padded = if arg_val.width >= elem_width {
@@ -6467,7 +6853,7 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
             }
             "insert" => {
                 if args.len() < 2 {
-                    return Err("insert expects 2 arguments (index, value)".to_string());
+                    return Err(SimError::runtime("insert expects 2 arguments (index, value)");
                 }
                 let idx_val = self.evaluate_expr(&args[0])?;
                 let idx = idx_val.to_u64() as usize;
@@ -6880,11 +7266,39 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 }
                 Ok(LogicVec::new(0))
             }
-            _ => Err(format!("unknown array/queue method: {}", method)),
+            _ => Err(SimError::runtime(format!("unknown array/queue method: {}", method)),
         }
     }
 }
 
+fn sym_char_matches(c: char, val: LogicVal) -> bool {
+    match c {
+        '0' => val == LogicVal::Zero,
+        '1' => val == LogicVal::One,
+        'x' | 'X' => val == LogicVal::X,
+        '?' => true, // matches 0, 1, or X
+        'b' | 'B' => val == LogicVal::Zero || val == LogicVal::One,
+        _ => false,
+    }
+}
 
+fn edge_matches_abbrev(edge: &str, prev: LogicVal, curr: LogicVal) -> bool {
+    match edge {
+        "r" | "R" => prev == LogicVal::Zero && curr == LogicVal::One, // rising = 01
+        "f" | "F" => prev == LogicVal::One && curr == LogicVal::Zero, // falling = 10
+        "p" | "P" => {
+            // posedge: 0→1, X→1, Z→1
+            (prev == LogicVal::Zero || prev == LogicVal::X || prev == LogicVal::Z)
+                && curr == LogicVal::One
+        }
+        "n" | "N" => {
+            // negedge: 1→0, X→0, Z→0
+            (prev == LogicVal::One || prev == LogicVal::X || prev == LogicVal::Z)
+                && curr == LogicVal::Zero
+        }
+        "*" => prev != curr, // any edge
+        _ => false,
+    }
+}
 
 

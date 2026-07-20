@@ -1,7 +1,7 @@
 # Verilator Compatibility Guide — Maria RTL Simulator
 
-**Tanggal:** 18 Juli 2026 (diperbarui)
-**Versi:** 0.2
+**Tanggal:** 19 Juli 2026 (diperbarui)
+**Versi:** 0.3
 **Standar:** Verilator 5.x + Maria 0.2.9
 
 ---
@@ -107,8 +107,9 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 | `$bits` | ✅ | ✅ | |
 | `$size` | ✅ | ✅ | |
 | `$signed`/`$unsigned` | ✅ | ✅ | |
-| `$countones` | ❌ | ✅ | |
-| `$onehot` | ❌ | ✅ | |
+| `$countones` | ✅ | ✅ | |
+| `$onehot` | ✅ | ✅ | |
+| `$isunknown` | ✅ | ✅ | |
 | `$clog2` (elaboration) | ✅ | ✅ | Compile-time |
 
 ### 1.8 Assertions (Immediate)
@@ -190,10 +191,10 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 | Fitur | Verilator | Maria | Catatan |
 |-------|-----------|-------|---------|
 | `// verilator ...` | ✅ | ❌ | Verilator directives |
-| `$countones` | ✅ | ❌ | Population count |
-| `$onehot` | ✅ | ❌ | One-hot detection |
-| `$isunknown` | ✅ | ❌ | X/Z detection |
-| `$clog2` (runtime) | ✅ | ⚠️ | Compile-time only |
+| `$countones` | ✅ | ✅ | Population count |
+| `$onehot` | ✅ | ✅ | One-hot detection |
+| `$isunknown` | ✅ | ✅ | X/Z detection (4-state) |
+| `$clog2` (runtime) | ✅ | ✅ | Compile-time fold + runtime eval |
 | Export DPI-C | ✅ | ❌ | C→SV calling |
 | SystemC export | ✅ | ❌ | |
 | `/* synthesis ... */` | ✅ | ❌ | Synthesis attributes |

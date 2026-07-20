@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::ast::types::const_eval_simple;
@@ -321,7 +321,7 @@ pub fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, v
         }
         ModuleItem::Func(_) | ModuleItem::Typedef(_) | ModuleItem::Import { .. }
         | ModuleItem::Covergroup(_) | ModuleItem::DpiImport(_) | ModuleItem::Param(_)
-        | ModuleItem::Clocking(_) => {}
+        | ModuleItem::Clocking(_) | ModuleItem::Specify(_) => {}
     }
 }
 
@@ -649,8 +649,9 @@ pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> E
             expr: Box::new(substitute_loop_var_in_expr(inner, var_name, value)),
             range_list: range_list.iter().map(|e| substitute_loop_var_in_expr(e, var_name, value)).collect(),
         },
-        Expr::StreamingConcat { op, slices } => Expr::StreamingConcat {
+        Expr::StreamingConcat { op, slice_size, slices } => Expr::StreamingConcat {
             op: op.clone(),
+            slice_size: slice_size.as_ref().map(|ss| Box::new(substitute_loop_var_in_expr(ss, var_name, value))),
             slices: slices.iter().map(|e| substitute_loop_var_in_expr(e, var_name, value)).collect(),
         },
         Expr::Dist { expr, items } => Expr::Dist {
@@ -839,6 +840,11 @@ pub fn collect_read_signals_expr(expr: &IrExpr, out: &mut Vec<SignalId>) {
         IrExpr::StreamingConcat { slices, .. } => {
             for e in slices {
                 collect_read_signals_expr(e, out);
+            }
+        }
+        IrExpr::UdpLookup { args, .. } => {
+            for arg in args {
+                collect_read_signals_expr(arg, out);
             }
         }
     }
@@ -1227,7 +1233,6 @@ pub fn substitute_class_types(cd: ClassDecl, param_name: &str, replacement: &Dat
                 }).collect();
                 new_members.push(ClassMember::Constraint { name, body: new_body });
             }
-            other => new_members.push(other),
         }
     }
     ClassDecl { members: new_members, ..cd }

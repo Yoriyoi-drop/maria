@@ -160,9 +160,6 @@ pub fn evaluate_expr_simple(
             }
             Ok(LogicVec::from_u64(0, 1))
         }
-        IrExpr::InsideRange { .. } => {
-            Ok(LogicVec::new(32))
-        }
         _ => {
             Ok(LogicVec::new(32))
         }
@@ -284,7 +281,7 @@ pub fn evaluate_stmt_block_parallel(
                     evaluate_stmt_block_parallel(body, signals, writes)?;
                 }
             }
-            IrStmt::SysCall { .. } | IrStmt::SysFinish | IrStmt::SysStop | IrStmt::Null => {}
+            IrStmt::SysCall { .. } | IrStmt::SysFinish | IrStmt::Null => {}
             _ => {
                 // Skip unsupported statement types in parallel eval.
                 // These will be handled by the sequential fallback path.

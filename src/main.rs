@@ -234,10 +234,14 @@ fn run(cli: Cli) -> Result<(), SimError> {
 
     // Combine all sources
     let mut combined = String::new();
+    let mut design_timescale = None;
     for path in &sources {
         let mut pp = base_pp.clone();
         let processed = pp.preprocess_file(path)
             .map_err(|e| SimError::new(None, format!("preprocessor '{}': {}", path, e)))?;
+        if pp.timescale.is_some() {
+            design_timescale = pp.timescale.clone();
+        }
         combined.push_str(&format!("`line 1 \"{}\"\n", path));
         combined.push_str(&processed);
         combined.push('\n');
@@ -261,7 +265,9 @@ fn run(cli: Cli) -> Result<(), SimError> {
 
     let first_source = sources.first().map(|s| s.as_str()).unwrap_or("<unknown>");
     let mut parser = Parser::new(tokens, first_source);
-    let design = parser.parse_design()?;
+    let mut design = parser.parse_design()?;
+    let ts_for_ir = design_timescale.clone();
+    design.timescale = design_timescale;
 
     if cli.print_ast {
         println!("{:#?}", design);
@@ -274,7 +280,8 @@ fn run(cli: Cli) -> Result<(), SimError> {
     let top_name = cli.top.as_deref();
     println!("Compiling design ({} files sources)...", sources.len());
     let mut elaborator = Elaborator::new(design);
-    let ir_design = elaborator.elaborate(top_name)?;
+    let mut ir_design = elaborator.elaborate(top_name)?;
+    ir_design.timescale = ts_for_ir;
 
     println!("Module '{}': {} signals, {} processes",
         ir_design.top.name,

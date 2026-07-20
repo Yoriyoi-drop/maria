@@ -1,38 +1,47 @@
 use std::fmt;
+use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct SimError {
-    pub line: Option<usize>,
-    pub message: String,
+#[derive(Error, Debug)]
+pub enum SimError {
+    #[error("{0}")]
+    Parse(String),
+    #[error("{0}")]
+    Elaborate(String),
+    #[error("{0}")]
+    Runtime(String),
+    #[error("{0}")]
+    Preprocessor(String),
+    #[error("{0}")]
+    Waveform(String),
+    #[error("{0}")]
+    Debugger(String),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
 }
 
 impl SimError {
     pub fn new(line: Option<usize>, message: impl Into<String>) -> Self {
-        SimError { line, message: message.into() }
-    }
-}
-
-impl fmt::Display for SimError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.line {
-            Some(line) => write!(f, "line {}: {}", line, self.message),
-            None => write!(f, "{}", self.message),
+        let msg = message.into();
+        match line {
+            Some(line) => SimError::Parse(format!("line {}: {}", line, msg)),
+            None => SimError::Runtime(msg),
         }
     }
+    pub fn parse(msg: impl Into<String>) -> Self { SimError::Parse(msg.into()) }
+    pub fn elaborate(msg: impl Into<String>) -> Self { SimError::Elaborate(msg.into()) }
+    pub fn runtime(msg: impl Into<String>) -> Self { SimError::Runtime(msg.into()) }
+    pub fn preprocessor(msg: impl Into<String>) -> Self { SimError::Preprocessor(msg.into()) }
+    pub fn waveform(msg: impl Into<String>) -> Self { SimError::Waveform(msg.into()) }
+    pub fn debugger(msg: impl Into<String>) -> Self { SimError::Debugger(msg.into()) }
 }
 
 impl From<String> for SimError {
     fn from(msg: String) -> Self {
-        let line = if msg.starts_with("line ") {
-            let rest = &msg[5..];
-            if let Some(end) = rest.find(':') {
-                rest[..end].parse::<usize>().ok()
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        SimError { line, message: msg }
+        let is_parse = msg.starts_with("line ") && msg[5..].find(':').is_some();
+        if is_parse { SimError::Parse(msg) } else { SimError::Runtime(msg) }
     }
+}
+
+impl From<&str> for SimError {
+    fn from(msg: &str) -> Self { SimError::Runtime(msg.to_string()) }
 }

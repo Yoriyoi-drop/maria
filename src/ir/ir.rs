@@ -12,6 +12,9 @@ pub struct IrDesign {
     pub covergroups: Vec<IrCovergroup>,
     pub dpi_imports: Vec<IrDpiImport>,
     pub hier_signal_map: HashMap<String, SignalId>,
+    pub udp_defs: Vec<crate::ast::types::UdpDef>,
+    pub specify_items: Vec<crate::ast::types::SpecifyItem>,
+    pub timescale: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -172,6 +175,7 @@ pub struct SignalInfo {
     pub is_queue: bool,
     pub is_associative: bool,
     pub is_signed: bool,
+    pub is_const: bool,
     pub msb: usize,
     pub lsb: usize,
     pub struct_fields: Vec<StructFieldInfo>,
@@ -475,11 +479,16 @@ pub enum IrExpr {
     },
     StreamingConcat {
         op: String,
+        slice_size: Option<usize>,
         slices: Vec<IrExpr>,
     },
     Dist {
         expr: Box<IrExpr>,
         items: Vec<IrDistItem>,
+    },
+    UdpLookup {
+        udp_name: String,
+        args: Vec<IrExpr>,
     },
 }
 

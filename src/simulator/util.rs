@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::ir::*;
@@ -138,6 +137,11 @@ pub fn extract_signal_deps_inner(expr: &IrExpr, deps: &mut Vec<SignalId>) {
         IrExpr::StreamingConcat { slices, .. } => {
             for e in slices {
                 extract_signal_deps_inner(e, deps);
+            }
+        }
+        IrExpr::UdpLookup { args, .. } => {
+            for a in args {
+                extract_signal_deps_inner(a, deps);
             }
         }
         IrExpr::Const(_) | IrExpr::FillLit(_) | IrExpr::String(_) | IrExpr::This => {}

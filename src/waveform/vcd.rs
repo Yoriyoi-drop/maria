@@ -154,7 +154,12 @@ impl VcdWriter {
 
     fn write_header(&mut self, design: &IrDesign) -> Result<(), String> {
         self.write_raw(b"$version Maria RTL Simulator v0.1.0 $end\n")?;
-        self.write_raw(b"$timescale 1ns $end\n")?;
+        let ts = if let Some((ref unit, _)) = design.timescale {
+            format!("$timescale {} $end\n", unit)
+        } else {
+            "$timescale 1ns $end\n".to_string()
+        };
+        self.write_raw(ts.as_bytes())?;
 
         let mut scope_map: HashMap<Vec<String>, Vec<(String, usize, usize)>> = HashMap::new();
         for sig in &design.top.signals {

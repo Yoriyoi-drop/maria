@@ -59,6 +59,7 @@ pub enum Expr {
     },
     StreamingConcat {
         op: String,     // ">>" or "<<"
+        slice_size: Option<Box<Expr>>,
         slices: Vec<Expr>,
     },
     Cast {

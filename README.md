@@ -68,6 +68,9 @@ cargo run -- --start .maria
 - `$sformatf`, `$fopen`/`$fclose`/`$fdisplay`/`$fwrite`/`$fstrobe`/`$fmonitor`/`$fscanf`/`$fread`
 - `$urandom`/`$random(seed)`/`$urandom_range`/`$realtime`
 - Debugger: breakpoint, watchpoint, step, reverse debug, timeline, hierarchy tree
+- Parallel simulation framework: `ParallelConfig`, `evaluate_expr_simple`, `evaluate_stmt_block_parallel`, `parallel_snapshot` (rayon-based)
+- JIT stub: basic expression compilation via `JITCompiler` (Cranelift integration planned)
+- UVM macros: `uvm_macros.svh` — info/warning/error/fatal, factory utils, field macros
 - Picorv32 RISC-V CPU (3049 LOC) compilation + simulation completed
 - AXI + Wishbone wrapper simulation via `--top`
 - IEEE 1800 compliance ~78% fitur relevan RTL
@@ -88,14 +91,15 @@ cargo test <test_name>
 | Library | `src/lib.rs` | — |
 | Preprocessor | `src/parser/preprocessor.rs` | — |
 | Lexer | `src/parser/lexer.rs` | — |
-| Parser | `src/parser/parser.rs` | ~5000 |
+| Parser | `src/parser/parser.rs` | ~5100 |
 | AST | `src/ast/` | expr, stmt, types, const_eval, inline |
-| Elaborator | `src/elaboration/elaborator.rs` | ~3267 |
+| Elaborator | `src/elaboration/elaborator.rs` | ~3400 |
 | IR | `src/ir/ir.rs` | — |
-| Simulator | `src/simulator/` | engine(~6622), state, value, types, sdf, util |
+| Simulator | `src/simulator/` | engine(~6700), state, value, types, sdf, util, jit, parallel |
 | Waveform | `src/waveform/` | vcd.rs, fst.rs |
 | Debugger | `src/debugger/` | mod.rs (~585) |
 | Tests | `src/tests/` | mod.rs + edge, parse_error, elab_error, fuzz, regression |
+| UVM macros | `uvm_macros.svh` | — |
 
 ## License
 

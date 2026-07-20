@@ -1,9 +1,9 @@
 # IEEE 1800-2012/2017 Compliance Matrix — Maria RTL Simulator
 
-**Tanggal:** 15 Juli 2026 (diperbarui)
+**Tanggal:** 20 Juli 2026 (diperbarui)
 **Versi Maria:** 0.2.9
 **Standar:** IEEE Standard for SystemVerilog (IEEE 1800-2012, revised 2017)
-**Coverage:** ~20% dari keseluruhan spesifikasi (~78% fitur relevan RTL)
+**Coverage:** ~81% dari fitur relevan RTL simulation (dari ~235 fitur, ~190 ✅ didukung)
 
 ---
 
@@ -26,7 +26,7 @@
 | 3.2 | Lexical conventions | ✅ | Keywords, identifiers, numbers, strings, operators |
 | 3.3 | Comments | ✅ | `//` dan `/* */` |
 | 3.4 | Preprocessor | ✅ | `` `define `` (name+args), `` `ifdef/`ifndef/`elsif/`else/`endif ``, `` `include `` (search paths); unknown directive emit as Verilog |
-| 3.5 | Compiler directives | ⚠️ | `line` directive passthrough; `timescale` di-skip |
+| 3.5 | Compiler directives | ✅ | `line` directive passthrough; `timescale 1ns/1ps` parsing + storage + VCD header |
 | 4.1 | Design units | ✅ | module, interface, package, program |
 | 4.2 | Module declarations | ✅ | ANSI + non-ANSI port list, parameter `#()` |
 | 4.3 | Port declarations | ✅ | input, output, inout; packed/unpacked |
@@ -67,7 +67,7 @@
 | 6.3 | Unions | ✅ | Anonymous + typedef |
 | 6.4 | Typedef | ✅ | `typedef_map` + `UserDefined` width resolution; range `[N:0]` |
 | 6.5 | Type casting | ✅ | `type'()` cast — parse + elaborator + engine |
-| 6.6 | `const` / `var` | ⚠️ | Parser skip; tidak ada compile-time enforcement |
+| 6.6 | `const` / `var` | ✅ | `const` parsing + engine write-protection; `var` recognized + implicit logic |
 | 6.7 | Parameterized types | ✅ | `class #(type T = default)` — specialized_classes + type substitution |
 
 ---
@@ -209,6 +209,7 @@
 | 28.2 | Gate instantiation | ✅ | Combinational process; no strength/delay |
 | 28.3 | Drive strength | ❌ | Tidak ada drive strength |
 | 28.4 | Gate delays | ❌ | Tidak ada gate delay |
+| 28.5 | UDP (user-defined primitives) | ✅ | `primitive`/`endprimitive` — combinational table-driven eval; 3 tests |
 
 ---
 
@@ -321,12 +322,12 @@
 | 20.15 | $signed/$unsigned | ✅ | Sign-extend / zero-extend |
 | 20.16 | $realtime | ✅ | Real-time simulation |
 | 20.17 | $finish | ✅ | End simulation |
-| 20.18 | $stop | ❌ | Tidak ada `$stop` |
+| 20.18 | $stop | ✅ | Pause simulation |
 | 20.19 | $dumpvars/$dumpfile | ✅ | VCD generation |
 | — | FST waveform | ✅ | `wavefst` crate v0.1 + `FstWaveWriter`; auto-dump saat simulasi; zlib compression |
-| 20.20 | $readmemh/$readmemb | ❌ | Tidak ada memory initialization |
-| 20.21 | $test$plusargs | ❌ | Tidak ada plusargs |
-| 20.22 | $value$plusargs | ❌ | Tidak ada plusargs |
+| 20.20 | $readmemh/$readmemb | ✅ | Memory init from file |
+| 20.21 | $test$plusargs | ✅ | Plusargs test |
+| 20.22 | $value$plusargs | ✅ | Plusargs value |
 
 ---
 
@@ -334,13 +335,13 @@
 
 | Subclaus | Fitur | Maria | Catatan |
 |----------|-------|-------|---------|
-| 20.7.1 | $fgets | ❌ | Tidak ada string I/O |
-| 20.7.2 | $fgetc | ❌ | Tidak ada character I/O |
+| 20.7.1 | $fgets | ✅ | Read line from file into string |
+| 20.7.2 | $fgetc | ✅ | Read char from file |
 | 20.7.3 | $ungetc | ❌ | Tidak ada ungetc |
-| 20.7.4 | $fflush | ❌ | Tidak ada fflush |
-| 20.7.5 | $fseek/$ftell | ❌ | Tidak ada file seek |
-| 20.7.6 | $rewind | ❌ | Tidak ada rewind |
-| 20.7.7 | $feof | ❌ | Tidak ada EOF detection |
+| 20.7.4 | $fflush | ✅ | Flush file handle ke disk |
+| 20.7.5 | $fseek/$ftell | ✅ | Seek ke posisi + tell; mode 0/1/2 (start/current/end) |
+| 20.7.6 | $rewind | ❌ | Tidak ada rewind; bisa $fseek(fd, 0, 0) |
+| 20.7.7 | $feof | ✅ | End-of-file detection via test read + seekback |
 
 ---
 
@@ -442,7 +443,7 @@
 | 25.3 | `bind` construct | ✅ | `bind target module instance;` — parser + elaborator resolve; 4 tests |
 | 26.6 | Package export | ❌ | Tidak ada export |
 | 27 | `config` clause | ✅ | `config ... endconfig` — design, default liblist, instance/cell/use rules; 3 tests |
-| 29 | `specify` block | ❌ | Tidak ada specify |
+| 29 | `specify` block | ✅ | `specify ... endspecify` — $setup/$hold/$setuphold timing checks, specparam, path delay; 2 tests |
 
 ---
 
@@ -459,36 +460,36 @@
 | Timing (9.3, 12.4) | 7 | 7 | 0 | 0 |
 | Subroutine (13) | 9 | 6 | 1 | 2 |
 | Modules (23-25) | 5 | 5 | 0 | 0 |
-| Primitives (28) | 4 | 1 | 0 | 3 |
+| Primitives (28) | 5 | 2 | 0 | 3 |
 | Interfaces (22) | 5 | 4 | 0 | 1 |
 | Packages (26) | 5 | 4 | 1 | 0 |
 | Classes (15-21) | 11 | 10 | 1 | 0 |
 | Assertions (16) | 6 | 3 | 2 | 1 |
 | Coverage (19.7) | 8 | 6 | 0 | 2 |
 | Randomization (19.7) | 6 | 6 | 0 | 0 |
-| System Tasks (20) | 22 | 17 | 0 | 5 |
-| I/O System Tasks (20.7) | 7 | 0 | 0 | 7 |
+| System Tasks (20) | 22 | 20 | 0 | 2 |
+| I/O System Tasks (20.7) | 9 | 4 | 0 | 5 |
 | IPC (17) | 5 | 5 | 0 | 0 |
 | UVM (compat) | 12 | 12 | 0 | 0 |
 | Analog (30-33) | 4 | 0 | 0 | 4 |
-| Timing Checks (14-15) | 12 | 1 | 0 | 11 |
+| Timing Checks (14-15) | 12 | 2 | 0 | 10 |
 | Assertion Builtins (20.11) | 6 | 0 | 0 | 6 |
 | Coverage Builtins (20.12) | 5 | 0 | 0 | 5 |
 | Miscellaneous | 8 | 4 | 1 | 3 |
 | Waveform (VCD + FST) | 2 | 2 | 0 | 0 |
-| **TOTAL** | **~232** | **~181** | **~8** | **~43** |
+| **TOTAL** | **~235** | **~190** | **~8** | **~37** |
 
-**Persentase Didukung:** ~78% (dari fitur yang relevan untuk RTL simulation)
+**Persentase Didukung:** ~81% (dari fitur yang relevan untuk RTL simulation)
 **Persentase Parsial:** ~3%
-**Persentase Tidak Didukung:** ~19%
+**Persentase Tidak Didukung:** ~16%
 
 ---
 
 ## Catatan Penting
 
 1. **Analog/Mixed-Signal (20%)** — Tidak relevan untuk Maria (RTL digital simulator)
-2. **Timing Checks (0%→SDF ✅)** — SDF annotation sudah didukung (`SdfData` parser + `annotate_sdf()`); `$setup`/`$hold` evaluasi membutuhkan elaboration tambahan
-3. **I/O System Tasks (0%)** — File I/O sudah ada (`$fopen`/`$fclose`/`$fread`/`$fscanf`), tapi string I/O (`$fgets`/`$fgetc`) belum
+2. **Timing Checks (SDF ✅ + specify ✅)** — SDF annotation sudah didukung (`SdfData` parser + `annotate_sdf()`); `$setup`/`$hold`/`$setuphold` specify timing checks via `specify ... endspecify` parse + storage; runtime eval via `signal_last_change` tracking
+3. **I/O System Tasks (✅ $fgets/$fgetc/$fflush/$fseek/$ftell/$feof)** — `$fgets(str, fd)` read line; `$fgetc(fd)` read byte (returns 32'hFFFFFFFF on EOF); `$fflush(fd)` flush ke disk; `$fseek(fd, offset, op)` seek (0=start, 1=current, 2=end); `$ftell(fd)` return posisi; `$feof(fd)` EOF check
 4. **Assertion Builtins (0%)** — Assertion immediate sudah ada, tapi control functions (`$assertoff`) belum
 5. **Coverage Builtins (0%→UCIS ✅)** — Covergroup/coverpoint sudah ada; `export_coverage_ucis()` untuk UCIS XML export; query/control functions masih belum
 6. **Bind Construct (100%)** — `bind target module instance;` sudah didukung penuh — parser + elaborator + 4 tests

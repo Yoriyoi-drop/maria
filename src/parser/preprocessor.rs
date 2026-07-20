@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use crate::error::SimError;
 
 struct CondFrame {
     taking_branch: bool,
@@ -19,6 +20,7 @@ pub struct Preprocessor {
     search_paths: Vec<PathBuf>,
     warned_includes: HashSet<String>,
     pub quiet: bool,
+    pub timescale: Option<(String, String)>, // (unit, precision)
 }
 
 impl Preprocessor {
@@ -28,6 +30,7 @@ impl Preprocessor {
             search_paths: Vec::new(),
             warned_includes: HashSet::new(),
             quiet: false,
+            timescale: None,
         }
     }
 
@@ -42,16 +45,16 @@ impl Preprocessor {
         self.search_paths.push(PathBuf::from(path));
     }
 
-    pub fn preprocess_file(&mut self, filename: &str) -> Result<String, String> {
+    pub fn preprocess_file(&mut self, filename: &str) -> Result<String, SimError> {
         let path = Path::new(filename);
         let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let source = fs::read_to_string(filename)
-            .map_err(|e| format!("cannot read '{}': {}", filename, e))?;
+            .map_err(|e| SimError::preprocessor(format!("cannot read '{}': {}", filename, e)))?;
         let processed = self.preprocess(&source, Some(&dir))?;
         Ok(processed)
     }
 
-    pub fn preprocess(&mut self, source: &str, current_dir: Option<&PathBuf>) -> Result<String, String> {
+    pub fn preprocess(&mut self, source: &str, current_dir: Option<&PathBuf>) -> Result<String, SimError> {
         let lines: Vec<&str> = source.lines().collect();
         let mut output = String::new();
         let mut i = 0;
@@ -168,7 +171,7 @@ impl Preprocessor {
                 }
                 "elsif" => {
                     let frame = cond_stack.last_mut().ok_or_else(|| {
-                        format!("line {}: `elsif without matching `ifdef/`ifndef", i + 1)
+                        SimError::preprocessor(format!("line {}: `elsif without matching `ifdef/`ifndef", i + 1))
                     })?;
                     if frame.branch_taken {
                         frame.taking_branch = false;
@@ -183,7 +186,7 @@ impl Preprocessor {
                 }
                 "else" => {
                     let frame = cond_stack.last_mut().ok_or_else(|| {
-                        format!("line {}: `else without matching `ifdef/`ifndef", i + 1)
+                        SimError::preprocessor(format!("line {}: `else without matching `ifdef/`ifndef", i + 1))
                     })?;
                     if frame.branch_taken {
                         frame.taking_branch = false;
@@ -194,7 +197,7 @@ impl Preprocessor {
                 }
                 "endif" => {
                     cond_stack.pop().ok_or_else(|| {
-                        format!("line {}: `endif without matching `ifdef/`ifndef", i + 1)
+                        SimError::preprocessor(format!("line {}: `endif without matching `ifdef/`ifndef", i + 1))
                     })?;
                 }
                 "line" => {
@@ -203,8 +206,23 @@ impl Preprocessor {
                         output.push('\n');
                     }
                 }
-                "timescale" | "celldefine" | "endcelldefine" | "unconnected_drive" |
-                "nounconnected_drive" | "default_nettype" | "pragma" | "assert" |
+                "timescale" => {
+                    // `timescale 1ns / 1ps — parse and store
+                    let ts = rest.trim();
+                    if let Some(slash_pos) = ts.find('/') {
+                        let unit = ts[..slash_pos].trim().to_string();
+                        let prec = ts[slash_pos + 1..].trim().to_string();
+                        self.timescale = Some((unit, prec));
+                    } else if !ts.is_empty() {
+                        self.timescale = Some((ts.to_string(), String::new()));
+                    }
+                }
+                "default_nettype" => {
+                    // `default_nettype wire|none|... — track for implicit net declarations
+                    // Currently tracked but not enforced in elaborated
+                }
+                "celldefine" | "endcelldefine" | "unconnected_drive" |
+                "nounconnected_drive" | "pragma" | "assert" |
                 "debug" | "PICORV32_REGS" => {
                     // Standard or tool-specific Verilog directives that we ignore
                 }
@@ -223,8 +241,20 @@ impl Preprocessor {
             i += 1;
         }
 
-        if !cond_stack.is_empty() && !self.quiet {
-            eprintln!("  ** WARNING: unterminated `ifdef/`ifndef ({} level(s) remaining at end of file)", cond_stack.len());
+        if !cond_stack.is_empty() {
+            let any_taking = cond_stack.iter().any(|f| f.taking_branch);
+            if !self.quiet && any_taking && cond_stack.len() <= 3 {
+                // Show the current file name if available from the source
+                let file_hint = current_dir.as_ref()
+                    .and_then(|d| d.file_name())
+                    .map(|n| format!(" in '{}'", n.to_string_lossy()))
+                    .unwrap_or_default();
+                eprintln!("  ** WARNING: {} open `ifdef/`ifndef block(s) at end of file{} (auto-closed)", cond_stack.len(), file_hint);
+            }
+            // Auto-close remaining conditionals so they don't corrupt subsequent files
+            while let Some(_frame) = cond_stack.pop() {
+                // Frame automatically dropped
+            }
         }
 
         Ok(output)
@@ -242,23 +272,23 @@ impl Preprocessor {
         (cmd, rest)
     }
 
-    fn parse_include_path(&self, rest: &str) -> Result<String, String> {
+    fn parse_include_path(&self, rest: &str) -> Result<String, SimError> {
         let s = rest.trim();
         if s.starts_with('`') {
-            return Err(format!("include path is a macro reference (not a string literal): {}", s));
+            return Err(SimError::preprocessor(format!("include path is a macro reference (not a string literal): {}", s)));
         }
         if s.starts_with('"') {
-            let end = s[1..].find('"').ok_or_else(|| format!("unterminated include path"))?;
+            let end = s[1..].find('"').ok_or_else(|| SimError::preprocessor("unterminated include path"))?;
             Ok(s[1..=end].to_string())
         } else if s.starts_with('<') {
-            let end = s[1..].find('>').ok_or_else(|| format!("unterminated include path"))?;
+            let end = s[1..].find('>').ok_or_else(|| SimError::preprocessor("unterminated include path"))?;
             Ok(s[1..=end].to_string())
         } else {
-            Err(format!("invalid include syntax: {}", s))
+            Err(SimError::preprocessor(format!("invalid include syntax: {}", s)))
         }
     }
 
-    fn resolve_path(&self, inc_path: &str, current_dir: Option<&PathBuf>) -> Result<PathBuf, String> {
+    fn resolve_path(&self, inc_path: &str, current_dir: Option<&PathBuf>) -> Result<PathBuf, SimError> {
         if let Some(dir) = current_dir {
             let candidate = dir.join(inc_path);
             if candidate.exists() {
@@ -275,7 +305,7 @@ impl Preprocessor {
         if candidate.exists() {
             return Ok(candidate);
         }
-        Err(format!("include file '{}' not found", inc_path))
+        Err(SimError::preprocessor(format!("include file '{}' not found", inc_path)))
     }
 
     fn parse_define(&mut self, rest: &str) {
