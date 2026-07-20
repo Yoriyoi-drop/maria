@@ -220,18 +220,18 @@ pub fn eval_display_arg(
             width: s.len() * 8,
         }),
         IrExpr::Signal(id, _) | IrExpr::RangeSelect(id, _, _) | IrExpr::BitSelect(id, _) | IrExpr::ArrayIndex { sig_id: id, .. } => {
-            let id = match arg {
+            return match arg {
                 IrExpr::RangeSelect(id, msb, lsb) => {
                     let val = state.read_signal(*id);
                     let (start, end) = if msb > lsb { (*lsb, *msb) } else { (*msb, *lsb) };
                     let mut bits = val.bits[start..=end.min(val.width - 1)].to_vec();
                     if msb > lsb { bits.reverse(); }
-                    return Ok(LogicVec { width: bits.len(), bits });
+                    Ok(LogicVec { width: bits.len(), bits })
                 }
                 IrExpr::BitSelect(id, idx) => {
                     let val = state.read_signal(*id);
                     let bit = val.bits.get(*idx).copied().unwrap_or(LogicVal::X);
-                    return Ok(LogicVec { width: 1, bits: vec![bit] });
+                    Ok(LogicVec { width: 1, bits: vec![bit] })
                 }
                 IrExpr::ArrayIndex { sig_id, index, elem_width } => {
                     let idx_val = eval_display_arg(state, signals, hier_map, assoc_data, index)?;
@@ -247,15 +247,13 @@ pub fn eval_display_arg(
                     for i in start..start + elem_width {
                         bits.push(val.bits.get(i).copied().unwrap_or(LogicVal::X));
                     }
-                    return Ok(LogicVec { width: *elem_width, bits });
+                    Ok(LogicVec { width: *elem_width, bits })
                 }
                 _ => {
                     let val = state.read_signal(*id);
-                    return Ok(val.clone());
+                    Ok(val.clone())
                 }
-            };
-            drop(id);
-            unreachable!()
+            }
         }
         _ => Ok(LogicVec::from_u64(0, 32)),
     }

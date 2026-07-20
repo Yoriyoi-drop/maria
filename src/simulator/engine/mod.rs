@@ -5,8 +5,8 @@ pub mod waveform;
 use crate::error::SimError;
 use crate::ir::*;
 use crate::simulator::state::SimulationState;
-use crate::simulator::types::*;
 use crate::simulator::value::*;
+use crate::simulator::types::*;
 use crate::simulator::sdf::SdfData;
 use crate::simulator::parallel::{self, ParallelConfig};
 use super::util::*;
@@ -398,6 +398,11 @@ impl SimulationEngine {
     }
 
 
+
+
+
+
+
     fn initialize_time_zero(&mut self) -> Result<(), SimError> {
         let t = 0usize;
         let processes = self.design.top.processes.clone();
@@ -438,6 +443,7 @@ impl SimulationEngine {
         Ok(())
     }
 
+
     pub fn annotate_sdf(&mut self, sdf: &SdfData) -> Result<(), SimError> {
         // Apply cell delays to signals (simplified annotation)
         for (_, cell_delay) in &sdf.cell_delays {
@@ -477,6 +483,7 @@ impl SimulationEngine {
 
         Ok(())
     }
+
 
     fn execute_final_blocks(&mut self) -> Result<(), SimError> {
         let bodies: Vec<Vec<IrStmt>> = self.design.top.processes.iter()
@@ -5903,6 +5910,8 @@ fn get_field_elem_width(&self, expr: &Expr) -> Option<usize> {
         Err(SimError::runtime(format!("method '{}' not found in class '{}' or its parents", method, class_name)))
     }
 }
+
+
 
 fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
     match method {

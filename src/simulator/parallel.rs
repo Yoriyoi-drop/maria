@@ -3,6 +3,7 @@ use crate::ir::{
     CaseType, IrExpr, IrLValue, IrStmt, LogicVal, LogicVec,
     SignalId,
 };
+use crate::simulator::util::string_to_logicvec;
 use crate::simulator::value::*;
 
 /// Configuration for parallel execution
@@ -417,24 +418,6 @@ fn write_lvalue_simple(
         _ => {}
     }
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Convert LogicVec to string (for string concat operations)
-/// Convert string to LogicVec
-fn string_to_logicvec(s: &str) -> LogicVec {
-    let width = s.len() * 8;
-    let mut bits = Vec::with_capacity(width);
-    for byte in s.bytes() {
-        for i in 0..8 {
-            bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
-        }
-    }
-    // Add null terminator
-    for _ in 0..8 {
-        bits.push(LogicVal::Zero);
-    }
-    LogicVec { bits, width: width + 8 }
 }
 
 /// Parallel signal snapshot: create a copy of all signal values using rayon

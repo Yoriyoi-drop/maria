@@ -3,8 +3,6 @@
 
 use crate::error::SimError;
 use crate::ir::*;
-use crate::simulator::types::*;
-use crate::simulator::value::*;
 use crate::simulator::util::*;
 use std::io::Write;
 

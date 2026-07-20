@@ -1,6 +1,6 @@
 # IEEE 1800-2012/2017 Compliance Matrix — Maria RTL Simulator
 
-**Tanggal:** 20 Juli 2026 (diperbarui)
+**Tanggal:** 20 Juli 2026 (diperbarui — cleanup kode: eliminasi duplikasi fungsi)
 **Versi Maria:** 0.2.9
 **Standar:** IEEE Standard for SystemVerilog (IEEE 1800-2012, revised 2017)
 **Coverage:** ~81% dari fitur relevan RTL simulation (dari ~235 fitur, ~190 ✅ didukung)
