@@ -315,7 +315,7 @@ pub fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, v
         }
         ModuleItem::Func(_) | ModuleItem::Typedef(_) | ModuleItem::Import { .. }
         | ModuleItem::Covergroup(_) | ModuleItem::DpiImport(_) | ModuleItem::DpiExport(_) | ModuleItem::Param(_)
-        | ModuleItem::Clocking(_) | ModuleItem::Specify(_) => {}
+        | ModuleItem::Clocking(_) | ModuleItem::Specify(_) | ModuleItem::VirtualInterface { .. } => {}
     }
 }
 
@@ -837,6 +837,8 @@ pub fn collect_read_signals_expr(expr: &IrExpr, out: &mut Vec<SignalId>) {
                 collect_read_signals_expr(arg, out);
             }
         }
+        IrExpr::VifBinding { .. } => {}
+        IrExpr::VirtualIfaceAccess { .. } => {}
         IrExpr::FuncCall { args, .. } => {
             for arg in args {
                 collect_read_signals_expr(arg, out);

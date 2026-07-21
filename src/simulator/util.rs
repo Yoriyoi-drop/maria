@@ -146,6 +146,8 @@ pub fn extract_signal_deps_inner(expr: &IrExpr, deps: &mut Vec<SignalId>) {
                 extract_signal_deps_inner(a, deps);
             }
         }
+        IrExpr::VifBinding { .. } => {}
+        IrExpr::VirtualIfaceAccess { .. } => {}
         IrExpr::FuncCall { args, .. } => {
             for a in args {
                 extract_signal_deps_inner(a, deps);

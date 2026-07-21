@@ -369,6 +369,7 @@ pub enum IrStmt {
         fail_stmt: Vec<IrStmt>,
         clock_event: Option<crate::ast::types::ClockEvent>,
         disable_iff: Option<Box<IrExpr>>,
+        sequence: Option<Box<IrSequence>>,
     },
     Assume {
         cond: IrExpr,
@@ -376,12 +377,14 @@ pub enum IrStmt {
         fail_stmt: Vec<IrStmt>,
         clock_event: Option<crate::ast::types::ClockEvent>,
         disable_iff: Option<Box<IrExpr>>,
+        sequence: Option<Box<IrSequence>>,
     },
     Cover {
         cond: IrExpr,
         pass_stmt: Vec<IrStmt>,
         clock_event: Option<crate::ast::types::ClockEvent>,
         disable_iff: Option<Box<IrExpr>>,
+        sequence: Option<Box<IrSequence>>,
     },
     WaitOrder {
         events: Vec<SignalId>,
@@ -507,12 +510,70 @@ pub enum IrExpr {
         func_name: String,
         args: Vec<IrExpr>,
     },
+    /// Virtual interface binding handle (instance name → binding value)
+    VifBinding {
+        instance_name: String,
+    },
     /// Virtual interface member access (resolved at runtime via bound instance)
     VirtualIfaceAccess {
         vif_name: String,
         field: String,
         field_width: usize,
     },
+}
+
+/// Temporal sequence expression for property evaluation
+#[derive(Debug, Clone, PartialEq)]
+pub enum IrSequence {
+    /// Immediate Boolean expression (evaluated each cycle)
+    Expr(IrExpr),
+    /// ##N — wait N clock cycles
+    Delay(u64),
+    /// ##[min:max] — wait between min and max clock cycles
+    DelayRange(u64, u64),
+    /// seq1 ##1 seq2 — concatenation (first then second)
+    Concat(Box<IrSequence>, Box<IrSequence>),
+    /// seq1 or seq2 — either matches
+    Or(Box<IrSequence>, Box<IrSequence>),
+    /// seq1 and seq2 — both must match
+    And(Box<IrSequence>, Box<IrSequence>),
+    /// seq[*N] — repeat seq N times consecutively
+    Repeat(Box<IrSequence>, u64),
+}
+
+impl IrSequence {
+    /// Estimate the minimum number of clock cycles this sequence needs to match
+    pub fn min_cycles(&self) -> u64 {
+        match self {
+            IrSequence::Expr(_) => 0,
+            IrSequence::Delay(n) => *n,
+            IrSequence::DelayRange(min, _) => *min,
+            IrSequence::Concat(a, b) => a.min_cycles() + b.min_cycles() + 1,
+            IrSequence::Or(a, b) => a.min_cycles().min(b.min_cycles()),
+            IrSequence::And(a, b) => a.min_cycles().max(b.min_cycles()),
+            IrSequence::Repeat(seq, n) => seq.min_cycles() * n,
+        }
+    }
+    /// Estimate the maximum number of clock cycles before sequence is determined
+    pub fn max_cycles(&self) -> Option<u64> {
+        match self {
+            IrSequence::Expr(_) => Some(0),
+            IrSequence::Delay(n) => Some(*n),
+            IrSequence::DelayRange(_, max) => Some(*max),
+            IrSequence::Concat(a, b) => {
+                a.max_cycles().and_then(|am| b.max_cycles().map(|bm| am + bm + 1))
+            }
+            IrSequence::Or(a, b) => {
+                a.max_cycles().and_then(|am| b.max_cycles().map(|bm| am.max(bm)))
+            }
+            IrSequence::And(a, b) => {
+                a.max_cycles().and_then(|am| b.max_cycles().map(|bm| am.max(bm)))
+            }
+            IrSequence::Repeat(seq, n) => {
+                seq.max_cycles().map(|m| m * n)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

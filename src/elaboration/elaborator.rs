@@ -1353,6 +1353,42 @@ impl Elaborator {
                         }
                     }
                 }
+                ModuleItem::VirtualInterface { iface_type, modport, vif_name } => {
+                    // Create a signal for the virtual interface variable
+                    let sid = next_id;
+                    next_id += 1;
+                    signal_map.insert(vif_name.clone(), sid);
+                    signals.push(SignalInfo {
+                        name: vif_name.clone(),
+                        width: 64,
+                        kind: SignalKind::Reg,
+                        net_type: NetType::Wire,
+                        multi_driver: false,
+                        init_val: LogicVec::new(64),
+                        array_depth: 1,
+                        elem_width: 64,
+                        array_dims: vec![],
+                        class_name: Some(iface_type.clone()),
+                        is_string: false,
+                        is_mailbox: false,
+                        is_semaphore: false,
+                        is_real: false,
+                        is_2state: true,
+                        is_dynamic: false,
+                        is_queue: false,
+                        is_associative: false,
+                        is_signed: false,
+                        is_const: false,
+                        msb: 63,
+                        lsb: 0,
+                        struct_fields: vec![],
+                        packed_dims: vec![],
+                        delay_rise: None,
+                        delay_fall: None,
+                        iface_type: Some(iface_type.clone()),
+                        iface_modport: modport.clone(),
+                    });
+                }
                 ModuleItem::Gate(gate) => {
                     let mut sig_ids = Vec::new();
                     for port in &gate.ports {
@@ -1764,6 +1800,8 @@ impl Elaborator {
                     packed_dims: sig.packed_dims.clone(),
                     delay_rise: sig.delay_rise,
                     delay_fall: sig.delay_fall,
+                    iface_type: None,
+                    iface_modport: None,
                 });
                     // Also add to hier_signal_map: internal signals already have the right name in flat list
                     hier_signal_map.insert(
@@ -1941,25 +1979,25 @@ impl Elaborator {
                 let new_proc = processes.iter().map(|p| self.translate_stmts(p, map_sig)).collect::<Result<Vec<_>, SimError>>()?;
                 Ok(IrStmt::Fork { processes: new_proc, join_type: join_type.clone() })
             }
-            IrStmt::Assert { cond, pass_stmt, fail_stmt, clock_event, disable_iff } => {
+            IrStmt::Assert { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence: _ } => {
                 let new_cond = self.translate_expr(cond, map_sig);
                 let new_pass = self.translate_stmts(pass_stmt, map_sig)?;
                 let new_fail = self.translate_stmts(fail_stmt, map_sig)?;
                 let new_disable = disable_iff.as_ref().map(|e| Box::new(self.translate_expr(e, map_sig)));
-                Ok(IrStmt::Assert { cond: new_cond, pass_stmt: new_pass, fail_stmt: new_fail, clock_event: clock_event.clone(), disable_iff: new_disable })
+                Ok(IrStmt::Assert { cond: new_cond, pass_stmt: new_pass, fail_stmt: new_fail, clock_event: clock_event.clone(), disable_iff: new_disable , sequence: None })
             }
-            IrStmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff } => {
+            IrStmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence: _ } => {
                 let new_cond = self.translate_expr(cond, map_sig);
                 let new_pass = self.translate_stmts(pass_stmt, map_sig)?;
                 let new_fail = self.translate_stmts(fail_stmt, map_sig)?;
                 let new_disable = disable_iff.as_ref().map(|e| Box::new(self.translate_expr(e, map_sig)));
-                Ok(IrStmt::Assume { cond: new_cond, pass_stmt: new_pass, fail_stmt: new_fail, clock_event: clock_event.clone(), disable_iff: new_disable })
+                Ok(IrStmt::Assume { cond: new_cond, pass_stmt: new_pass, fail_stmt: new_fail, clock_event: clock_event.clone(), disable_iff: new_disable , sequence: None })
             }
-            IrStmt::Cover { cond, pass_stmt, clock_event, disable_iff } => {
+            IrStmt::Cover { cond, pass_stmt, clock_event, disable_iff, sequence: _ } => {
                 let new_cond = self.translate_expr(cond, map_sig);
                 let new_pass = self.translate_stmts(pass_stmt, map_sig)?;
                 let new_disable = disable_iff.as_ref().map(|e| Box::new(self.translate_expr(e, map_sig)));
-                Ok(IrStmt::Cover { cond: new_cond, pass_stmt: new_pass, clock_event: clock_event.clone(), disable_iff: new_disable })
+                Ok(IrStmt::Cover { cond: new_cond, pass_stmt: new_pass, clock_event: clock_event.clone(), disable_iff: new_disable , sequence: None })
             }
             IrStmt::WaitOrder { events, failure_stmts } => {
                 let new_events = events.iter().map(|id| map_sig(*id)).collect();
@@ -2102,6 +2140,12 @@ impl Elaborator {
                 udp_name: udp_name.clone(),
                 args: args.iter().map(|a| self.translate_expr(a, map_sig)).collect(),
             },
+            IrExpr::VifBinding { instance_name } => {
+                IrExpr::VifBinding { instance_name: instance_name.clone() }
+            },
+            IrExpr::VirtualIfaceAccess { vif_name, field, field_width } => {
+                IrExpr::VirtualIfaceAccess { vif_name: vif_name.clone(), field: field.clone(), field_width: *field_width }
+            },
             IrExpr::FuncCall { func_name, args } => IrExpr::FuncCall {
                 func_name: func_name.clone(),
                 args: args.iter().map(|a| self.translate_expr(a, map_sig)).collect(),
@@ -2242,26 +2286,59 @@ impl Elaborator {
                 let body = self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
                 Ok(IrStmt::Block { stmts: body })
             }
-            Stmt::BlockingAssign { lhs, rhs, .. } => {
-                let ir_lhs = self.elaborate_lvalue(lhs, signal_map, signals)?;
-                let mut ir_rhs = self.elaborate_expr(rhs, signal_map, signals)?;
-                // Fill in class name for new() calls from LHS signal info
-                if let IrExpr::NewCall { ref mut class_name, .. } = ir_rhs {
-                    if class_name.is_empty() {
-                        if let IrLValue::Signal(sid, _) = ir_lhs {
-                            if let Some(sig) = signals.get(sid) {
-                                if let Some(cn) = &sig.class_name {
-                                    *class_name = cn.clone();
-                                }
+        Stmt::BlockingAssign { lhs, rhs, .. } => {
+            let ir_lhs = self.elaborate_lvalue(lhs, signal_map, signals)?;
+            // Check if LHS is a virtual interface signal
+            let is_vif_lhs = match &ir_lhs {
+                IrLValue::Signal(sid, _) => {
+                    signals.get(*sid).map(|s| s.iface_type.is_some()).unwrap_or(false)
+                }
+                _ => false,
+            };
+            let mut ir_rhs = if is_vif_lhs {
+                // For vif binding, RHS might be an instance name (not a signal)
+                match rhs {
+                    Expr::Ident(name) if !signal_map.contains_key(name) => {
+                        // Vif binding: store instance name for runtime resolution
+                        IrExpr::VifBinding { instance_name: name.clone() }
+                    }
+                    _ => self.elaborate_expr(rhs, signal_map, signals)?,
+                }
+            } else {
+                self.elaborate_expr(rhs, signal_map, signals)?
+            };
+            // Fill in class name for new() calls from LHS signal info
+            if let IrExpr::NewCall { ref mut class_name, .. } = ir_rhs {
+                if class_name.is_empty() {
+                    if let IrLValue::Signal(sid, _) = ir_lhs {
+                        if let Some(sig) = signals.get(sid) {
+                            if let Some(cn) = &sig.class_name {
+                                *class_name = cn.clone();
                             }
                         }
                     }
                 }
-                Ok(IrStmt::BlockingAssign { lhs: ir_lhs, rhs: ir_rhs, delay: None })
             }
-            Stmt::NonBlockingAssign { lhs, rhs, .. } => {
-                let ir_lhs = self.elaborate_lvalue(lhs, signal_map, signals)?;
-                let mut ir_rhs = self.elaborate_expr(rhs, signal_map, signals)?;
+            Ok(IrStmt::BlockingAssign { lhs: ir_lhs, rhs: ir_rhs, delay: None })
+        }
+        Stmt::NonBlockingAssign { lhs, rhs, .. } => {
+            let ir_lhs = self.elaborate_lvalue(lhs, signal_map, signals)?;
+            let ir_is_vif = match &ir_lhs {
+                IrLValue::Signal(sid, _) => {
+                    signals.get(*sid).map(|s| s.iface_type.is_some()).unwrap_or(false)
+                }
+                _ => false,
+            };
+            let mut ir_rhs = if ir_is_vif {
+                match rhs {
+                    Expr::Ident(name) if !signal_map.contains_key(name) => {
+                        IrExpr::VifBinding { instance_name: name.clone() }
+                    }
+                    _ => self.elaborate_expr(rhs, signal_map, signals)?,
+                }
+            } else {
+                self.elaborate_expr(rhs, signal_map, signals)?
+            };
                 if let IrExpr::NewCall { ref mut class_name, .. } = ir_rhs {
                     if class_name.is_empty() {
                         if let IrLValue::Signal(sid, _) = ir_lhs {
@@ -2672,7 +2749,7 @@ impl Elaborator {
                     Some(e) => Some(Box::new(self.elaborate_expr(&*e, signal_map, signals)?)),
                     None => None,
                 };
-                Ok(IrStmt::Assert { cond: ir_cond, pass_stmt: pass, fail_stmt: fail, clock_event: clock_event.clone(), disable_iff: ir_disable })
+                Ok(IrStmt::Assert { cond: ir_cond, pass_stmt: pass, fail_stmt: fail, clock_event: clock_event.clone(), disable_iff: ir_disable, sequence: None })
             }
             Stmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff } => {
                 let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
@@ -2688,7 +2765,7 @@ impl Elaborator {
                     Some(e) => Some(Box::new(self.elaborate_expr(&*e, signal_map, signals)?)),
                     None => None,
                 };
-                Ok(IrStmt::Assume { cond: ir_cond, pass_stmt: pass, fail_stmt: fail, clock_event: clock_event.clone(), disable_iff: ir_disable })
+                Ok(IrStmt::Assume { cond: ir_cond, pass_stmt: pass, fail_stmt: fail, clock_event: clock_event.clone(), disable_iff: ir_disable, sequence: None })
             }
             Stmt::Cover { cond, pass_stmt, clock_event, disable_iff } => {
                 let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
@@ -2700,7 +2777,7 @@ impl Elaborator {
                     Some(e) => Some(Box::new(self.elaborate_expr(&*e, signal_map, signals)?)),
                     None => None,
                 };
-                Ok(IrStmt::Cover { cond: ir_cond, pass_stmt: pass, clock_event: clock_event.clone(), disable_iff: ir_disable })
+                Ok(IrStmt::Cover { cond: ir_cond, pass_stmt: pass, clock_event: clock_event.clone(), disable_iff: ir_disable, sequence: None })
             }
             Stmt::Expect { .. } => {
                 Ok(IrStmt::Null)
@@ -3260,6 +3337,25 @@ impl Elaborator {
             match self.elaborate_expr(obj, signal_map, signals) {
                 Ok(IrExpr::Signal(sig_id, _)) => {
                     let sig_info = &signals[sig_id];
+                    // Check if this is a virtual interface variable
+                    if let Some(ref iface_type) = sig_info.iface_type {
+                        // Look up the interface definition to find field width
+                        let field_width = if let Some(iface) = self.design.interfaces.iter().find(|i| i.name == *iface_type) {
+                            if let Some(d) = iface.decls.iter().find(|d| d.names.iter().any(|n| n.name == *field)) {
+                                let var = d.names.iter().find(|n| n.name == *field).unwrap();
+                                var.resolved_width(&HashMap::new()).unwrap_or(1)
+                            } else {
+                                1
+                            }
+                        } else {
+                            1
+                        };
+                        return Ok(IrExpr::VirtualIfaceAccess {
+                            vif_name: sig_info.name.clone(),
+                            field: field.clone(),
+                            field_width,
+                        });
+                    }
                     if !sig_info.struct_fields.is_empty() {
                         if let Some(f) = sig_info.struct_fields.iter().find(|f| f.name == *field) {
                             let lsb = f.offset;

@@ -20,6 +20,20 @@ use rand::SeedableRng;
 
 const MAX_LOOP_ITER: usize = 10_000_000;
 
+/// Tracks a single attempt of a concurrent assertion sequence evaluation
+pub struct SequenceAttempt {
+    /// The sequence expression being evaluated
+    pub sequence: Box<IrSequence>,
+    /// Clock cycles elapsed since this attempt started
+    pub cycles: u64,
+    /// Pass statements to execute on success
+    pub pass_stmt: Vec<IrStmt>,
+    /// Fail statements to execute on failure
+    pub fail_stmt: Vec<IrStmt>,
+    /// Clock event for this assertion
+    pub clock_event: crate::ast::types::ClockEvent,
+}
+
 pub struct SimulationEngine {
     pub state: SimulationState,
     pub design: IrDesign,
@@ -92,6 +106,8 @@ pub struct SimulationEngine {
     assert_off_all: bool,
     assert_kill_all: bool,
     assert_modules_off: HashSet<String>,
+    // Active sequence evaluation attempts (for concurrent assertions)
+    sequence_attempts: Vec<SequenceAttempt>,
     // Coverage options (for $coverage_control)
     coverage_options: HashMap<String, u64>,
     coverage_enabled: bool,
@@ -180,9 +196,10 @@ impl SimulationEngine {
             assert_kill_all: false,
             assert_modules_off: HashSet::new(),
             coverage_options: HashMap::new(),
-            coverage_enabled: true,
-            coverage_model_handles: HashMap::new(),
-            next_coverage_model_handle: 1,
+        coverage_enabled: true,
+        coverage_model_handles: HashMap::new(),
+        next_coverage_model_handle: 1,
+        sequence_attempts: Vec::new(),
             recursion_depth: HashMap::new(),
             max_recursion_depth: 256,
         }
@@ -404,6 +421,8 @@ impl SimulationEngine {
                 }
             }
 
+            // Advance and evaluate sequence attempts
+            self.evaluate_sequence_attempts()?;
             self.state.time += 1;
             if self.state.time > self.max_time {
                 break;
@@ -1363,7 +1382,7 @@ impl SimulationEngine {
                     return Ok(true);
                 }
                 IrStmt::Null => {}
-                IrStmt::Assert { cond, pass_stmt, fail_stmt, clock_event, disable_iff } => {
+                IrStmt::Assert { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => !self.assert_off_all,
@@ -1374,21 +1393,33 @@ impl SimulationEngine {
                             None => false,
                         };
                         if !disabled && !self.assert_kill_all {
-                            let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
-                            if ok {
-                                if !pass_stmt.is_empty() {
-                                    self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
-                                }
+                            if let Some(seq) = &sequence {
+                                // Concurrent assertion with temporal sequence: start a new attempt
+                                self.sequence_attempts.push(SequenceAttempt {
+                                    sequence: seq.clone(),
+                                    cycles: 0,
+                                    pass_stmt: pass_stmt.clone(),
+                                    fail_stmt: fail_stmt.clone(),
+                                    clock_event: clock_event.clone().unwrap(),
+                                });
                             } else {
-                                eprintln!("assertion failed");
-                                if !fail_stmt.is_empty() {
-                                    self.evaluate_block_with_delay_fork(fail_stmt, fork_id)?;
+                                // Immediate assertion: evaluate condition now
+                                let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                                if ok {
+                                    if !pass_stmt.is_empty() {
+                                        self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
+                                    }
+                                } else {
+                                    eprintln!("assertion failed");
+                                    if !fail_stmt.is_empty() {
+                                        self.evaluate_block_with_delay_fork(fail_stmt, fork_id)?;
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                IrStmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff } => {
+                IrStmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => !self.assert_off_all,
@@ -1413,7 +1444,7 @@ impl SimulationEngine {
                         }
                     }
                 }
-                IrStmt::Cover { cond, pass_stmt, clock_event, disable_iff } => {
+                IrStmt::Cover { cond, pass_stmt, clock_event, disable_iff, sequence } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => !self.assert_off_all,
@@ -2355,7 +2386,7 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::Null => {}
-                IrStmt::Assert { cond, pass_stmt, fail_stmt, clock_event, disable_iff } => {
+                IrStmt::Assert { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => true,
@@ -2380,7 +2411,7 @@ impl SimulationEngine {
                         }
                     }
                 }
-                IrStmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff } => {
+                IrStmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => true,
@@ -2405,7 +2436,7 @@ impl SimulationEngine {
                         }
                     }
                 }
-                IrStmt::Cover { cond, pass_stmt, clock_event, disable_iff } => {
+                IrStmt::Cover { cond, pass_stmt, clock_event, disable_iff, sequence } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => true,
@@ -4086,6 +4117,58 @@ impl SimulationEngine {
                 self.recursion_depth.insert(name.clone(), depth);
 
                 Ok(return_val)
+            }
+            IrExpr::VifBinding { instance_name } => {
+                // Look up the instance in the signal hierarchy
+                // Find the first signal belonging to this instance and return its SignalId as binding handle
+                let mut binding_handle: Option<usize> = None;
+                let prefix = format!("{instance_name}.");
+                for (sid, sig) in self.design.top.signals.iter().enumerate() {
+                    if sig.name.starts_with(&prefix) || sig.name == *instance_name {
+                        binding_handle = Some(sid);
+                        break;
+                    }
+                }
+                if let Some(handle) = binding_handle {
+                    return Ok(LogicVec::from_u64(handle as u64, 64));
+                }
+                // Fallback: match instance name as any path component: top.instance.sig
+                let target = instance_name.as_str();
+                for (sid, sig) in self.design.top.signals.iter().enumerate() {
+                    let parts: Vec<&str> = sig.name.split('.').collect();
+                    if parts.iter().any(|p| *p == target) {
+                        binding_handle = Some(sid);
+                        break;
+                    }
+                }
+                match binding_handle {
+                    Some(handle) => Ok(LogicVec::from_u64(handle as u64, 64)),
+                    None => Ok(LogicVec::fill(LogicVal::X, 64)),
+                }
+            }
+            IrExpr::VirtualIfaceAccess { vif_name, field, field_width } => {
+                // Find the vif signal and read its binding handle (SignalId of a signal in the bound instance)
+                let mut result = LogicVec::fill(LogicVal::X, *field_width);
+                for (sid, sig) in self.design.top.signals.iter().enumerate() {
+                    if sig.iface_type.is_some() && sig.name == *vif_name {
+                        let binding_val = self.state.read_signal(sid);
+                        let handle = binding_val.to_u64() as usize;
+                        if handle > 0 && handle < self.design.top.signals.len() {
+                            // Bound — extract instance path from the bound signal's name
+                            let bound_sig_name = &self.design.top.signals[handle].name;
+                            // Strip the signal name to get instance path: top.inst.sig -> top.inst
+                            if let Some(dot_pos) = bound_sig_name.rfind('.') {
+                                let inst_path = &bound_sig_name[..dot_pos];
+                                let sig_key = format!("{}.{}", inst_path, field);
+                                if let Some(&field_sid) = self.design.hier_signal_map.get(&sig_key) {
+                                    result = self.state.read_signal(field_sid).clone();
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+                Ok(result)
             }
         }
     }
@@ -7305,6 +7388,115 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
             }
             _ => Err(SimError::runtime(format!("unknown array/queue method: {}", method))),
         }
+    }
+
+    /// Evaluate sequence expressions recursively at a given cycle offset.
+    /// Note: uses CURRENT signal state only — past values are not tracked.
+    /// This gives simplified semantics where all Expr evaluations happen at the current time,
+    /// but the cycle offset controls structural matching (delays, concatenations).
+    fn eval_sequence_at_cycle(&mut self, seq: &IrSequence, cycles: u64) -> Result<bool, SimError> {
+        match seq {
+            IrSequence::Expr(expr) => {
+                if cycles == 0 {
+                    let val = self.evaluate_expr(expr)?;
+                    Ok(val.to_bool() == Some(true))
+                } else {
+                    Ok(false)
+                }
+            }
+            IrSequence::Delay(n) => Ok(cycles == *n),
+            IrSequence::DelayRange(min, max) => Ok(cycles >= *min && cycles <= *max),
+            IrSequence::Concat(a, b) => {
+                // a must match at cycle k, b must match at cycles-k-1
+                // Total: k + 1 + (cycles-k-1) = cycles
+                for k in 0..cycles {
+                    if self.eval_sequence_at_cycle(a, k)?
+                        && self.eval_sequence_at_cycle(b, cycles - k - 1)?
+                    {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            IrSequence::Or(a, b) => {
+                Ok(self.eval_sequence_at_cycle(a, cycles)?
+                    || self.eval_sequence_at_cycle(b, cycles)?)
+            }
+            IrSequence::And(a, b) => {
+                Ok(self.eval_sequence_at_cycle(a, cycles)?
+                    && self.eval_sequence_at_cycle(b, cycles)?)
+            }
+            IrSequence::Repeat(seq, n) => {
+                if *n == 0 { return Ok(true); }
+                if *n == 1 { return self.eval_sequence_at_cycle(seq, cycles); }
+                for k in 0..=cycles {
+                    if self.eval_sequence_at_cycle(seq, k)? {
+                        let remaining = IrSequence::Repeat(
+                            Box::new((**seq).clone()), n - 1
+                        );
+                        if self.eval_sequence_at_cycle(&remaining, cycles - k)? {
+                            return Ok(true);
+                        }
+                    }
+                }
+                Ok(false)
+            }
+        }
+    }
+
+    /// Advance all active sequence attempts and evaluate them.
+    /// Removes completed (matched or expired) attempts and executes pass/fail statements.
+    fn evaluate_sequence_attempts(&mut self) -> Result<(), SimError> {
+        // Pre-compute firing events (immutable borrow of self)
+        let firing_events: Vec<bool> = self.sequence_attempts.iter()
+            .map(|a| self.check_concurrent_clock_event(&a.clock_event))
+            .collect();
+        
+        // Pre-clone sequences to avoid borrow conflicts during iteration
+        let seqs: Vec<(Box<IrSequence>, u64)> = self.sequence_attempts.iter()
+            .enumerate()
+            .filter(|(idx, _)| *idx < firing_events.len() && firing_events[*idx])
+            .map(|(_, a)| (a.sequence.clone(), a.cycles))
+            .collect();
+        
+        // Evaluate all sequences (mutable borrow of self)
+        let mut results: Vec<bool> = Vec::new();
+        for (seq, cycles) in &seqs {
+            results.push(self.eval_sequence_at_cycle(seq, *cycles)?);
+        }
+        
+        // Update attempt states and mark completions
+        let mut completed = Vec::new();
+        let mut result_idx = 0;
+        for (idx, attempt) in self.sequence_attempts.iter_mut().enumerate() {
+            if idx < firing_events.len() && firing_events[idx] {
+                let matched = if result_idx < results.len() { results[result_idx] } else { false };
+                result_idx += 1;
+                let max_cycles = attempt.sequence.max_cycles().unwrap_or(u64::MAX);
+                if matched {
+                    completed.push((idx, true));
+                } else if attempt.cycles >= max_cycles {
+                    completed.push((idx, false));
+                }
+                attempt.cycles += 1;
+            }
+        }
+        
+        // Process completed attempts (reverse order to preserve indices)
+        for (idx, success) in completed.into_iter().rev() {
+            if let Some(attempt) = self.sequence_attempts.get(idx) {
+                let stmts = if success {
+                    attempt.pass_stmt.clone()
+                } else {
+                    attempt.fail_stmt.clone()
+                };
+                if !stmts.is_empty() {
+                    self.evaluate_block_with_delay_fork(&stmts, None)?;
+                }
+            }
+            self.sequence_attempts.remove(idx);
+        }
+        Ok(())
     }
 
     fn check_concurrent_clock_event(&self, ce: &crate::ast::types::ClockEvent) -> bool {

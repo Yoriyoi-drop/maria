@@ -221,7 +221,7 @@
 | 22.2 | Interface instantiation | ✅ | Instantiasi di module |
 | 22.3 | Modport | ✅ | Modport declaration + port direction |
 | 22.4 | Clocking block | ✅ | `clocking cb @(posedge clk); ... endclocking` — lexer + AST + parser; input/output skew; 4 tests |
-| 22.5 | Virtual interface | ❌ | Tidak ada virtual interface |
+| 22.5 | Virtual interface | ✅ | `virtual <iface>[.<modport>] <name>` — parser, elaborator signal creation, VirtualIfaceAccess IR expresssion, engine handler (runtime binding minimal) |
 
 ---
 
@@ -268,7 +268,7 @@
 | 16.12 | Immediate cover | ✅ | `cover (expr) [pass]` |
 | 16.13 | Concurrent assert | ✅ | `clock_event` + `disable_iff` di AST/IR; engine cek clock edge + disable sebelum eval |
 | 16.14 | Property | ✅ | Property keyword parse + clock_event + disable_iff tersimpan; evaluated at clock edge |
-| 16.15 | Sequence | ❌ | Tidak ada sequence evaluation |
+| 16.15 | Sequence | ✅ | IrSequence enum (Expr/Delay/DelayRange/Concat/Or/And/Repeat) + engine evaluator (cycle-based state machine; simplified semantics: all Expr eval menggunakan current state, temporal history belum di-track) |
 | 16.16 | Assertion on/off | ✅ | `$assertoff`/`$assertkill`/`$asserton` — engine assertion control flags; sub-scope support via module name filter |
 
 ---
@@ -442,7 +442,7 @@
 | 6.16 | Type parameter | ✅ | `class #(type T)` |
 | 13.1 | Ref arguments | ✅ | `PortDirection::Ref` di AST/parser/lexer/elaborator; diperlakukan seperti inout di engine (read-write pass-by-reference) |
 | 15.13 | Local scope resolution | ✅ | NamedBlock `decls` preserved di IR (tdk dibuang); scoped signal `block.var` di signal_map |
-| 22.5 | Virtual interface | ❌ | Tidak ada |
+| 22.5 | Virtual interface | ✅ | Parser+elaborator+IR+engine |
 | 25.3 | `bind` construct | ✅ | `bind target module instance;` — parser + elaborator resolve; 4 tests |
 | 26.6 | Package export | ✅ | `export pkg::*` / `export pkg::item` — re-export dari package ke package lain |
 | 27 | `config` clause | ✅ | `config ... endconfig` — design, default liblist, instance/cell/use rules; 3 tests |
@@ -464,10 +464,10 @@
 | Subroutine (13) | 9 | 9 | 0 | 0 |
 | Modules (23-25) | 5 | 5 | 0 | 0 |
 | Primitives (28) | 5 | 5 | 0 | 0 |
-| Interfaces (22) | 5 | 4 | 0 | 1 |
+| Interfaces (22) | 5 | 5 | 0 | 0 |
 | Packages (26) | 5 | 5 | 0 | 0 |
 | Classes (15-21) | 11 | 11 | 0 | 0 |
-| Assertions (16) | 6 | 6 | 0 | 0 |
+| Assertions (16) | 7 | 7 | 0 | 0 |
 | Coverage (19.7) | 8 | 8 | 0 | 0 |
 | Randomization (19.7) | 6 | 6 | 0 | 0 |
 | System Tasks (20) | 22 | 22 | 0 | 0 |
@@ -478,13 +478,13 @@
 | Timing Checks (14-15) | 12 | 12 | 0 | 0 |
 | Assertion Builtins (20.11) | 6 | 6 | 0 | 0 |
 | Coverage Builtins (20.12) | 5 | 5 | 0 | 0 |
-| Miscellaneous | 8 | 7 | 0 | 1 |
+| Miscellaneous | 8 | 8 | 0 | 0 |
 | Waveform (VCD + FST) | 2 | 2 | 0 | 0 |
-| **TOTAL** | **~238** | **~234** | **~0** | **~4** |
+| **TOTAL** | **~238** | **~235** | **~0** | **~3** |
 
-**Persentase Didukung:** ~98.3% (dari fitur yang relevan untuk RTL simulation)
+**Persentase Didukung:** ~98.7% (dari fitur yang relevan untuk RTL simulation)
 **Persentase Parsial:** ~0%
-**Persentase Tidak Didukung:** ~1.7%
+**Persentase Tidak Didukung:** ~1.3%
 
 ---
 
