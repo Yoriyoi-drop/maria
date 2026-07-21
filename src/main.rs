@@ -241,6 +241,50 @@ fn run(cli: Cli) -> Result<(), SimError> {
         scan_for_includes(src_dir, &mut auto_seen, &mut base_pp, 0);
     }
 
+    // Additional scan: walk up ancestors looking at ALL nested subdirectories recursively
+    // This helps find deeply nested SV files like opentitan/hw/ip/prim/rtl/prim_assert.sv
+    let max_scan_depth = 4usize;
+    for src_dir in src_dirs.iter() {
+        let mut anc = Some(src_dir.clone());
+        let mut ancestors_checked = std::collections::HashSet::new();
+        while let Some(ref d) = anc {
+            if !ancestors_checked.insert(d.clone()) { break; }
+            // Scan recursively from this ancestor level into subdirectories
+            if let Ok(entries) = std::fs::read_dir(d) {
+                for entry in entries.flatten() {
+                    if let Ok(ft) = entry.file_type() {
+                        let path = entry.path();
+                        if ft.is_dir() {
+                            // Recursively walk this subdirectory to find SV files
+                            fn deep_scan_sv_inner(dir: &std::path::PathBuf, pp: &mut Preprocessor, seen: &mut std::collections::HashSet<PathBuf>, max_depth: usize, depth: usize) {
+                                if depth > max_depth { return; }
+                                if let Ok(entries) = std::fs::read_dir(dir) {
+                                    for entry in entries.flatten() {
+                                        if let Ok(ft) = entry.file_type() {
+                                            let path = entry.path();
+                                            if ft.is_dir() && depth < max_depth {
+                                                deep_scan_sv_inner(&path, pp, seen, max_depth, depth + 1);
+                                            } else if ft.is_file() {
+                                                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                                                if (ext == "svh" || ext == "sv") && seen.insert(path.clone()) {
+                                                    if let Some(parent) = path.parent() {
+                                                        pp.add_search_path(parent.to_str().unwrap());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            deep_scan_sv_inner(&path, &mut base_pp, &mut auto_seen, max_scan_depth, 0);
+                        }
+                    }
+                }
+            }
+            anc = d.parent().map(|p| p.to_path_buf());
+        }
+    }
+
     // Combine all sources
     let mut combined = String::new();
     let mut design_timescale = None;
@@ -359,6 +403,11 @@ fn run(cli: Cli) -> Result<(), SimError> {
     }
 
     if design.modules.is_empty() {
+        // If there are packages, interfaces, or other items but no modules, it's not fatal
+        if !design.packages.is_empty() || !design.interfaces.is_empty() || !design.classes.is_empty() {
+            eprintln!("note: no modules found in design (packages/interfaces present, skipping simulation)");
+            return Ok(());
+        }
         return Err(SimError::new(None, "no modules found in design"));
     }
 

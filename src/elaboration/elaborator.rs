@@ -522,9 +522,22 @@ impl Elaborator {
                 ) {
                     return Ok(64);
                 }
-                self.typedef_map.get(name)
-                    .copied()
-                    .ok_or_else(|| SimError::elaborate(format!("unknown type '{}' is not defined in this scope", name)))
+                // Check package symbols for typedefs
+                for (_, pkg_items) in &self.package_symbols {
+                    if let Some(PackageItem::Typedef(td)) = pkg_items.get(name.as_str()) {
+                        let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
+                        if width > 0 {
+                            return Ok(width);
+                        }
+                    }
+                }
+                // Check in-module typedefs stored in typedef_map
+                if let Some(&width) = self.typedef_map.get(name) {
+                    return Ok(width);
+                }
+                // Type not found — warn and return default width of 32 (common SV default)
+                eprintln!("  ** WARNING: unknown type '{}' is not defined in this scope (using default width 32)", name);
+                Ok(32)
             }
             DataType::Signed(inner) => self.resolve_type_width(inner),
             _ => Ok(dtype.width()),

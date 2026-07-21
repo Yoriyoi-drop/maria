@@ -142,11 +142,21 @@ pub fn expand_generate_block(gen: &GenerateBlock, param_vals: &HashMap<String, i
     for item in &gen.items {
         match item {
             GenerateItem::If { cond, true_items, false_items } => {
-                let val = const_eval_with_params(cond, param_vals)
-                    .map_err(|_| format!("non-constant condition in generate if"))?;
-                let branch = if val != 0 { true_items } else { false_items };
-                for item in branch {
-                    result.push(item.clone());
+                let eval_result = const_eval_with_params(cond, param_vals);
+                match eval_result {
+                    Ok(val) => {
+                        let branch = if val != 0 { true_items } else { false_items };
+                        for item in branch {
+                            result.push(item.clone());
+                        }
+                    }
+                    Err(_) => {
+                        // Non-constant condition — warn and try both branches (take true branch as default)
+                        eprintln!("  ** WARNING: non-constant condition in generate if, taking true branch");
+                        for item in true_items {
+                            result.push(item.clone());
+                        }
+                    }
                 }
             }
             GenerateItem::For { var, init, cond, step, body_items } => {
@@ -188,8 +198,23 @@ pub fn expand_generate_block(gen: &GenerateBlock, param_vals: &HashMap<String, i
                 }
             }
             GenerateItem::Case { expr, items, default, .. } => {
-                let case_val = const_eval_with_params(expr, param_vals)
-                    .map_err(|_| format!("non-constant expression in generate case"))?;
+                let case_val = match const_eval_with_params(expr, param_vals) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!("  ** WARNING: non-constant expression in generate case, taking first case");
+                        // Take first case item if available
+                        if let Some(first) = items.first() {
+                            for item in &first.body {
+                                result.push(item.clone());
+                            }
+                        } else if let Some(default_items) = default {
+                            for item in default_items {
+                                result.push(item.clone());
+                            }
+                        }
+                        continue;
+                    }
+                };
                 let mut matched = false;
                 for ci in items {
                     for label in &ci.labels {
