@@ -262,6 +262,10 @@ pub fn eval_display_arg(
                 }
             }
         }
+        IrExpr::SysFunc { name, args } if name == "sformatf" => {
+            let msg = format_display(state, signals, hier_map, assoc_data, args);
+            Ok(string_to_logicvec(&msg))
+        }
         _ => Ok(LogicVec::from_u64(0, 32)),
     }
 }

@@ -117,6 +117,9 @@ pub struct SimulationEngine {
     // Recursion tracking
     recursion_depth: HashMap<String, u32>,
     max_recursion_depth: u32,
+    // UVM objection tracking (end-of-test mechanism)
+    objection_count: u32,
+    objection_triggered: bool,
 }
 
 
@@ -200,8 +203,10 @@ impl SimulationEngine {
         coverage_model_handles: HashMap::new(),
         next_coverage_model_handle: 1,
         sequence_attempts: Vec::new(),
-            recursion_depth: HashMap::new(),
-            max_recursion_depth: 256,
+        recursion_depth: HashMap::new(),
+        max_recursion_depth: 256,
+        objection_count: 0,
+        objection_triggered: false,
         }
     }
 
@@ -6112,6 +6117,26 @@ impl SimulationEngine {
                 println!("UVM_INFO @ {}: {} [{}]", self.current_time, data.name, class_name);
                 Ok(LogicVec::from_u64(1, 1))
             }
+            "raise_objection" => {
+                self.objection_count = self.objection_count.saturating_add(1);
+                let name = self.uvm_object_data.get(&obj_id).map(|d| d.name.as_str()).unwrap_or("unknown");
+                println!("UVM_OBJECTION: {} raised (count={})", name, self.objection_count);
+                Ok(LogicVec::from_u64(1, 1))
+            },
+            "drop_objection" => {
+                let name = self.uvm_object_data.get(&obj_id).map(|d| d.name.as_str()).unwrap_or("unknown");
+                if self.objection_count > 0 {
+                    self.objection_count -= 1;
+                }
+                println!("UVM_OBJECTION: {} dropped (count={})", name, self.objection_count);
+                if self.objection_count == 0 && !self.objection_triggered {
+                    self.objection_triggered = true;
+                    println!("UVM_PHASE: All objections dropped, ending test");
+                    // Schedule end-of-test via $finish behavior
+                    self.running = false;
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            },
             _ => Err(SimError::runtime(format!("uvm_object::{} not implemented", method))),
         }
     }
