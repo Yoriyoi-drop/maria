@@ -164,20 +164,26 @@ pub enum Stmt {
         items: Vec<CaseItem>,
         default: Option<Box<Stmt>>,
     },
-    // Immediate assertions
+    // Immediate/concurrent assertions
     Assert {
         cond: Expr,
         pass_stmt: Option<Box<Stmt>>,
         fail_stmt: Option<Box<Stmt>>,
+        clock_event: Option<super::types::ClockEvent>,
+        disable_iff: Option<Box<Expr>>,
     },
     Assume {
         cond: Expr,
         pass_stmt: Option<Box<Stmt>>,
         fail_stmt: Option<Box<Stmt>>,
+        clock_event: Option<super::types::ClockEvent>,
+        disable_iff: Option<Box<Expr>>,
     },
     Cover {
         cond: Expr,
         pass_stmt: Option<Box<Stmt>>,
+        clock_event: Option<super::types::ClockEvent>,
+        disable_iff: Option<Box<Expr>>,
     },
     Expect {
         cond: Expr,

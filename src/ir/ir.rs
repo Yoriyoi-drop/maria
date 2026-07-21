@@ -80,6 +80,7 @@ pub struct IrClassMethod {
     pub name: String,
     pub is_task: bool,
     pub virtual_flag: bool,
+    pub is_static: bool,
     pub ports: Vec<crate::ast::FunctionPort>,
     pub decls: Vec<crate::ast::Decl>,
     pub stmts: Vec<crate::ast::Stmt>,
@@ -265,6 +266,7 @@ pub enum IrStmt {
     NamedBlock {
         name: String,
         stmts: Vec<IrStmt>,
+        decls: Vec<crate::ast::Decl>,
     },
     BlockingAssign {
         lhs: IrLValue,
@@ -361,15 +363,21 @@ pub enum IrStmt {
         cond: IrExpr,
         pass_stmt: Vec<IrStmt>,
         fail_stmt: Vec<IrStmt>,
+        clock_event: Option<crate::ast::types::ClockEvent>,
+        disable_iff: Option<Box<IrExpr>>,
     },
     Assume {
         cond: IrExpr,
         pass_stmt: Vec<IrStmt>,
         fail_stmt: Vec<IrStmt>,
+        clock_event: Option<crate::ast::types::ClockEvent>,
+        disable_iff: Option<Box<IrExpr>>,
     },
     Cover {
         cond: IrExpr,
         pass_stmt: Vec<IrStmt>,
+        clock_event: Option<crate::ast::types::ClockEvent>,
+        disable_iff: Option<Box<IrExpr>>,
     },
     WaitOrder {
         events: Vec<SignalId>,

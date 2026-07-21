@@ -38,6 +38,7 @@ impl Elaborator {
                         d.names.first().map(|v| v.name.clone()).unwrap_or_default()
                     }
                     PackageItem::Import { .. } => continue,
+                    PackageItem::Export { .. } => continue,
                 };
                 items.insert(name, item.clone());
             }
@@ -74,6 +75,38 @@ impl Elaborator {
                 }
             }
         }
+        // Third pass: resolve exports within packages (re-export items from other packages)
+        let exports: Vec<(String, String, String)> = design.packages.iter()
+            .flat_map(|pkg| {
+                pkg.items.iter().filter_map(|item| {
+                    if let PackageItem::Export { package, item: export_item } = item {
+                        Some((pkg.name.clone(), package.clone(), export_item.clone()))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+        for (pkg_name, source_pkg_name, export_item) in exports {
+            let source_items = package_symbols.get(&source_pkg_name).cloned();
+            if let Some(source_items) = source_items {
+                if let Some(pkg_items) = package_symbols.get_mut(&pkg_name) {
+                    let names: Vec<String> = if export_item == "*" {
+                        source_items.keys().cloned().collect()
+                    } else {
+                        vec![export_item]
+                    };
+                    for name in names {
+                        if let Some(source_item) = source_items.get(&name) {
+                            if !pkg_items.contains_key(&name) {
+                                pkg_items.insert(name, source_item.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Elaborator {
             design,
             modules: HashMap::new(),
@@ -141,6 +174,7 @@ impl Elaborator {
                                             decls: t.decls.clone(),
                                             stmts: t.stmts.clone(),
                                             virtual_flag: t.virtual_flag,
+                                            is_static: t.is_static,
                                         }));
                                     }
                                 }
@@ -778,6 +812,7 @@ impl Elaborator {
                 PortDirection::Input => SignalKind::Input,
                 PortDirection::Output => SignalKind::Output,
                 PortDirection::Inout => SignalKind::Inout,
+                PortDirection::Ref => SignalKind::Inout,
             };
             let (p_msb, p_lsb) = if let Some(r) = &port.range {
                 (r.msb, r.lsb)
@@ -799,6 +834,7 @@ impl Elaborator {
                 PortDirection::Input => inputs.push(sid),
                 PortDirection::Output => outputs.push(sid),
                 PortDirection::Inout => inouts.push(sid),
+                PortDirection::Ref => inouts.push(sid),
             }
         }
 
@@ -1374,6 +1410,7 @@ impl Elaborator {
                         name: fd.name.clone(),
                         is_task: false,
                         virtual_flag: fd.virtual_flag,
+                        is_static: fd.is_static,
                         ports: fd.ports.clone(),
                         decls: fd.decls.clone(),
                         stmts: fd.stmts.clone(),
@@ -1382,6 +1419,7 @@ impl Elaborator {
                         name: td.name.clone(),
                         is_task: true,
                         virtual_flag: td.virtual_flag,
+                        is_static: td.is_static,
                         ports: td.ports.clone(),
                         decls: td.decls.clone(),
                         stmts: td.stmts.clone(),
@@ -1744,9 +1782,9 @@ impl Elaborator {
                 let new = self.translate_stmts(stmts, map_sig)?;
                 Ok(IrStmt::Block { stmts: new })
             }
-            IrStmt::NamedBlock { name, stmts } => {
+            IrStmt::NamedBlock { name, stmts, decls } => {
                 let new = self.translate_stmts(stmts, map_sig)?;
-                Ok(IrStmt::NamedBlock { name: name.clone(), stmts: new })
+                Ok(IrStmt::NamedBlock { name: name.clone(), stmts: new, decls: decls.clone() })
             }
             IrStmt::BlockingAssign { lhs, rhs, delay } => {
                 let new_lhs = self.translate_lvalue(lhs, map_sig);
@@ -1849,22 +1887,25 @@ impl Elaborator {
                 let new_proc = processes.iter().map(|p| self.translate_stmts(p, map_sig)).collect::<Result<Vec<_>, SimError>>()?;
                 Ok(IrStmt::Fork { processes: new_proc, join_type: join_type.clone() })
             }
-            IrStmt::Assert { cond, pass_stmt, fail_stmt } => {
+            IrStmt::Assert { cond, pass_stmt, fail_stmt, clock_event, disable_iff } => {
                 let new_cond = self.translate_expr(cond, map_sig);
                 let new_pass = self.translate_stmts(pass_stmt, map_sig)?;
                 let new_fail = self.translate_stmts(fail_stmt, map_sig)?;
-                Ok(IrStmt::Assert { cond: new_cond, pass_stmt: new_pass, fail_stmt: new_fail })
+                let new_disable = disable_iff.as_ref().map(|e| Box::new(self.translate_expr(e, map_sig)));
+                Ok(IrStmt::Assert { cond: new_cond, pass_stmt: new_pass, fail_stmt: new_fail, clock_event: clock_event.clone(), disable_iff: new_disable })
             }
-            IrStmt::Assume { cond, pass_stmt, fail_stmt } => {
+            IrStmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff } => {
                 let new_cond = self.translate_expr(cond, map_sig);
                 let new_pass = self.translate_stmts(pass_stmt, map_sig)?;
                 let new_fail = self.translate_stmts(fail_stmt, map_sig)?;
-                Ok(IrStmt::Assume { cond: new_cond, pass_stmt: new_pass, fail_stmt: new_fail })
+                let new_disable = disable_iff.as_ref().map(|e| Box::new(self.translate_expr(e, map_sig)));
+                Ok(IrStmt::Assume { cond: new_cond, pass_stmt: new_pass, fail_stmt: new_fail, clock_event: clock_event.clone(), disable_iff: new_disable })
             }
-            IrStmt::Cover { cond, pass_stmt } => {
+            IrStmt::Cover { cond, pass_stmt, clock_event, disable_iff } => {
                 let new_cond = self.translate_expr(cond, map_sig);
                 let new_pass = self.translate_stmts(pass_stmt, map_sig)?;
-                Ok(IrStmt::Cover { cond: new_cond, pass_stmt: new_pass })
+                let new_disable = disable_iff.as_ref().map(|e| Box::new(self.translate_expr(e, map_sig)));
+                Ok(IrStmt::Cover { cond: new_cond, pass_stmt: new_pass, clock_event: clock_event.clone(), disable_iff: new_disable })
             }
             IrStmt::WaitOrder { events, failure_stmts } => {
                 let new_events = events.iter().map(|id| map_sig(*id)).collect();
@@ -2416,9 +2457,9 @@ impl Elaborator {
                 };
                 Ok(IrStmt::Case { case_type: CaseType::CaseZ, expr: ir_expr, items: ir_items, default: ir_default })
             }
-            Stmt::NamedBlock { name, stmts, decls: _ } => {
+            Stmt::NamedBlock { name, stmts, decls } => {
                 let body = self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
-                Ok(IrStmt::NamedBlock { name: name.clone(), stmts: body })
+                Ok(IrStmt::NamedBlock { name: name.clone(), stmts: body, decls: decls.clone() })
             }
             Stmt::Delay { delay, stmt } => {
                 let d = const_eval_params(delay, &self.param_vals)? as u64;
@@ -2559,7 +2600,7 @@ impl Elaborator {
             Stmt::PriorityIf { cond, true_branch, false_branch } => {
                 self.elaborate_stmt(&Stmt::IfElse { cond: cond.clone(), true_branch: true_branch.clone(), false_branch: false_branch.clone() }, signal_map, known_modules, signals)
             }
-            Stmt::Assert { cond, pass_stmt, fail_stmt } => {
+            Stmt::Assert { cond, pass_stmt, fail_stmt, clock_event, disable_iff } => {
                 let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
                 let pass = match pass_stmt {
                     Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
@@ -2569,9 +2610,13 @@ impl Elaborator {
                     Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
                     None => vec![],
                 };
-                Ok(IrStmt::Assert { cond: ir_cond, pass_stmt: pass, fail_stmt: fail })
+                let ir_disable = match disable_iff {
+                    Some(e) => Some(Box::new(self.elaborate_expr(&*e, signal_map, signals)?)),
+                    None => None,
+                };
+                Ok(IrStmt::Assert { cond: ir_cond, pass_stmt: pass, fail_stmt: fail, clock_event: clock_event.clone(), disable_iff: ir_disable })
             }
-            Stmt::Assume { cond, pass_stmt, fail_stmt } => {
+            Stmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff } => {
                 let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
                 let pass = match pass_stmt {
                     Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
@@ -2581,15 +2626,23 @@ impl Elaborator {
                     Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
                     None => vec![],
                 };
-                Ok(IrStmt::Assume { cond: ir_cond, pass_stmt: pass, fail_stmt: fail })
+                let ir_disable = match disable_iff {
+                    Some(e) => Some(Box::new(self.elaborate_expr(&*e, signal_map, signals)?)),
+                    None => None,
+                };
+                Ok(IrStmt::Assume { cond: ir_cond, pass_stmt: pass, fail_stmt: fail, clock_event: clock_event.clone(), disable_iff: ir_disable })
             }
-            Stmt::Cover { cond, pass_stmt } => {
+            Stmt::Cover { cond, pass_stmt, clock_event, disable_iff } => {
                 let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
                 let pass = match pass_stmt {
                     Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
                     None => vec![],
                 };
-                Ok(IrStmt::Cover { cond: ir_cond, pass_stmt: pass })
+                let ir_disable = match disable_iff {
+                    Some(e) => Some(Box::new(self.elaborate_expr(&*e, signal_map, signals)?)),
+                    None => None,
+                };
+                Ok(IrStmt::Cover { cond: ir_cond, pass_stmt: pass, clock_event: clock_event.clone(), disable_iff: ir_disable })
             }
             Stmt::Expect { .. } => {
                 Ok(IrStmt::Null)

@@ -34,6 +34,7 @@ pub struct SimulationEngine {
     current_method: Option<String>,
     rng: rand::rngs::StdRng,
     file_handles: HashMap<u32, std::fs::File>,
+    file_ungetc_buf: HashMap<u32, Vec<u8>>,
     file_read_pos: HashMap<u32, u64>,
     next_file_handle: u32,
     monitor_args: Option<Vec<IrExpr>>,
@@ -87,7 +88,18 @@ pub struct SimulationEngine {
     pub step_mode: StepMode,
     pub event_log: Vec<DebugEvent>,
     pub snapshot_interval: u64,
+    // Assertion control flags ($assertoff/$assertkill/$asserton)
+    assert_off_all: bool,
+    assert_kill_all: bool,
+    assert_modules_off: HashSet<String>,
+    // Coverage options (for $coverage_control)
+    coverage_options: HashMap<String, u64>,
+    coverage_enabled: bool,
+    // Recursion tracking
+    recursion_depth: HashMap<String, u32>,
+    max_recursion_depth: u32,
 }
+
 
 impl SimulationEngine {
     pub fn new(design: IrDesign, max_time: u64) -> Self {
@@ -107,6 +119,7 @@ impl SimulationEngine {
             current_method: None,
             rng: rand::rngs::StdRng::seed_from_u64(42),
             file_handles: HashMap::new(),
+            file_ungetc_buf: HashMap::new(),
             file_read_pos: HashMap::new(),
             next_file_handle: 1,
             monitor_args: None,
@@ -160,6 +173,13 @@ impl SimulationEngine {
             step_mode: StepMode::Running,
             event_log: Vec::new(),
             snapshot_interval: 1000,
+            assert_off_all: false,
+            assert_kill_all: false,
+            assert_modules_off: HashSet::new(),
+            coverage_options: HashMap::new(),
+            coverage_enabled: true,
+            recursion_depth: HashMap::new(),
+            max_recursion_depth: 256,
         }
     }
 
@@ -609,7 +629,7 @@ impl SimulationEngine {
                 IrStmt::Block { stmts: inner } => {
                     self.evaluate_block_with_delay_fork(inner, fork_id)?;
                 }
-                IrStmt::NamedBlock { name, stmts: inner } => {
+                IrStmt::NamedBlock { name, stmts: inner, .. } => {
                     if self.disable_pending.as_deref() == Some(name) {
                         self.disable_pending = None;
                         return Ok(true);
@@ -1135,6 +1155,160 @@ impl SimulationEngine {
                                 break;
                             }
                         }
+                    } else if name == "asserton" {
+                        // $asserton — re-enable all assertions
+                        self.assert_off_all = false;
+                    } else if name == "assertoff" {
+                        // $assertoff — disable all assertions
+                        self.assert_off_all = true;
+                        // If scope argument provided, disable assertions in that scope
+                        if let Some(scope_arg) = ir_args.first() {
+                            if let Ok(scope_val) = self.evaluate_expr(scope_arg) {
+                                let scope_name = logicvec_to_string(&scope_val);
+                                self.assert_modules_off.insert(scope_name);
+                            }
+                        }
+                    } else if name == "assertkill" {
+                        // $assertkill — disable and kill all assertions
+                        self.assert_kill_all = true;
+                        self.assert_off_all = true;
+                        if let Some(scope_arg) = ir_args.first() {
+                            if let Ok(scope_val) = self.evaluate_expr(scope_arg) {
+                                let scope_name = logicvec_to_string(&scope_val);
+                                self.assert_modules_off.insert(scope_name);
+                            }
+                        }
+                    } else if name == "assertpasson" {
+                        // $assertpasson — re-enable assertion pass action (stub)
+                    } else if name == "assertfailon" {
+                        // $assertfailon — re-enable assertion fail action (stub)
+                    } else if name == "assertnonvacuouson" {
+                        // $assertnonvacuouson — stub
+                    } else if name == "isunbounded" {
+                        // $isunbounded — always returns false for bounded simulations
+                        if let Some(sig_arg) = ir_args.first() {
+                            if let IrExpr::Signal(id, _) = sig_arg {
+                                self.state.write_signal(*id, LogicVec::from_u64(0, 1));
+                            }
+                        }
+                    } else if name == "coverage_control" {
+                        // $coverage_control - control coverage collection
+                        if let Some(arg) = ir_args.first() {
+                            if let Ok(val) = self.evaluate_expr(arg) {
+                                let bitmask = val.to_u64();
+                                // Bit 0: coverage on/off
+                                self.coverage_enabled = (bitmask & 1) == 0;
+                                self.coverage_options.insert("control".to_string(), bitmask);
+                            }
+                        }
+                    } else if name == "coverage_get" {
+                        // $coverage_get - get current coverage level
+                        let mut total = 0u64;
+                        let mut hit = 0u64;
+                        for cg in &self.design.covergroups {
+                            for cp in &cg.coverpoints {
+                                let key = format!("{}.{}", cg.name, cp.name);
+                                if let Some(t) = self.cover_total.get(&key) {
+                                    total += t;
+                                }
+                                if let Some(h) = self.cover_hits.get(&key) {
+                                    hit += h;
+                                }
+                            }
+                        }
+                        let pct = if total > 0 { (hit as f64 / total as f64) * 100.0 } else { 0.0 };
+                        if let Some(sig_arg) = ir_args.first() {
+                            if let IrExpr::Signal(id, _) = sig_arg {
+                                self.state.write_signal(*id, LogicVec::from_u64(pct as u64, 64));
+                            }
+                        }
+                    } else if name == "coverage_save" {
+                        // $coverage_save — save coverage data to a file
+                        let path = ir_args.first().and_then(|a| if let IrExpr::String(s) = a { Some(s.clone()) } else { None })
+                            .unwrap_or_else(|| "coverage.ucis".to_string());
+                        let _ = self.export_coverage_ucis(&path);
+                    } else if name == "coverage_model" {
+                        // $coverage_model - stub: get coverage model handle
+                        if let Some(sig_arg) = ir_args.first() {
+                            if let IrExpr::Signal(id, _) = sig_arg {
+                                self.state.write_signal(*id, LogicVec::from_u64(0, 32));
+                            }
+                        }
+                    } else if name == "load_coverage_db" {
+                        // $load_coverage_db — stub: acknowledge but do nothing
+                        eprintln!("warning: $load_coverage_db not yet implemented");
+                    } else if name == "swrite" || name == "sformat" {
+                        // $swrite/$sformat — format values into string variable
+                        // Format: $swrite(output_str, format, args...)
+                        // Note: $swrite appends newline, $sformat does not
+                        if let Some(IrExpr::Signal(out_id, _)) = ir_args.first() {
+                            let format_args = &ir_args[1..];
+                            let mut msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, format_args);
+                            if name == "swrite" {
+                                msg.push('\n');
+                            }
+                            let mut bits = Vec::with_capacity(msg.len() * 8);
+                            for c in msg.chars() {
+                                let byte = c as u8;
+                                for i in 0..8 {
+                                    bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                                }
+                            }
+                            self.state.write_signal(*out_id, LogicVec { width: bits.len(), bits });
+                        }
+                    } else if name == "sscanf" {
+                        // $sscanf — scan values from string
+                        // Format: $sscanf(input_str, format, output_args...)
+                        if let Some(input_arg) = ir_args.first() {
+                            let input_str = if let IrExpr::String(s) = input_arg {
+                                s.clone()
+                            } else if let Ok(val) = self.evaluate_expr(input_arg) {
+                                logicvec_to_string(&val)
+                            } else { String::new() };
+                            let fmt = ir_args.get(1).and_then(|a| if let IrExpr::String(s) = a { Some(s.clone()) } else { None });
+                            if let Some(ref fmt_str) = fmt {
+                                let tokens: Vec<&str> = input_str.split_whitespace().collect();
+                                let mut ti = 0;
+                                let mut ai = 0;
+                                let mut chars = fmt_str.chars().peekable();
+                                while let Some(c) = chars.next() {
+                                    if c == '%' {
+                                        if let Some(spec) = chars.next() {
+                                            if spec == 'd' || spec == 'h' || spec == 'b' || spec == 'o' {
+                                                if let Some(tok) = tokens.get(ti) {
+                                                    let radix = if spec == 'h' { 16 } else if spec == 'o' { 8 } else if spec == 'b' { 2 } else { 10 };
+                                                    if let Ok(val) = i64::from_str_radix(tok, radix) {
+                                                        if let Some(out_arg) = ir_args.get(2 + ai) {
+                                                            if let IrExpr::Signal(sid, _) = out_arg {
+                                                                self.state.write_signal(*sid, LogicVec::from_u64(val as u64, 32));
+                                                            }
+                                                        }
+                                                        ai += 1;
+                                                    }
+                                                }
+                                                ti += 1;
+                                            } else if spec == 's' {
+                                                // String format: consume all remaining tokens
+                                                if let Some(out_arg) = ir_args.get(2 + ai) {
+                                                    if let IrExpr::Signal(sid, _) = out_arg {
+                                                        let s = tokens[ti..].join(" ");
+                                                        let mut bits = Vec::with_capacity(s.len() * 8);
+                                                        for c in s.chars() {
+                                                            let byte = c as u8;
+                                                            for i in 0..8 {
+                                                                bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                                                            }
+                                                        }
+                                                        self.state.write_signal(*sid, LogicVec { width: bits.len(), bits });
+                                                    }
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     } else if name == "test$plusargs" {
                         // $test$plusargs in statement context — return value ignored
                     } else {
@@ -1152,38 +1326,74 @@ impl SimulationEngine {
                     return Ok(true);
                 }
                 IrStmt::Null => {}
-                IrStmt::Assert { cond, pass_stmt, fail_stmt } => {
-                    let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
-                    if ok {
-                        if !pass_stmt.is_empty() {
-                            self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
-                        }
-                    } else {
-                        eprintln!("assertion failed");
-                        if !fail_stmt.is_empty() {
-                            self.evaluate_block_with_delay_fork(fail_stmt, fork_id)?;
+                IrStmt::Assert { cond, pass_stmt, fail_stmt, clock_event, disable_iff } => {
+                    let should_check = match clock_event {
+                        Some(ref ce) => self.check_concurrent_clock_event(ce),
+                        None => !self.assert_off_all,
+                    };
+                    if should_check {
+                        let disabled = match disable_iff {
+                            Some(ref di) => self.evaluate_expr(di)?.to_bool().unwrap_or(false),
+                            None => false,
+                        };
+                        if !disabled && !self.assert_kill_all {
+                            let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                            if ok {
+                                if !pass_stmt.is_empty() {
+                                    self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
+                                }
+                            } else {
+                                eprintln!("assertion failed");
+                                if !fail_stmt.is_empty() {
+                                    self.evaluate_block_with_delay_fork(fail_stmt, fork_id)?;
+                                }
+                            }
                         }
                     }
                 }
-                IrStmt::Assume { cond, pass_stmt, fail_stmt } => {
-                    let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
-                    if ok {
-                        if !pass_stmt.is_empty() {
-                            self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
-                        }
-                    } else {
-                        eprintln!("assumption violated");
-                        if !fail_stmt.is_empty() {
-                            self.evaluate_block_with_delay_fork(fail_stmt, fork_id)?;
+                IrStmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff } => {
+                    let should_check = match clock_event {
+                        Some(ref ce) => self.check_concurrent_clock_event(ce),
+                        None => !self.assert_off_all,
+                    };
+                    if should_check {
+                        let disabled = match disable_iff {
+                            Some(ref di) => self.evaluate_expr(di)?.to_bool().unwrap_or(false),
+                            None => false,
+                        };
+                        if !disabled && !self.assert_kill_all {
+                            let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                            if ok {
+                                if !pass_stmt.is_empty() {
+                                    self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
+                                }
+                            } else {
+                                eprintln!("assumption violated");
+                                if !fail_stmt.is_empty() {
+                                    self.evaluate_block_with_delay_fork(fail_stmt, fork_id)?;
+                                }
+                            }
                         }
                     }
                 }
-                IrStmt::Cover { cond, pass_stmt } => {
-                    let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
-                    if ok {
-                        eprintln!("cover point hit");
-                        if !pass_stmt.is_empty() {
-                            self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
+                IrStmt::Cover { cond, pass_stmt, clock_event, disable_iff } => {
+                    let should_check = match clock_event {
+                        Some(ref ce) => self.check_concurrent_clock_event(ce),
+                        None => !self.assert_off_all,
+                    };
+                    if should_check {
+                        let disabled = match disable_iff {
+                            Some(ref di) => self.evaluate_expr(di)?.to_bool().unwrap_or(false),
+                            None => false,
+                        };
+                        if !disabled && !self.assert_kill_all {
+                            let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                            if ok {
+                                eprintln!("cover point hit");
+                                if !pass_stmt.is_empty() {
+                                    self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
+                                }
+                            }
                         }
                     }
                 }
@@ -1740,7 +1950,7 @@ impl SimulationEngine {
                     }
                     return Ok(true);
                 }
-                crate::ast::Stmt::Assert { cond, pass_stmt, fail_stmt } => {
+                crate::ast::Stmt::Assert { cond, pass_stmt, fail_stmt, .. } => {
                     let ok = self.evaluate_ast_expr(cond)?.to_bool().unwrap_or(false);
                     if ok {
                         if let Some(ps) = pass_stmt {
@@ -1753,7 +1963,7 @@ impl SimulationEngine {
                         }
                     }
                 }
-                crate::ast::Stmt::Assume { cond, pass_stmt, fail_stmt } => {
+                crate::ast::Stmt::Assume { cond, pass_stmt, fail_stmt, .. } => {
                     let ok = self.evaluate_ast_expr(cond)?.to_bool().unwrap_or(false);
                     if ok {
                         if let Some(ps) = pass_stmt {
@@ -1766,7 +1976,7 @@ impl SimulationEngine {
                         }
                     }
                 }
-                crate::ast::Stmt::Cover { cond, pass_stmt } => {
+                crate::ast::Stmt::Cover { cond, pass_stmt, .. } => {
                     let ok = self.evaluate_ast_expr(cond)?.to_bool().unwrap_or(false);
                     if ok {
                         if let Some(ps) = pass_stmt {
@@ -1817,7 +2027,7 @@ impl SimulationEngine {
                 IrStmt::Block { stmts: inner } => {
                     self.evaluate_stmt_block(inner)?;
                 }
-                IrStmt::NamedBlock { name, stmts: inner } => {
+                IrStmt::NamedBlock { name, stmts: inner, .. } => {
                     if self.disable_pending.as_deref() == Some(name) {
                         self.disable_pending = None;
                         return Ok(());
@@ -2108,38 +2318,74 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::Null => {}
-                IrStmt::Assert { cond, pass_stmt, fail_stmt } => {
-                    let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
-                    if ok {
-                        if !pass_stmt.is_empty() {
-                            self.evaluate_stmt_block(pass_stmt)?;
-                        }
-                    } else {
-                        eprintln!("assertion failed");
-                        if !fail_stmt.is_empty() {
-                            self.evaluate_stmt_block(fail_stmt)?;
+                IrStmt::Assert { cond, pass_stmt, fail_stmt, clock_event, disable_iff } => {
+                    let should_check = match clock_event {
+                        Some(ref ce) => self.check_concurrent_clock_event(ce),
+                        None => true,
+                    };
+                    if should_check {
+                        let disabled = match disable_iff {
+                            Some(ref di) => self.evaluate_expr(di)?.to_bool().unwrap_or(false),
+                            None => false,
+                        };
+                        if !disabled {
+                            let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                            if ok {
+                                if !pass_stmt.is_empty() {
+                                    self.evaluate_stmt_block(pass_stmt)?;
+                                }
+                            } else {
+                                eprintln!("assertion failed");
+                                if !fail_stmt.is_empty() {
+                                    self.evaluate_stmt_block(fail_stmt)?;
+                                }
+                            }
                         }
                     }
                 }
-                IrStmt::Assume { cond, pass_stmt, fail_stmt } => {
-                    let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
-                    if ok {
-                        if !pass_stmt.is_empty() {
-                            self.evaluate_stmt_block(pass_stmt)?;
-                        }
-                    } else {
-                        eprintln!("assumption violated");
-                        if !fail_stmt.is_empty() {
-                            self.evaluate_stmt_block(fail_stmt)?;
+                IrStmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff } => {
+                    let should_check = match clock_event {
+                        Some(ref ce) => self.check_concurrent_clock_event(ce),
+                        None => true,
+                    };
+                    if should_check {
+                        let disabled = match disable_iff {
+                            Some(ref di) => self.evaluate_expr(di)?.to_bool().unwrap_or(false),
+                            None => false,
+                        };
+                        if !disabled {
+                            let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                            if ok {
+                                if !pass_stmt.is_empty() {
+                                    self.evaluate_stmt_block(pass_stmt)?;
+                                }
+                            } else {
+                                eprintln!("assumption violated");
+                                if !fail_stmt.is_empty() {
+                                    self.evaluate_stmt_block(fail_stmt)?;
+                                }
+                            }
                         }
                     }
                 }
-                IrStmt::Cover { cond, pass_stmt } => {
-                    let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
-                    if ok {
-                        eprintln!("cover point hit");
-                        if !pass_stmt.is_empty() {
-                            self.evaluate_stmt_block(pass_stmt)?;
+                IrStmt::Cover { cond, pass_stmt, clock_event, disable_iff } => {
+                    let should_check = match clock_event {
+                        Some(ref ce) => self.check_concurrent_clock_event(ce),
+                        None => true,
+                    };
+                    if should_check {
+                        let disabled = match disable_iff {
+                            Some(ref di) => self.evaluate_expr(di)?.to_bool().unwrap_or(false),
+                            None => false,
+                        };
+                        if !disabled {
+                            let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                            if ok {
+                                eprintln!("cover point hit");
+                                if !pass_stmt.is_empty() {
+                                    self.evaluate_stmt_block(pass_stmt)?;
+                                }
+                            }
                         }
                     }
                 }
@@ -3044,6 +3290,19 @@ impl SimulationEngine {
                         }
                         Ok(LogicVec::from_u64(1, 1))
                     }
+                    "$rewind" => {
+                        // $rewind(fd) — rewind file to beginning (same as $fseek(fd, 0, 0))
+                        let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        if let Some(h) = handle {
+                            if let Some(f) = self.file_handles.get_mut(&h) {
+                                use std::io::{Seek, SeekFrom};
+                                let _ = f.seek(SeekFrom::Start(0));
+                                self.file_read_pos.insert(h, 0);
+                                self.file_ungetc_buf.remove(&h);
+                            }
+                        }
+                        Ok(LogicVec::from_u64(0, 1))
+                    }
                     "$fgets" => {
                         // $fgets(str_var, fd) — read a line from file handle into string var
                         let str_arg = args.first();
@@ -3080,6 +3339,12 @@ impl SimulationEngine {
                         // $fgetc(fd) — read a single character from file handle
                         let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
+                            // Check ungetc buffer first
+                            if let Some(buf) = self.file_ungetc_buf.get_mut(&h) {
+                                if let Some(byte) = buf.pop() {
+                                    return Ok(LogicVec::from_u64(byte as u64, 32));
+                                }
+                            }
                             if let Some(f) = self.file_handles.get_mut(&h) {
                                 use std::io::Read;
                                 let mut byte = [0u8; 1];
@@ -3090,6 +3355,15 @@ impl SimulationEngine {
                             }
                         }
                         Ok(LogicVec::from_u64(!0u64, 32)) // EOF: returns 32'hFFFFFFFF
+                    }
+                    "$ungetc" => {
+                        // $ungetc(char, fd) — push back a character to file handle
+                        let char_val = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u8));
+                        let handle = args.get(1).and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        if let (Some(c), Some(h)) = (char_val, handle) {
+                            self.file_ungetc_buf.entry(h).or_default().push(c);
+                        }
+                        Ok(LogicVec::from_u64(0, 1))
                     }
                     "$fscanf" => {
                         let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
@@ -3493,6 +3767,13 @@ impl SimulationEngine {
                 let arg_vals: Vec<LogicVec> = args.iter()
                     .map(|a| self.evaluate_expr(a))
                     .collect::<Result<_, _>>()?;
+                // Handle randomize() with inline constraint
+                if method == "randomize" && with_clause.is_some() {
+                    let class_name = self.state.get_object(obj_id)
+                        .map(|o| o.class_name.clone())
+                        .unwrap_or_default();
+                    return self.execute_randomize_with(obj_id, &class_name, with_clause.as_deref());
+                }
                 let result = self.execute_method(obj_id, method, &arg_vals)?;
                 Ok(result)
             }
@@ -3532,12 +3813,29 @@ impl SimulationEngine {
             IrExpr::Dist { expr: _expr, items } => {
                 // Dist expression in randomize context: use weighted random selection
                 if self.current_method.as_deref() == Some("randomize") {
-                    let total_weight: i64 = items.iter().map(|item| item.weight).sum();
+                    let total_weight: i64 = items.iter().map(|item| {
+                        let count = match (item.range_lo, item.range_hi) {
+                            (Some(lo), Some(hi)) if hi >= lo => (hi - lo + 1).max(1),
+                            _ => 1,
+                        };
+                        match item.weight_type {
+                            DistWeightType::Item => item.weight * count,
+                            DistWeightType::Range => item.weight,
+                        }
+                    }).sum();
                     if total_weight > 0 {
                         let r = (self.rng.gen::<u64>() % total_weight as u64) as i64;
                         let mut cumulative = 0i64;
                         for item in items {
-                            cumulative += item.weight;
+                            let count = match (item.range_lo, item.range_hi) {
+                                (Some(lo), Some(hi)) if hi >= lo => (hi - lo + 1).max(1),
+                                _ => 1,
+                            };
+                            let step = match item.weight_type {
+                                DistWeightType::Item => item.weight * count,
+                                DistWeightType::Range => item.weight,
+                            };
+                            cumulative += step;
                             if r < cumulative {
                                 let v = match (item.range_lo, item.range_hi) {
                                     (Some(lo), Some(hi)) if hi >= lo => {
@@ -3832,6 +4130,25 @@ impl SimulationEngine {
                                 if delta > 0 && delta <= limit_val {
                                     eprintln!("TIMING WARNING: $hold violation: data '{}' changed {}ns before ref (limit={}ns)",
                                         data_sig, delta, limit_val);
+                                }
+                            }
+                        }
+                    }
+                }
+                SpecifyItem::SetupHoldCheck { ref_event: _ref_event, data, setup_limit, hold_limit } => {
+                    let setup_val = const_eval_simple(setup_limit).unwrap_or(0) as u64;
+                    let hold_val = const_eval_simple(hold_limit).unwrap_or(0) as u64;
+                    if let Expr::Ident(data_sig) = data {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                            if let Some(&last_change) = self.signal_last_change.get(sid) {
+                                let delta = current_time - last_change;
+                                if delta > 0 && delta <= setup_val {
+                                    eprintln!("TIMING WARNING: $setuphold (setup) violation: data '{}' changed {}ns before ref (setup={}ns)",
+                                        data_sig, delta, setup_val);
+                                }
+                                if delta > 0 && delta <= hold_val {
+                                    eprintln!("TIMING WARNING: $setuphold (hold) violation: data '{}' changed {}ns before ref (hold={}ns)",
+                                        data_sig, delta, hold_val);
                                 }
                             }
                         }
@@ -5128,7 +5445,9 @@ impl SimulationEngine {
         }
         // Normal dispatch: find method in the full class hierarchy (virtual dispatch)
         let method_def = self.find_method_in_hierarchy(&class_name, method)?.clone();
-        self.execute_method_body(Some(obj_id), &method_def, args, method)
+        // Static methods don't receive `this`
+        let this_opt = if method_def.is_static { None } else { Some(obj_id) };
+        self.execute_method_body(this_opt, &method_def, args, method)
     }
 
     fn execute_randomize(&mut self, obj_id: ObjId, class_name: &str) -> Result<LogicVec, SimError> {
@@ -5215,6 +5534,97 @@ impl SimulationEngine {
 
         self.current_this = old_this;
         Err(SimError::runtime(format!("randomize failed: could not satisfy all constraints after {} attempts", max_attempts)))
+    }
+
+    fn execute_randomize_with(&mut self, obj_id: ObjId, class_name: &str, with_clause: Option<&IrExpr>) -> Result<LogicVec, SimError> {
+        let class_def = self.design.classes.get(class_name)
+            .ok_or_else(|| format!("class '{}' not found", class_name))?.clone();
+        if class_def.rand_fields.is_empty() {
+            return Ok(LogicVec::from_u64(1, 1));
+        }
+        if with_clause.is_none() {
+            return self.execute_randomize(obj_id, class_name);
+        }
+        let wc = with_clause.unwrap();
+        let old_this = self.current_this;
+        self.current_this = Some(obj_id);
+
+        let mut before_map: std::collections::HashMap<String, std::collections::HashSet<String>> = std::collections::HashMap::new();
+        for (_, body) in &class_def.constraints {
+            for item in body {
+                if let ConstraintItem::SolveBefore { vars } = item {
+                    if vars.len() >= 2 {
+                        let first = &vars[0];
+                        for later in &vars[1..] {
+                            before_map.entry(first.clone())
+                                .or_insert_with(std::collections::HashSet::new)
+                                .insert(later.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut ordered_fields: Vec<String> = Vec::new();
+        let mut remaining: std::collections::HashSet<String> = class_def.rand_fields.iter().cloned().collect();
+        for fname in &class_def.rand_fields {
+            if before_map.contains_key(fname) && remaining.contains(fname) {
+                ordered_fields.push(fname.clone());
+                remaining.remove(fname);
+            }
+        }
+        for fname in &class_def.rand_fields {
+            if remaining.contains(fname) {
+                ordered_fields.push(fname.clone());
+            }
+        }
+
+        let max_attempts = 100;
+        let mut seed = self.current_time as u64;
+        for _ in 0..max_attempts {
+            for fname in &ordered_fields {
+                let field_info = class_def.fields.iter().find(|f| &f.name == fname);
+                let width = field_info.map(|f| f.width).unwrap_or(1);
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let rv = LogicVec::from_u64(seed, width);
+                if let Some(obj) = self.state.objects.get_mut(obj_id) {
+                    obj.fields.insert(fname.clone(), rv);
+                }
+            }
+
+            let mut all_satisfied = true;
+            // Evaluate class constraints
+            for (_, body) in &class_def.constraints {
+                for item in body {
+                    match item {
+                        ConstraintItem::Expr(expr) => {
+                            let result = self.evaluate_ast_expr(expr)?;
+                            if !result.to_bool().unwrap_or(false) {
+                                all_satisfied = false;
+                                break;
+                            }
+                        }
+                        ConstraintItem::SolveBefore { .. } => {}
+                    }
+                }
+                if !all_satisfied { break; }
+            }
+            // Evaluate inline constraint (with_clause)
+            if all_satisfied {
+                let wc_result = self.evaluate_expr(wc)?;
+                if !wc_result.to_bool().unwrap_or(false) {
+                    all_satisfied = false;
+                }
+            }
+
+            if all_satisfied {
+                self.current_this = old_this;
+                return Ok(LogicVec::from_u64(1, 1));
+            }
+        }
+
+        self.current_this = old_this;
+        Err(SimError::runtime(format!("randomize with failed: could not satisfy constraints after {} attempts", max_attempts)))
     }
 
     fn execute_mailbox_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
@@ -6646,6 +7056,45 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 Ok(LogicVec::new(0))
             }
             _ => Err(SimError::runtime(format!("unknown array/queue method: {}", method))),
+        }
+    }
+
+    fn check_concurrent_clock_event(&self, ce: &crate::ast::types::ClockEvent) -> bool {
+        let sig_name = match ce {
+            crate::ast::types::ClockEvent::Posedge(s) => s,
+            crate::ast::types::ClockEvent::Negedge(s) => s,
+            crate::ast::types::ClockEvent::Edge(s) => s,
+        };
+        let sig_id = match self.find_signal(sig_name) {
+            Some(id) => id,
+            None => return true,
+        };
+        let curr = self.state.read_signal(sig_id);
+        match ce {
+            crate::ast::types::ClockEvent::Posedge(_) => {
+                if let Some(ref snap) = self.signal_snapshot {
+                    let old = snap.get(sig_id).cloned().unwrap_or_else(|| LogicVec::new(1));
+                    old.to_bool() != Some(true) && curr.to_bool() == Some(true)
+                } else {
+                    curr.to_bool() == Some(true)
+                }
+            }
+            crate::ast::types::ClockEvent::Negedge(_) => {
+                if let Some(ref snap) = self.signal_snapshot {
+                    let old = snap.get(sig_id).cloned().unwrap_or_else(|| LogicVec::new(1));
+                    old.to_bool() != Some(false) && curr.to_bool() == Some(false)
+                } else {
+                    curr.to_bool() == Some(false)
+                }
+            }
+            crate::ast::types::ClockEvent::Edge(_) => {
+                if let Some(ref snap) = self.signal_snapshot {
+                    let old = snap.get(sig_id).cloned().unwrap_or_else(|| LogicVec::new(1));
+                    old.to_bool() != curr.to_bool()
+                } else {
+                    true
+                }
+            }
         }
     }
 }

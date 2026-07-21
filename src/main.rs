@@ -12,7 +12,7 @@ use maria::simulator::Breakpoint;
 use maria::simulator::Watchpoint;
 use maria::waveform::VcdWriter;
 use maria::ir::LogicVec;
-use maria::error::SimError;
+use maria::error::{SimError, ErrorContext};
 use maria::read_project_file;
 use maria::debugger::Debugger;
 
@@ -139,7 +139,8 @@ fn main() {
 
     let result = run(cli);
     if let Err(e) = result {
-        eprintln!("Error: {}", e);
+        let ctx = ErrorContext::new();
+        eprint!("{}", e.format_with_context(&ctx));
         process::exit(1);
     }
 }
@@ -264,7 +265,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
     }
 
     let first_source = sources.first().map(|s| s.as_str()).unwrap_or("<unknown>");
-    let mut parser = Parser::new(tokens, first_source);
+    let mut parser = Parser::new(tokens, first_source).with_source_lines(&combined);
     let mut design = parser.parse_design()?;
     let ts_for_ir = design_timescale.clone();
     design.timescale = design_timescale;

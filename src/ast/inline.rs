@@ -296,7 +296,7 @@ fn inline_funcs_in_stmt(
                         let port = func.ports.get(i)
                             .cloned()
                             .unwrap_or_else(|| super::types::FunctionPort {
-                                name: format!("_arg{}", i), range: None, expr_range: None,
+                                name: format!("_arg{}", i), range: None, expr_range: None, direction: None,
                             });
                         let temp_arg_name = format!("__func_{}_{}_{}_{}", prefix, name, c, port.name);
                         let port_width = func_port_width(func, &port.name);
@@ -528,27 +528,30 @@ fn inline_funcs_in_stmt(
             let main = Stmt::CaseInside { expr: new_expr, items: new_items, default: new_default };
             if preamble.is_empty() { main } else { preamble.push(main); Stmt::Block { stmts: preamble } }
         }
-        Stmt::Assert { cond, pass_stmt, fail_stmt } => {
+        Stmt::Assert { cond, pass_stmt, fail_stmt, clock_event: _ce, disable_iff: _di } => {
             let new_cond = replace_func_calls_in_expr(cond, funcs, prefix, counter, &mut vec![], temp_signals);
             Stmt::Assert {
                 cond: new_cond,
                 pass_stmt: pass_stmt.map(|s| Box::new(inline_funcs_in_stmt(*s, funcs, prefix, counter, temp_signals))),
                 fail_stmt: fail_stmt.map(|s| Box::new(inline_funcs_in_stmt(*s, funcs, prefix, counter, temp_signals))),
+                clock_event: None, disable_iff: None,
             }
         }
-        Stmt::Assume { cond, pass_stmt, fail_stmt } => {
+        Stmt::Assume { cond, pass_stmt, fail_stmt, clock_event: _ce, disable_iff: _di } => {
             let new_cond = replace_func_calls_in_expr(cond, funcs, prefix, counter, &mut vec![], temp_signals);
             Stmt::Assume {
                 cond: new_cond,
                 pass_stmt: pass_stmt.map(|s| Box::new(inline_funcs_in_stmt(*s, funcs, prefix, counter, temp_signals))),
                 fail_stmt: fail_stmt.map(|s| Box::new(inline_funcs_in_stmt(*s, funcs, prefix, counter, temp_signals))),
+                clock_event: None, disable_iff: None,
             }
         }
-        Stmt::Cover { cond, pass_stmt } => {
+        Stmt::Cover { cond, pass_stmt, clock_event: _ce, disable_iff: _di } => {
             let new_cond = replace_func_calls_in_expr(cond, funcs, prefix, counter, &mut vec![], temp_signals);
             Stmt::Cover {
                 cond: new_cond,
                 pass_stmt: pass_stmt.map(|s| Box::new(inline_funcs_in_stmt(*s, funcs, prefix, counter, temp_signals))),
+                clock_event: None, disable_iff: None,
             }
         }
         Stmt::Expect { cond, pass_stmt, fail_stmt } => {
@@ -623,7 +626,7 @@ fn replace_func_calls_in_expr(
                     let port = func.ports.get(i)
                         .cloned()
                         .unwrap_or_else(|| super::types::FunctionPort {
-                            name: format!("_arg{}", i), range: None, expr_range: None,
+                            name: format!("_arg{}", i), range: None, expr_range: None, direction: None,
                         });
                     let temp_arg_name = format!("__func_{}_{}_{}_{}", prefix, name, c, port.name);
                     let port_width = func_port_width(func, &port.name);
@@ -698,7 +701,7 @@ fn replace_func_calls_in_expr(
                     let port = func.ports.get(i)
                         .cloned()
                         .unwrap_or_else(|| super::types::FunctionPort {
-                            name: format!("_arg{}", i), range: None, expr_range: None,
+                            name: format!("_arg{}", i), range: None, expr_range: None, direction: None,
                         });
                     let temp_arg_name = format!("__func_{}_{}_{}_{}", prefix, name, c, port.name);
                     if let Expr::Ident(_) = &orig_arg {
@@ -923,19 +926,22 @@ fn rename_in_stmt(stmt: &Stmt, rename_map: &HashMap<String, String>) -> Stmt {
             }).collect(),
             default: default.map(|d| Box::new(rename_in_stmt(&d, rename_map))),
         },
-        Stmt::Assert { cond, pass_stmt, fail_stmt } => Stmt::Assert {
+        Stmt::Assert { cond, pass_stmt, fail_stmt, .. } => Stmt::Assert {
             cond: rename_in_expr(cond, rename_map),
             pass_stmt: pass_stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
             fail_stmt: fail_stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
+            clock_event: None, disable_iff: None,
         },
-        Stmt::Assume { cond, pass_stmt, fail_stmt } => Stmt::Assume {
+        Stmt::Assume { cond, pass_stmt, fail_stmt, .. } => Stmt::Assume {
             cond: rename_in_expr(cond, rename_map),
             pass_stmt: pass_stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
             fail_stmt: fail_stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
+            clock_event: None, disable_iff: None,
         },
-        Stmt::Cover { cond, pass_stmt } => Stmt::Cover {
+        Stmt::Cover { cond, pass_stmt, .. } => Stmt::Cover {
             cond: rename_in_expr(cond, rename_map),
             pass_stmt: pass_stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
+            clock_event: None, disable_iff: None,
         },
         Stmt::Expect { cond, pass_stmt, fail_stmt } => Stmt::Expect {
             cond: rename_in_expr(cond, rename_map),

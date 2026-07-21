@@ -7,12 +7,13 @@ pub mod parser;
 pub mod simulator;
 pub mod waveform;
 
+pub use error::{SimError, ErrorContext};
+
 use std::fs;
 use std::path::Path;
 use parser::lexer::Lexer;
 use parser::parser::Parser;
 use parser::preprocessor::Preprocessor;
-use error::SimError;
 
 /// Read a .maria project file and return list of .sv file paths
 /// Paths in .maria are resolved relative to the .maria file's directory

@@ -314,7 +314,7 @@ pub fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, v
             }
         }
         ModuleItem::Func(_) | ModuleItem::Typedef(_) | ModuleItem::Import { .. }
-        | ModuleItem::Covergroup(_) | ModuleItem::DpiImport(_) | ModuleItem::Param(_)
+        | ModuleItem::Covergroup(_) | ModuleItem::DpiImport(_) | ModuleItem::DpiExport(_) | ModuleItem::Param(_)
         | ModuleItem::Clocking(_) | ModuleItem::Specify(_) => {}
     }
 }

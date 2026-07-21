@@ -8,10 +8,42 @@ use std::collections::HashMap;
 
 use super::SimulationEngine;
 
+/// Check if a value matches a wildcard bin pattern (supports ? and * wildcards).
+fn wildcard_match(value: u64, pattern: &str) -> bool {
+    let val_str = format!("{}", value);
+    let p = pattern.trim();
+    
+    let pat_chars: Vec<char> = p.chars().collect();
+    let val_chars: Vec<char> = val_str.chars().collect();
+    
+    let vlen = val_chars.len();
+    let plen = pat_chars.len();
+    let mut dp = vec![vec![false; plen + 1]; vlen + 1];
+    dp[0][0] = true;
+    
+    for j in 1..=plen {
+        if pat_chars[j - 1] == '*' {
+            dp[0][j] = dp[0][j - 1];
+        }
+    }
+    
+    for i in 1..=vlen {
+        for j in 1..=plen {
+            if pat_chars[j - 1] == '*' {
+                dp[i][j] = dp[i - 1][j] || dp[i][j - 1];
+            } else if pat_chars[j - 1] == '?' {
+                dp[i][j] = dp[i - 1][j - 1];
+            } else if pat_chars[j - 1] == val_chars[i - 1] {
+                dp[i][j] = dp[i - 1][j - 1];
+            }
+        }
+    }
+    dp[vlen][plen]
+}
+
 impl SimulationEngine {
     /// Sample a named covergroup: evaluate coverpoints, update hit counts and bins.
     pub(crate) fn sample_covergroup(&mut self, cg_name: &str) -> Result<(), SimError> {
-        // Clone covergroup data to avoid borrow conflict with evaluate_expr
         let cg = self.design.covergroups.iter()
             .find(|c| c.name == cg_name)
             .cloned();
@@ -23,11 +55,13 @@ impl SimulationEngine {
                 *total += 1;
                 let val = self.evaluate_expr(&cp.expr).unwrap_or(LogicVec::from_u64(0, 32));
                 cp_values.insert(cp.name.clone(), val.to_u64());
+                
+                // Default bin: just record the actual value
                 let bin_key = format!("{}={}", cp.name, val.to_u64());
                 let bins = self.cover_bins.entry(key.clone()).or_insert_with(HashMap::new);
                 let entry = bins.entry(bin_key).or_insert(0);
                 *entry += 1;
-                let hits = self.cover_hits.entry(key).or_insert(0);
+                let hits = self.cover_hits.entry(key.clone()).or_insert(0);
                 *hits += 1;
             }
             // Cross coverage

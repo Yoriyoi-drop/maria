@@ -2,12 +2,13 @@ use crate::ast::*;
 use crate::ast::types::const_eval_simple;
 use crate::parser::lexer::*;
 use super::util::*;
-use crate::error::SimError;
+use crate::error::{SimError, ErrorContext};
 
 pub struct Parser {
     tokens: Vec<(Token, usize, usize)>,
     pos: usize,
     source_file: String,
+    source_lines: Vec<String>,
     class_names: Vec<String>,
     typedef_names: Vec<String>,
     package_tdefs: std::collections::HashMap<String, Vec<String>>,
@@ -16,7 +17,12 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(tokens: Vec<(Token, usize, usize)>, source_file: &str) -> Self {
-        Self { tokens, pos: 0, source_file: source_file.to_string(), class_names: vec!["process".to_string(), "uvm_object".to_string(), "uvm_component".to_string(), "uvm_sequence_item".to_string(), "uvm_sequence".to_string(), "uvm_sequencer".to_string(), "uvm_driver".to_string(), "uvm_monitor".to_string(), "uvm_scoreboard".to_string(), "uvm_analysis_port".to_string(), "uvm_analysis_imp".to_string(), "uvm_test".to_string(), "uvm_config_db".to_string(), "uvm_report_object".to_string(), "uvm_factory".to_string(), "uvm_resource_db".to_string()], typedef_names: Vec::new(), package_tdefs: std::collections::HashMap::new(), type_param_names: Vec::new() }
+        Self { tokens, pos: 0, source_file: source_file.to_string(), source_lines: Vec::new(), class_names: vec!["process".to_string(), "uvm_object".to_string(), "uvm_component".to_string(), "uvm_sequence_item".to_string(), "uvm_sequence".to_string(), "uvm_sequencer".to_string(), "uvm_driver".to_string(), "uvm_monitor".to_string(), "uvm_scoreboard".to_string(), "uvm_analysis_port".to_string(), "uvm_analysis_imp".to_string(), "uvm_test".to_string(), "uvm_config_db".to_string(), "uvm_report_object".to_string(), "uvm_factory".to_string(), "uvm_resource_db".to_string()], typedef_names: Vec::new(), package_tdefs: std::collections::HashMap::new(), type_param_names: Vec::new() }
+    }
+
+    pub fn with_source_lines(mut self, source: &str) -> Self {
+        self.source_lines = source.lines().map(|s| s.to_string()).collect();
+        self
     }
 
     fn peek(&self) -> &Token {
@@ -41,7 +47,32 @@ impl Parser {
     }
 
     fn err(&self, msg: impl Into<String>) -> SimError {
-        SimError::parse(format!("{}:{}:{}: {}", self.source_file, self.peek_line(), self.peek_col(), msg.into()))
+        let msg_str = msg.into();
+        let line = self.peek_line();
+        let col = self.peek_col();
+        let source_line = if line > 0 && line <= self.source_lines.len() {
+            Some(self.source_lines[line - 1].clone())
+        } else {
+            None
+        };
+        
+        let mut ctx = ErrorContext::new()
+            .with_file(&self.source_file)
+            .with_line(line)
+            .with_col(col);
+        
+        if let Some(sl) = source_line {
+            ctx = ctx.with_source(&sl);
+        }
+        
+        let simple_err = SimError::parse(format!("{}:{}:{}: {}", self.source_file, line, col, msg_str));
+        
+        // If we have source lines available, format with rich context
+        if !self.source_lines.is_empty() {
+            SimError::parse(simple_err.format_with_context(&ctx))
+        } else {
+            simple_err
+        }
     }
 
     fn peek_ahead(&self, n: usize) -> &Token {
@@ -1098,6 +1129,19 @@ impl Parser {
                             self.skip_semi();
                             items.push(PackageItem::Import { package: pkg, item });
                         }
+                        Token::Export => {
+                            self.advance();
+                            let pkg = self.expect_ident()?;
+                            self.expect(Token::Scope)?;
+                            let item = if self.peek() == &Token::Star {
+                                self.advance();
+                                "*".to_string()
+                            } else {
+                                self.expect_ident()?
+                            };
+                            self.skip_semi();
+                            items.push(PackageItem::Export { package: pkg, item });
+                        }
                         _ => {
                             let decl = self.parse_decl()?;
                             items.push(PackageItem::Decl(decl));
@@ -2009,6 +2053,7 @@ impl Parser {
                     decls: task.decls,
                     stmts: task.stmts,
                     virtual_flag: task.virtual_flag,
+                    is_static: task.is_static,
                 })))
             }
             Token::And | Token::Or | Token::Nand | Token::Nor | Token::Xor | Token::Xnor => {
@@ -2019,6 +2064,7 @@ impl Parser {
                 let gate = self.parse_gate_primitive()?;
                 Ok(Some(ModuleItem::Gate(gate)))
             }
+
             Token::Typedef => {
                 // Check for 'typedef class' (forward declaration)
                 if matches!(self.peek_ahead(1), Token::Class | Token::Virtual) {
@@ -2035,7 +2081,7 @@ impl Parser {
             }
             Token::Import => {
                 self.advance();
-                // Check for DPI-C import
+                // Check for DPI-C import or export
                 if self.peek() == &Token::StringLit("DPI-C".to_string())
                     || self.peek() == &Token::StringLit("DPI".to_string()) {
                     let result = self.parse_dpi_import()?;
@@ -3012,10 +3058,14 @@ impl Parser {
 
     fn parse_function(&mut self, virtual_flag: bool) -> Result<FunctionDecl, SimError> {
         self.advance(); // consume 'function'
-        // Skip optional 'automatic'/'static' qualifier
-        if matches!(self.peek(), Token::Auto | Token::Static) {
+        // Capture optional 'static' qualifier
+        let is_static = if matches!(self.peek(), Token::Static) {
             self.advance();
-        }
+            true
+        } else {
+            if matches!(self.peek(), Token::Auto) { self.advance(); }
+            false
+        };
         // Parse optional return type
         let return_type = match self.peek() {
             Token::Void => { self.advance(); Some(Box::new(DataType::Void)) }
@@ -3055,6 +3105,7 @@ impl Parser {
         // Parse ANSI-style port list in parens (e.g., function new(int level, string name))
         let mut ports = Vec::new();
         let mut decls = Vec::new();
+        let mut last_direction: Option<PortDirection> = None;
         if self.peek() == &Token::LParen {
             self.advance();
             while self.peek() != &Token::RParen && self.peek() != &Token::Eof {
@@ -3064,8 +3115,16 @@ impl Parser {
                 if matches!(self.peek(),
                     Token::Int | Token::Integer | Token::String | Token::Void |
                     Token::Reg | Token::Logic | Token::Wire | Token::Signed | Token::Unsigned |
-                    Token::Input | Token::Output | Token::Inout)
+                    Token::Input | Token::Output | Token::Inout | Token::Ref)
                 {
+                    if matches!(self.peek(), Token::Input | Token::Output | Token::Inout | Token::Ref) {
+                        last_direction = Some(match self.peek() {
+                            Token::Input => PortDirection::Input,
+                            Token::Output => PortDirection::Output,
+                            Token::Ref => PortDirection::Ref,
+                            _ => PortDirection::Inout,
+                        });
+                    }
                     self.advance();
                 } else if let Token::Ident(name) = self.peek() {
                     if self.type_param_names.contains(name) {
@@ -3094,6 +3153,7 @@ impl Parser {
                                 name: pn,
                                 range: range.clone(),
                                 expr_range: None,
+                                direction: last_direction,
                             });
                         }
                         _ => break,
@@ -3113,10 +3173,11 @@ impl Parser {
         // Parse ports and declarations until 'begin' or statement
         loop {
             match self.peek() {
-                Token::Input | Token::Output | Token::Inout => {
-                    let _direction = match self.peek() {
+                Token::Input | Token::Output | Token::Inout | Token::Ref => {
+                    let direction = match self.peek() {
                         Token::Input => { self.advance(); PortDirection::Input }
                         Token::Output => { self.advance(); PortDirection::Output }
+                        Token::Ref => { self.advance(); PortDirection::Ref }
                         _ => { self.advance(); PortDirection::Inout }
                     };
                     let port_range = if self.peek() == &Token::LBrack {
@@ -3140,6 +3201,7 @@ impl Parser {
                                     name: pn,
                                     range: port_range.clone(),
                                     expr_range: None,
+                                    direction: Some(direction),
                                 });
                             }
                             _ => break,
@@ -3173,7 +3235,7 @@ impl Parser {
                         self.advance();
                         if matches!(self.peek(), Token::Ident(_)) { self.advance(); }
                     }
-                    return Ok(FunctionDecl { name, range, return_type, ports, decls, stmts, virtual_flag });
+                    return Ok(FunctionDecl { name, range, return_type, ports, decls, stmts, virtual_flag, is_static });
                 }
                 Token::EndFunction => {
                     self.advance(); // consume 'endfunction'
@@ -3181,7 +3243,7 @@ impl Parser {
                         self.advance();
                         if matches!(self.peek(), Token::Ident(_)) { self.advance(); }
                     }
-                    return Ok(FunctionDecl { name, range, return_type, ports, decls, stmts: vec![], virtual_flag });
+                    return Ok(FunctionDecl { name, range, return_type, ports, decls, stmts: vec![], virtual_flag, is_static });
                 }
                 _ => break,
             }
@@ -3202,18 +3264,23 @@ impl Parser {
             self.advance();
             if matches!(self.peek(), Token::Ident(_)) { self.advance(); }
         }
-        Ok(FunctionDecl { name, range, return_type, ports, decls, stmts, virtual_flag })
+        Ok(FunctionDecl { name, range, return_type, ports, decls, stmts, virtual_flag, is_static })
     }
 
     fn parse_task(&mut self, virtual_flag: bool) -> Result<TaskDecl, SimError> {
         self.advance(); // consume 'task'
-        // Skip optional 'automatic'/'static' qualifier
-        if matches!(self.peek(), Token::Auto | Token::Static) {
+        // Capture optional 'static' qualifier
+        let is_static = if matches!(self.peek(), Token::Static) {
             self.advance();
-        }
+            true
+        } else {
+            if matches!(self.peek(), Token::Auto) { self.advance(); }
+            false
+        };
         let name = self.expect_ident()?;
         let mut ports = Vec::new();
         let mut decls = Vec::new();
+        let mut last_direction: Option<PortDirection> = None;
         // Parse ANSI-style port list in parens (e.g., task set_val(input [7:0] x))
         if self.peek() == &Token::LParen {
             self.advance();
@@ -3222,8 +3289,16 @@ impl Parser {
                 if matches!(self.peek(),
                     Token::Int | Token::Integer | Token::String | Token::Void |
                     Token::Reg | Token::Logic | Token::Wire | Token::Signed |
-                    Token::Input | Token::Output | Token::Inout)
+                    Token::Input | Token::Output | Token::Inout | Token::Ref)
                 {
+                    if matches!(self.peek(), Token::Input | Token::Output | Token::Inout | Token::Ref) {
+                        last_direction = Some(match self.peek() {
+                            Token::Input => PortDirection::Input,
+                            Token::Output => PortDirection::Output,
+                            Token::Ref => PortDirection::Ref,
+                            _ => PortDirection::Inout,
+                        });
+                    }
                     self.advance();
                 }
                 let range: Option<Range> = if self.peek() == &Token::LBrack {
@@ -3250,6 +3325,7 @@ impl Parser {
                                 name: pn,
                                 range: range.clone(),
                                 expr_range: None,
+                                direction: last_direction,
                             });
                         }
                         _ => break,
@@ -3266,15 +3342,17 @@ impl Parser {
         if self.peek() == &Token::Semi {
             self.advance();
         }
+        
         // Parse non-ANSI port declarations and body
         loop {
             match self.peek() {
-                Token::Input | Token::Output | Token::Inout => {
-                    match self.peek() {
-                        Token::Input => { self.advance(); }
-                        Token::Output => { self.advance(); }
-                        _ => { self.advance(); }
-                    }
+                Token::Input | Token::Output | Token::Inout | Token::Ref => {
+                    let direction = match self.peek() {
+                        Token::Input => { self.advance(); PortDirection::Input }
+                        Token::Output => { self.advance(); PortDirection::Output }
+                        Token::Ref => { self.advance(); PortDirection::Ref }
+                        _ => { self.advance(); PortDirection::Inout }
+                    };
                     let port_range = if self.peek() == &Token::LBrack {
                         let er = self.parse_range()?;
                         er.as_ref().and_then(|er| {
@@ -3296,6 +3374,7 @@ impl Parser {
                                     name: pn,
                                     range: port_range.clone(),
                                     expr_range: None,
+                                    direction: Some(direction),
                                 });
                             }
                             _ => break,
@@ -3318,7 +3397,7 @@ impl Parser {
                         self.advance();
                         if matches!(self.peek(), Token::Ident(_)) { self.advance(); }
                     }
-                    return Ok(TaskDecl { name, ports, decls, stmts, virtual_flag });
+                    return Ok(TaskDecl { name, ports, decls, stmts, virtual_flag, is_static });
                 }
                 Token::EndTask => {
                     self.advance(); // consume 'endtask'
@@ -3326,7 +3405,7 @@ impl Parser {
                         self.advance();
                         if matches!(self.peek(), Token::Ident(_)) { self.advance(); }
                     }
-                    return Ok(TaskDecl { name, ports, decls, stmts: vec![], virtual_flag });
+                    return Ok(TaskDecl { name, ports, decls, stmts: vec![], virtual_flag, is_static });
                 }
                 _ => break,
             }
@@ -3346,7 +3425,7 @@ impl Parser {
             self.advance();
             if matches!(self.peek(), Token::Ident(_)) { self.advance(); }
         }
-        Ok(TaskDecl { name, ports, decls, stmts, virtual_flag })
+        Ok(TaskDecl { name, ports, decls, stmts, virtual_flag, is_static })
     }
 
     fn parse_always(&mut self) -> Result<AlwaysBlock, SimError> {
@@ -3659,6 +3738,59 @@ impl Parser {
             Token::NotGate => { self.advance(); GateType::Not }
             _ => return Err(SimError::parse(format!("line {}: expected gate type", self.peek_line()))),
         };
+
+        // Parse optional drive strength: (strength1, strength0)
+        let mut drive_strength = None;
+        if self.peek() == &Token::LParen && matches!(self.peek_ahead(1), Token::Ident(_)) {
+            // Check if this looks like drive strength, not port list
+            let saved = self.pos;
+            self.advance(); // consume (
+            if let Token::Ident(s1) = self.peek().clone() {
+                if is_strength_keyword(&s1) {
+                    self.advance();
+                    if self.peek() == &Token::Comma {
+                        self.advance();
+                        if let Token::Ident(s2) = self.peek().clone() {
+                            if is_strength_keyword(&s2) {
+                                self.advance();
+                                if self.peek() == &Token::RParen {
+                                    self.advance();
+                                    drive_strength = Some((s1.to_lowercase(), s2.to_lowercase()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if drive_strength.is_none() {
+                self.pos = saved; // Not drive strength, restore position
+            }
+        }
+
+        // Parse optional delay: #(rise, fall, turnoff) or #delay
+        let mut delay = None;
+        if self.peek() == &Token::Hash {
+            self.advance();
+            if self.peek() == &Token::LParen {
+                self.advance();
+                let rise = Some(self.parse_expr(0)?);
+                let fall = if self.peek() == &Token::Comma {
+                    self.advance();
+                    Some(self.parse_expr(0)?)
+                } else { None };
+                let turnoff = if self.peek() == &Token::Comma {
+                    self.advance();
+                    Some(self.parse_expr(0)?)
+                } else { None };
+                self.expect(Token::RParen)?;
+                delay = Some(crate::ast::types::Delay { rise, fall, turnoff });
+            } else {
+                // Single delay value
+                let d = Some(self.parse_expr(0)?);
+                delay = Some(crate::ast::types::Delay { rise: d.clone(), fall: d, turnoff: None });
+            }
+        }
+
         let instance_name = if self.peek() == &Token::LParen {
             None
         } else {
@@ -3683,7 +3815,7 @@ impl Parser {
         }
         self.expect(Token::RParen)?;
         self.skip_semi();
-        Ok(GatePrimitive { gate_type, instance_name, ports })
+        Ok(GatePrimitive { gate_type, instance_name, ports, drive_strength, delay })
     }
 
     fn parse_stmt_block(&mut self) -> Result<Vec<Stmt>, SimError> {
@@ -3732,20 +3864,40 @@ impl Parser {
             self.advance();
             self.expect(Token::LParen)?;
             // Parse optional clocking: @(posedge clk)
-            if self.peek() == &Token::At {
-                self.parse_clocking_event()?;
-            }
+            let clock_event = if self.peek() == &Token::At {
+                self.advance();
+                self.expect(Token::LParen)?;
+                let ce = if self.peek() == &Token::PosEdge {
+                    self.advance();
+                    let sig = self.expect_ident()?;
+                    Some(ClockEvent::Posedge(sig))
+                } else if self.peek() == &Token::NegEdge {
+                    self.advance();
+                    let sig = self.expect_ident()?;
+                    Some(ClockEvent::Negedge(sig))
+                } else {
+                    let sig = self.expect_ident()?;
+                    Some(ClockEvent::Edge(sig))
+                };
+                self.expect(Token::RParen)?;
+                ce
+            } else {
+                None
+            };
             // Parse optional disable iff (expr)
-            if self.peek() == &Token::Disable {
+            let disable_iff = if self.peek() == &Token::Disable {
                 self.advance();
                 match self.peek() {
                     Token::Ident(s) if s == "iff" => { self.advance(); }
                     _ => return Err(SimError::parse("expected 'iff' after 'disable'")),
                 }
                 self.expect(Token::LParen)?;
-                self.parse_expr(0)?;
+                let expr = self.parse_expr(0)?;
                 self.expect(Token::RParen)?;
-            }
+                Some(Box::new(expr))
+            } else {
+                None
+            };
             let expr = self.parse_expr(0)?;
             self.expect(Token::RParen)?;
             let fail_stmt = if self.peek() == &Token::Else {
@@ -3761,9 +3913,9 @@ impl Parser {
                 false_expr: Box::new(Expr::Value(Value::Decimal(0))),
             };
             return match kind {
-                "assert" => Ok(Stmt::Assert { cond, pass_stmt: None, fail_stmt }),
-                "assume" => Ok(Stmt::Assume { cond, pass_stmt: None, fail_stmt }),
-                "cover" => Ok(Stmt::Cover { cond, pass_stmt: None }),
+                "assert" => Ok(Stmt::Assert { cond, pass_stmt: None, fail_stmt, clock_event, disable_iff }),
+                "assume" => Ok(Stmt::Assume { cond, pass_stmt: None, fail_stmt, clock_event, disable_iff }),
+                "cover" => Ok(Stmt::Cover { cond, pass_stmt: None, clock_event, disable_iff }),
                 _ => unreachable!(),
             };
         }
@@ -3788,9 +3940,9 @@ impl Parser {
         };
         self.skip_semi();
         match kind {
-            "assert" => Ok(Stmt::Assert { cond, pass_stmt, fail_stmt }),
-            "assume" => Ok(Stmt::Assume { cond, pass_stmt, fail_stmt }),
-            "cover" => Ok(Stmt::Cover { cond, pass_stmt }),
+            "assert" => Ok(Stmt::Assert { cond, pass_stmt, fail_stmt, clock_event: None, disable_iff: None }),
+            "assume" => Ok(Stmt::Assume { cond, pass_stmt, fail_stmt, clock_event: None, disable_iff: None }),
+            "cover" => Ok(Stmt::Cover { cond, pass_stmt, clock_event: None, disable_iff: None }),
             "expect" => Ok(Stmt::Expect { cond, pass_stmt, fail_stmt }),
             _ => unreachable!(),
         }
@@ -3950,6 +4102,12 @@ impl Parser {
     }
 
     fn parse_dpi_import(&mut self) -> Result<DpiImport, SimError> {
+        // Check if this is a DPI-C export instead of import
+        let saved = self.pos;
+        // We already consumed the string "DPI-C" or "DPI"
+        // Now check for 'context' and then 'function' or 'task'
+        // For export: import "DPI-C" context function ...  vs export "DPI-C" function ...
+
         self.advance(); // consume "DPI-C" string literal
         let is_task = if self.peek() == &Token::Task {
             self.advance();
@@ -4896,13 +5054,32 @@ impl Parser {
                     continue;
                 }
                 Token::Ident(ref s) if s == "with" => {
-                    // expr.method(args) with (expr)
+                    // expr.method(args) with (expr) or with { stmt; ... }
                     // Same precedence as method call
                     if 6 < min_prec { break; }
                     self.advance();
-                    self.expect(Token::LParen)?;
-                    let with_expr = self.parse_expr(0)?;
-                    self.expect(Token::RParen)?;
+                    let with_expr = if self.peek() == &Token::LBrace {
+                        // with { constraint_expr; ... } — inline constraint block
+                        self.advance();
+                        let mut exprs: Vec<Expr> = Vec::new();
+                        while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+                            let e = self.parse_expr(0)?;
+                            exprs.push(e);
+                            if self.peek() == &Token::Semi { self.advance(); }
+                        }
+                        self.expect(Token::RBrace)?;
+                        // Combine multiple constraints with logical AND
+                        let combined = exprs.into_iter().reduce(|acc, e| {
+                            Expr::BinaryOp { op: BinaryOp::LogicalAnd, lhs: Box::new(acc), rhs: Box::new(e) }
+                        }).unwrap_or(Expr::Value(Value::Decimal(1)));
+                        combined
+                    } else {
+                        // with (expr) — array method with-clause
+                        self.expect(Token::LParen)?;
+                        let e = self.parse_expr(0)?;
+                        self.expect(Token::RParen)?;
+                        e
+                    };
                     let old_lhs = std::mem::replace(&mut lhs, Expr::Value(Value::Decimal(0)));
                     match old_lhs {
                         Expr::MethodCall { obj, method, args, with_clause: None } => {

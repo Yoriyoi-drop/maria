@@ -74,6 +74,7 @@ pub struct TaskDecl {
     pub decls: Vec<Decl>,
     pub stmts: Vec<Stmt>,
     pub virtual_flag: bool,
+    pub is_static: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -135,11 +136,12 @@ impl Port {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PortDirection {
     Input,
     Output,
     Inout,
+    Ref,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -376,6 +378,8 @@ pub struct GatePrimitive {
     pub gate_type: GateType,
     pub instance_name: Option<String>,
     pub ports: Vec<Expr>,
+    pub drive_strength: Option<(String, String)>,
+    pub delay: Option<Delay>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -444,6 +448,7 @@ pub enum ModuleItem {
     // Imported items from packages
     Import { package: String, item: String },
     DpiImport(DpiImport),
+    DpiExport(DpiImport),
     Param(ParamDecl),
     Clocking(ClockingBlock),
     Specify(SpecifyBlock),
@@ -499,6 +504,7 @@ pub struct FunctionDecl {
     pub decls: Vec<Decl>,
     pub stmts: Vec<Stmt>,
     pub virtual_flag: bool,
+    pub is_static: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -515,6 +521,7 @@ pub enum PackageItem {
     Typedef(TypedefDecl),
     Param(ParamDecl),
     Import { package: String, item: String },
+    Export { package: String, item: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -555,6 +562,7 @@ pub struct FunctionPort {
     pub name: String,
     pub range: Option<Range>,
     pub expr_range: Option<ExprRange>,
+    pub direction: Option<PortDirection>,
 }
 
 impl FunctionPort {

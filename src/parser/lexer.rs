@@ -3,7 +3,7 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Keywords
-    Module, Endmodule, Input, Output, Inout,
+    Module, Endmodule, Input, Output, Inout, Ref,
     Wire, Reg, Logic, Int, Integer, Signed, Unsigned,
     Wand, Wor, Tri, Tri0, Tri1, TriAnd, TriOr,
     Supply0, Supply1,
@@ -82,7 +82,7 @@ pub enum Token {
     Assert, Assume, Cover, Expect, WaitOrder, Property,
     Sequence, EndSequence,
     // Package
-    Package, EndPackage, Import,
+    Package, EndPackage, Import, Export,
     Mailbox, Semaphore,
     // Bind
     Bind,
@@ -113,6 +113,7 @@ impl fmt::Display for Token {
             Token::Input => write!(f, "input"),
             Token::Output => write!(f, "output"),
             Token::Inout => write!(f, "inout"),
+            Token::Ref => write!(f, "ref"),
             Token::Wire => write!(f, "wire"),
             Token::Wand => write!(f, "wand"),
             Token::Wor => write!(f, "wor"),
@@ -195,6 +196,7 @@ impl fmt::Display for Token {
             Token::Package => write!(f, "package"),
             Token::EndPackage => write!(f, "endpackage"),
             Token::Import => write!(f, "import"),
+            Token::Export => write!(f, "export"),
             Token::Bind => write!(f, "bind"),
             Token::Specify => write!(f, "specify"),
             Token::EndSpecify => write!(f, "endspecify"),
@@ -425,6 +427,7 @@ impl Lexer {
             "input" => Token::Input,
             "output" => Token::Output,
             "inout" => Token::Inout,
+            "ref" => Token::Ref,
             "wire" => Token::Wire,
             "wand" => Token::Wand,
             "wor" => Token::Wor,
@@ -549,6 +552,7 @@ impl Lexer {
             "package" => Token::Package,
             "endpackage" => Token::EndPackage,
             "import" => Token::Import,
+            "export" => Token::Export,
             "bind" => Token::Bind,
             "specify" => Token::Specify,
             "endspecify" => Token::EndSpecify,
