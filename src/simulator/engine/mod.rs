@@ -455,25 +455,37 @@ impl SimulationEngine {
     fn initialize_time_zero(&mut self) -> Result<(), SimError> {
         let t = 0usize;
         let processes = self.design.top.processes.clone();
+
+        // IEEE 1800: initial blocks execute FIRST, then always_comb evaluates.
+        // Schedule initial blocks and always-with-delay first,
+        // then combinational/reactive processes AFTER.
+        // All in Active region, processed in FIFO order by the event loop.
+
+        // Pass 1: Initial blocks (execute first at time 0)
         for (pid, process) in processes.iter().enumerate() {
-            match process {
-                Process::Initial { .. } => {
-                    self.events[t].push(RegionEvent { region: EventRegion::Active, event: EventKind::EvalProcess(pid) });
-                }
-                Process::Final { .. } => {
-                    // Final blocks execute only at $finish, not at time zero
-                }
-                Process::AlwaysWithDelay { .. } => {
-                    self.events[t].push(RegionEvent { region: EventRegion::Active, event: EventKind::EvalProcess(pid) });
-                }
-                Process::Combinational { .. } | Process::CombReactive { .. } => {
-                    // Evaluate at time zero via event, not inline, so initial/always
-                    // blocks run first and signals have settled
-                    self.events[t].push(RegionEvent { region: EventRegion::Active, event: EventKind::EvalProcess(pid) });
-                }
-                Process::Sequential { .. } => {}
+            if matches!(process, Process::Initial { .. }) {
+                self.events[t].push(RegionEvent { region: EventRegion::Active, event: EventKind::EvalProcess(pid) });
             }
         }
+
+        // Pass 2: Combinational/Reactive processes (evaluate after initial)
+        for (pid, process) in processes.iter().enumerate() {
+            if matches!(process, Process::Combinational { .. } | Process::CombReactive { .. }) {
+                self.events[t].push(RegionEvent { region: EventRegion::Active, event: EventKind::EvalProcess(pid) });
+            }
+        }
+
+        // Pass 3: AlwaysWithDelay (time-0 processes that schedule future events)
+        for (pid, process) in processes.iter().enumerate() {
+            if matches!(process, Process::AlwaysWithDelay { .. }) {
+                self.events[t].push(RegionEvent { region: EventRegion::Active, event: EventKind::EvalProcess(pid) });
+            }
+        }
+
+        // Sequential processes wait for edge events, not scheduled at time 0
+        // Final processes execute only at $finish
+
+        // Initialize coverage tracking
         // Initialize coverage tracking
         for cg in &self.design.covergroups {
             for cp in &cg.coverpoints {
@@ -1424,7 +1436,7 @@ impl SimulationEngine {
                         }
                     }
                 }
-                IrStmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence } => {
+                IrStmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence: _ } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => !self.assert_off_all,
@@ -1449,7 +1461,7 @@ impl SimulationEngine {
                         }
                     }
                 }
-                IrStmt::Cover { cond, pass_stmt, clock_event, disable_iff, sequence } => {
+                IrStmt::Cover { cond, pass_stmt, clock_event, disable_iff, sequence: _ } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => !self.assert_off_all,
@@ -2391,7 +2403,7 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::Null => {}
-                IrStmt::Assert { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence } => {
+                IrStmt::Assert { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence: _ } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => true,
@@ -2416,7 +2428,7 @@ impl SimulationEngine {
                         }
                     }
                 }
-                IrStmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence } => {
+                IrStmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence: _ } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => true,
@@ -2441,7 +2453,7 @@ impl SimulationEngine {
                         }
                     }
                 }
-                IrStmt::Cover { cond, pass_stmt, clock_event, disable_iff, sequence } => {
+                IrStmt::Cover { cond, pass_stmt, clock_event, disable_iff, sequence: _ } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => true,

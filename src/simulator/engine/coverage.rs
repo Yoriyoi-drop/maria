@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use super::SimulationEngine;
 
 /// Check if a value matches a wildcard bin pattern (supports ? and * wildcards).
+#[allow(dead_code)]
 fn wildcard_match(value: u64, pattern: &str) -> bool {
     let val_str = format!("{}", value);
     let p = pattern.trim();

@@ -191,30 +191,56 @@ impl Debugger {
 
     pub fn memory_inspect(&self, addr: u64, len: usize) -> String {
         let mut out = String::new();
+
+        // Build a flat memory map from arrayed/large signals
+        // Each signal contributes an address range [base, base+byte_count)
+        struct MemRegion {
+            sig_id: SignalId,
+            base: u64,
+            byte_count: usize,
+        }
+        let mut regions: Vec<MemRegion> = Vec::new();
+        let mut cur_base: u64 = 0;
+        for (i, sig) in self.engine.design.top.signals.iter().enumerate() {
+            let byte_count = (sig.width + 7) / 8;
+            if byte_count > 1 || sig.array_depth > 0 {
+                regions.push(MemRegion {
+                    sig_id: i,
+                    base: cur_base,
+                    byte_count,
+                });
+            }
+            cur_base += byte_count as u64;
+        }
+
+        if regions.is_empty() {
+            return "no memory regions found\n".to_string();
+        }
+
+        out.push_str(&format!("Memory dump from 0x{:X} ({} bytes):\n", addr, len));
+        out.push_str(&"-".repeat(32));
+        out.push('\n');
+
         for offset in 0..len {
             let a = addr + offset as u64;
             let mut found = false;
-            for sig in &self.engine.design.top.signals {
-                if sig.array_depth > 0 || sig.width > 8 {
-                    let id = self.find_signal_id(&sig.name).unwrap_or(0);
-                    let val = self.engine.state.read_signal(id);
-                    let byte_count = (sig.width + 7) / 8;
-                    if a >= offset as u64 && a < offset as u64 + byte_count as u64 {
-                        let byte_offset = (a - offset as u64) as usize;
-                        if byte_offset < byte_count {
-                            let mut b = 0u8;
-                            for bi in 0..8 {
-                                let idx = byte_offset * 8 + bi;
-                                if idx < val.bits.len() && val.bits[idx] == LogicVal::One {
-                                    b |= 1 << bi;
-                                }
-                            }
-                            out.push_str(&format!("0x{:04X} : {:02X}\n", a, b));
-                            found = true;
+
+            for region in &regions {
+                if a >= region.base && a < region.base + region.byte_count as u64 {
+                    let val = self.engine.state.read_signal(region.sig_id);
+                    let byte_offset = (a - region.base) as usize;
+                    // Extract byte at byte_offset within the signal
+                    let mut b = 0u8;
+                    for bi in 0..8 {
+                        let bit_idx = byte_offset * 8 + bi;
+                        if bit_idx < val.bits.len() && val.bits[bit_idx] == LogicVal::One {
+                            b |= 1 << bi;
                         }
                     }
+                    out.push_str(&format!("0x{:04X} : {:02X}\n", a, b));
+                    found = true;
+                    break; // Stop at first matching region
                 }
-                if found { break; }
             }
             if !found {
                 out.push_str(&format!("0x{:04X} : --\n", a));

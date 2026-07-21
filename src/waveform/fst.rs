@@ -17,6 +17,29 @@ pub struct FstWaveWriter {
 }
 
 impl FstWaveWriter {
+    /// Parse signal name into (scope_path, bare_name)
+    /// Example: "top.u_sub.count" → (["top", "u_sub"], "count")
+    /// Example: "clk" → ([], "clk")
+    fn parse_scope(name: &str) -> (Vec<String>, String) {
+        let parts: Vec<&str> = name.rsplitn(2, '.').collect();
+        if parts.len() == 2 {
+            let bare_name = parts[0].to_string();
+            let scope_parts: Vec<String> = parts[1].split('.').map(|s| s.to_string()).collect();
+            (scope_parts, bare_name)
+        } else {
+            (vec![], name.to_string())
+        }
+    }
+
+    /// Build a full-qualified key from scope + bare_name for var_handles hashmap
+    fn signal_key(scope: &[String], bare_name: &str) -> String {
+        if scope.is_empty() {
+            bare_name.to_string()
+        } else {
+            format!("{}.{}", scope.join("."), bare_name)
+        }
+    }
+
     pub fn new(path: &str, design: &IrDesign) -> Result<Self, String> {
         let file = fs::File::create(path)
             .map_err(|e| format!("cannot create FST file '{}': {}", path, e))?;
@@ -35,42 +58,97 @@ impl FstWaveWriter {
             .write_header(header)
             .map_err(|e| format!("FST header write failed: {}", e))?;
 
-        // Create hierarchy
+        // ── Build scope hierarchy ──
+        // Step 1: Group signals by scope
+        let mut scope_map: HashMap<Vec<String>, Vec<(String, usize, usize)>> = HashMap::new();
+        for sig in &design.top.signals {
+            let (scope_parts, bare_name) = Self::parse_scope(&sig.name);
+            scope_map
+                .entry(scope_parts)
+                .or_default()
+                .push((bare_name, sig.width, sig.array_depth));
+        }
+
+        // Step 2: Sort scopes for consistent ordering
+        let mut sorted_scopes: Vec<Vec<String>> = scope_map.keys().cloned().collect();
+        sorted_scopes.sort();
+
+        // Step 3: Open top-level module scope
         writer
             .begin_scope(ScopeType::VcdModule, &design.top.name, None)
             .map_err(|e| format!("FST scope begin failed: {}", e))?;
 
         let mut var_handles = HashMap::new();
 
-        for sig in &design.top.signals {
-            let (_, sig_bare) = Self::parse_scope(&sig.name);
+        // Step 4: Process each scope path, opening/closing sub-scopes as needed
+        let mut active_stack: Vec<String> = Vec::new();
 
-            if sig.array_depth > 1 {
-                for elem in 0..sig.array_depth {
-                    let elem_name = format!("{}[{}]", sig_bare, elem);
+        for scope_path in &sorted_scopes {
+            // Close scopes that are no longer needed
+            let mut common_prefix = 0usize;
+            for (i, p) in scope_path.iter().enumerate() {
+                if i < active_stack.len() && active_stack[i] == *p {
+                    common_prefix = i + 1;
+                } else {
+                    break;
+                }
+            }
+            // Close excess scopes
+            for _ in common_prefix..active_stack.len() {
+                writer
+                    .end_scope()
+                    .map_err(|e| format!("FST scope end failed: {}", e))?;
+            }
+            // Open new scopes
+            for p in &scope_path[common_prefix..] {
+                writer
+                    .begin_scope(ScopeType::VcdModule, p, None)
+                    .map_err(|e| format!("FST begin scope '{}' failed: {}", p, e))?;
+            }
+            active_stack = scope_path.clone();
+
+            // Add variables in this scope
+            let sigs = scope_map.get(scope_path).unwrap();
+            for (bare_name, width, array_depth) in sigs {
+                if *width == 0 { continue; }  // skip dynamic arrays
+                let key = Self::signal_key(scope_path, bare_name);
+
+                if *array_depth > 1 {
+                    for elem in 0..*array_depth {
+                        let elem_name = format!("{}[{}]", bare_name, elem);
+                        let elem_key = Self::signal_key(scope_path, &elem_name);
+                        let elem_width = *width / array_depth;
+                        let handle = writer
+                            .add_variable(
+                                VarType::VcdWire,
+                                VarDir::Implicit,
+                                &elem_name,
+                                GeomEntry::Fixed(elem_width as u32),
+                            )
+                            .map_err(|e| format!("FST add_variable '{}' failed: {}", elem_name, e))?;
+                        var_handles.insert(elem_key, handle);
+                    }
+                } else {
                     let handle = writer
                         .add_variable(
                             VarType::VcdWire,
                             VarDir::Implicit,
-                            &elem_name,
-                            GeomEntry::Fixed(sig.elem_width as u32),
+                            bare_name,
+                            GeomEntry::Fixed(*width as u32),
                         )
-                        .map_err(|e| format!("FST add_variable failed: {}", e))?;
-                    var_handles.insert(elem_name, handle);
+                        .map_err(|e| format!("FST add_variable '{}' failed: {}", bare_name, e))?;
+                    var_handles.insert(key, handle);
                 }
-            } else {
-                let handle = writer
-                    .add_variable(
-                        VarType::VcdWire,
-                        VarDir::Implicit,
-                        &sig_bare,
-                        GeomEntry::Fixed(sig.width as u32),
-                    )
-                    .map_err(|e| format!("FST add_variable failed: {}", e))?;
-                var_handles.insert(sig_bare, handle);
             }
         }
 
+        // Close all remaining scopes
+        for _ in 0..active_stack.len() {
+            writer
+                .end_scope()
+                .map_err(|e| format!("FST scope end failed: {}", e))?;
+        }
+        // Close top-level scope
         writer
             .end_scope()
             .map_err(|e| format!("FST scope end failed: {}", e))?;
@@ -82,17 +160,6 @@ impl FstWaveWriter {
             current_time: 0,
             enabled: true,
         })
-    }
-
-    fn parse_scope(name: &str) -> (Vec<String>, String) {
-        let parts: Vec<&str> = name.rsplitn(2, '.').collect();
-        if parts.len() == 2 {
-            let bare_name = parts[0].to_string();
-            let scope_parts: Vec<String> = parts[1].split('.').map(|s| s.to_string()).collect();
-            (scope_parts, bare_name)
-        } else {
-            (vec![], name.to_string())
-        }
     }
 
     fn logicvec_to_fst(val: &LogicVec) -> String {
@@ -130,24 +197,28 @@ impl FstWaveWriter {
         let mut changes: Vec<(u32, String)> = Vec::new();
 
         for (sig_val, sig) in state.iter().zip(design.top.signals.iter()) {
-            let (_, sig_bare) = Self::parse_scope(&sig.name);
+            let (scope, sig_bare) = Self::parse_scope(&sig.name);
+            let key = Self::signal_key(&scope, &sig_bare);
 
             if sig.array_depth > 1 {
                 for elem in 0..sig.array_depth {
                     let elem_name = format!("{}[{}]", sig_bare, elem);
-                    if let Some(&handle) = self.var_handles.get(&elem_name) {
+                    let elem_key = Self::signal_key(&scope, &elem_name);
+                    if let Some(&handle) = self.var_handles.get(&elem_key) {
                         let e_val = Self::elem_val(sig_val, elem, sig.elem_width);
                         let val_str = Self::logicvec_to_fst(&e_val);
-                        if self.last_values.get(&elem_name) != Some(&val_str) {
-                            changes.push((handle, val_str));
+                        if self.last_values.get(&elem_key) != Some(&val_str) {
+                            changes.push((handle, val_str.clone()));
+                            self.last_values.insert(elem_key, val_str);
                         }
                     }
                 }
             } else {
-                if let Some(&handle) = self.var_handles.get(&sig_bare) {
+                if let Some(&handle) = self.var_handles.get(&key) {
                     let val_str = Self::logicvec_to_fst(sig_val);
-                    if self.last_values.get(&sig_bare) != Some(&val_str) {
-                        changes.push((handle, val_str));
+                    if self.last_values.get(&key) != Some(&val_str) {
+                        changes.push((handle, val_str.clone()));
+                        self.last_values.insert(key, val_str);
                     }
                 }
             }
@@ -160,16 +231,6 @@ impl FstWaveWriter {
                 writer
                     .emit_change(self.current_time, *handle, fst_val)
                     .map_err(|e| format!("FST emit_change failed: {}", e))?;
-            }
-        }
-
-        // Update last_values
-        for (handle, val_str) in changes {
-            for (name, &h) in &self.var_handles {
-                if h == handle {
-                    self.last_values.insert(name.clone(), val_str);
-                    break;
-                }
             }
         }
 
@@ -183,21 +244,25 @@ impl FstWaveWriter {
         let mut changes: Vec<(u32, String)> = Vec::new();
 
         for (sig_val, sig) in state.iter().zip(design.top.signals.iter()) {
-            let (_, sig_bare) = Self::parse_scope(&sig.name);
+            let (scope, sig_bare) = Self::parse_scope(&sig.name);
+            let key = Self::signal_key(&scope, &sig_bare);
 
             if sig.array_depth > 1 {
                 for elem in 0..sig.array_depth {
                     let elem_name = format!("{}[{}]", sig_bare, elem);
-                    if let Some(&handle) = self.var_handles.get(&elem_name) {
+                    let elem_key = Self::signal_key(&scope, &elem_name);
+                    if let Some(&handle) = self.var_handles.get(&elem_key) {
                         let e_val = Self::elem_val(sig_val, elem, sig.elem_width);
                         let val_str = Self::logicvec_to_fst(&e_val);
-                        changes.push((handle, val_str));
+                        changes.push((handle, val_str.clone()));
+                        self.last_values.insert(elem_key, val_str);
                     }
                 }
             } else {
-                if let Some(&handle) = self.var_handles.get(&sig_bare) {
+                if let Some(&handle) = self.var_handles.get(&key) {
                     let val_str = Self::logicvec_to_fst(sig_val);
-                    changes.push((handle, val_str));
+                    changes.push((handle, val_str.clone()));
+                    self.last_values.insert(key, val_str);
                 }
             }
         }
@@ -209,16 +274,6 @@ impl FstWaveWriter {
                 writer
                     .emit_change(self.current_time, *handle, fst_val)
                     .map_err(|e| format!("FST emit_change failed: {}", e))?;
-            }
-        }
-
-        // Update last_values
-        for (handle, val_str) in changes {
-            for (name, &h) in &self.var_handles {
-                if h == handle {
-                    self.last_values.insert(name.clone(), val_str);
-                    break;
-                }
             }
         }
 

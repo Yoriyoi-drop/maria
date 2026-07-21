@@ -308,6 +308,17 @@ impl Parser {
                     let cb = self.parse_clocking_block()?;
                     clocking_blocks.push(cb);
                 }
+                Token::Export => {
+                    // export "DPI-C" function/task ...
+                    self.advance();
+                    if self.peek() == &Token::StringLit("DPI-C".to_string())
+                        || self.peek() == &Token::StringLit("DPI".to_string()) {
+                        self.parse_dpi_import()?;
+                    } else {
+                        // Not recognized — skip to semi
+                        self.skip_until_semi_or_end()?;
+                    }
+                }
                 Token::Config => {
                     let cfg = self.parse_config_decl()?;
                     configs.push(cfg);
@@ -2077,9 +2088,34 @@ impl Parser {
                 } else if self.peek_ahead(1) == &Token::Colon {
                     self.skip_until_semi_or_end()?;
                     Ok(None)
+                } else if self.peek_ahead(1) == &Token::BlockingAssign
+                    || self.peek_ahead(1) == &Token::NonBlockingAssign
+                    || self.peek_ahead(1) == &Token::Semi
+                {
+                    // Treat as implicit wire/reg declaration: `name;` or `name <= expr;` or `name = expr;`
+                    let vname = self.expect_ident()?;
+                    let expr = if self.peek() == &Token::BlockingAssign {
+                        self.advance();
+                        self.parse_expr(0).ok()
+                    } else if self.peek() == &Token::NonBlockingAssign {
+                        self.advance();
+                        self.parse_expr(0).ok()
+                    } else {
+                        None
+                    };
+                    self.skip_semi();
+                    let names = vec![DeclVar {
+                        name: vname, range: None, expr_range: None, array_range: None,
+                        extra_packed_dims: vec![], is_dynamic: false, is_queue: false,
+                        is_associative: false, assoc_key_type: None, is_rand: false, is_const: false, expr,
+                    }];
+                    Ok(Some(ModuleItem::Decl(Decl { dtype: DataType::Logic, kind: DeclKind::Wire, names })))
                 } else {
+                    // Not recognized — skip silently
                     let line = self.peek_line();
-                    Err(SimError::parse(format!("line {}: unexpected token in module body: {}", line, self.peek())))
+                    eprintln!("warning: skipping unknown construct at line {}: {}", line, self.peek());
+                    self.skip_until_semi_or_end()?;
+                    Ok(None)
                 }
             }
             Token::For | Token::If | Token::Case | Token::CaseX | Token::CaseZ => {
@@ -2255,12 +2291,31 @@ impl Parser {
                 let sb = self.parse_specify_block()?;
                 Ok(Some(ModuleItem::Specify(sb)))
             }
+            Token::Export => {
+                // export "DPI-C" function/task
+                self.advance();
+                if self.peek() == &Token::StringLit("DPI-C".to_string())
+                    || self.peek() == &Token::StringLit("DPI".to_string()) {
+                    let result = self.parse_dpi_import()?;
+                    Ok(Some(ModuleItem::DpiImport(result)))
+                } else {
+                    // Not a DPI export — skip to semicolon
+                    self.skip_until_semi_or_end()?;
+                    Ok(None)
+                }
+            }
             Token::Assert | Token::Assume | Token::Cover | Token::Expect => {
                 self.skip_until_semi_or_end()?;
                 Ok(None)
             }
             Token::Void | Token::Auto | Token::Static => {
                 self.skip_until_semi_or_end()?;
+                Ok(None)
+            }
+            Token::Class | Token::EndClass => {
+                // Skip class/endclass tokens — don't use skip_until_semi_or_end
+                // because class bodies contain semicolons; just advance one token
+                // and let the module loop handle the rest
                 Ok(None)
             }
             _ => Ok(None),
@@ -4236,7 +4291,7 @@ impl Parser {
 
     fn parse_dpi_import(&mut self) -> Result<DpiImport, SimError> {
         // Check if this is a DPI-C export instead of import
-        let saved = self.pos;
+        let _saved = self.pos;
         // We already consumed the string "DPI-C" or "DPI"
         // Now check for 'context' and then 'function' or 'task'
         // For export: import "DPI-C" context function ...  vs export "DPI-C" function ...
@@ -5667,6 +5722,18 @@ impl Parser {
             Token::FillLit(val) => {
                 self.advance();
                 Ok(Expr::FillLit(*val))
+            }
+            Token::Auto => {
+                self.advance();
+                Ok(Expr::Ident("automatic".to_string()))
+            }
+            Token::String => {
+                self.advance();
+                Ok(Expr::Ident("string".to_string()))
+            }
+            Token::Class | Token::EndClass => {
+                self.advance();
+                Ok(Expr::Ident("class".to_string()))
             }
             Token::Quote => {
                 self.advance();
