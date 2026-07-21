@@ -15,6 +15,8 @@ pub struct IrDesign {
     pub udp_defs: Vec<crate::ast::types::UdpDef>,
     pub specify_items: Vec<crate::ast::types::SpecifyItem>,
     pub timescale: Option<(String, String)>,
+    /// Module-level recursive function declarations — kept for runtime evaluation (not inlined)
+    pub module_functions: HashMap<String, crate::ast::types::FunctionDecl>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -183,6 +185,8 @@ pub struct SignalInfo {
     pub packed_dims: Vec<usize>,
     pub delay_rise: Option<u64>,
     pub delay_fall: Option<u64>,
+    pub iface_type: Option<String>,
+    pub iface_modport: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -497,6 +501,17 @@ pub enum IrExpr {
     UdpLookup {
         udp_name: String,
         args: Vec<IrExpr>,
+    },
+    /// Runtime function call (used for recursive functions that can't be inlined)
+    FuncCall {
+        func_name: String,
+        args: Vec<IrExpr>,
+    },
+    /// Virtual interface member access (resolved at runtime via bound instance)
+    VirtualIfaceAccess {
+        vif_name: String,
+        field: String,
+        field_width: usize,
     },
 }
 

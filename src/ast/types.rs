@@ -18,6 +18,11 @@ pub struct Design {
     pub udp_defs: Vec<UdpDef>,
     pub top_module: Option<String>,
     pub unit_imports: Vec<(String, String)>,
+    pub unit_decls: Vec<Decl>,
+    pub unit_funcs: Vec<FunctionDecl>,
+    pub unit_tasks: Vec<TaskDecl>,
+    pub unit_typedefs: Vec<TypedefDecl>,
+    pub unit_params: Vec<ParamDecl>,
     pub timescale: Option<(String, String)>,
 }
 
@@ -452,6 +457,11 @@ pub enum ModuleItem {
     Param(ParamDecl),
     Clocking(ClockingBlock),
     Specify(SpecifyBlock),
+    VirtualInterface {
+        iface_type: String,
+        modport: Option<String>,
+        vif_name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -667,6 +677,48 @@ pub enum SpecifyItem {
         data: Expr,
         setup_limit: Expr,
         hold_limit: Expr,
+    },
+    RecoveryCheck {
+        data: Expr,
+        ref_event: Expr,
+        limit: Expr,
+    },
+    RemovalCheck {
+        ref_event: Expr,
+        data: Expr,
+        limit: Expr,
+    },
+    RecoveryRemovalCheck {
+        ref_event: Expr,
+        data: Expr,
+        recovery_limit: Expr,
+        removal_limit: Expr,
+    },
+    PeriodCheck {
+        ref_event: Expr,
+        limit: Expr,
+    },
+    WidthCheck {
+        ref_event: Expr,
+        limit: Expr,
+        threshold: Option<Expr>,
+    },
+    NochangeCheck {
+        ref_event: Expr,
+        data: Expr,
+        start_limit: Expr,
+        end_limit: Expr,
+    },
+    SkewCheck {
+        ref_event: Expr,
+        data: Expr,
+        limit: Expr,
+    },
+    TimeskewCheck {
+        ref_event: Expr,
+        data: Expr,
+        limit: Expr,
+        threshold: Option<Expr>,
     },
 }
 

@@ -186,6 +186,29 @@ impl Elaborator {
             }
         }
 
+        // Inject $unit function/task declarations into all modules
+        for module in &mut self.design.modules {
+            for func in &self.design.unit_funcs {
+                if !module.items.iter().any(|mi| matches!(mi, ModuleItem::Func(fd) if fd.name == func.name)) {
+                    module.items.push(ModuleItem::Func(func.clone()));
+                }
+            }
+            for task in &self.design.unit_tasks {
+                if !module.items.iter().any(|mi| matches!(mi, ModuleItem::Func(fd) if fd.name == task.name)) {
+                    module.items.push(ModuleItem::Func(FunctionDecl {
+                        name: task.name.clone(),
+                        range: None,
+                        return_type: None,
+                        ports: task.ports.clone(),
+                        decls: task.decls.clone(),
+                        stmts: task.stmts.clone(),
+                        virtual_flag: task.virtual_flag,
+                        is_static: task.is_static,
+                    }));
+                }
+            }
+        }
+
         // Inline function calls in all modules
         for module in &mut self.design.modules {
             let temps = crate::ast::inline::inline_func_calls_in_module(module)?;
@@ -272,7 +295,7 @@ impl Elaborator {
                         msb: if is_real { 63 } else { 0 },
                         lsb: 0,
                         struct_fields: vec![],
-                        packed_dims: vec![], delay_rise: None, delay_fall: None,
+                        packed_dims: vec![], delay_rise: None, delay_fall: None, iface_type: None, iface_modport: None,
                     });
                     continue;
                     }
@@ -307,7 +330,7 @@ impl Elaborator {
                         msb: if elem_width > 0 { elem_width - 1 } else { 0 },
                         lsb: 0,
                         struct_fields: vec![],
-                        packed_dims: vec![], delay_rise: None, delay_fall: None,
+                        packed_dims: vec![], delay_rise: None, delay_fall: None, iface_type: None, iface_modport: None,
                     });
                 }
             }
@@ -450,6 +473,16 @@ impl Elaborator {
             }
         }
 
+        // Collect recursive function declarations from module items for runtime evaluation
+        let mut module_functions: HashMap<String, crate::ast::types::FunctionDecl> = HashMap::new();
+        for module in &self.design.modules {
+            for item in &module.items {
+                if let ModuleItem::Func(f) = item {
+                    module_functions.insert(f.name.clone(), f.clone());
+                }
+            }
+        }
+
         Ok(IrDesign {
             top,
             modules: self.modules.clone(),
@@ -460,6 +493,7 @@ impl Elaborator {
             udp_defs: self.design.udp_defs.clone(),
             specify_items,
             timescale: self.design.timescale.clone(),
+            module_functions,
         })
     }
 
@@ -551,6 +585,17 @@ impl Elaborator {
                                     param_vals: &HashMap<String, i64>,
                                     type_param_overrides: &HashMap<String, usize>) -> Result<IrModule, SimError> {
         let mut effective_params = param_vals.clone();
+
+        // Process $unit parameters (top-level param declarations)
+        for param in &self.design.unit_params {
+            if !effective_params.contains_key(&param.name) {
+                if let Some(expr) = &param.default {
+                    if let Ok(val) = const_eval_with_params(expr, &effective_params) {
+                        effective_params.insert(param.name.clone(), val);
+                    }
+                }
+            }
+        }
 
         // Process $unit imports
         for (package, import_item) in &self.design.unit_imports {
@@ -651,6 +696,15 @@ impl Elaborator {
                 if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. }) {
                     self.store_typedef_fields(&td.name, &td.dtype);
                 }
+            }
+        }
+        // Pre-pass: process $unit typedefs (top-level typedefs outside any module)
+        let unit_typedefs = self.design.unit_typedefs.clone();
+        for td in &unit_typedefs {
+            let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
+            self.typedef_map.insert(td.name.clone(), width);
+            if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. }) {
+                self.store_typedef_fields(&td.name, &td.dtype);
             }
         }
         // Pre-pass: process $unit imports for typedefs
@@ -787,7 +841,7 @@ impl Elaborator {
                     msb,
                     lsb,
                     struct_fields: vec![],
-                    packed_dims: vec![], delay_rise: None, delay_fall: None,
+                    packed_dims: vec![], delay_rise: None, delay_fall: None, iface_type: None, iface_modport: None,
                 });
                 sid
             }
@@ -876,7 +930,7 @@ impl Elaborator {
                         msb: if is_real { 63 } else { 0 },
                         lsb: 0,
                         struct_fields: vec![],
-                        packed_dims: vec![], delay_rise: None, delay_fall: None,
+                        packed_dims: vec![], delay_rise: None, delay_fall: None, iface_type: None, iface_modport: None,
                     });
                     continue;
                 }
@@ -912,7 +966,7 @@ impl Elaborator {
                     msb: 0,
                     lsb: 0,
                     struct_fields: vec![],
-                    packed_dims: vec![], delay_rise: None, delay_fall: None,
+                    packed_dims: vec![], delay_rise: None, delay_fall: None, iface_type: None, iface_modport: None,
                 });
             }
                 let dtype_width = self.resolve_type_width(&decl.dtype)?;
@@ -2046,6 +2100,10 @@ impl Elaborator {
             },
             IrExpr::UdpLookup { udp_name, args } => IrExpr::UdpLookup {
                 udp_name: udp_name.clone(),
+                args: args.iter().map(|a| self.translate_expr(a, map_sig)).collect(),
+            },
+            IrExpr::FuncCall { func_name, args } => IrExpr::FuncCall {
+                func_name: func_name.clone(),
                 args: args.iter().map(|a| self.translate_expr(a, map_sig)).collect(),
             },
         }
@@ -3371,6 +3429,16 @@ impl Elaborator {
                         .unwrap_or(32);
                     Ok(IrExpr::DpiCall { name: name.clone(), args: ir_args?, return_width })
                 } else {
+                    // Check if this is a module-level function (recursive, not inlined)
+                    let func_exists = self.design.modules.iter().any(|m|
+                        m.items.iter().any(|mi| matches!(mi, ModuleItem::Func(fd) if fd.name == *name))
+                    );
+                    if func_exists {
+                        let ir_args: Result<Vec<IrExpr>, SimError> = args.iter()
+                            .map(|a| self.elaborate_expr(a, signal_map, signals))
+                            .collect();
+                        return Ok(IrExpr::FuncCall { func_name: name.clone(), args: ir_args? });
+                    }
                     Err(SimError::elaborate(format!("function '{}' not found (not a DPI import)", name)))
                 }
             }
@@ -3592,7 +3660,7 @@ impl Elaborator {
             msb: width - 1,
             lsb: 0,
             struct_fields: vec![],
-            packed_dims: vec![], delay_rise: None, delay_fall: None,
+            packed_dims: vec![], delay_rise: None, delay_fall: None, iface_type: None, iface_modport: None,
         });
         // Add a continuous assignment process
         let sensitivity = collect_sensitivity(expr, signal_map);

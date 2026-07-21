@@ -129,6 +129,14 @@ struct Cli {
     #[arg(long = "coverage-ucis")]
     coverage_ucis: Option<String>,
 
+    /// Library directory to search for missing modules (-y <dir>)
+    #[arg(short = 'y', long = "libdir", num_args = 1)]
+    libdirs: Vec<String>,
+
+    /// Library file containing one or more modules (-v <file>)
+    #[arg(short = 'v', long = "libfile", num_args = 1)]
+    libfiles: Vec<String>,
+
     /// Suppress preprocessor warnings (missing include files, etc.)
     #[arg(short = 'q', long = "quiet")]
     quiet: bool,
@@ -272,6 +280,82 @@ fn run(cli: Cli) -> Result<(), SimError> {
 
     if cli.print_ast {
         println!("{:#?}", design);
+    }
+
+    // ── Library scanning: always scan library directories/files before elaboration ──
+    for libdir in &cli.libdirs {
+        base_pp.add_search_path(libdir);
+        if let Ok(entries) = std::fs::read_dir(libdir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                    if ext == "v" || ext == "sv" {
+                        let mut pp = base_pp.clone();
+                        let path_str = path.to_string_lossy().to_string();
+                        match pp.preprocess_file(&path_str) {
+                            Ok(processed) => {
+                                let combined_lib = format!("`line 1 \"{}\"\n{}", path.display(), processed);
+                                let mut lexer = Lexer::new(&combined_lib);
+                                let mut lib_tokens = Vec::new();
+                                loop {
+                                    let (tok, line, col) = lexer.next_token();
+                                    if tok == maria::parser::lexer::Token::Eof { break; }
+                                    lib_tokens.push((tok, line, col));
+                                }
+                                let mut parser = Parser::new(lib_tokens, path.to_str().unwrap_or("<lib>"));
+                                parser = parser.with_source_lines(&combined_lib);
+                                match parser.parse_design() {
+                                    Ok(lib_design) => {
+                                        for m in lib_design.modules {
+                                            if !design.modules.iter().any(|dm| dm.name == m.name) {
+                                                design.modules.push(m);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => eprintln!("warning: library file '{}' parse error: {}", path.display(), e),
+                                }
+                            }
+                            Err(e) => eprintln!("warning: library file '{}' preprocess error: {}", path.display(), e),
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for libfile in &cli.libfiles {
+        let mut pp = base_pp.clone();
+        let libfile_path = std::path::Path::new(libfile);
+        if let Some(dir) = libfile_path.parent() {
+            if let Some(dir_str) = dir.to_str() {
+                base_pp.add_search_path(dir_str);
+            }
+        }
+        match pp.preprocess_file(libfile) {
+            Ok(processed) => {
+                let combined_lib = format!("`line 1 \"{}\"\n{}", libfile, processed);
+                let mut lexer = Lexer::new(&combined_lib);
+                let mut lib_tokens = Vec::new();
+                loop {
+                    let (tok, line, col) = lexer.next_token();
+                    if tok == maria::parser::lexer::Token::Eof { break; }
+                    lib_tokens.push((tok, line, col));
+                }
+                let mut parser = Parser::new(lib_tokens, libfile);
+                parser = parser.with_source_lines(&combined_lib);
+                match parser.parse_design() {
+                    Ok(lib_design) => {
+                        for m in lib_design.modules {
+                            if !design.modules.iter().any(|dm| dm.name == m.name) {
+                                design.modules.push(m);
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("warning: library file '{}' parse error: {}", libfile, e),
+                }
+            }
+            Err(e) => eprintln!("warning: library file '{}' preprocess error: {}", libfile, e),
+        }
     }
 
     if design.modules.is_empty() {

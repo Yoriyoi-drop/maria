@@ -837,6 +837,11 @@ pub fn collect_read_signals_expr(expr: &IrExpr, out: &mut Vec<SignalId>) {
                 collect_read_signals_expr(arg, out);
             }
         }
+        IrExpr::FuncCall { args, .. } => {
+            for arg in args {
+                collect_read_signals_expr(arg, out);
+            }
+        }
     }
 }
 

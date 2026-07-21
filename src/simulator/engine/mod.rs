@@ -95,6 +95,9 @@ pub struct SimulationEngine {
     // Coverage options (for $coverage_control)
     coverage_options: HashMap<String, u64>,
     coverage_enabled: bool,
+    // Coverage model handles ($coverage_model)
+    coverage_model_handles: HashMap<u32, String>,
+    next_coverage_model_handle: u32,
     // Recursion tracking
     recursion_depth: HashMap<String, u32>,
     max_recursion_depth: u32,
@@ -178,6 +181,8 @@ impl SimulationEngine {
             assert_modules_off: HashSet::new(),
             coverage_options: HashMap::new(),
             coverage_enabled: true,
+            coverage_model_handles: HashMap::new(),
+            next_coverage_model_handle: 1,
             recursion_depth: HashMap::new(),
             max_recursion_depth: 256,
         }
@@ -1228,10 +1233,42 @@ impl SimulationEngine {
                             .unwrap_or_else(|| "coverage.ucis".to_string());
                         let _ = self.export_coverage_ucis(&path);
                     } else if name == "coverage_model" {
-                        // $coverage_model - stub: get coverage model handle
+                        // $coverage_model — get coverage model handle for a covergroup
+                        // Usage: $coverage_model(output_signal [, "covergroup_name"])
+                        let cg_name = ir_args.get(1).and_then(|a| {
+                            if let IrExpr::String(s) = a { Some(s.clone()) }
+                            else { None }
+                        });
+                        let handle: u32 = if let Some(ref name) = cg_name {
+                            let exists = self.design.covergroups.iter().any(|cg| cg.name.as_str() == name.as_str());
+                            if exists {
+                                if let Some((&h, _)) = self.coverage_model_handles.iter().find(|(_, n)| n.as_str() == name.as_str()) {
+                                    h
+                                } else {
+                                    let h = self.next_coverage_model_handle;
+                                    self.next_coverage_model_handle += 1;
+                                    self.coverage_model_handles.insert(h, name.clone());
+                                    h
+                                }
+                            } else {
+                                eprintln!("warning: $coverage_model: covergroup '{}' not found", name);
+                                0
+                            }
+                        } else if let Some(first_cg) = self.design.covergroups.first() {
+                            if let Some((&h, _)) = self.coverage_model_handles.iter().find(|(_, n)| n.as_str() == first_cg.name.as_str()) {
+                                h
+                            } else {
+                                let h = self.next_coverage_model_handle;
+                                self.next_coverage_model_handle += 1;
+                                self.coverage_model_handles.insert(h, first_cg.name.clone());
+                                h
+                            }
+                        } else {
+                            0
+                        };
                         if let Some(sig_arg) = ir_args.first() {
                             if let IrExpr::Signal(id, _) = sig_arg {
-                                self.state.write_signal(*id, LogicVec::from_u64(0, 32));
+                                self.state.write_signal(*id, LogicVec::from_u64(handle as u64, 32));
                             }
                         }
                     } else if name == "load_coverage_db" {
@@ -3960,6 +3997,96 @@ impl SimulationEngine {
                 self.udp_prev_args.insert(udp_name.clone(), arg_vals.clone());
                 Ok(result)
             }
+            IrExpr::FuncCall { func_name, args } => {
+                let name = func_name;
+                // Check recursion depth
+                let depth = self.recursion_depth.get(name.as_str()).copied().unwrap_or(0);
+                if depth >= self.max_recursion_depth {
+                    return Err(SimError::runtime(format!("recursion depth exceeded for function '{}' (max {})", name, self.max_recursion_depth)));
+                }
+                self.recursion_depth.insert(name.clone(), depth + 1);
+
+                // Find the function declaration
+                let func = self.design.module_functions.get(name.as_str())
+                    .cloned()
+                    .ok_or_else(|| SimError::runtime(format!("function '{}' not found for runtime call", name)))?;
+
+                // Compute return width from function declaration
+                let ret_width = if let Some(er) = &func.range {
+                    if let (Ok(msb), Ok(lsb)) = (crate::ast::types::const_eval_simple(&er.msb), crate::ast::types::const_eval_simple(&er.lsb)) {
+                        let msb = msb as usize;
+                        let lsb = lsb as usize;
+                        if msb >= lsb { msb - lsb + 1 } else { lsb - msb + 1 }
+                    } else { 1 }
+                } else {
+                    match &func.return_type {
+                        Some(dt) => match dt.as_ref() {
+                            crate::ast::types::DataType::Void => 0,
+                            crate::ast::types::DataType::Byte => 8,
+                            crate::ast::types::DataType::Shortint => 16,
+                            crate::ast::types::DataType::Int | crate::ast::types::DataType::Integer => 32,
+                            crate::ast::types::DataType::Longint => 64,
+                            crate::ast::types::DataType::Time => 64,
+                            _ => 1,
+                        },
+                        None => 1,
+                    }
+                };
+
+                // Evaluate all arguments
+                let arg_vals: Vec<LogicVec> = args.iter()
+                    .map(|a| self.evaluate_expr(a))
+                    .collect::<Result<_, _>>()?;
+
+                // Create new local scope
+                let depth_idx = self.method_locals.len();
+                let mut locals = HashMap::new();
+
+                // Initialize return value slot (for Stmt::Return to write into via current_method)
+                locals.insert("__func_ret".to_string(), LogicVec::new(ret_width.max(1)));
+
+                // Bind arguments to port names
+                for (i, arg_val) in arg_vals.into_iter().enumerate() {
+                    if let Some(port) = func.ports.get(i) {
+                        locals.insert(port.name.clone(), arg_val);
+                    }
+                }
+
+                // Initialize internal variables with X
+                for decl in &func.decls {
+                    for var in &decl.names {
+                        if !locals.contains_key(&var.name) {
+                            let width = if let Some(r) = &var.range { r.width() }
+                                else { 1 };
+                            locals.insert(var.name.clone(), LogicVec::new(width));
+                        }
+                    }
+                }
+
+                self.method_locals.push(locals);
+
+                // Save and set current_method so Stmt::Return stores into method_locals
+                let saved_method = self.current_method.take();
+                self.current_method = Some("__func_ret".to_string());
+
+                self.evaluate_ast_block_with_delay_fork(&func.stmts, None)?;
+
+                // Restore current_method
+                self.current_method = saved_method;
+
+                // Read return value from method_locals
+                let return_val = if ret_width > 0 {
+                    self.get_local("__func_ret").unwrap_or_else(|| LogicVec::new(ret_width))
+                } else {
+                    LogicVec::new(0)
+                };
+
+                // Restore scope
+                self.method_locals.truncate(depth_idx);
+                self.recursion_depth.insert(name.clone(), depth);
+
+                Ok(return_val)
+            }
         }
     }
 
@@ -4149,6 +4276,127 @@ impl SimulationEngine {
                                 if delta > 0 && delta <= hold_val {
                                     eprintln!("TIMING WARNING: $setuphold (hold) violation: data '{}' changed {}ns before ref (hold={}ns)",
                                         data_sig, delta, hold_val);
+                                }
+                            }
+                        }
+                    }
+                }
+                SpecifyItem::RecoveryCheck { data, ref_event: _ref_event, limit } => {
+                    let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
+                    if let Expr::Ident(data_sig) = data {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                            if let Some(&last_change) = self.signal_last_change.get(sid) {
+                                let delta = current_time - last_change;
+                                if delta > 0 && delta <= limit_val {
+                                    eprintln!("TIMING WARNING: $recovery violation: signal '{}' changed {}ns before ref (limit={}ns)", data_sig, delta, limit_val);
+                                }
+                            }
+                        }
+                    }
+                }
+                SpecifyItem::RemovalCheck { ref_event: _ref_event, data, limit } => {
+                    let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
+                    if let Expr::Ident(data_sig) = data {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                            if let Some(&last_change) = self.signal_last_change.get(sid) {
+                                let delta = current_time - last_change;
+                                if delta > 0 && delta <= limit_val {
+                                    eprintln!("TIMING WARNING: $removal violation: signal '{}' changed {}ns before ref (limit={}ns)", data_sig, delta, limit_val);
+                                }
+                            }
+                        }
+                    }
+                }
+                SpecifyItem::RecoveryRemovalCheck { ref_event: _ref_event, data, recovery_limit, removal_limit } => {
+                    let recov_val = const_eval_simple(recovery_limit).unwrap_or(0) as u64;
+                    let remov_val = const_eval_simple(removal_limit).unwrap_or(0) as u64;
+                    if let Expr::Ident(data_sig) = data {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                            if let Some(&last_change) = self.signal_last_change.get(sid) {
+                                let delta = current_time - last_change;
+                                if delta > 0 && delta <= recov_val {
+                                    eprintln!("TIMING WARNING: $recrem (recovery) violation: signal '{}' changed {}ns before ref (recov={}ns)", data_sig, delta, recov_val);
+                                }
+                                if delta > 0 && delta <= remov_val {
+                                    eprintln!("TIMING WARNING: $recrem (removal) violation: signal '{}' changed {}ns before ref (remov={}ns)", data_sig, delta, remov_val);
+                                }
+                            }
+                        }
+                    }
+                }
+                SpecifyItem::PeriodCheck { ref_event, limit } => {
+                    let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
+                    if let Expr::Ident(ref_sig) = ref_event {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == ref_sig) {
+                            if let Some(&last_change) = self.signal_last_change.get(sid) {
+                                let delta = current_time - last_change;
+                                if delta > 0 && delta < limit_val {
+                                    eprintln!("TIMING WARNING: $period violation: signal '{}' period {}ns < minimum {}ns", ref_sig, delta, limit_val);
+                                }
+                            }
+                        }
+                    }
+                }
+                SpecifyItem::WidthCheck { ref_event, limit, threshold: _threshold } => {
+                    let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
+                    if let Expr::Ident(ref_sig) = ref_event {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == ref_sig) {
+                            if let Some(&last_change) = self.signal_last_change.get(sid) {
+                                let delta = current_time - last_change;
+                                if delta > 0 && delta < limit_val {
+                                    eprintln!("TIMING WARNING: $width violation: signal '{}' pulse width {}ns < minimum {}ns", ref_sig, delta, limit_val);
+                                }
+                            }
+                        }
+                    }
+                }
+                SpecifyItem::SkewCheck { ref_event, data, limit } => {
+                    let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
+                    if let Expr::Ident(data_sig) = data {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                            if let Some(&data_change) = self.signal_last_change.get(sid) {
+                                if let Expr::Ident(ref_sig) = &ref_event {
+                                    if let Some((_, rsid)) = signal_names.iter().find(|(n, _)| n == ref_sig) {
+                                        if let Some(&ref_change) = self.signal_last_change.get(rsid) {
+                                            let skew = if data_change > ref_change { data_change - ref_change } else { ref_change - data_change };
+                                            if skew > limit_val {
+                                                eprintln!("TIMING WARNING: $skew violation: skew {}ns > max {}ns between '{}' and '{}'", skew, limit_val, data_sig, ref_sig);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                SpecifyItem::TimeskewCheck { ref_event, data, limit, threshold: _threshold } => {
+                    let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
+                    if let Expr::Ident(data_sig) = data {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                            if let Some(&data_change) = self.signal_last_change.get(sid) {
+                                if let Expr::Ident(ref_sig) = &ref_event {
+                                    if let Some((_, rsid)) = signal_names.iter().find(|(n, _)| n == ref_sig) {
+                                        if let Some(&ref_change) = self.signal_last_change.get(rsid) {
+                                            let skew = if data_change > ref_change { data_change - ref_change } else { ref_change - data_change };
+                                            if skew > limit_val {
+                                                eprintln!("TIMING WARNING: $timeskew violation: skew {}ns > max {}ns between '{}' and '{}'", skew, limit_val, data_sig, ref_sig);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                SpecifyItem::NochangeCheck { ref_event: _ref_event, data, start_limit, end_limit } => {
+                    let start_val = const_eval_simple(start_limit).unwrap_or(0) as u64;
+                    let end_val = const_eval_simple(end_limit).unwrap_or(0) as u64;
+                    if let Expr::Ident(data_sig) = data {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                            if let Some(&last_change) = self.signal_last_change.get(sid) {
+                                let delta = current_time - last_change;
+                                if delta > 0 && delta >= start_val && delta <= end_val {
+                                    eprintln!("TIMING WARNING: $nochange violation: signal '{}' changed within window [{}ns, {}ns] (delta={}ns)", data_sig, start_val, end_val, delta);
                                 }
                             }
                         }

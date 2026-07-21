@@ -135,6 +135,10 @@ impl Parser {
         let mut packages = Vec::new();
         let mut interfaces = Vec::new();
         let mut unit_imports = Vec::new();
+        let mut unit_funcs: Vec<FunctionDecl> = Vec::new();
+        let mut unit_tasks: Vec<TaskDecl> = Vec::new();
+        let mut unit_typedefs: Vec<TypedefDecl> = Vec::new();
+        let mut unit_params: Vec<ParamDecl> = Vec::new();
         let mut binds = Vec::new();
         let mut clocking_blocks = Vec::new();
         let mut configs = Vec::new();
@@ -312,6 +316,30 @@ impl Parser {
                     let udp = self.parse_udp_declaration()?;
                     udp_defs.push(udp);
                 }
+                Token::Function => {
+                    let func = self.parse_function(false)?;
+                    unit_funcs.push(func);
+                }
+                Token::Task => {
+                    let task = self.parse_task(false)?;
+                    unit_tasks.push(task);
+                }
+                Token::Typedef => {
+                    let td = self.parse_typedef()?;
+                    // Store typedef as a declaration
+                    unit_typedefs.push(td);
+                }
+                Token::Parameter | Token::LocalParam => {
+                    let is_local = self.peek() == &Token::LocalParam;
+                    self.advance();
+                    let mut params = Vec::new();
+                    self.parse_param_list(&mut params)?;
+                    for p in params {
+                        if !is_local {
+                            unit_params.push(p);
+                        }
+                    }
+                }
                 _ => {
                     if matches!(self.peek(), Token::Wire | Token::Wand | Token::Wor |
                         Token::Tri | Token::TriAnd | Token::TriOr | Token::Tri0 | Token::Tri1 |
@@ -329,7 +357,24 @@ impl Parser {
                 }
             }
         }
-        Ok(Design { modules, classes, packages, interfaces, binds, clocking_blocks, configs, udp_defs, top_module: None, unit_imports, timescale: None })
+        Ok(Design {
+            modules,
+            classes,
+            packages,
+            interfaces,
+            binds,
+            clocking_blocks,
+            configs,
+            udp_defs,
+            top_module: None,
+            unit_imports,
+            unit_decls: Vec::new(),
+            unit_funcs,
+            unit_tasks,
+            unit_typedefs,
+            unit_params,
+            timescale: None,
+        })
     }
 
     fn parse_clocking_block(&mut self) -> Result<ClockingBlock, SimError> {
@@ -502,15 +547,82 @@ impl Parser {
             if let Token::Ident(fname) = self.peek().clone() {
                 self.advance();
                 match fname.as_str() {
-                    "$setup" | "$hold" | "$setuphold" => {
+                    "$setup" | "$hold" | "$setuphold" | "$recovery" | "$removal" | "$recrem" | "$period" | "$width" | "$nochange" | "$skew" | "$timeskew" => {
                         let is_setup = fname == "$setup";
-                        let _is_hold = fname == "$hold";
+                        let is_hold = fname == "$hold";
                         let is_setuphold = fname == "$setuphold";
+                        let is_recovery = fname == "$recovery";
+                        let is_removal = fname == "$removal";
+                        let is_recrem = fname == "$recrem";
+                        let is_period = fname == "$period";
+                        let is_width = fname == "$width";
+                        let is_nochange = fname == "$nochange";
+                        let is_skew = fname == "$skew";
+                        let is_timeskew = fname == "$timeskew";
                         self.expect(Token::LParen)?;
+                        // Parse based on timing check type
+                        if is_period {
+                            // $period(ref_event, limit);
+                            let ref_event = self.parse_expr(0)?;
+                            self.expect(Token::Comma)?;
+                            let limit = self.parse_expr(0)?;
+                            self.expect(Token::RParen)?;
+                            if self.peek() == &Token::Semi { self.advance(); }
+                            return Ok(Some(SpecifyItem::PeriodCheck { ref_event, limit }));
+                        } else if is_width {
+                            // $width(ref_event, limit [, threshold]);
+                            let ref_event = self.parse_expr(0)?;
+                            self.expect(Token::Comma)?;
+                            let limit = self.parse_expr(0)?;
+                            let threshold = if self.peek() == &Token::Comma {
+                                self.advance();
+                                Some(self.parse_expr(0)?)
+                            } else { None };
+                            self.expect(Token::RParen)?;
+                            if self.peek() == &Token::Semi { self.advance(); }
+                            return Ok(Some(SpecifyItem::WidthCheck { ref_event, limit, threshold }));
+                        } else if is_skew {
+                            // $skew(ref_event, data, limit);
+                            let ref_event = self.parse_expr(0)?;
+                            self.expect(Token::Comma)?;
+                            let data = self.parse_expr(0)?;
+                            self.expect(Token::Comma)?;
+                            let limit = self.parse_expr(0)?;
+                            self.expect(Token::RParen)?;
+                            if self.peek() == &Token::Semi { self.advance(); }
+                            return Ok(Some(SpecifyItem::SkewCheck { ref_event, data, limit }));
+                        } else if is_timeskew {
+                            // $timeskew(ref_event, data, limit [, threshold]);
+                            let ref_event = self.parse_expr(0)?;
+                            self.expect(Token::Comma)?;
+                            let data = self.parse_expr(0)?;
+                            self.expect(Token::Comma)?;
+                            let limit = self.parse_expr(0)?;
+                            let threshold = if self.peek() == &Token::Comma {
+                                self.advance();
+                                Some(self.parse_expr(0)?)
+                            } else { None };
+                            self.expect(Token::RParen)?;
+                            if self.peek() == &Token::Semi { self.advance(); }
+                            return Ok(Some(SpecifyItem::TimeskewCheck { ref_event, data, limit, threshold }));
+                        } else if is_nochange {
+                            // $nochange(ref_event, data, start_limit, end_limit);
+                            let ref_event = self.parse_expr(0)?;
+                            self.expect(Token::Comma)?;
+                            let data = self.parse_expr(0)?;
+                            self.expect(Token::Comma)?;
+                            let start_limit = self.parse_expr(0)?;
+                            self.expect(Token::Comma)?;
+                            let end_limit = self.parse_expr(0)?;
+                            self.expect(Token::RParen)?;
+                            if self.peek() == &Token::Semi { self.advance(); }
+                            return Ok(Some(SpecifyItem::NochangeCheck { ref_event, data, start_limit, end_limit }));
+                        }
+                        // $setup, $hold, $setuphold, $recovery, $removal, $recrem — same signature pattern
                         let data = self.parse_expr(0)?;
                         self.expect(Token::Comma)?;
                         let ref_event = self.parse_expr(0)?;
-                        let (setup_limit, hold_limit) = if is_setuphold {
+                        let (setup_limit, hold_limit) = if is_setuphold || is_recrem {
                             self.expect(Token::Comma)?;
                             let sl = self.parse_expr(0)?;
                             self.expect(Token::Comma)?;
@@ -519,23 +631,27 @@ impl Parser {
                         } else {
                             self.expect(Token::Comma)?;
                             let limit = self.parse_expr(0)?;
-                            if is_setup { (Some(limit), None) } else { (None, Some(limit)) }
+                            if is_setup || is_recovery { (Some(limit), None) } else { (None, Some(limit)) }
                         };
                         self.expect(Token::RParen)?;
                         if self.peek() == &Token::Semi {
-                            self.advance(); // consume optional ;
+                            self.advance();
                         }
                         return if is_setuphold {
-                            Ok(Some(SpecifyItem::SetupHoldCheck {
-                                ref_event,
-                                data,
-                                setup_limit: setup_limit.unwrap(),
-                                hold_limit: hold_limit.unwrap(),
-                            }))
+                            Ok(Some(SpecifyItem::SetupHoldCheck { ref_event, data, setup_limit: setup_limit.unwrap(), hold_limit: hold_limit.unwrap() }))
                         } else if is_setup {
                             Ok(Some(SpecifyItem::SetupCheck { data, ref_event, limit: setup_limit.unwrap() }))
-                        } else {
+                        } else if is_hold {
                             Ok(Some(SpecifyItem::HoldCheck { ref_event, data, limit: hold_limit.unwrap() }))
+                        } else if is_recrem {
+                            Ok(Some(SpecifyItem::RecoveryRemovalCheck { ref_event, data, recovery_limit: setup_limit.unwrap(), removal_limit: hold_limit.unwrap() }))
+                        } else if is_recovery {
+                            Ok(Some(SpecifyItem::RecoveryCheck { data, ref_event, limit: setup_limit.unwrap() }))
+                        } else if is_removal {
+                            Ok(Some(SpecifyItem::RemovalCheck { ref_event, data, limit: hold_limit.unwrap() }))
+                        } else {
+                            // Fallback — shouldn't reach here
+                            Ok(Some(SpecifyItem::SetupCheck { data, ref_event, limit: setup_limit.unwrap_or(hold_limit.unwrap_or(Expr::Value(crate::ast::expr::Value::Decimal(0)))) }))
                         };
                     }
                     _ => {}
@@ -2037,6 +2153,23 @@ impl Parser {
                         items: vec![GenerateItem::Items(params.into_iter().map(|p| ModuleItem::Param(p)).collect())],
                     })))
                 }
+            }
+            Token::Virtual => {
+                // virtual <iface_type>[.<modport>] <vif_name>;
+                self.advance(); // consume 'virtual'
+                let iface_type = self.expect_ident()?;
+                let mut modport = None;
+                if self.peek() == &Token::Dot {
+                    self.advance();
+                    modport = Some(self.expect_ident()?);
+                }
+                let vif_name = self.expect_ident()?;
+                self.skip_semi();
+                Ok(Some(ModuleItem::VirtualInterface {
+                    iface_type,
+                    modport,
+                    vif_name,
+                }))
             }
             Token::Function => {
                 let func = self.parse_function(false)?;
