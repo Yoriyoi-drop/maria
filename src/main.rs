@@ -165,6 +165,14 @@ struct Cli {
     /// Save checksums to file for change detection across runs
     #[arg(long = "checksum-file")]
     checksum_file: Option<String>,
+
+    /// Enable profiling (show phase timings and counters)
+    #[arg(long = "profile")]
+    profile: bool,
+
+    /// Force full recompile (ignore cache)
+    #[arg(long = "recompile")]
+    recompile: bool,
 }
 
 fn main() {
@@ -642,7 +650,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         cli.files.iter().map(PathBuf::from).collect()
     };
 
-    let mut config = SessionConfig {
+    let config = SessionConfig {
         sources,
         incdirs: cli.incdirs.iter().map(PathBuf::from).collect(),
         defines: cli
@@ -652,14 +660,24 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect(),
         top_module: cli.top.clone(),
-        auto_incdirs: !cli.sources.is_empty() || !cli.start,! // disable auto-scan if files specified
+        auto_incdirs: cli.start || cli.files.is_empty(),
         libdirs: cli.libdirs.iter().map(PathBuf::from).collect(),
         libfiles: cli.libfiles.iter().map(PathBuf::from).collect(),
         use_fast_lexer: !cli.legacy_lexer,
     };
 
     let mut session = CompileSession::new(config);
-    let (design, index_len) = {
+
+    if cli.profile {
+        session.enable_profiling();
+    }
+    let (design, index_len) = if cli.recompile {
+        if !cli.quiet { eprintln!("Forcing full recompile..."); }
+        let all_sources: Vec<PathBuf> = session.config.sources.clone();
+        let (design, module_index) = session.compile_incremental(&all_sources)?;
+        let len = module_index.len();
+        (design, len)
+    } else {
         let (design, module_index) = session.compile()?;
         let len = module_index.len();
         (design, len)
@@ -668,6 +686,19 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     if !cli.quiet {
         session.print_timing();
         println!("Modules indexed: {}", index_len);
+    }
+
+    // Show cache stats if enabled
+    if cli.cache_stats {
+        let stats = session.cache_stats();
+        eprintln!("{}", stats);
+    }
+
+    // Show profile report if enabled
+    if cli.profile {
+        if let Some(report) = session.profile_report() {
+            eprintln!("{}", report);
+        }
     }
 
     if cli.print_ast {

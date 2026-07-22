@@ -82,29 +82,6 @@ fn bench_session_50_files() {
 
 #[test]
 #[ignore]
-fn bench_compares_legacy_vs_simd_lexer() {
-    use crate::frontend::lexer::lexer::{tokenize_legacy, tokenize_simd};
-    let source = include_str!("../../test/counter.sv");
-
-    let start = Instant::now();
-    for _ in 0..100 {
-        let _ = tokenize_legacy(source);
-    }
-    let legacy_time = start.elapsed();
-
-    let start = Instant::now();
-    for _ in 0..100 {
-        let _ = tokenize_simd(source);
-    }
-    let simd_time = start.elapsed();
-
-    eprintln!("Legacy lexer: {:?} for 100 iterations", legacy_time);
-    eprintln!("SIMD lexer:  {:?} for 100 iterations", simd_time);
-    eprintln!("Speedup: {:.1}x", legacy_time.as_nanos() as f64 / simd_time.as_nanos() as f64);
-}
-
-#[test]
-#[ignore]
 fn bench_string_intern_speed() {
     use crate::intern::Symbol;
     let start = Instant::now();

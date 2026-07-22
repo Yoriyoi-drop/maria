@@ -2,6 +2,8 @@ use super::*;
 use crate::simulator::logicvec_to_string;
 
 mod stress_tests;
+mod bench_release;
+mod bench_profile;
 
 #[test]
 fn test_simple_module() {

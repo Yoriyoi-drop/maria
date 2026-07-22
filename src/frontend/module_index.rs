@@ -121,6 +121,35 @@ impl ModuleIndex {
             items
         })
     }
+
+    /// Get all module symbols that belong to a specific file.
+    pub fn file_modules(&self, file: &PathBuf) -> Vec<Symbol> {
+        self.file_map
+            .get(file)
+            .map(|r| r.clone())
+            .unwrap_or_default()
+    }
+
+    /// Count modules of a specific kind.
+    pub fn count_by_kind(&self, kind: EntryKind) -> usize {
+        self.modules
+            .iter()
+            .filter(|entry| entry.value().iter().any(|(k, _)| *k == kind))
+            .count()
+    }
+
+    /// Get all module names as Symbol vec.
+    pub fn module_names(&self) -> Vec<Symbol> {
+        self.modules.iter().map(|entry| *entry.key()).collect()
+    }
+
+    /// Get all module names as String vec (for legacy interop).
+    pub fn module_names_string(&self) -> Vec<String> {
+        self.modules
+            .iter()
+            .map(|entry| entry.key().as_str().to_string())
+            .collect()
+    }
 }
 
 impl Default for ModuleIndex {

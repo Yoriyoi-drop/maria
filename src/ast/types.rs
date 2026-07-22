@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use super::expr::Expr;
 use super::stmt::{AlwaysBlock, InitialBlock, Stmt};
+use crate::intern::Symbol;
 
 // Re-export constant evaluation functions
 pub use crate::ast::const_eval::{const_eval_simple, const_eval_with_params, string_to_i64};
@@ -16,8 +17,8 @@ pub struct Design {
     pub clocking_blocks: Vec<ClockingBlock>,
     pub configs: Vec<ConfigDecl>,
     pub udp_defs: Vec<UdpDef>,
-    pub top_module: Option<String>,
-    pub unit_imports: Vec<(String, String)>,
+    pub top_module: Option<Symbol>,
+    pub unit_imports: Vec<(Symbol, Symbol)>,
     pub unit_decls: Vec<Decl>,
     pub unit_funcs: Vec<FunctionDecl>,
     pub unit_tasks: Vec<TaskDecl>,
@@ -28,36 +29,36 @@ pub struct Design {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfigDecl {
-    pub name: String,
-    pub design_top: Option<String>,
+    pub name: Symbol,
+    pub design_top: Option<Symbol>,
     pub default_liblist: Option<String>,
     pub rules: Vec<ConfigRule>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConfigRule {
-    InstanceLiblist { instance: String, liblist: String },
-    CellLiblist { cell: String, liblist: String },
+    InstanceLiblist { instance: Symbol, liblist: String },
+    CellLiblist { cell: Symbol, liblist: String },
     UseLiblist { liblist: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BindDecl {
-    pub target: String,
+    pub target: Symbol,
     pub instance: ModuleInstance,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassDecl {
-    pub name: String,
-    pub extends: Option<String>,
+    pub name: Symbol,
+    pub extends: Option<Symbol>,
     pub type_params: Vec<TypeParam>,
     pub members: Vec<ClassMember>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeParam {
-    pub name: String,
+    pub name: Symbol,
     pub default_type: Option<DataType>,
 }
 
@@ -67,14 +68,14 @@ pub enum ClassMember {
     Function(FunctionDecl),
     Task(TaskDecl),
     Constraint {
-        name: String,
+        name: Symbol,
         body: Vec<ConstraintItem>,
     },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskDecl {
-    pub name: String,
+    pub name: Symbol,
     pub ports: Vec<FunctionPort>,
     pub decls: Vec<Decl>,
     pub stmts: Vec<Stmt>,
@@ -85,12 +86,12 @@ pub struct TaskDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstraintItem {
     Expr(Expr),
-    SolveBefore { vars: Vec<String> },
+    SolveBefore { vars: Vec<Symbol> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Module {
-    pub name: String,
+    pub name: Symbol,
     pub ports: Vec<Port>,
     pub params: Vec<ParamDecl>,
     pub decls: Vec<Decl>,
@@ -99,19 +100,19 @@ pub struct Module {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModportItem {
-    pub name: String,
+    pub name: Symbol,
     pub direction: PortDirection,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Modport {
-    pub name: String,
+    pub name: Symbol,
     pub items: Vec<ModportItem>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Interface {
-    pub name: String,
+    pub name: Symbol,
     pub params: Vec<ParamDecl>,
     pub decls: Vec<Decl>,
     pub modports: Vec<Modport>,
@@ -119,15 +120,15 @@ pub struct Interface {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Port {
-    pub name: String,
+    pub name: Symbol,
     pub direction: PortDirection,
     pub range: Option<Range>,
     pub expr_range: Option<ExprRange>,
-    pub dtype_name: Option<String>,
+    pub dtype_name: Option<Symbol>,
 }
 
 impl Port {
-    pub fn resolved_width(&self, param_vals: &HashMap<String, i64>) -> Result<usize, String> {
+    pub fn resolved_width(&self, param_vals: &HashMap<Symbol, i64>) -> Result<usize, String> {
         if let Some(r) = &self.range {
             Ok(r.width())
         } else if let Some(er) = &self.expr_range {
@@ -173,7 +174,7 @@ pub struct ExprRange {
 
 pub fn resolve_expr_range(
     er: &ExprRange,
-    param_vals: &HashMap<String, i64>,
+    param_vals: &HashMap<Symbol, i64>,
 ) -> Result<Range, String> {
     let msb = const_eval_with_params(&er.msb, param_vals)?;
     let lsb = const_eval_with_params(&er.lsb, param_vals)?;
@@ -185,7 +186,7 @@ pub fn resolve_expr_range(
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParamDecl {
-    pub name: String,
+    pub name: Symbol,
     pub dtype: Option<DataType>,
     pub range: Option<(Expr, Expr)>,
     pub default: Option<Expr>,
@@ -239,7 +240,7 @@ impl DeclKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeclVar {
-    pub name: String,
+    pub name: Symbol,
     pub range: Option<Range>,
     pub expr_range: Option<ExprRange>,
     pub array_range: Option<Range>,
@@ -323,7 +324,7 @@ impl DeclVar {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructMember {
-    pub name: String,
+    pub name: Symbol,
     pub dtype: Box<DataType>,
     pub range: Option<Range>,
 }
@@ -343,10 +344,10 @@ pub enum DataType {
     Realtime,
     String,
     Signed(Box<DataType>),
-    UserDefined(String),
+    UserDefined(Symbol),
     EnumType {
         base: Option<Box<DataType>>,
-        members: Vec<(String, Option<Expr>)>,
+        members: Vec<(Symbol, Option<Expr>)>,
     },
     StructType {
         members: Vec<StructMember>,
@@ -382,7 +383,7 @@ impl std::fmt::Display for DataType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypedefDecl {
-    pub name: String,
+    pub name: Symbol,
     pub dtype: DataType,
     pub range: Option<ExprRange>,
 }
@@ -402,7 +403,7 @@ pub enum GateType {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GatePrimitive {
     pub gate_type: GateType,
-    pub instance_name: Option<String>,
+    pub instance_name: Option<Symbol>,
     pub ports: Vec<Expr>,
     pub drive_strength: Option<(String, String)>,
     pub delay: Option<Delay>,
@@ -410,7 +411,7 @@ pub struct GatePrimitive {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CovergroupDecl {
-    pub name: String,
+    pub name: Symbol,
     pub clocking_event: Option<Expr>,
     pub coverpoints: Vec<CoverpointDef>,
     pub crosses: Vec<CrossDef>,
@@ -418,20 +419,20 @@ pub struct CovergroupDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CoverpointDef {
-    pub name: String,
+    pub name: Symbol,
     pub expr: Expr,
     pub bins: Vec<BinDef>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CrossDef {
-    pub name: String,
-    pub coverpoints: Vec<String>,
+    pub name: Symbol,
+    pub coverpoints: Vec<Symbol>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinDef {
-    pub name: String,
+    pub name: Symbol,
     pub range_list: Vec<Expr>,
     pub bin_type: BinType,
 }
@@ -445,7 +446,7 @@ pub enum BinType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DpiImport {
-    pub name: String,
+    pub name: Symbol,
     pub return_type: Option<Box<DataType>>,
     pub args: Vec<DpiArg>,
     pub is_task: bool,
@@ -455,7 +456,7 @@ pub struct DpiImport {
 pub struct DpiArg {
     pub direction: PortDirection,
     pub dtype: DataType,
-    pub name: String,
+    pub name: Symbol,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -473,8 +474,8 @@ pub enum ModuleItem {
     Covergroup(CovergroupDecl),
     // Imported items from packages
     Import {
-        package: String,
-        item: String,
+        package: Symbol,
+        item: Symbol,
     },
     DpiImport(DpiImport),
     DpiExport(DpiImport),
@@ -482,9 +483,9 @@ pub enum ModuleItem {
     Clocking(ClockingBlock),
     Specify(SpecifyBlock),
     VirtualInterface {
-        iface_type: String,
-        modport: Option<String>,
-        vif_name: String,
+        iface_type: Symbol,
+        modport: Option<Symbol>,
+        vif_name: Symbol,
     },
 }
 
@@ -501,7 +502,7 @@ pub enum GenerateItem {
         false_items: Vec<ModuleItem>,
     },
     For {
-        var: String,
+        var: Symbol,
         init: Option<Stmt>,
         cond: Option<Expr>,
         step: Option<Stmt>,
@@ -531,7 +532,7 @@ pub struct CaseGenerateItem {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDecl {
-    pub name: String,
+    pub name: Symbol,
     pub range: Option<ExprRange>,
     pub return_type: Option<Box<DataType>>,
     pub ports: Vec<FunctionPort>,
@@ -543,7 +544,7 @@ pub struct FunctionDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PackageDecl {
-    pub name: String,
+    pub name: Symbol,
     pub items: Vec<PackageItem>,
 }
 
@@ -554,13 +555,13 @@ pub enum PackageItem {
     Task(TaskDecl),
     Typedef(TypedefDecl),
     Param(ParamDecl),
-    Import { package: String, item: String },
-    Export { package: String, item: String },
+    Import { package: Symbol, item: Symbol },
+    Export { package: Symbol, item: Symbol },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClockingBlock {
-    pub name: String,
+    pub name: Symbol,
     pub clock_event: ClockEvent,
     pub default_input_skew: Option<u64>,
     pub default_output_skew: Option<u64>,
@@ -569,23 +570,23 @@ pub struct ClockingBlock {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClockEvent {
-    Posedge(String),
-    Negedge(String),
-    Edge(String),
+    Posedge(Symbol),
+    Negedge(Symbol),
+    Edge(Symbol),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClockingItem {
     Input {
-        signals: Vec<String>,
+        signals: Vec<Symbol>,
         skew: Option<u64>,
     },
     Output {
-        signals: Vec<String>,
+        signals: Vec<Symbol>,
         skew: Option<u64>,
     },
     InputOutput {
-        signals: Vec<String>,
+        signals: Vec<Symbol>,
     },
     DefaultInputSkew(u64),
     DefaultOutputSkew(u64),
@@ -593,7 +594,7 @@ pub enum ClockingItem {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionPort {
-    pub name: String,
+    pub name: Symbol,
     pub range: Option<Range>,
     pub expr_range: Option<ExprRange>,
     pub direction: Option<PortDirection>,
@@ -615,7 +616,7 @@ impl FunctionPort {
 #[derive(Debug, Clone, PartialEq)]
 pub struct UdpPort {
     pub direction: PortDirection,
-    pub name: String,
+    pub name: Symbol,
     pub is_reg: bool,
 }
 
@@ -625,7 +626,7 @@ pub enum UdpSymbol {
     One,
     X,
     DontCare,
-    Edge(String),
+    Edge(Symbol),
     NoChange,
 }
 
@@ -637,7 +638,7 @@ pub struct UdpTableEntry {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UdpDef {
-    pub name: String,
+    pub name: Symbol,
     pub ports: Vec<UdpPort>,
     pub table: Vec<UdpTableEntry>,
     pub is_sequential: bool,
@@ -653,18 +654,18 @@ pub struct ContinuousAssign {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleInstance {
-    pub module_name: String,
-    pub instance_name: String,
+    pub module_name: Symbol,
+    pub instance_name: Symbol,
     pub range: Option<ExprRange>,
-    pub param_assigns: HashMap<String, Expr>,
-    pub type_param_assigns: HashMap<String, DataType>,
+    pub param_assigns: HashMap<Symbol, Expr>,
+    pub type_param_assigns: HashMap<Symbol, DataType>,
     pub port_conns: Vec<PortConnection>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PortConnection {
     Positional(Expr),
-    Named { port: String, expr: Expr },
+    Named { port: Symbol, expr: Expr },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -677,13 +678,13 @@ pub struct Delay {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SpecifyItem {
     PathDelay {
-        src: String,
-        dst: String,
+        src: Symbol,
+        dst: Symbol,
         rise: Option<Expr>,
         fall: Option<Expr>,
     },
     SpecParam {
-        name: String,
+        name: Symbol,
         value: Expr,
     },
     SetupCheck {

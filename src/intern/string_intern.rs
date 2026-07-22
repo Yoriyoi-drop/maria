@@ -2,7 +2,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
-use dashmap::DashMap;
+use dashmap::{DashMap, Entry};
 
 // ─── Symbol ───
 
@@ -88,13 +88,22 @@ impl AsRef<str> for Symbol {
 
 // ─── Global String Table ───
 
-/// Thread-safe string table with O(1) DashMap lookup.
-/// Strings stored as owned String — no leak overhead.
+/// Thread-safe string table with O(1) DashMap lookup and O(1) intern.
+///
+/// Design:
+/// - `lookup`: DashMap for O(1) string→u32 lookup
+/// - `strings`: append-only Vec of `Box::leak`'d `&'static str` for O(1) u32→string
+/// - `next_id`: atomic counter for lock-free ID allocation
+///
+/// The `intern()` method uses DashMap's `entry()` API to atomically
+/// check-and-insert in O(1) — no linear scan, no O(n²) blowup.
 struct StringTable {
-    /// Indexed storage — ensures stable u32 handles
-    strings: parking_lot::Mutex<Vec<String>>,
     /// O(1) hash-based lookup — string → u32 index
     lookup: DashMap<String, u32, fxhash::FxBuildHasher>,
+    /// Indexed storage — `Box::leak`'d strings for stable `&'static str` pointers.
+    /// Append-only: once pushed, a string lives forever.
+    strings: parking_lot::Mutex<Vec<&'static str>>,
+    // ID is derived from strings.len() under the lock — no separate counter needed.
 }
 
 fn table() -> &'static StringTable {
@@ -159,7 +168,7 @@ fn table() -> &'static StringTable {
             "process",    // 53
         ];
         for s in &prelude {
-            table.intern_fast(s);
+            table.intern(s);
         }
         table
     })
@@ -168,47 +177,47 @@ fn table() -> &'static StringTable {
 impl StringTable {
     fn new() -> Self {
         StringTable {
-            strings: parking_lot::Mutex::new(Vec::with_capacity(10240)),
             lookup: DashMap::with_hasher(fxhash::FxBuildHasher::default()),
+            strings: parking_lot::Mutex::new(Vec::with_capacity(10240)),
         }
     }
 
-    /// Fast intern — assumes string not yet interned (used for pre-population).
-    fn intern_fast(&self, s: &str) -> Symbol {
-        let mut strings = self.strings.lock();
-        let id = strings.len() as u32;
-        let owned = s.to_string();
-        self.lookup.insert(owned.clone(), id);
-        strings.push(owned);
-        Symbol(id)
-    }
-
+    /// Intern a string — O(1) amortized.
+    ///
+    /// Uses DashMap `entry()` API for atomic check-and-insert,
+    /// eliminating the O(n²) bottleneck from the old linear-scan approach.
+    /// Fast path (cache hit) avoids allocation by using `get()` first.
     fn intern(&self, s: &str) -> Symbol {
-        // Fast path: O(1) DashMap lookup
+        // Fast path: no allocation on cache hit (common case — keywords interned thousands of times)
         if let Some(sym) = self.lookup.get(s) {
             return Symbol(*sym);
         }
-
-        // Slow path: allocate new entry
-        let mut strings = self.strings.lock();
-        // Double-check after acquiring lock (prevent race)
-        for (i, existing) in strings.iter().enumerate() {
-            if existing == s {
-                self.lookup.insert(existing.clone(), i as u32);
-                return Symbol(i as u32);
+        // Slow path: allocate and insert atomically via entry() API
+        let owned = s.to_string();
+        match self.lookup.entry(owned) {
+            Entry::Occupied(e) => Symbol(*e.get()),
+            Entry::Vacant(e) => {
+                // Leak the string for a stable `&'static str` pointer.
+                // Safe: only allocated once, lives forever.
+                // Note: `owned` is already moved into `entry()` above, so we allocate fresh.
+                let leaked: &'static str = Box::leak(Box::from(s));
+                // Use strings.len() as the ID (guaranteed to match Vec index under the lock)
+                let mut strings = self.strings.lock();
+                let id = strings.len() as u32;
+                strings.push(leaked);
+                e.insert(id);
+                Symbol(id)
             }
         }
-        let id = strings.len() as u32;
-        let owned = s.to_string();
-        self.lookup.insert(owned.clone(), id);
-        strings.push(owned);
-        Symbol(id)
     }
 
+    /// Retrieve a string by its u32 ID — O(1).
+    ///
+    /// `&'static str: Copy`, so indexing the Vec returns a `&'static str` value
+    /// that is not tied to the MutexGuard lifetime — safe without transmute.
     fn get(&self, id: u32) -> &'static str {
         let strings = self.strings.lock();
-        // Safe: strings are append-only, never removed, table is static
-        unsafe { std::mem::transmute::<&str, &'static str>(&strings[id as usize]) }
+        strings[id as usize]
     }
 }
 
@@ -277,6 +286,26 @@ pub mod prelude {
 /// Initialize the global string table.
 pub fn init_string_table() {
     let _ = table();
+}
+
+/// Convert a Symbol back to an owned String (for legacy interop).
+pub fn sym_to_string(sym: Symbol) -> String {
+    sym.as_str().to_string()
+}
+
+/// Intern all strings in a Vec into Symbols.
+pub fn strings_to_symbols(strings: &[String]) -> Vec<Symbol> {
+    strings.iter().map(|s| Symbol::intern(s)).collect()
+}
+
+/// Convert all Symbols in a slice to Strings.
+pub fn symbols_to_strings(symbols: &[Symbol]) -> Vec<String> {
+    symbols.iter().map(|s| s.as_str().to_string()).collect()
+}
+
+/// Intern all strings in a Vec<&str> into Symbols (borrowed variant).
+pub fn strs_to_symbols(strings: &[&str]) -> Vec<Symbol> {
+    strings.iter().map(|s| Symbol::intern(s)).collect()
 }
 
 // ─── Tests ───

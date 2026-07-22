@@ -2,6 +2,7 @@ use super::util::*;
 use crate::ast::types::const_eval_simple;
 use crate::ast::*;
 use crate::error::{ErrorContext, SimError};
+use crate::intern::Symbol;
 use crate::parser::lexer::*;
 
 pub struct Parser {
@@ -9,10 +10,10 @@ pub struct Parser {
     pos: usize,
     source_file: String,
     source_lines: Vec<String>,
-    class_names: Vec<String>,
-    typedef_names: Vec<String>,
-    package_tdefs: std::collections::HashMap<String, Vec<String>>,
-    type_param_names: Vec<String>,
+    class_names: Vec<Symbol>,
+    typedef_names: Vec<Symbol>,
+    package_tdefs: std::collections::HashMap<Symbol, Vec<Symbol>>,
+    type_param_names: Vec<Symbol>,
 }
 
 impl Parser {
@@ -23,22 +24,22 @@ impl Parser {
             source_file: source_file.to_string(),
             source_lines: Vec::new(),
             class_names: vec![
-                "process".to_string(),
-                "uvm_object".to_string(),
-                "uvm_component".to_string(),
-                "uvm_sequence_item".to_string(),
-                "uvm_sequence".to_string(),
-                "uvm_sequencer".to_string(),
-                "uvm_driver".to_string(),
-                "uvm_monitor".to_string(),
-                "uvm_scoreboard".to_string(),
-                "uvm_analysis_port".to_string(),
-                "uvm_analysis_imp".to_string(),
-                "uvm_test".to_string(),
-                "uvm_config_db".to_string(),
-                "uvm_report_object".to_string(),
-                "uvm_factory".to_string(),
-                "uvm_resource_db".to_string(),
+                Symbol::intern("process"),
+                Symbol::intern("uvm_object"),
+                Symbol::intern("uvm_component"),
+                Symbol::intern("uvm_sequence_item"),
+                Symbol::intern("uvm_sequence"),
+                Symbol::intern("uvm_sequencer"),
+                Symbol::intern("uvm_driver"),
+                Symbol::intern("uvm_monitor"),
+                Symbol::intern("uvm_scoreboard"),
+                Symbol::intern("uvm_analysis_port"),
+                Symbol::intern("uvm_analysis_imp"),
+                Symbol::intern("uvm_test"),
+                Symbol::intern("uvm_config_db"),
+                Symbol::intern("uvm_report_object"),
+                Symbol::intern("uvm_factory"),
+                Symbol::intern("uvm_resource_db"),
             ],
             typedef_names: Vec::new(),
             package_tdefs: std::collections::HashMap::new(),
@@ -131,20 +132,20 @@ impl Parser {
         }
     }
 
-    fn expect_ident(&mut self) -> Result<String, SimError> {
+    fn expect_ident(&mut self) -> Result<Symbol, SimError> {
         let tok = self.peek().clone();
         match &tok {
             Token::Ident(s) => {
                 self.advance();
-                Ok(s.clone())
+                Ok(Symbol::intern(s))
             }
             Token::New => {
                 self.advance();
-                Ok("new".to_string())
+                Ok(Symbol::intern("new"))
             }
             Token::This => {
                 self.advance();
-                Ok("this".to_string())
+                Ok(Symbol::intern("this"))
             }
             _ => Err(SimError::parse(format!(
                 "line {}: expected identifier, found {}",
@@ -156,22 +157,22 @@ impl Parser {
 
     pub fn parse_design(&mut self) -> Result<Design, SimError> {
         self.class_names.clear();
-        self.class_names.push("process".to_string());
-        self.class_names.push("uvm_object".to_string());
-        self.class_names.push("uvm_component".to_string());
-        self.class_names.push("uvm_sequence_item".to_string());
-        self.class_names.push("uvm_sequence".to_string());
-        self.class_names.push("uvm_sequencer".to_string());
-        self.class_names.push("uvm_driver".to_string());
-        self.class_names.push("uvm_monitor".to_string());
-        self.class_names.push("uvm_scoreboard".to_string());
-        self.class_names.push("uvm_analysis_port".to_string());
-        self.class_names.push("uvm_analysis_imp".to_string());
-        self.class_names.push("uvm_test".to_string());
-        self.class_names.push("uvm_config_db".to_string());
-        self.class_names.push("uvm_report_object".to_string());
-        self.class_names.push("uvm_factory".to_string());
-        self.class_names.push("uvm_resource_db".to_string());
+        self.class_names.push(Symbol::intern("process"));
+        self.class_names.push(Symbol::intern("uvm_object"));
+        self.class_names.push(Symbol::intern("uvm_component"));
+        self.class_names.push(Symbol::intern("uvm_sequence_item"));
+        self.class_names.push(Symbol::intern("uvm_sequence"));
+        self.class_names.push(Symbol::intern("uvm_sequencer"));
+        self.class_names.push(Symbol::intern("uvm_driver"));
+        self.class_names.push(Symbol::intern("uvm_monitor"));
+        self.class_names.push(Symbol::intern("uvm_scoreboard"));
+        self.class_names.push(Symbol::intern("uvm_analysis_port"));
+        self.class_names.push(Symbol::intern("uvm_analysis_imp"));
+        self.class_names.push(Symbol::intern("uvm_test"));
+        self.class_names.push(Symbol::intern("uvm_config_db"));
+        self.class_names.push(Symbol::intern("uvm_report_object"));
+        self.class_names.push(Symbol::intern("uvm_factory"));
+        self.class_names.push(Symbol::intern("uvm_resource_db"));
         let mut modules = Vec::new();
         let mut classes = Vec::new();
         let mut packages = Vec::new();

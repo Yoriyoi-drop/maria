@@ -62,8 +62,11 @@ fn test_stress_100_modules() {
     let start = Instant::now();
     let design = compile_str(&source).unwrap();
     let elapsed = start.elapsed();
-    eprintln!("Stress 100 modules: {:?} ({} modules)", elapsed, design.modules.len());
-    assert_eq!(design.modules.len(), 100);
+    // Note: top module is stored in IrDesign.top, not in IrDesign.modules
+    // So total = modules.len() + 1
+    let total = design.modules.len() + 1;
+    eprintln!("Stress 100 modules: {:?} ({} modules + 1 top = {})", elapsed, design.modules.len(), total);
+    assert_eq!(total, 100, "100 modules total (99 in modules + 1 in .top)");
     assert!(elapsed.as_secs() < 5, "100 modules took too long: {:?}", elapsed);
 }
 
@@ -74,8 +77,10 @@ fn test_stress_1000_modules() {
     let start = Instant::now();
     let design = compile_str(&source).unwrap();
     let elapsed = start.elapsed();
-    eprintln!("Stress 1000 modules: {:?} ({} modules)", elapsed, design.modules.len());
-    assert_eq!(design.modules.len(), 1000);
+    // Note: top module is stored in IrDesign.top, not in IrDesign.modules
+    let total = design.modules.len() + 1;
+    eprintln!("Stress 1000 modules: {:?} ({} modules + 1 top = {})", elapsed, design.modules.len(), total);
+    assert_eq!(total, 1000, "1000 modules total (999 in modules + 1 in .top)");
     assert!(elapsed.as_secs() < 30, "1000 modules took too long: {:?}", elapsed);
 }
 

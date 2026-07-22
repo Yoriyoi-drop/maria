@@ -1,4 +1,5 @@
 use super::expr::Expr;
+use crate::intern::Symbol;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlwaysBlock {
@@ -39,7 +40,7 @@ pub enum Stmt {
         stmts: Vec<Stmt>,
     },
     NamedBlock {
-        name: String,
+        name: Symbol,
         stmts: Vec<Stmt>,
         decls: Vec<super::types::Decl>,
     },
@@ -107,7 +108,7 @@ pub enum Stmt {
         expr: Expr,
     },
     SysCall {
-        name: String,
+        name: Symbol,
         args: Vec<Expr>,
     },
     SysFinish,
@@ -120,7 +121,7 @@ pub enum Stmt {
         stmt: Option<Box<Stmt>>,
     },
     Disable {
-        name: String,
+        name: Symbol,
     },
     Force {
         lhs: Expr,
@@ -141,11 +142,11 @@ pub enum Stmt {
         stmt: Option<Box<Stmt>>,
     },
     EventTrigger {
-        name: String,
+        name: Symbol,
     },
     ForeachLoop {
-        array_var: String,
-        index_vars: Vec<String>,
+        array_var: Symbol,
+        index_vars: Vec<Symbol>,
         stmts: Vec<Stmt>,
     },
     // Unique/Priority case qualifiers
@@ -191,7 +192,7 @@ pub enum Stmt {
         fail_stmt: Option<Box<Stmt>>,
     },
     WaitOrder {
-        events: Vec<String>,
+        events: Vec<Symbol>,
         fail_stmt: Option<Box<Stmt>>,
     },
     /// Unique/priority if
@@ -219,7 +220,7 @@ pub enum Stmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RandSeqProduction {
-    pub name: String,
+    pub name: Symbol,
     pub items: Vec<RandSeqItem>,
 }
 

@@ -1,10 +1,12 @@
+use crate::intern::Symbol;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Value(Value),
     FillLit(crate::ir::LogicVal),
-    Ident(String),
+    Ident(Symbol),
     FuncCall {
-        name: String,
+        name: Symbol,
         args: Vec<Expr>,
     },
     RangeSelect {
@@ -44,13 +46,13 @@ pub enum Expr {
     String(String),
     MethodCall {
         obj: Box<Expr>,
-        method: String,
+        method: Symbol,
         args: Vec<Expr>,
         with_clause: Option<Box<Expr>>,
     },
     MemberAccess {
         obj: Box<Expr>,
-        field: String,
+        field: Symbol,
     },
     Null,
     Inside {
@@ -63,12 +65,12 @@ pub enum Expr {
         slices: Vec<Expr>,
     },
     Cast {
-        dtype: String,
+        dtype: Symbol,
         expr: Box<Expr>,
     },
     ScopedIdent {
-        package: String,
-        item: String,
+        package: Symbol,
+        item: Symbol,
     },
     Dist {
         expr: Box<Expr>,
