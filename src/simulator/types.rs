@@ -4,10 +4,18 @@ use std::fmt;
 // ── Debug types ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum DebugMode { Normal, Debug, DeepDebug }
+pub enum DebugMode {
+    Normal,
+    Debug,
+    DeepDebug,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum StepMode { Running, Paused, StepCycle }
+pub enum StepMode {
+    Running,
+    Paused,
+    StepCycle,
+}
 
 #[derive(Debug, Clone)]
 pub enum Breakpoint {
@@ -78,17 +86,17 @@ pub enum EventKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EventRegion {
-    Preponed    = 1,
-    PreActive   = 2,
-    Active      = 3,
-    Inactive    = 4,
-    PreNba      = 5,
-    Nba         = 6,
-    PostNba     = 7,
+    Preponed = 1,
+    PreActive = 2,
+    Active = 3,
+    Inactive = 4,
+    PreNba = 5,
+    Nba = 6,
+    PostNba = 7,
     PreObserved = 8,
-    Observed    = 9,
+    Observed = 9,
     PostObserved = 10,
-    Reactive    = 11,
+    Reactive = 11,
     PostReactive = 12,
 }
 

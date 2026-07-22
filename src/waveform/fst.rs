@@ -110,7 +110,9 @@ impl FstWaveWriter {
             // Add variables in this scope
             let sigs = scope_map.get(scope_path).unwrap();
             for (bare_name, width, array_depth) in sigs {
-                if *width == 0 { continue; }  // skip dynamic arrays
+                if *width == 0 {
+                    continue;
+                } // skip dynamic arrays
                 let key = Self::signal_key(scope_path, bare_name);
 
                 if *array_depth > 1 {
@@ -125,7 +127,9 @@ impl FstWaveWriter {
                                 &elem_name,
                                 GeomEntry::Fixed(elem_width as u32),
                             )
-                            .map_err(|e| format!("FST add_variable '{}' failed: {}", elem_name, e))?;
+                            .map_err(|e| {
+                                format!("FST add_variable '{}' failed: {}", elem_name, e)
+                            })?;
                         var_handles.insert(elem_key, handle);
                     }
                 } else {
@@ -181,17 +185,24 @@ impl FstWaveWriter {
         for j in start..start + elem_width {
             bits.push(sig_val.bits.get(j).copied().unwrap_or(LogicVal::X));
         }
-        LogicVec { width: elem_width, bits }
+        LogicVec {
+            width: elem_width,
+            bits,
+        }
     }
 
     pub fn write_time_header(&mut self, time: u64) -> Result<(), String> {
-        if !self.enabled { return Ok(()); }
+        if !self.enabled {
+            return Ok(());
+        }
         self.current_time = time;
         Ok(())
     }
 
     pub fn dump_state(&mut self, design: &IrDesign, state: &[LogicVec]) -> Result<(), String> {
-        if !self.enabled { return Ok(()); }
+        if !self.enabled {
+            return Ok(());
+        }
 
         // Collect changes first to avoid borrow conflicts
         let mut changes: Vec<(u32, String)> = Vec::new();
@@ -238,7 +249,9 @@ impl FstWaveWriter {
     }
 
     pub fn dump_all(&mut self, design: &IrDesign, state: &[LogicVec]) -> Result<(), String> {
-        if !self.enabled { return Ok(()); }
+        if !self.enabled {
+            return Ok(());
+        }
 
         // Collect changes first to avoid borrow conflicts
         let mut changes: Vec<(u32, String)> = Vec::new();

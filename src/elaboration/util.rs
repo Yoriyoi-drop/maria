@@ -1,13 +1,21 @@
 use std::collections::HashMap;
 
-use crate::ast::*;
 use crate::ast::types::const_eval_simple;
 use crate::ast::types::const_eval_with_params;
 use crate::ast::types::string_to_i64;
+use crate::ast::*;
 use crate::ir::*;
 
 pub fn is_2state_type(dtype: &DataType) -> bool {
-    matches!(dtype, DataType::Bit | DataType::Byte | DataType::Shortint | DataType::Int | DataType::Longint | DataType::Time)
+    matches!(
+        dtype,
+        DataType::Bit
+            | DataType::Byte
+            | DataType::Shortint
+            | DataType::Int
+            | DataType::Longint
+            | DataType::Time
+    )
 }
 
 pub fn is_signed_type(dtype: &DataType) -> bool {
@@ -36,7 +44,10 @@ pub fn collect_body_params(module: &Module) -> Vec<ParamDecl> {
     params
 }
 
-pub fn resolve_param_values_fn(module: &Module, instance_overrides: &HashMap<String, i64>) -> Result<HashMap<String, i64>, String> {
+pub fn resolve_param_values_fn(
+    module: &Module,
+    instance_overrides: &HashMap<String, i64>,
+) -> Result<HashMap<String, i64>, String> {
     let mut vals = HashMap::new();
     let mut positional_overrides: Vec<i64> = Vec::new();
     for (name, val) in instance_overrides {
@@ -95,7 +106,11 @@ pub fn resolve_param_values_fn(module: &Module, instance_overrides: &HashMap<Str
 }
 
 pub fn detect_sync_reset(body: &[IrStmt]) -> Option<ResetInfo> {
-    if let Some(IrStmt::If { cond: IrExpr::Signal(sig_id, _), .. }) = body.first() {
+    if let Some(IrStmt::If {
+        cond: IrExpr::Signal(sig_id, _),
+        ..
+    }) = body.first()
+    {
         return Some(ResetInfo {
             signal: *sig_id,
             polarity: true,
@@ -106,7 +121,10 @@ pub fn detect_sync_reset(body: &[IrStmt]) -> Option<ResetInfo> {
     None
 }
 
-pub fn expand_all_generates(module: &mut Module, param_vals: &HashMap<String, i64>) -> Result<(), String> {
+pub fn expand_all_generates(
+    module: &mut Module,
+    param_vals: &HashMap<String, i64>,
+) -> Result<(), String> {
     let mut i = 0;
     while i < module.items.len() {
         if let ModuleItem::Generate(gen) = &module.items[i] {
@@ -125,23 +143,36 @@ pub fn expand_all_generates(module: &mut Module, param_vals: &HashMap<String, i6
 }
 
 pub fn extract_generate_step(step: &Option<Stmt>, param_vals: &HashMap<String, i64>) -> i64 {
-    let Some(Stmt::BlockingAssign { rhs, .. }) = step else { return 1 };
+    let Some(Stmt::BlockingAssign { rhs, .. }) = step else {
+        return 1;
+    };
     match rhs {
-        Expr::BinaryOp { op: BinaryOp::Add, lhs: _, rhs } => {
-            const_eval_with_params(rhs, param_vals).unwrap_or(1)
-        }
-        Expr::BinaryOp { op: BinaryOp::Sub, lhs: _, rhs } => {
-            -const_eval_with_params(rhs, param_vals).unwrap_or(1)
-        }
-        _ => 1
+        Expr::BinaryOp {
+            op: BinaryOp::Add,
+            lhs: _,
+            rhs,
+        } => const_eval_with_params(rhs, param_vals).unwrap_or(1),
+        Expr::BinaryOp {
+            op: BinaryOp::Sub,
+            lhs: _,
+            rhs,
+        } => -const_eval_with_params(rhs, param_vals).unwrap_or(1),
+        _ => 1,
     }
 }
 
-pub fn expand_generate_block(gen: &GenerateBlock, param_vals: &HashMap<String, i64>) -> Result<Vec<ModuleItem>, String> {
+pub fn expand_generate_block(
+    gen: &GenerateBlock,
+    param_vals: &HashMap<String, i64>,
+) -> Result<Vec<ModuleItem>, String> {
     let mut result = Vec::new();
     for item in &gen.items {
         match item {
-            GenerateItem::If { cond, true_items, false_items } => {
+            GenerateItem::If {
+                cond,
+                true_items,
+                false_items,
+            } => {
                 let eval_result = const_eval_with_params(cond, param_vals);
                 match eval_result {
                     Ok(val) => {
@@ -159,20 +190,36 @@ pub fn expand_generate_block(gen: &GenerateBlock, param_vals: &HashMap<String, i
                     }
                 }
             }
-            GenerateItem::For { var, init, cond, step, body_items } => {
+            GenerateItem::For {
+                var,
+                init,
+                cond,
+                step,
+                body_items,
+            } => {
                 let start_val: i64 = match init {
-                    Some(Stmt::BlockingAssign { rhs, .. }) => const_eval_with_params(rhs, param_vals)?,
+                    Some(Stmt::BlockingAssign { rhs, .. }) => {
+                        const_eval_with_params(rhs, param_vals)?
+                    }
                     _ => 0,
                 };
                 let limit: i64 = match cond {
-                    Some(Expr::BinaryOp { op: BinaryOp::Lt, rhs, .. }) => {
-                        const_eval_with_params(rhs, param_vals)?
-                    }
-                    Some(Expr::BinaryOp { op: BinaryOp::Le, rhs, .. }) => {
-                        const_eval_with_params(rhs, param_vals)? + 1
-                    }
+                    Some(Expr::BinaryOp {
+                        op: BinaryOp::Lt,
+                        rhs,
+                        ..
+                    }) => const_eval_with_params(rhs, param_vals)?,
+                    Some(Expr::BinaryOp {
+                        op: BinaryOp::Le,
+                        rhs,
+                        ..
+                    }) => const_eval_with_params(rhs, param_vals)? + 1,
                     Some(c) => {
-                        if const_eval_with_params(c, param_vals)? != 0 { 1 } else { 0 }
+                        if const_eval_with_params(c, param_vals)? != 0 {
+                            1
+                        } else {
+                            0
+                        }
                     }
                     None => 0,
                 };
@@ -197,7 +244,12 @@ pub fn expand_generate_block(gen: &GenerateBlock, param_vals: &HashMap<String, i
                     }
                 }
             }
-            GenerateItem::Case { expr, items, default, .. } => {
+            GenerateItem::Case {
+                expr,
+                items,
+                default,
+                ..
+            } => {
                 let case_val = match const_eval_with_params(expr, param_vals) {
                     Ok(v) => v,
                     Err(_) => {
@@ -227,7 +279,9 @@ pub fn expand_generate_block(gen: &GenerateBlock, param_vals: &HashMap<String, i
                             break;
                         }
                     }
-                    if matched { break; }
+                    if matched {
+                        break;
+                    }
                 }
                 if !matched {
                     if let Some(default_items) = default {
@@ -269,10 +323,12 @@ pub fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, v
         }
         ModuleItem::Assign(assign) => {
             let old_lhs = std::mem::replace(
-                &mut assign.lhs, Expr::Value(crate::ast::expr::Value::Decimal(0))
+                &mut assign.lhs,
+                Expr::Value(crate::ast::expr::Value::Decimal(0)),
             );
             let old_rhs = std::mem::replace(
-                &mut assign.rhs, Expr::Value(crate::ast::expr::Value::Decimal(0))
+                &mut assign.rhs,
+                Expr::Value(crate::ast::expr::Value::Decimal(0)),
             );
             assign.lhs = substitute_loop_var_in_expr(&old_lhs, var_name, value);
             assign.rhs = substitute_loop_var_in_expr(&old_rhs, var_name, value);
@@ -280,31 +336,33 @@ pub fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, v
         ModuleItem::Instance(inst) => {
             if let Some(range) = &mut inst.range {
                 let old_msb = std::mem::replace(
-                    &mut range.msb, Expr::Value(crate::ast::expr::Value::Decimal(0))
+                    &mut range.msb,
+                    Expr::Value(crate::ast::expr::Value::Decimal(0)),
                 );
                 let old_lsb = std::mem::replace(
-                    &mut range.lsb, Expr::Value(crate::ast::expr::Value::Decimal(0))
+                    &mut range.lsb,
+                    Expr::Value(crate::ast::expr::Value::Decimal(0)),
                 );
                 range.msb = substitute_loop_var_in_expr(&old_msb, var_name, value);
                 range.lsb = substitute_loop_var_in_expr(&old_lsb, var_name, value);
             }
             for (_, expr) in &mut inst.param_assigns {
-                let old = std::mem::replace(
-                    expr, Expr::Value(crate::ast::expr::Value::Decimal(0))
-                );
+                let old = std::mem::replace(expr, Expr::Value(crate::ast::expr::Value::Decimal(0)));
                 *expr = substitute_loop_var_in_expr(&old, var_name, value);
             }
             for conn in &mut inst.port_conns {
                 match conn {
                     PortConnection::Positional(expr) => {
                         let old = std::mem::replace(
-                            expr, Expr::Value(crate::ast::expr::Value::Decimal(0))
+                            expr,
+                            Expr::Value(crate::ast::expr::Value::Decimal(0)),
                         );
                         *expr = substitute_loop_var_in_expr(&old, var_name, value);
                     }
                     PortConnection::Named { expr, .. } => {
                         let old = std::mem::replace(
-                            expr, Expr::Value(crate::ast::expr::Value::Decimal(0))
+                            expr,
+                            Expr::Value(crate::ast::expr::Value::Decimal(0)),
                         );
                         *expr = substitute_loop_var_in_expr(&old, var_name, value);
                     }
@@ -318,18 +376,21 @@ pub fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, v
                     let old_lsb = er.lsb.clone();
                     let new_msb = substitute_loop_var_in_expr(&old_msb, var_name, value);
                     let new_lsb = substitute_loop_var_in_expr(&old_lsb, var_name, value);
-                    if let (Ok(msb), Ok(lsb)) = (const_eval_simple(&new_msb), const_eval_simple(&new_lsb)) {
+                    if let (Ok(msb), Ok(lsb)) =
+                        (const_eval_simple(&new_msb), const_eval_simple(&new_lsb))
+                    {
                         var.expr_range = None;
-                        var.range = Some(Range { msb: msb as usize, lsb: lsb as usize });
+                        var.range = Some(Range {
+                            msb: msb as usize,
+                            lsb: lsb as usize,
+                        });
                     }
                 }
             }
         }
         ModuleItem::Gate(ref mut gate) => {
             for port in &mut gate.ports {
-                let old = std::mem::replace(
-                    port, Expr::Value(crate::ast::expr::Value::Decimal(0))
-                );
+                let old = std::mem::replace(port, Expr::Value(crate::ast::expr::Value::Decimal(0)));
                 *port = substitute_loop_var_in_expr(&old, var_name, value);
             }
         }
@@ -338,16 +399,28 @@ pub fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, v
                 substitute_genvar_in_generate_item(gi, var_name, value);
             }
         }
-        ModuleItem::Func(_) | ModuleItem::Typedef(_) | ModuleItem::Import { .. }
-        | ModuleItem::Covergroup(_) | ModuleItem::DpiImport(_) | ModuleItem::DpiExport(_) | ModuleItem::Param(_)
-        | ModuleItem::Clocking(_) | ModuleItem::Specify(_) | ModuleItem::VirtualInterface { .. } => {}
+        ModuleItem::Func(_)
+        | ModuleItem::Typedef(_)
+        | ModuleItem::Import { .. }
+        | ModuleItem::Covergroup(_)
+        | ModuleItem::DpiImport(_)
+        | ModuleItem::DpiExport(_)
+        | ModuleItem::Param(_)
+        | ModuleItem::Clocking(_)
+        | ModuleItem::Specify(_)
+        | ModuleItem::VirtualInterface { .. } => {}
     }
 }
 
 pub fn substitute_genvar_in_generate_item(item: &mut GenerateItem, var_name: &str, value: i64) {
     match item {
-        GenerateItem::If { cond, true_items, false_items } => {
-            let old_cond = std::mem::replace(cond, Expr::Value(crate::ast::expr::Value::Decimal(0)));
+        GenerateItem::If {
+            cond,
+            true_items,
+            false_items,
+        } => {
+            let old_cond =
+                std::mem::replace(cond, Expr::Value(crate::ast::expr::Value::Decimal(0)));
             *cond = substitute_loop_var_in_expr(&old_cond, var_name, value);
             for item in true_items.iter_mut() {
                 substitute_genvar_in_module_item(item, var_name, value);
@@ -356,7 +429,13 @@ pub fn substitute_genvar_in_generate_item(item: &mut GenerateItem, var_name: &st
                 substitute_genvar_in_module_item(item, var_name, value);
             }
         }
-        GenerateItem::For { var: _, init, cond, step, body_items } => {
+        GenerateItem::For {
+            var: _,
+            init,
+            cond,
+            step,
+            body_items,
+        } => {
             if let Some(stmt) = init {
                 let old = std::mem::replace(stmt, Stmt::Null);
                 *stmt = substitute_loop_var_in_stmt(&old, var_name, value);
@@ -373,12 +452,19 @@ pub fn substitute_genvar_in_generate_item(item: &mut GenerateItem, var_name: &st
                 substitute_genvar_in_module_item(item, var_name, value);
             }
         }
-        GenerateItem::Case { expr, items, default, .. } => {
-            let old_expr = std::mem::replace(expr, Expr::Value(crate::ast::expr::Value::Decimal(0)));
+        GenerateItem::Case {
+            expr,
+            items,
+            default,
+            ..
+        } => {
+            let old_expr =
+                std::mem::replace(expr, Expr::Value(crate::ast::expr::Value::Decimal(0)));
             *expr = substitute_loop_var_in_expr(&old_expr, var_name, value);
             for ci in items.iter_mut() {
                 for label in ci.labels.iter_mut() {
-                    let old = std::mem::replace(label, Expr::Value(crate::ast::expr::Value::Decimal(0)));
+                    let old =
+                        std::mem::replace(label, Expr::Value(crate::ast::expr::Value::Decimal(0)));
                     *label = substitute_loop_var_in_expr(&old, var_name, value);
                 }
                 for item in ci.body.iter_mut() {
@@ -399,48 +485,69 @@ pub fn substitute_genvar_in_generate_item(item: &mut GenerateItem, var_name: &st
     }
 }
 
-pub fn try_unroll_for_loop<'a, F>(init: Option<&'a Stmt>, cond: Option<&'a Expr>, step: Option<&'a Stmt>,
-                           stmts: &[Stmt], elaborate_body: &F,
-                           params: &HashMap<String, i64>)
-    -> Result<Option<Vec<IrStmt>>, String>
-    where F: Fn(&[Stmt], &str, i64) -> Result<Vec<IrStmt>, String>
+pub fn try_unroll_for_loop<'a, F>(
+    init: Option<&'a Stmt>,
+    cond: Option<&'a Expr>,
+    step: Option<&'a Stmt>,
+    stmts: &[Stmt],
+    elaborate_body: &F,
+    params: &HashMap<String, i64>,
+) -> Result<Option<Vec<IrStmt>>, String>
+where
+    F: Fn(&[Stmt], &str, i64) -> Result<Vec<IrStmt>, String>,
 {
     let (var_name, init_val) = match init {
-        Some(Stmt::BlockingAssign { lhs: Expr::Ident(name), rhs, .. }) => {
-            (name.clone(), const_eval_with_params(rhs, params)?)
-        }
+        Some(Stmt::BlockingAssign {
+            lhs: Expr::Ident(name),
+            rhs,
+            ..
+        }) => (name.clone(), const_eval_with_params(rhs, params)?),
         _ => return Ok(None),
     };
 
     let step_fn: Box<dyn Fn(i64) -> Result<i64, String>> = match step {
-        Some(Stmt::BlockingAssign { lhs: Expr::Ident(n), rhs, .. }) if *n == var_name => {
-            match rhs {
-                Expr::BinaryOp { op: BinaryOp::Add, lhs, rhs } => {
-                    if let Expr::Ident(n2) = lhs.as_ref() {
-                        if n2 == &var_name {
-                            let inc = const_eval_with_params(rhs, params)?;
-                            Box::new(move |v| Ok(v + inc))
-                        } else { return Ok(None) }
-                    } else if let Expr::Ident(n2) = rhs.as_ref() {
-                        if n2 == &var_name {
-                            let inc = const_eval_with_params(lhs, params)?;
-                            Box::new(move |v| Ok(v + inc))
-                        } else { return Ok(None) }
-                    } else { return Ok(None) }
+        Some(Stmt::BlockingAssign {
+            lhs: Expr::Ident(n),
+            rhs,
+            ..
+        }) if *n == var_name => match rhs {
+            Expr::BinaryOp {
+                op: BinaryOp::Add,
+                lhs,
+                rhs,
+            } => {
+                if let Expr::Ident(n2) = lhs.as_ref() {
+                    if n2 == &var_name {
+                        let inc = const_eval_with_params(rhs, params)?;
+                        Box::new(move |v| Ok(v + inc))
+                    } else {
+                        return Ok(None);
+                    }
+                } else if let Expr::Ident(n2) = rhs.as_ref() {
+                    if n2 == &var_name {
+                        let inc = const_eval_with_params(lhs, params)?;
+                        Box::new(move |v| Ok(v + inc))
+                    } else {
+                        return Ok(None);
+                    }
+                } else {
+                    return Ok(None);
                 }
-                _ => return Ok(None),
             }
-        }
+            _ => return Ok(None),
+        },
         _ => return Ok(None),
     };
 
     let limit = match cond {
-        Some(Expr::BinaryOp { op: BinaryOp::Lt, lhs, rhs }) => {
-            match lhs.as_ref() {
-                Expr::Ident(n) if *n == var_name => const_eval_with_params(rhs, params)?,
-                _ => return Ok(None),
-            }
-        }
+        Some(Expr::BinaryOp {
+            op: BinaryOp::Lt,
+            lhs,
+            rhs,
+        }) => match lhs.as_ref() {
+            Expr::Ident(n) if *n == var_name => const_eval_with_params(rhs, params)?,
+            _ => return Ok(None),
+        },
         _ => return Ok(None),
     };
 
@@ -456,7 +563,10 @@ pub fn try_unroll_for_loop<'a, F>(init: Option<&'a Stmt>, cond: Option<&'a Expr>
 }
 
 pub fn substitute_loop_var_in_stmts(stmts: &[Stmt], var_name: &str, value: i64) -> Vec<Stmt> {
-    stmts.iter().map(|s| substitute_loop_var_in_stmt(s, var_name, value)).collect()
+    stmts
+        .iter()
+        .map(|s| substitute_loop_var_in_stmt(s, var_name, value))
+        .collect()
 }
 
 pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> Stmt {
@@ -474,19 +584,37 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
             rhs: substitute_loop_var_in_expr(rhs, var_name, value),
             delay: delay.clone(),
         },
-        Stmt::IfElse { cond, true_branch, false_branch } => Stmt::IfElse {
+        Stmt::IfElse {
+            cond,
+            true_branch,
+            false_branch,
+        } => Stmt::IfElse {
             cond: substitute_loop_var_in_expr(cond, var_name, value),
             true_branch: Box::new(substitute_loop_var_in_stmt(true_branch, var_name, value)),
-            false_branch: false_branch.as_ref().map(|fb|
-                Box::new(substitute_loop_var_in_stmt(fb, var_name, value))),
+            false_branch: false_branch
+                .as_ref()
+                .map(|fb| Box::new(substitute_loop_var_in_stmt(fb, var_name, value))),
         },
-        Stmt::Case { expr, items, default } => Stmt::Case {
+        Stmt::Case {
+            expr,
+            items,
+            default,
+        } => Stmt::Case {
             expr: substitute_loop_var_in_expr(expr, var_name, value),
-            items: items.iter().map(|item| crate::ast::stmt::CaseItem {
-                labels: item.labels.iter().map(|l| substitute_loop_var_in_expr(l, var_name, value)).collect(),
-                stmt: Box::new(substitute_loop_var_in_stmt(&item.stmt, var_name, value)),
-            }).collect(),
-            default: default.as_ref().map(|d| Box::new(substitute_loop_var_in_stmt(d, var_name, value))),
+            items: items
+                .iter()
+                .map(|item| crate::ast::stmt::CaseItem {
+                    labels: item
+                        .labels
+                        .iter()
+                        .map(|l| substitute_loop_var_in_expr(l, var_name, value))
+                        .collect(),
+                    stmt: Box::new(substitute_loop_var_in_stmt(&item.stmt, var_name, value)),
+                })
+                .collect(),
+            default: default
+                .as_ref()
+                .map(|d| Box::new(substitute_loop_var_in_stmt(d, var_name, value))),
         },
         Stmt::StmtAssign { lhs, rhs } => Stmt::StmtAssign {
             lhs: substitute_loop_var_in_expr(lhs, var_name, value),
@@ -498,34 +626,76 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
         },
         Stmt::SysCall { name, args } => Stmt::SysCall {
             name: name.clone(),
-            args: args.iter().map(|a| substitute_loop_var_in_expr(a, var_name, value)).collect(),
+            args: args
+                .iter()
+                .map(|a| substitute_loop_var_in_expr(a, var_name, value))
+                .collect(),
         },
         Stmt::Expr { expr } => Stmt::Expr {
             expr: substitute_loop_var_in_expr(expr, var_name, value),
         },
-        Stmt::CaseX { expr, items, default } => Stmt::CaseX {
+        Stmt::CaseX {
+            expr,
+            items,
+            default,
+        } => Stmt::CaseX {
             expr: substitute_loop_var_in_expr(expr, var_name, value),
-            items: items.iter().map(|item| crate::ast::stmt::CaseItem {
-                labels: item.labels.iter().map(|l| substitute_loop_var_in_expr(l, var_name, value)).collect(),
-                stmt: Box::new(substitute_loop_var_in_stmt(&item.stmt, var_name, value)),
-            }).collect(),
-            default: default.as_ref().map(|d| Box::new(substitute_loop_var_in_stmt(d, var_name, value))),
+            items: items
+                .iter()
+                .map(|item| crate::ast::stmt::CaseItem {
+                    labels: item
+                        .labels
+                        .iter()
+                        .map(|l| substitute_loop_var_in_expr(l, var_name, value))
+                        .collect(),
+                    stmt: Box::new(substitute_loop_var_in_stmt(&item.stmt, var_name, value)),
+                })
+                .collect(),
+            default: default
+                .as_ref()
+                .map(|d| Box::new(substitute_loop_var_in_stmt(d, var_name, value))),
         },
-        Stmt::CaseZ { expr, items, default } => Stmt::CaseZ {
+        Stmt::CaseZ {
+            expr,
+            items,
+            default,
+        } => Stmt::CaseZ {
             expr: substitute_loop_var_in_expr(expr, var_name, value),
-            items: items.iter().map(|item| crate::ast::stmt::CaseItem {
-                labels: item.labels.iter().map(|l| substitute_loop_var_in_expr(l, var_name, value)).collect(),
-                stmt: Box::new(substitute_loop_var_in_stmt(&item.stmt, var_name, value)),
-            }).collect(),
-            default: default.as_ref().map(|d| Box::new(substitute_loop_var_in_stmt(d, var_name, value))),
+            items: items
+                .iter()
+                .map(|item| crate::ast::stmt::CaseItem {
+                    labels: item
+                        .labels
+                        .iter()
+                        .map(|l| substitute_loop_var_in_expr(l, var_name, value))
+                        .collect(),
+                    stmt: Box::new(substitute_loop_var_in_stmt(&item.stmt, var_name, value)),
+                })
+                .collect(),
+            default: default
+                .as_ref()
+                .map(|d| Box::new(substitute_loop_var_in_stmt(d, var_name, value))),
         },
-        Stmt::StmtCase { expr, items, default } => Stmt::StmtCase {
+        Stmt::StmtCase {
+            expr,
+            items,
+            default,
+        } => Stmt::StmtCase {
             expr: substitute_loop_var_in_expr(expr, var_name, value),
-            items: items.iter().map(|item| crate::ast::stmt::CaseItem {
-                labels: item.labels.iter().map(|l| substitute_loop_var_in_expr(l, var_name, value)).collect(),
-                stmt: Box::new(substitute_loop_var_in_stmt(&item.stmt, var_name, value)),
-            }).collect(),
-            default: default.as_ref().map(|d| Box::new(substitute_loop_var_in_stmt(d, var_name, value))),
+            items: items
+                .iter()
+                .map(|item| crate::ast::stmt::CaseItem {
+                    labels: item
+                        .labels
+                        .iter()
+                        .map(|l| substitute_loop_var_in_expr(l, var_name, value))
+                        .collect(),
+                    stmt: Box::new(substitute_loop_var_in_stmt(&item.stmt, var_name, value)),
+                })
+                .collect(),
+            default: default
+                .as_ref()
+                .map(|d| Box::new(substitute_loop_var_in_stmt(d, var_name, value))),
         },
         Stmt::LoopForever { stmts } => Stmt::LoopForever {
             stmts: substitute_loop_var_in_stmts(stmts, var_name, value),
@@ -534,10 +704,21 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
             cond: substitute_loop_var_in_expr(cond, var_name, value),
             stmts: substitute_loop_var_in_stmts(stmts, var_name, value),
         },
-        Stmt::LoopFor { init, cond, step, stmts } => Stmt::LoopFor {
-            init: init.as_ref().map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
-            cond: cond.as_ref().map(|c| substitute_loop_var_in_expr(c, var_name, value)),
-            step: step.as_ref().map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
+        Stmt::LoopFor {
+            init,
+            cond,
+            step,
+            stmts,
+        } => Stmt::LoopFor {
+            init: init
+                .as_ref()
+                .map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
+            cond: cond
+                .as_ref()
+                .map(|c| substitute_loop_var_in_expr(c, var_name, value)),
+            step: step
+                .as_ref()
+                .map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
             stmts: substitute_loop_var_in_stmts(stmts, var_name, value),
         },
         Stmt::Repeat { count, stmts } => Stmt::Repeat {
@@ -546,7 +727,9 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
         },
         Stmt::Wait { cond, stmt } => Stmt::Wait {
             cond: substitute_loop_var_in_expr(cond, var_name, value),
-            stmt: stmt.as_ref().map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
+            stmt: stmt
+                .as_ref()
+                .map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
         },
         Stmt::Disable { name } => Stmt::Disable { name: name.clone() },
         Stmt::Force { lhs, rhs } => Stmt::Force {
@@ -560,16 +743,26 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
             expr: substitute_loop_var_in_expr(expr, var_name, value),
         },
         Stmt::Return(expr) => Stmt::Return(
-            expr.as_ref().map(|e| Box::new(substitute_loop_var_in_expr(e, var_name, value))),
+            expr.as_ref()
+                .map(|e| Box::new(substitute_loop_var_in_expr(e, var_name, value))),
         ),
         Stmt::Null => Stmt::Null,
         Stmt::SysFinish => Stmt::SysFinish,
         Stmt::EventControl { events, stmt } => Stmt::EventControl {
-            events: events.iter().map(|e| substitute_sensitivity_event(e, var_name, value)).collect(),
-            stmt: stmt.as_ref().map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
+            events: events
+                .iter()
+                .map(|e| substitute_sensitivity_event(e, var_name, value))
+                .collect(),
+            stmt: stmt
+                .as_ref()
+                .map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
         },
         Stmt::EventTrigger { name } => Stmt::EventTrigger { name: name.clone() },
-        Stmt::ForeachLoop { array_var, index_vars, stmts } => Stmt::ForeachLoop {
+        Stmt::ForeachLoop {
+            array_var,
+            index_vars,
+            stmts,
+        } => Stmt::ForeachLoop {
             array_var: array_var.clone(),
             index_vars: index_vars.clone(),
             stmts: substitute_loop_var_in_stmts(stmts, var_name, value),
@@ -580,10 +773,13 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
             decls: decls.clone(),
         },
         Stmt::RandCase { items } => Stmt::RandCase {
-            items: items.iter().map(|rc| RandCaseItem {
-                weight: rc.weight,
-                stmt: Box::new(substitute_loop_var_in_stmt(&rc.stmt, var_name, value)),
-            }).collect(),
+            items: items
+                .iter()
+                .map(|rc| RandCaseItem {
+                    weight: rc.weight,
+                    stmt: Box::new(substitute_loop_var_in_stmt(&rc.stmt, var_name, value)),
+                })
+                .collect(),
         },
         Stmt::Break => Stmt::Break,
         Stmt::Continue => Stmt::Continue,
@@ -595,21 +791,37 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
     }
 }
 
-pub fn substitute_sensitivity_event(event: &SensitivityEvent, var_name: &str, value: i64) -> SensitivityEvent {
+pub fn substitute_sensitivity_event(
+    event: &SensitivityEvent,
+    var_name: &str,
+    value: i64,
+) -> SensitivityEvent {
     match event {
-        SensitivityEvent::PosEdge(e) => SensitivityEvent::PosEdge(substitute_loop_var_in_expr(e, var_name, value)),
-        SensitivityEvent::NegEdge(e) => SensitivityEvent::NegEdge(substitute_loop_var_in_expr(e, var_name, value)),
-        SensitivityEvent::Level(e) => SensitivityEvent::Level(substitute_loop_var_in_expr(e, var_name, value)),
+        SensitivityEvent::PosEdge(e) => {
+            SensitivityEvent::PosEdge(substitute_loop_var_in_expr(e, var_name, value))
+        }
+        SensitivityEvent::NegEdge(e) => {
+            SensitivityEvent::NegEdge(substitute_loop_var_in_expr(e, var_name, value))
+        }
+        SensitivityEvent::Level(e) => {
+            SensitivityEvent::Level(substitute_loop_var_in_expr(e, var_name, value))
+        }
         SensitivityEvent::Wildcard => SensitivityEvent::Wildcard,
     }
 }
 
 pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> Expr {
     match expr {
-        Expr::Ident(name) if name == var_name => Expr::Value(crate::ast::expr::Value::Decimal(value)),
+        Expr::Ident(name) if name == var_name => {
+            Expr::Value(crate::ast::expr::Value::Decimal(value))
+        }
         Expr::Ident(_) => expr.clone(),
         Expr::Value(_) | Expr::String(_) | Expr::Null => expr.clone(),
-        Expr::RangeSelect { expr: inner, msb, lsb } => Expr::RangeSelect {
+        Expr::RangeSelect {
+            expr: inner,
+            msb,
+            lsb,
+        } => Expr::RangeSelect {
             expr: Box::new(substitute_loop_var_in_expr(inner, var_name, value)),
             msb: Box::new(substitute_loop_var_in_expr(msb, var_name, value)),
             lsb: Box::new(substitute_loop_var_in_expr(lsb, var_name, value)),
@@ -618,17 +830,27 @@ pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> E
             expr: Box::new(substitute_loop_var_in_expr(inner, var_name, value)),
             index: Box::new(substitute_loop_var_in_expr(index, var_name, value)),
         },
-        Expr::PartSelect { expr: inner, base, width } => Expr::PartSelect {
+        Expr::PartSelect {
+            expr: inner,
+            base,
+            width,
+        } => Expr::PartSelect {
             expr: Box::new(substitute_loop_var_in_expr(inner, var_name, value)),
             base: Box::new(substitute_loop_var_in_expr(base, var_name, value)),
             width: Box::new(substitute_loop_var_in_expr(width, var_name, value)),
         },
         Expr::Concat(exprs) => Expr::Concat(
-            exprs.iter().map(|e| substitute_loop_var_in_expr(e, var_name, value)).collect()
+            exprs
+                .iter()
+                .map(|e| substitute_loop_var_in_expr(e, var_name, value))
+                .collect(),
         ),
         Expr::FuncCall { name, args } => Expr::FuncCall {
             name: name.clone(),
-            args: args.iter().map(|a| substitute_loop_var_in_expr(a, var_name, value)).collect(),
+            args: args
+                .iter()
+                .map(|a| substitute_loop_var_in_expr(a, var_name, value))
+                .collect(),
         },
         Expr::Replicate { count, expr: inner } => Expr::Replicate {
             count: Box::new(substitute_loop_var_in_expr(count, var_name, value)),
@@ -643,31 +865,62 @@ pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> E
             lhs: Box::new(substitute_loop_var_in_expr(lhs, var_name, value)),
             rhs: Box::new(substitute_loop_var_in_expr(rhs, var_name, value)),
         },
-        Expr::TernaryOp { cond, true_expr, false_expr } => Expr::TernaryOp {
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => Expr::TernaryOp {
             cond: Box::new(substitute_loop_var_in_expr(cond, var_name, value)),
             true_expr: Box::new(substitute_loop_var_in_expr(true_expr, var_name, value)),
             false_expr: Box::new(substitute_loop_var_in_expr(false_expr, var_name, value)),
         },
-        Expr::Paren(inner) => Expr::Paren(Box::new(substitute_loop_var_in_expr(inner, var_name, value))),
-        Expr::MethodCall { obj, method, args, with_clause } => Expr::MethodCall {
+        Expr::Paren(inner) => Expr::Paren(Box::new(substitute_loop_var_in_expr(
+            inner, var_name, value,
+        ))),
+        Expr::MethodCall {
+            obj,
+            method,
+            args,
+            with_clause,
+        } => Expr::MethodCall {
             obj: Box::new(substitute_loop_var_in_expr(obj, var_name, value)),
             method: method.clone(),
-            args: args.iter().map(|a| substitute_loop_var_in_expr(a, var_name, value)).collect(),
-            with_clause: with_clause.clone().map(|wc| Box::new(substitute_loop_var_in_expr(&wc, var_name, value))),
+            args: args
+                .iter()
+                .map(|a| substitute_loop_var_in_expr(a, var_name, value))
+                .collect(),
+            with_clause: with_clause
+                .clone()
+                .map(|wc| Box::new(substitute_loop_var_in_expr(&wc, var_name, value))),
         },
         Expr::MemberAccess { obj, field } => Expr::MemberAccess {
             obj: Box::new(substitute_loop_var_in_expr(obj, var_name, value)),
             field: field.clone(),
         },
         Expr::FillLit(val) => Expr::FillLit(*val),
-        Expr::Inside { expr: inner, range_list } => Expr::Inside {
+        Expr::Inside {
+            expr: inner,
+            range_list,
+        } => Expr::Inside {
             expr: Box::new(substitute_loop_var_in_expr(inner, var_name, value)),
-            range_list: range_list.iter().map(|e| substitute_loop_var_in_expr(e, var_name, value)).collect(),
+            range_list: range_list
+                .iter()
+                .map(|e| substitute_loop_var_in_expr(e, var_name, value))
+                .collect(),
         },
-        Expr::StreamingConcat { op, slice_size, slices } => Expr::StreamingConcat {
+        Expr::StreamingConcat {
+            op,
+            slice_size,
+            slices,
+        } => Expr::StreamingConcat {
             op: op.clone(),
-            slice_size: slice_size.as_ref().map(|ss| Box::new(substitute_loop_var_in_expr(ss, var_name, value))),
-            slices: slices.iter().map(|e| substitute_loop_var_in_expr(e, var_name, value)).collect(),
+            slice_size: slice_size
+                .as_ref()
+                .map(|ss| Box::new(substitute_loop_var_in_expr(ss, var_name, value))),
+            slices: slices
+                .iter()
+                .map(|e| substitute_loop_var_in_expr(e, var_name, value))
+                .collect(),
         },
         Expr::Dist { expr, items } => Expr::Dist {
             expr: Box::new(substitute_loop_var_in_expr(expr, var_name, value)),
@@ -704,12 +957,21 @@ pub fn collect_read_signals_stmt(stmt: &IrStmt, out: &mut Vec<SignalId>) {
         IrStmt::BlockingAssign { rhs, .. } | IrStmt::NonBlockingAssign { rhs, .. } => {
             collect_read_signals_expr(rhs, out);
         }
-        IrStmt::If { cond, true_branch, false_branch } => {
+        IrStmt::If {
+            cond,
+            true_branch,
+            false_branch,
+        } => {
             collect_read_signals_expr(cond, out);
             collect_read_signals_stmts(true_branch, out);
             collect_read_signals_stmts(false_branch, out);
         }
-        IrStmt::Case { expr, items, default, .. } => {
+        IrStmt::Case {
+            expr,
+            items,
+            default,
+            ..
+        } => {
             collect_read_signals_expr(expr, out);
             for item in items {
                 for label in &item.labels {
@@ -737,7 +999,12 @@ pub fn collect_read_signals_stmt(stmt: &IrStmt, out: &mut Vec<SignalId>) {
             collect_read_signals_expr(cond, out);
             collect_read_signals_stmts(body, out);
         }
-        IrStmt::LoopFor { init, cond, step, body } => {
+        IrStmt::LoopFor {
+            init,
+            cond,
+            step,
+            body,
+        } => {
             if let Some(s) = init {
                 collect_read_signals_stmt(s, out);
             }
@@ -780,7 +1047,10 @@ pub fn collect_read_signals_stmt(stmt: &IrStmt, out: &mut Vec<SignalId>) {
 
 pub fn collect_read_signals_expr(expr: &IrExpr, out: &mut Vec<SignalId>) {
     match expr {
-        IrExpr::Signal(id, _) | IrExpr::RangeSelect(id, ..) | IrExpr::BitSelect(id, _) | IrExpr::ArrayIndex { sig_id: id, .. } => {
+        IrExpr::Signal(id, _)
+        | IrExpr::RangeSelect(id, ..)
+        | IrExpr::BitSelect(id, _)
+        | IrExpr::ArrayIndex { sig_id: id, .. } => {
             out.push(*id);
         }
         IrExpr::Const(_) | IrExpr::String(_) | IrExpr::FillLit(_) => {}
@@ -872,7 +1142,10 @@ pub fn collect_read_signals_expr(expr: &IrExpr, out: &mut Vec<SignalId>) {
     }
 }
 
-pub fn resolve_expr_signal(expr: &Expr, signal_map: &HashMap<String, SignalId>) -> Option<SignalId> {
+pub fn resolve_expr_signal(
+    expr: &Expr,
+    signal_map: &HashMap<String, SignalId>,
+) -> Option<SignalId> {
     match expr {
         Expr::Ident(name) => signal_map.get(name).copied(),
         Expr::MethodCall { .. } => None,
@@ -881,43 +1154,67 @@ pub fn resolve_expr_signal(expr: &Expr, signal_map: &HashMap<String, SignalId>) 
     }
 }
 
-pub fn compute_expr_width(expr: &Expr, signal_map: &HashMap<String, SignalId>,
-                      signals: &[SignalInfo], param_vals: &HashMap<String, i64>,
-                      package_symbols: &HashMap<String, HashMap<String, PackageItem>>) -> Result<usize, String> {
+pub fn compute_expr_width(
+    expr: &Expr,
+    signal_map: &HashMap<String, SignalId>,
+    signals: &[SignalInfo],
+    param_vals: &HashMap<String, i64>,
+    package_symbols: &HashMap<String, HashMap<String, PackageItem>>,
+) -> Result<usize, String> {
     match expr {
         Expr::Ident(name) => {
             if let Some(sig_id) = signal_map.get(name) {
                 let info = &signals[*sig_id];
-                Ok(info.width * if info.array_depth > 0 { info.array_depth } else { 1 })
+                Ok(info.width
+                    * if info.array_depth > 0 {
+                        info.array_depth
+                    } else {
+                        1
+                    })
             } else if let Some(&val) = param_vals.get(name) {
                 let abs = val.unsigned_abs();
-                Ok(if val == 0 { 1 } else { 64 - (abs.leading_zeros() as usize) }.max(1))
+                Ok(if val == 0 {
+                    1
+                } else {
+                    64 - (abs.leading_zeros() as usize)
+                }
+                .max(1))
             } else {
                 Err(format!("cannot determine width of '{}'", name))
             }
         }
-        Expr::Value(v) => {
-            match v {
-                Value::Binary { width, .. } => Ok(width.unwrap_or(1)),
-                Value::Hex { width, .. } => Ok(width.unwrap_or(1)),
-                Value::Octal { width, .. } => Ok(width.unwrap_or(1)),
-                Value::Decimal(_) => Ok(32),
-                Value::Real(_) => Ok(64),
-            }
-        }
+        Expr::Value(v) => match v {
+            Value::Binary { width, .. } => Ok(width.unwrap_or(1)),
+            Value::Hex { width, .. } => Ok(width.unwrap_or(1)),
+            Value::Octal { width, .. } => Ok(width.unwrap_or(1)),
+            Value::Decimal(_) => Ok(32),
+            Value::Real(_) => Ok(64),
+        },
         Expr::FillLit(_) => Ok(1),
         Expr::FuncCall { name, .. } => {
             if let Some(width) = param_vals.get(name) {
                 let abs = width.unsigned_abs();
-                Ok(if *width == 0 { 1 } else { 64 - (abs.leading_zeros() as usize) }.max(1))
+                Ok(if *width == 0 {
+                    1
+                } else {
+                    64 - (abs.leading_zeros() as usize)
+                }
+                .max(1))
             } else if let Some((pkg_name, func_name)) = name.split_once("::") {
                 if let Some(pkg) = package_symbols.get(pkg_name) {
                     if let Some(PackageItem::Function(f)) = pkg.get(func_name) {
                         let ret_width = if let Some(r) = &f.range {
-                            if let (Ok(msb), Ok(lsb)) = (const_eval_with_params(&r.msb, param_vals), const_eval_with_params(&r.lsb, param_vals)) {
+                            if let (Ok(msb), Ok(lsb)) = (
+                                const_eval_with_params(&r.msb, param_vals),
+                                const_eval_with_params(&r.lsb, param_vals),
+                            ) {
                                 (msb.abs_diff(lsb) + 1) as usize
-                            } else { 1 }
-                        } else { 1 };
+                            } else {
+                                1
+                            }
+                        } else {
+                            1
+                        };
                         Ok(ret_width)
                     } else {
                         Err(format!("cannot determine width of function '{}'", name))
@@ -929,15 +1226,19 @@ pub fn compute_expr_width(expr: &Expr, signal_map: &HashMap<String, SignalId>,
                 Err(format!("cannot determine width of function '{}'", name))
             }
         }
-        Expr::Paren(inner) => compute_expr_width(inner, signal_map, signals, param_vals, package_symbols),
-        Expr::UnaryOp { op, expr: inner } => {
-            match op {
-                UnaryOp::ReductionAnd | UnaryOp::ReductionNand | UnaryOp::ReductionOr
-                | UnaryOp::ReductionNor | UnaryOp::ReductionXor | UnaryOp::ReductionXnor
-                | UnaryOp::Not => Ok(1),
-                _ => compute_expr_width(inner, signal_map, signals, param_vals, package_symbols),
-            }
+        Expr::Paren(inner) => {
+            compute_expr_width(inner, signal_map, signals, param_vals, package_symbols)
         }
+        Expr::UnaryOp { op, expr: inner } => match op {
+            UnaryOp::ReductionAnd
+            | UnaryOp::ReductionNand
+            | UnaryOp::ReductionOr
+            | UnaryOp::ReductionNor
+            | UnaryOp::ReductionXor
+            | UnaryOp::ReductionXnor
+            | UnaryOp::Not => Ok(1),
+            _ => compute_expr_width(inner, signal_map, signals, param_vals, package_symbols),
+        },
         Expr::BinaryOp { lhs, rhs, .. } => {
             let lw = compute_expr_width(lhs, signal_map, signals, param_vals, package_symbols)?;
             let rw = compute_expr_width(rhs, signal_map, signals, param_vals, package_symbols)?;
@@ -946,7 +1247,8 @@ pub fn compute_expr_width(expr: &Expr, signal_map: &HashMap<String, SignalId>,
         Expr::Concat(items) => {
             let mut total = 0;
             for item in items {
-                total += compute_expr_width(item, signal_map, signals, param_vals, package_symbols)?;
+                total +=
+                    compute_expr_width(item, signal_map, signals, param_vals, package_symbols)?;
             }
             Ok(total)
         }
@@ -955,13 +1257,22 @@ pub fn compute_expr_width(expr: &Expr, signal_map: &HashMap<String, SignalId>,
             let w = compute_expr_width(inner, signal_map, signals, param_vals, package_symbols)?;
             Ok(c * w)
         }
-        Expr::TernaryOp { true_expr, false_expr, .. } => {
-            let tw = compute_expr_width(true_expr, signal_map, signals, param_vals, package_symbols)?;
-            let fw = compute_expr_width(false_expr, signal_map, signals, param_vals, package_symbols)?;
+        Expr::TernaryOp {
+            true_expr,
+            false_expr,
+            ..
+        } => {
+            let tw =
+                compute_expr_width(true_expr, signal_map, signals, param_vals, package_symbols)?;
+            let fw =
+                compute_expr_width(false_expr, signal_map, signals, param_vals, package_symbols)?;
             Ok(tw.max(fw))
         }
         Expr::RangeSelect { msb, lsb, .. } => {
-            if let (Ok(m), Ok(l)) = (const_eval_with_params(msb, param_vals), const_eval_with_params(lsb, param_vals)) {
+            if let (Ok(m), Ok(l)) = (
+                const_eval_with_params(msb, param_vals),
+                const_eval_with_params(lsb, param_vals),
+            ) {
                 Ok((m.abs_diff(l) + 1) as usize)
             } else {
                 Err("dynamic range select width not computable at compile time".to_string())
@@ -975,7 +1286,11 @@ pub fn compute_expr_width(expr: &Expr, signal_map: &HashMap<String, SignalId>,
             if let Expr::Ident(name) = obj.as_ref() {
                 if let Some(&sig_id) = signal_map.get(name) {
                     if !signals[sig_id].struct_fields.is_empty() {
-                        if let Some(f) = signals[sig_id].struct_fields.iter().find(|f| f.name == *field) {
+                        if let Some(f) = signals[sig_id]
+                            .struct_fields
+                            .iter()
+                            .find(|f| f.name == *field)
+                        {
                             return Ok(f.width);
                         }
                     }
@@ -983,59 +1298,70 @@ pub fn compute_expr_width(expr: &Expr, signal_map: &HashMap<String, SignalId>,
             }
             compute_expr_width(obj, signal_map, signals, param_vals, package_symbols)
         }
-        Expr::Cast { dtype, .. } => {
-            match super::parse_type_spec_str(dtype) {
-                Some(dt) => match dt {
-                    DataType::UserDefined(name) => {
-                        param_vals.get(&name).map(|&v| v as usize).ok_or_else(|| format!("unknown type '{}'", name))
-                    }
-                    _ => Ok(dt.width()),
-                },
-                None => Err(format!("unknown type '{}' in cast", dtype)),
-            }
-        }
+        Expr::Cast { dtype, .. } => match super::parse_type_spec_str(dtype) {
+            Some(dt) => match dt {
+                DataType::UserDefined(name) => param_vals
+                    .get(&name)
+                    .map(|&v| v as usize)
+                    .ok_or_else(|| format!("unknown type '{}'", name)),
+                _ => Ok(dt.width()),
+            },
+            None => Err(format!("unknown type '{}' in cast", dtype)),
+        },
         Expr::MethodCall { .. } | Expr::StreamingConcat { .. } | Expr::Dist { .. } => {
             Err("width not computable for this expression type".to_string())
         }
-        Expr::ScopedIdent { package, item } => {
-            Err(format!("cannot determine width of '{}.{}' at compile time", package, item))
-        }
+        Expr::ScopedIdent { package, item } => Err(format!(
+            "cannot determine width of '{}.{}' at compile time",
+            package, item
+        )),
         _ => Err("cannot determine width of expression".to_string()),
     }
 }
 
 pub fn collect_sensitivity(expr: &Expr, signal_map: &HashMap<String, SignalId>) -> Vec<SignalId> {
     match expr {
-        Expr::Ident(name) => {
-            signal_map.get(name).map(|&id| vec![id]).unwrap_or_default()
-        }
+        Expr::Ident(name) => signal_map.get(name).map(|&id| vec![id]).unwrap_or_default(),
         Expr::BinaryOp { lhs, rhs, .. } => {
             let mut v = collect_sensitivity(lhs, signal_map);
             v.extend(collect_sensitivity(rhs, signal_map));
             v
         }
         Expr::UnaryOp { expr: inner, .. } => collect_sensitivity(inner, signal_map),
-        Expr::Concat(exprs) => {
-            exprs.iter().flat_map(|e| collect_sensitivity(e, signal_map)).collect()
-        }
+        Expr::Concat(exprs) => exprs
+            .iter()
+            .flat_map(|e| collect_sensitivity(e, signal_map))
+            .collect(),
         Expr::BitSelect { expr: inner, index } => {
             let mut v = collect_sensitivity(inner, signal_map);
             v.extend(collect_sensitivity(index, signal_map));
             v
         }
-        Expr::RangeSelect { expr: inner, msb, lsb } => {
+        Expr::RangeSelect {
+            expr: inner,
+            msb,
+            lsb,
+        } => {
             let mut v = collect_sensitivity(inner, signal_map);
             v.extend(collect_sensitivity(msb, signal_map));
             v.extend(collect_sensitivity(lsb, signal_map));
             v
         }
-        Expr::PartSelect { expr: inner, base, width } => {
+        Expr::PartSelect {
+            expr: inner,
+            base,
+            width,
+        } => {
             let mut v = collect_sensitivity(inner, signal_map);
             v.extend(collect_sensitivity(base, signal_map));
             v.extend(collect_sensitivity(width, signal_map));
             v
         }
-        Expr::TernaryOp { cond, true_expr, false_expr } => {
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => {
             let mut v = collect_sensitivity(cond, signal_map);
             v.extend(collect_sensitivity(true_expr, signal_map));
             v.extend(collect_sensitivity(false_expr, signal_map));
@@ -1052,12 +1378,19 @@ pub fn const_eval_params(expr: &Expr, params: &HashMap<String, i64>) -> Result<i
     const_eval_with_params(expr, params)
 }
 
-pub fn try_fold_const(expr: &Expr, params: &HashMap<String, i64>) -> Result<Option<IrExpr>, String> {
+pub fn try_fold_const(
+    expr: &Expr,
+    params: &HashMap<String, i64>,
+) -> Result<Option<IrExpr>, String> {
     match const_eval_with_params(expr, params) {
         Ok(val) => {
             let abs = val.unsigned_abs();
             let min_width = if val >= 0 {
-                if val == 0 { 1 } else { 64 - (abs.leading_zeros() as usize) }
+                if val == 0 {
+                    1
+                } else {
+                    64 - (abs.leading_zeros() as usize)
+                }
             } else {
                 64 - (abs.leading_zeros() as usize) + 1
             };
@@ -1072,7 +1405,11 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
     match val {
         Value::Decimal(n) => {
             let abs = n.unsigned_abs();
-            let min_width = if *n == 0 { 1 } else { 64 - (abs.leading_zeros() as usize) };
+            let min_width = if *n == 0 {
+                1
+            } else {
+                64 - (abs.leading_zeros() as usize)
+            };
             let width = min_width.max(32);
             let mut lv = LogicVec::from_u64(abs, width);
             if *n < 0 {
@@ -1087,8 +1424,13 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
                 for b in lv.bits.iter_mut() {
                     if carry {
                         match b {
-                            LogicVal::Zero => { *b = LogicVal::One; carry = false; }
-                            LogicVal::One => { *b = LogicVal::Zero; }
+                            LogicVal::Zero => {
+                                *b = LogicVal::One;
+                                carry = false;
+                            }
+                            LogicVal::One => {
+                                *b = LogicVal::Zero;
+                            }
                             _ => {}
                         }
                     }
@@ -1100,7 +1442,9 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
             let w = width.unwrap_or(bits.len());
             let mut vec = LogicVec::new(w);
             for (i, c) in bits.chars().rev().enumerate() {
-                if i >= w { break; }
+                if i >= w {
+                    break;
+                }
                 vec.bits[i] = match c {
                     '0' => LogicVal::Zero,
                     '1' => LogicVal::One,
@@ -1120,7 +1464,9 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
                 let hex_val = c.to_digit(16).unwrap_or(0);
                 for j in 0..4 {
                     let bit_idx = i * 4 + j;
-                    if bit_idx >= w { break; }
+                    if bit_idx >= w {
+                        break;
+                    }
                     vec.bits[bit_idx] = if (hex_val >> j) & 1 == 1 {
                         LogicVal::One
                     } else {
@@ -1138,7 +1484,9 @@ pub fn value_to_logicvec(val: &Value) -> LogicVec {
                 let oct_val = c.to_digit(8).unwrap_or(0);
                 for j in 0..3 {
                     let bit_idx = i * 3 + j;
-                    if bit_idx >= w { break; }
+                    if bit_idx >= w {
+                        break;
+                    }
                     vec.bits[bit_idx] = if (oct_val >> j) & 1 == 1 {
                         LogicVal::One
                     } else {
@@ -1202,10 +1550,19 @@ pub fn build_gate_expr(gate_type: &GateType, inputs: &[IrExpr]) -> IrExpr {
     match gate_type {
         GateType::And => fold_binary(BinaryIrOp::BitAnd, inputs),
         GateType::Or => fold_binary(BinaryIrOp::BitOr, inputs),
-        GateType::Nand => IrExpr::UnaryOp(UnaryIrOp::BitNot, Box::new(fold_binary(BinaryIrOp::BitAnd, inputs))),
-        GateType::Nor => IrExpr::UnaryOp(UnaryIrOp::BitNot, Box::new(fold_binary(BinaryIrOp::BitOr, inputs))),
+        GateType::Nand => IrExpr::UnaryOp(
+            UnaryIrOp::BitNot,
+            Box::new(fold_binary(BinaryIrOp::BitAnd, inputs)),
+        ),
+        GateType::Nor => IrExpr::UnaryOp(
+            UnaryIrOp::BitNot,
+            Box::new(fold_binary(BinaryIrOp::BitOr, inputs)),
+        ),
         GateType::Xor => fold_binary(BinaryIrOp::BitXor, inputs),
-        GateType::Xnor => IrExpr::UnaryOp(UnaryIrOp::BitNot, Box::new(fold_binary(BinaryIrOp::BitXor, inputs))),
+        GateType::Xnor => IrExpr::UnaryOp(
+            UnaryIrOp::BitNot,
+            Box::new(fold_binary(BinaryIrOp::BitXor, inputs)),
+        ),
         GateType::Buf => inputs[0].clone(),
         GateType::Not => IrExpr::UnaryOp(UnaryIrOp::BitNot, Box::new(inputs[0].clone())),
     }
@@ -1222,7 +1579,11 @@ pub fn fold_binary(op: BinaryIrOp, exprs: &[IrExpr]) -> IrExpr {
     result
 }
 
-pub fn substitute_class_types(cd: ClassDecl, param_name: &str, replacement: &DataType) -> ClassDecl {
+pub fn substitute_class_types(
+    cd: ClassDecl,
+    param_name: &str,
+    replacement: &DataType,
+) -> ClassDecl {
     let mut new_members = Vec::new();
     for member in cd.members {
         match member {
@@ -1231,103 +1592,115 @@ pub fn substitute_class_types(cd: ClassDecl, param_name: &str, replacement: &Dat
                 new_members.push(ClassMember::Decl(decl));
             }
             ClassMember::Function(mut fd) => {
-                fd.return_type = fd.return_type.map(|dt| {
-                    Box::new(substitute_data_type(*dt, param_name, replacement))
-                });
+                fd.return_type = fd
+                    .return_type
+                    .map(|dt| Box::new(substitute_data_type(*dt, param_name, replacement)));
                 new_members.push(ClassMember::Function(fd));
             }
             ClassMember::Task(td) => {
                 new_members.push(ClassMember::Task(td));
             }
             ClassMember::Constraint { name, body } => {
-                let new_body = body.into_iter().map(|ci| {
-                    match ci {
+                let new_body = body
+                    .into_iter()
+                    .map(|ci| match ci {
                         ConstraintItem::Expr(e) => {
                             ConstraintItem::Expr(substitute_expr_types(e, param_name, replacement))
                         }
                         ConstraintItem::SolveBefore { vars } => {
                             ConstraintItem::SolveBefore { vars }
                         }
-                    }
-                }).collect();
-                new_members.push(ClassMember::Constraint { name, body: new_body });
+                    })
+                    .collect();
+                new_members.push(ClassMember::Constraint {
+                    name,
+                    body: new_body,
+                });
             }
         }
     }
-    ClassDecl { members: new_members, ..cd }
+    ClassDecl {
+        members: new_members,
+        ..cd
+    }
 }
 
 pub fn substitute_data_type(dt: DataType, param_name: &str, replacement: &DataType) -> DataType {
     match dt {
         DataType::UserDefined(ref name) if name == param_name => replacement.clone(),
-        DataType::Signed(inner) => DataType::Signed(Box::new(substitute_data_type(*inner, param_name, replacement))),
-        DataType::EnumType { base, members } => {
-            DataType::EnumType {
-                base: base.map(|b| Box::new(substitute_data_type(*b, param_name, replacement))),
-                members,
-            }
-        }
-        DataType::StructType { members } => {
-            DataType::StructType {
-                members: members.into_iter().map(|m| {
-                    StructMember {
-                        dtype: Box::new(substitute_data_type(*m.dtype, param_name, replacement)),
-                        ..m
-                    }
-                }).collect(),
-            }
-        }
-        DataType::UnionType { members } => {
-            DataType::UnionType {
-                members: members.into_iter().map(|m| {
-                    StructMember {
-                        dtype: Box::new(substitute_data_type(*m.dtype, param_name, replacement)),
-                        ..m
-                    }
-                }).collect(),
-            }
-        }
+        DataType::Signed(inner) => DataType::Signed(Box::new(substitute_data_type(
+            *inner,
+            param_name,
+            replacement,
+        ))),
+        DataType::EnumType { base, members } => DataType::EnumType {
+            base: base.map(|b| Box::new(substitute_data_type(*b, param_name, replacement))),
+            members,
+        },
+        DataType::StructType { members } => DataType::StructType {
+            members: members
+                .into_iter()
+                .map(|m| StructMember {
+                    dtype: Box::new(substitute_data_type(*m.dtype, param_name, replacement)),
+                    ..m
+                })
+                .collect(),
+        },
+        DataType::UnionType { members } => DataType::UnionType {
+            members: members
+                .into_iter()
+                .map(|m| StructMember {
+                    dtype: Box::new(substitute_data_type(*m.dtype, param_name, replacement)),
+                    ..m
+                })
+                .collect(),
+        },
         other => other,
     }
 }
 
 pub fn substitute_expr_types(e: Expr, param_name: &str, replacement: &DataType) -> Expr {
     match e {
-        Expr::BinaryOp { lhs, op, rhs } => {
-            Expr::BinaryOp {
-                lhs: Box::new(substitute_expr_types(*lhs, param_name, replacement)),
-                op,
-                rhs: Box::new(substitute_expr_types(*rhs, param_name, replacement)),
-            }
-        }
-        Expr::UnaryOp { op, expr } => {
-            Expr::UnaryOp { op, expr: Box::new(substitute_expr_types(*expr, param_name, replacement)) }
-        }
-        Expr::Paren(inner) => {
-            Expr::Paren(Box::new(substitute_expr_types(*inner, param_name, replacement)))
-        }
-        Expr::Concat(items) => {
-            Expr::Concat(items.into_iter().map(|e| substitute_expr_types(e, param_name, replacement)).collect())
-        }
-        Expr::Replicate { count, expr } => {
-            Expr::Replicate {
-                count: Box::new(substitute_expr_types(*count, param_name, replacement)),
-                expr: Box::new(substitute_expr_types(*expr, param_name, replacement)),
-            }
-        }
-        Expr::TernaryOp { cond, true_expr, false_expr } => {
-            Expr::TernaryOp {
-                cond: Box::new(substitute_expr_types(*cond, param_name, replacement)),
-                true_expr: Box::new(substitute_expr_types(*true_expr, param_name, replacement)),
-                false_expr: Box::new(substitute_expr_types(*false_expr, param_name, replacement)),
-            }
-        }
-        Expr::FuncCall { name, args } => {
-            Expr::FuncCall {
-                name,
-                args: args.into_iter().map(|a| substitute_expr_types(a, param_name, replacement)).collect(),
-            }
-        }
+        Expr::BinaryOp { lhs, op, rhs } => Expr::BinaryOp {
+            lhs: Box::new(substitute_expr_types(*lhs, param_name, replacement)),
+            op,
+            rhs: Box::new(substitute_expr_types(*rhs, param_name, replacement)),
+        },
+        Expr::UnaryOp { op, expr } => Expr::UnaryOp {
+            op,
+            expr: Box::new(substitute_expr_types(*expr, param_name, replacement)),
+        },
+        Expr::Paren(inner) => Expr::Paren(Box::new(substitute_expr_types(
+            *inner,
+            param_name,
+            replacement,
+        ))),
+        Expr::Concat(items) => Expr::Concat(
+            items
+                .into_iter()
+                .map(|e| substitute_expr_types(e, param_name, replacement))
+                .collect(),
+        ),
+        Expr::Replicate { count, expr } => Expr::Replicate {
+            count: Box::new(substitute_expr_types(*count, param_name, replacement)),
+            expr: Box::new(substitute_expr_types(*expr, param_name, replacement)),
+        },
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => Expr::TernaryOp {
+            cond: Box::new(substitute_expr_types(*cond, param_name, replacement)),
+            true_expr: Box::new(substitute_expr_types(*true_expr, param_name, replacement)),
+            false_expr: Box::new(substitute_expr_types(*false_expr, param_name, replacement)),
+        },
+        Expr::FuncCall { name, args } => Expr::FuncCall {
+            name,
+            args: args
+                .into_iter()
+                .map(|a| substitute_expr_types(a, param_name, replacement))
+                .collect(),
+        },
         other => other,
     }
 }

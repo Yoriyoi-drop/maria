@@ -1,4 +1,4 @@
-use crate::ir::{LogicVec, SignalId, IrModule, IrDesign, ObjectData, ObjId};
+use crate::ir::{IrDesign, IrModule, LogicVec, ObjId, ObjectData, SignalId};
 use std::collections::HashMap;
 
 pub struct SimulationState {
@@ -23,9 +23,19 @@ impl SimulationState {
         let changed = vec![true; signals.len()];
 
         // Index 0 is reserved for null handle
-        let objects = vec![ObjectData { class_name: String::new(), fields: HashMap::new() }];
+        let objects = vec![ObjectData {
+            class_name: String::new(),
+            fields: HashMap::new(),
+        }];
 
-        SimulationState { signals, next_signals, changed, time: 0, objects, next_obj_id: 1 }
+        SimulationState {
+            signals,
+            next_signals,
+            changed,
+            time: 0,
+            objects,
+            next_obj_id: 1,
+        }
     }
 
     pub fn alloc_object(&mut self, class_name: &str) -> ObjId {
@@ -99,7 +109,9 @@ impl SimulationState {
     }
 
     pub fn signal_name(&self, id: SignalId, module: &IrModule) -> String {
-        module.signals.get(id)
+        module
+            .signals
+            .get(id)
             .map(|s| s.name.clone())
             .unwrap_or_else(|| format!("sig_{}", id))
     }

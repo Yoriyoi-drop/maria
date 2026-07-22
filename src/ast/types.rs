@@ -6,7 +6,7 @@ use super::stmt::{AlwaysBlock, InitialBlock, Stmt};
 // Re-export constant evaluation functions
 pub use crate::ast::const_eval::{const_eval_simple, const_eval_with_params, string_to_i64};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Design {
     pub modules: Vec<Module>,
     pub classes: Vec<ClassDecl>,
@@ -85,9 +85,7 @@ pub struct TaskDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstraintItem {
     Expr(Expr),
-    SolveBefore {
-        vars: Vec<String>,
-    },
+    SolveBefore { vars: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -173,13 +171,17 @@ pub struct ExprRange {
     pub lsb: Expr,
 }
 
-pub fn resolve_expr_range(er: &ExprRange, param_vals: &HashMap<String, i64>) -> Result<Range, String> {
+pub fn resolve_expr_range(
+    er: &ExprRange,
+    param_vals: &HashMap<String, i64>,
+) -> Result<Range, String> {
     let msb = const_eval_with_params(&er.msb, param_vals)?;
     let lsb = const_eval_with_params(&er.lsb, param_vals)?;
-    Ok(Range { msb: msb as usize, lsb: lsb as usize })
+    Ok(Range {
+        msb: msb as usize,
+        lsb: lsb as usize,
+    })
 }
-
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParamDecl {
@@ -219,10 +221,19 @@ pub enum DeclKind {
 
 impl DeclKind {
     pub fn is_net(&self) -> bool {
-        matches!(self, DeclKind::Wire | DeclKind::Wand | DeclKind::Wor
-            | DeclKind::Tri | DeclKind::Tri0 | DeclKind::Tri1
-            | DeclKind::TriAnd | DeclKind::TriOr
-            | DeclKind::Supply0 | DeclKind::Supply1)
+        matches!(
+            self,
+            DeclKind::Wire
+                | DeclKind::Wand
+                | DeclKind::Wor
+                | DeclKind::Tri
+                | DeclKind::Tri0
+                | DeclKind::Tri1
+                | DeclKind::TriAnd
+                | DeclKind::TriOr
+                | DeclKind::Supply0
+                | DeclKind::Supply1
+        )
     }
 }
 
@@ -262,7 +273,10 @@ impl DeclVar {
     }
 
     /// Returns all packed dimension widths from outermost to innermost.
-    pub fn packed_dim_widths(&self, param_vals: &HashMap<String, i64>) -> Result<Vec<usize>, String> {
+    pub fn packed_dim_widths(
+        &self,
+        param_vals: &HashMap<String, i64>,
+    ) -> Result<Vec<usize>, String> {
         let first_width = if let Some(er) = &self.expr_range {
             let r = resolve_expr_range(er, param_vals)?;
             r.width()
@@ -375,7 +389,14 @@ pub struct TypedefDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GateType {
-    And, Or, Nand, Nor, Xor, Xnor, Buf, Not,
+    And,
+    Or,
+    Nand,
+    Nor,
+    Xor,
+    Xnor,
+    Buf,
+    Not,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -451,7 +472,10 @@ pub enum ModuleItem {
     Typedef(TypedefDecl),
     Covergroup(CovergroupDecl),
     // Imported items from packages
-    Import { package: String, item: String },
+    Import {
+        package: String,
+        item: String,
+    },
     DpiImport(DpiImport),
     DpiExport(DpiImport),
     Param(ParamDecl),

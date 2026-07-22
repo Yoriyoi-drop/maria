@@ -1,5 +1,5 @@
-pub mod vcd;
 pub mod fst;
+pub mod vcd;
 
-pub use vcd::*;
 pub use fst::*;
+pub use vcd::*;

@@ -74,7 +74,9 @@ impl SdfData {
                         while pos < tokens.len() && tokens[pos] != ")" {
                             pos += 1;
                         }
-                        if pos < tokens.len() { pos += 1; }
+                        if pos < tokens.len() {
+                            pos += 1;
+                        }
                     }
                     "DELAYCELL" | "CELL" => {
                         let (name, delay, new_pos) = parse_cell(&tokens, pos)?;
@@ -139,7 +141,9 @@ fn tokenize(content: &str) -> Vec<String> {
                 }
                 let mut s = String::new();
                 for c2 in chars.by_ref() {
-                    if c2 == '"' { break; }
+                    if c2 == '"' {
+                        break;
+                    }
                     s.push(c2);
                 }
                 tokens.push(format!("\"{}\"", s));
@@ -215,7 +219,9 @@ fn parse_cell(tokens: &[String], pos: usize) -> Result<(String, CellDelay, usize
             p += 1;
         }
     }
-    if p < tokens.len() { p += 1; } // skip closing )
+    if p < tokens.len() {
+        p += 1;
+    } // skip closing )
 
     Ok((name, delay, p))
 }
@@ -230,7 +236,10 @@ fn parse_net(tokens: &[String], pos: usize) -> Result<(String, NetDelay, usize),
         "unknown".to_string()
     };
 
-    let mut net_delay = NetDelay { rise: None, fall: None };
+    let mut net_delay = NetDelay {
+        rise: None,
+        fall: None,
+    };
 
     while p < tokens.len() && tokens[p] != ")" {
         if tokens[p] == "(" && p + 1 < tokens.len() {
@@ -250,7 +259,9 @@ fn parse_net(tokens: &[String], pos: usize) -> Result<(String, NetDelay, usize),
             p += 1;
         }
     }
-    if p < tokens.len() { p += 1; }
+    if p < tokens.len() {
+        p += 1;
+    }
 
     Ok((name, net_delay, p))
 }
@@ -271,7 +282,9 @@ fn parse_rise_fall(tokens: &[String], pos: usize) -> Result<(f64, f64, usize), S
             fall = tokens[p].parse::<f64>().unwrap_or(0.0);
             p += 1;
         }
-        if p < tokens.len() { p += 1; } // skip )
+        if p < tokens.len() {
+            p += 1;
+        } // skip )
     } else if p < tokens.len() {
         rise = tokens[p].parse::<f64>().unwrap_or(0.0);
         fall = rise;
@@ -296,11 +309,21 @@ fn parse_timing_checks(tokens: &[String], pos: usize) -> Result<(Vec<TimingCheck
                 while p < tokens.len() && tokens[p] != ")" {
                     if tokens[p] == "(" {
                         p += 1;
-                        let label = if p < tokens.len() { tokens[p].clone() } else { break };
+                        let label = if p < tokens.len() {
+                            tokens[p].clone()
+                        } else {
+                            break;
+                        };
                         p += 1;
-                        let value = if p < tokens.len() { tokens[p].clone() } else { break };
+                        let value = if p < tokens.len() {
+                            tokens[p].clone()
+                        } else {
+                            break;
+                        };
                         p += 1;
-                        if p < tokens.len() { p += 1; } // skip )
+                        if p < tokens.len() {
+                            p += 1;
+                        } // skip )
 
                         match label.as_str() {
                             "IOTIMING" | "NETTIMING" => {}
@@ -318,7 +341,9 @@ fn parse_timing_checks(tokens: &[String], pos: usize) -> Result<(Vec<TimingCheck
                         p += 1;
                     }
                 }
-                if p < tokens.len() { p += 1; } // skip )
+                if p < tokens.len() {
+                    p += 1;
+                } // skip )
                 checks.push(TimingCheck::Setup {
                     signal: sig,
                     ref_signal: ref_sig,
@@ -334,11 +359,21 @@ fn parse_timing_checks(tokens: &[String], pos: usize) -> Result<(Vec<TimingCheck
                 while p < tokens.len() && tokens[p] != ")" {
                     if tokens[p] == "(" {
                         p += 1;
-                        let _label = if p < tokens.len() { tokens[p].clone() } else { break };
+                        let _label = if p < tokens.len() {
+                            tokens[p].clone()
+                        } else {
+                            break;
+                        };
                         p += 1;
-                        let value = if p < tokens.len() { tokens[p].clone() } else { break };
+                        let value = if p < tokens.len() {
+                            tokens[p].clone()
+                        } else {
+                            break;
+                        };
                         p += 1;
-                        if p < tokens.len() { p += 1; }
+                        if p < tokens.len() {
+                            p += 1;
+                        }
 
                         let value = value.trim_matches('"');
                         if sig.is_empty() {
@@ -352,7 +387,9 @@ fn parse_timing_checks(tokens: &[String], pos: usize) -> Result<(Vec<TimingCheck
                         p += 1;
                     }
                 }
-                if p < tokens.len() { p += 1; }
+                if p < tokens.len() {
+                    p += 1;
+                }
                 checks.push(TimingCheck::Hold {
                     signal: sig,
                     ref_signal: ref_sig,

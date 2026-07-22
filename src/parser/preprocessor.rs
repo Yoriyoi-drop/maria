@@ -1,7 +1,7 @@
+use crate::error::SimError;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use crate::error::SimError;
 
 struct CondFrame {
     taking_branch: bool,
@@ -35,10 +35,13 @@ impl Preprocessor {
     }
 
     pub fn define(&mut self, name: &str, value: &str) {
-        self.defines.insert(name.to_string(), MacroDef {
-            value: value.to_string(),
-            params: Vec::new(),
-        });
+        self.defines.insert(
+            name.to_string(),
+            MacroDef {
+                value: value.to_string(),
+                params: Vec::new(),
+            },
+        );
     }
 
     pub fn add_search_path(&mut self, path: &str) {
@@ -54,7 +57,11 @@ impl Preprocessor {
         Ok(processed)
     }
 
-    pub fn preprocess(&mut self, source: &str, current_dir: Option<&PathBuf>) -> Result<String, SimError> {
+    pub fn preprocess(
+        &mut self,
+        source: &str,
+        current_dir: Option<&PathBuf>,
+    ) -> Result<String, SimError> {
         let lines: Vec<&str> = source.lines().collect();
         let mut output = String::new();
         let mut i = 0;
@@ -103,7 +110,9 @@ impl Preprocessor {
                         let inc_path = match self.parse_include_path(rest) {
                             Ok(p) => p,
                             Err(e) => {
-                                if !self.quiet { eprintln!("  ** WARNING: {}", e); }
+                                if !self.quiet {
+                                    eprintln!("  ** WARNING: {}", e);
+                                }
                                 i += 1;
                                 continue;
                             }
@@ -114,7 +123,10 @@ impl Preprocessor {
                                 match fs::read_to_string(&resolved) {
                                     Ok(inc_source) => {
                                         let inc_dir = resolved.parent().map(|p| p.to_path_buf());
-                                        output.push_str(&format!("`line 1 \"{}\"\n", resolved.display()));
+                                        output.push_str(&format!(
+                                            "`line 1 \"{}\"\n",
+                                            resolved.display()
+                                        ));
                                         match self.preprocess(&inc_source, inc_dir.as_ref()) {
                                             Ok(processed) => {
                                                 output.push_str(&processed);
@@ -123,12 +135,20 @@ impl Preprocessor {
                                                 }
                                             }
                                             Err(e) => {
-                                                if !self.quiet { eprintln!("  ** WARNING: error processing include '{}': {}", resolved.display(), e); }
+                                                if !self.quiet {
+                                                    eprintln!("  ** WARNING: error processing include '{}': {}", resolved.display(), e);
+                                                }
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        if !self.quiet { eprintln!("  ** WARNING: cannot read include '{}': {}", resolved.display(), e); }
+                                        if !self.quiet {
+                                            eprintln!(
+                                                "  ** WARNING: cannot read include '{}': {}",
+                                                resolved.display(),
+                                                e
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -171,7 +191,10 @@ impl Preprocessor {
                 }
                 "elsif" => {
                     let frame = cond_stack.last_mut().ok_or_else(|| {
-                        SimError::preprocessor(format!("line {}: `elsif without matching `ifdef/`ifndef", i + 1))
+                        SimError::preprocessor(format!(
+                            "line {}: `elsif without matching `ifdef/`ifndef",
+                            i + 1
+                        ))
                     })?;
                     if frame.branch_taken {
                         frame.taking_branch = false;
@@ -186,7 +209,10 @@ impl Preprocessor {
                 }
                 "else" => {
                     let frame = cond_stack.last_mut().ok_or_else(|| {
-                        SimError::preprocessor(format!("line {}: `else without matching `ifdef/`ifndef", i + 1))
+                        SimError::preprocessor(format!(
+                            "line {}: `else without matching `ifdef/`ifndef",
+                            i + 1
+                        ))
                     })?;
                     if frame.branch_taken {
                         frame.taking_branch = false;
@@ -197,7 +223,10 @@ impl Preprocessor {
                 }
                 "endif" => {
                     cond_stack.pop().ok_or_else(|| {
-                        SimError::preprocessor(format!("line {}: `endif without matching `ifdef/`ifndef", i + 1))
+                        SimError::preprocessor(format!(
+                            "line {}: `endif without matching `ifdef/`ifndef",
+                            i + 1
+                        ))
                     })?;
                 }
                 "line" => {
@@ -221,9 +250,14 @@ impl Preprocessor {
                     // `default_nettype wire|none|... — track for implicit net declarations
                     // Currently tracked but not enforced in elaborated
                 }
-                "celldefine" | "endcelldefine" | "unconnected_drive" |
-                "nounconnected_drive" | "pragma" | "assert" |
-                "debug" | "PICORV32_REGS" => {
+                "celldefine"
+                | "endcelldefine"
+                | "unconnected_drive"
+                | "nounconnected_drive"
+                | "pragma"
+                | "assert"
+                | "debug"
+                | "PICORV32_REGS" => {
                     // Standard or tool-specific Verilog directives that we ignore
                 }
                 "FORMAL_KEEP" => {
@@ -245,11 +279,16 @@ impl Preprocessor {
             let any_taking = cond_stack.iter().any(|f| f.taking_branch);
             if !self.quiet && any_taking && cond_stack.len() <= 3 {
                 // Show the current file name if available from the source
-                let file_hint = current_dir.as_ref()
+                let file_hint = current_dir
+                    .as_ref()
                     .and_then(|d| d.file_name())
                     .map(|n| format!(" in '{}'", n.to_string_lossy()))
                     .unwrap_or_default();
-                eprintln!("  ** WARNING: {} open `ifdef/`ifndef block(s) at end of file{} (auto-closed)", cond_stack.len(), file_hint);
+                eprintln!(
+                    "  ** WARNING: {} open `ifdef/`ifndef block(s) at end of file{} (auto-closed)",
+                    cond_stack.len(),
+                    file_hint
+                );
             }
             // Auto-close remaining conditionals so they don't corrupt subsequent files
             while let Some(_frame) = cond_stack.pop() {
@@ -266,7 +305,9 @@ impl Preprocessor {
 
     fn split_directive<'a>(&self, directive: &'a str) -> (&'a str, &'a str) {
         let trimmed = directive.trim_start();
-        let end = trimmed.find(|c: char| c.is_whitespace() || c == '(' || c == '[').unwrap_or(trimmed.len());
+        let end = trimmed
+            .find(|c: char| c.is_whitespace() || c == '(' || c == '[')
+            .unwrap_or(trimmed.len());
         let cmd = &trimmed[..end];
         let rest = trimmed[end..].trim();
         (cmd, rest)
@@ -275,20 +316,34 @@ impl Preprocessor {
     fn parse_include_path(&self, rest: &str) -> Result<String, SimError> {
         let s = rest.trim();
         if s.starts_with('`') {
-            return Err(SimError::preprocessor(format!("include path is a macro reference (not a string literal): {}", s)));
+            return Err(SimError::preprocessor(format!(
+                "include path is a macro reference (not a string literal): {}",
+                s
+            )));
         }
         if s.starts_with('"') {
-            let end = s[1..].find('"').ok_or_else(|| SimError::preprocessor("unterminated include path"))?;
+            let end = s[1..]
+                .find('"')
+                .ok_or_else(|| SimError::preprocessor("unterminated include path"))?;
             Ok(s[1..=end].to_string())
         } else if s.starts_with('<') {
-            let end = s[1..].find('>').ok_or_else(|| SimError::preprocessor("unterminated include path"))?;
+            let end = s[1..]
+                .find('>')
+                .ok_or_else(|| SimError::preprocessor("unterminated include path"))?;
             Ok(s[1..=end].to_string())
         } else {
-            Err(SimError::preprocessor(format!("invalid include syntax: {}", s)))
+            Err(SimError::preprocessor(format!(
+                "invalid include syntax: {}",
+                s
+            )))
         }
     }
 
-    fn resolve_path(&self, inc_path: &str, current_dir: Option<&PathBuf>) -> Result<PathBuf, SimError> {
+    fn resolve_path(
+        &self,
+        inc_path: &str,
+        current_dir: Option<&PathBuf>,
+    ) -> Result<PathBuf, SimError> {
         if let Some(dir) = current_dir {
             let candidate = dir.join(inc_path);
             if candidate.exists() {
@@ -305,16 +360,22 @@ impl Preprocessor {
         if candidate.exists() {
             return Ok(candidate);
         }
-        Err(SimError::preprocessor(format!("include file '{}' not found", inc_path)))
+        Err(SimError::preprocessor(format!(
+            "include file '{}' not found",
+            inc_path
+        )))
     }
 
     fn parse_define(&mut self, rest: &str) {
         let s = rest.trim();
-        if s.is_empty() { return; }
+        if s.is_empty() {
+            return;
+        }
 
         let (name, params, value) = if let Some(open_paren) = s.find('(') {
             let name = s[..open_paren].trim().to_string();
-            let close_paren = s[open_paren..].find(')')
+            let close_paren = s[open_paren..]
+                .find(')')
                 .map(|p| open_paren + p)
                 .unwrap_or(s.len());
             let params_str = if open_paren + 1 <= close_paren && close_paren <= s.len() {
@@ -322,7 +383,8 @@ impl Preprocessor {
             } else {
                 ""
             };
-            let params: Vec<String> = params_str.split(',')
+            let params: Vec<String> = params_str
+                .split(',')
                 .map(|p| p.trim().to_string())
                 .filter(|p| !p.is_empty())
                 .collect();
@@ -356,7 +418,10 @@ impl Preprocessor {
                 }
                 break;
             }
-            if chars[i] == '`' && i + 1 < chars.len() && (chars[i + 1].is_ascii_alphabetic() || chars[i + 1] == '_') {
+            if chars[i] == '`'
+                && i + 1 < chars.len()
+                && (chars[i + 1].is_ascii_alphabetic() || chars[i + 1] == '_')
+            {
                 i += 1;
                 let start = i;
                 while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
@@ -372,8 +437,11 @@ impl Preprocessor {
                             let mut depth = 1;
                             let mut args_end = args_start;
                             while args_end < chars.len() && depth > 0 {
-                                if chars[args_end] == '(' { depth += 1; }
-                                else if chars[args_end] == ')' { depth -= 1; }
+                                if chars[args_end] == '(' {
+                                    depth += 1;
+                                } else if chars[args_end] == ')' {
+                                    depth -= 1;
+                                }
                                 args_end += 1;
                             }
                             let args_str: String = chars[args_start..args_end - 1].iter().collect();
@@ -406,13 +474,21 @@ impl Preprocessor {
         let mut depth = 0usize;
         for c in args_str.chars() {
             match c {
-                '(' => { depth += 1; current.push(c); }
-                ')' => { depth = depth.saturating_sub(1); current.push(c); }
+                '(' => {
+                    depth += 1;
+                    current.push(c);
+                }
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    current.push(c);
+                }
                 ',' if depth == 0 => {
                     args.push(current.trim().to_string());
                     current.clear();
                 }
-                _ => { current.push(c); }
+                _ => {
+                    current.push(c);
+                }
             }
         }
         let last = current.trim().to_string();

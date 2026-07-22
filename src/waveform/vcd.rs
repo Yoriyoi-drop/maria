@@ -31,7 +31,12 @@ impl VcdWriter {
         Ok(writer)
     }
 
-    pub fn reopen(&mut self, path: &str, design: &IrDesign, state: &[crate::ir::LogicVec]) -> Result<(), String> {
+    pub fn reopen(
+        &mut self,
+        path: &str,
+        design: &IrDesign,
+        state: &[crate::ir::LogicVec],
+    ) -> Result<(), String> {
         self.close_inner()?;
         let file = fs::File::create(path)
             .map_err(|e| format!("cannot create VCD file '{}': {}", path, e))?;
@@ -51,12 +56,19 @@ impl VcdWriter {
                 return Ok(());
             }
         }
-        self.file.write_all(buf).map_err(|e| format!("VCD write error: {}", e))?;
+        self.file
+            .write_all(buf)
+            .map_err(|e| format!("VCD write error: {}", e))?;
         self.total_written += buf.len() as u64;
         Ok(())
     }
 
-    fn write_vals(&mut self, sig_val: &crate::ir::LogicVec, code: &str, is_one_bit: bool) -> Result<(), String> {
+    fn write_vals(
+        &mut self,
+        sig_val: &crate::ir::LogicVec,
+        code: &str,
+        is_one_bit: bool,
+    ) -> Result<(), String> {
         let val_str = vec_to_vcd(sig_val);
         if self.last_values.get(code) != Some(&val_str) {
             let line = if is_one_bit {
@@ -70,7 +82,12 @@ impl VcdWriter {
         Ok(())
     }
 
-    fn write_vals_force(&mut self, sig_val: &crate::ir::LogicVec, code: &str, is_one_bit: bool) -> Result<(), String> {
+    fn write_vals_force(
+        &mut self,
+        sig_val: &crate::ir::LogicVec,
+        code: &str,
+        is_one_bit: bool,
+    ) -> Result<(), String> {
         let val_str = vec_to_vcd(sig_val);
         let line = if is_one_bit {
             format!("{}{}\n", val_str, code)
@@ -82,21 +99,38 @@ impl VcdWriter {
         Ok(())
     }
 
-    fn elem_val<'a>(&self, sig_val: &'a crate::ir::LogicVec, elem: usize, elem_width: usize) -> crate::ir::LogicVec {
+    fn elem_val<'a>(
+        &self,
+        sig_val: &'a crate::ir::LogicVec,
+        elem: usize,
+        elem_width: usize,
+    ) -> crate::ir::LogicVec {
         let start = elem * elem_width;
         let mut bits = Vec::with_capacity(elem_width);
         for j in start..start + elem_width {
             bits.push(sig_val.bits.get(j).copied().unwrap_or(LogicVal::X));
         }
-        crate::ir::LogicVec { width: elem_width, bits }
+        crate::ir::LogicVec {
+            width: elem_width,
+            bits,
+        }
     }
 
-    fn code_for_signal(&self, sig_scope: &[String], sig_bare: &str, elem: Option<usize>) -> Option<String> {
+    fn code_for_signal(
+        &self,
+        sig_scope: &[String],
+        sig_bare: &str,
+        elem: Option<usize>,
+    ) -> Option<String> {
         if let Some(e) = elem {
             let elem_name = format!("{}[{}]", sig_bare, e);
-            self.code_by_key.get(&(sig_scope.to_vec(), elem_name)).cloned()
+            self.code_by_key
+                .get(&(sig_scope.to_vec(), elem_name))
+                .cloned()
         } else {
-            self.code_by_key.get(&(sig_scope.to_vec(), sig_bare.to_string())).cloned()
+            self.code_by_key
+                .get(&(sig_scope.to_vec(), sig_bare.to_string()))
+                .cloned()
         }
     }
 
@@ -111,7 +145,13 @@ impl VcdWriter {
         }
     }
 
-    fn write_scopes(&mut self, current: &[String], target: &[String], sigs: &[(String, usize, usize)], entry_idx: &mut usize) -> Result<(), String> {
+    fn write_scopes(
+        &mut self,
+        current: &[String],
+        target: &[String],
+        sigs: &[(String, usize, usize)],
+        entry_idx: &mut usize,
+    ) -> Result<(), String> {
         let mut close_count = 0usize;
         for (i, p) in current.iter().enumerate() {
             if i >= target.len() || target[i] != *p {
@@ -129,24 +169,53 @@ impl VcdWriter {
         }
 
         for (bare_name, width, array_depth) in sigs {
-            if *width == 0 { continue; }  // skip dynamic/queue arrays before allocation
+            if *width == 0 {
+                continue;
+            } // skip dynamic/queue arrays before allocation
             if *array_depth > 1 {
                 for elem in 0..*array_depth {
                     let code = format!("s{:x}", entry_idx);
                     *entry_idx += 1;
                     let elem_name = format!("{}[{}]", bare_name, elem);
-                    let width_disp = if *width == 1 { "1".to_string() } else { width.to_string() };
-                    let range = if *width == 1 { String::new() } else { format!(" [{}:0]", width - 1) };
-                    writeln!(self.file, "$var wire {} {} {} {} $end", width_disp, code, elem_name, range).unwrap();
+                    let width_disp = if *width == 1 {
+                        "1".to_string()
+                    } else {
+                        width.to_string()
+                    };
+                    let range = if *width == 1 {
+                        String::new()
+                    } else {
+                        format!(" [{}:0]", width - 1)
+                    };
+                    writeln!(
+                        self.file,
+                        "$var wire {} {} {} {} $end",
+                        width_disp, code, elem_name, range
+                    )
+                    .unwrap();
                     self.code_by_key.insert((target.to_vec(), elem_name), code);
                 }
             } else {
                 let code = format!("s{:x}", entry_idx);
                 *entry_idx += 1;
-                let width_disp = if *width == 1 { "1".to_string() } else { width.to_string() };
-                let range = if *width == 1 { String::new() } else { format!(" [{}:0]", width - 1) };
-                writeln!(self.file, "$var wire {} {} {} {} $end", width_disp, code, bare_name, range).unwrap();
-                self.code_by_key.insert((target.to_vec(), bare_name.clone()), code);
+                let width_disp = if *width == 1 {
+                    "1".to_string()
+                } else {
+                    width.to_string()
+                };
+                let range = if *width == 1 {
+                    String::new()
+                } else {
+                    format!(" [{}:0]", width - 1)
+                };
+                writeln!(
+                    self.file,
+                    "$var wire {} {} {} {} $end",
+                    width_disp, code, bare_name, range
+                )
+                .unwrap();
+                self.code_by_key
+                    .insert((target.to_vec(), bare_name.clone()), code);
             }
         }
         Ok(())
@@ -164,7 +233,8 @@ impl VcdWriter {
         let mut scope_map: HashMap<Vec<String>, Vec<(String, usize, usize)>> = HashMap::new();
         for sig in &design.top.signals {
             let (scope_parts, bare_name) = Self::parse_scope(&sig.name);
-            scope_map.entry(scope_parts)
+            scope_map
+                .entry(scope_parts)
                 .or_default()
                 .push((bare_name, sig.width, sig.array_depth));
         }
@@ -210,12 +280,20 @@ impl VcdWriter {
     }
 
     pub fn write_time_header(&mut self, time: u64) -> Result<(), String> {
-        if !self.enabled { return Ok(()); }
+        if !self.enabled {
+            return Ok(());
+        }
         self.write_raw(format!("#{}\n", time).as_bytes())
     }
 
-    pub fn dump_state(&mut self, design: &IrDesign, state: &[crate::ir::LogicVec]) -> Result<(), String> {
-        if !self.enabled { return Ok(()); }
+    pub fn dump_state(
+        &mut self,
+        design: &IrDesign,
+        state: &[crate::ir::LogicVec],
+    ) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
         for (sig_val, sig) in state.iter().zip(design.top.signals.iter()) {
             let (sig_scope, sig_bare) = Self::parse_scope(&sig.name);
             if sig.array_depth > 1 {
@@ -234,8 +312,14 @@ impl VcdWriter {
         Ok(())
     }
 
-    pub fn dump_all(&mut self, design: &IrDesign, state: &[crate::ir::LogicVec]) -> Result<(), String> {
-        if !self.enabled { return Ok(()); }
+    pub fn dump_all(
+        &mut self,
+        design: &IrDesign,
+        state: &[crate::ir::LogicVec],
+    ) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
         for (sig_val, sig) in state.iter().zip(design.top.signals.iter()) {
             let (sig_scope, sig_bare) = Self::parse_scope(&sig.name);
             if sig.array_depth > 1 {

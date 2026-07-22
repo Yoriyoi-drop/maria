@@ -42,10 +42,20 @@ pub fn eval_unary(op: UnaryIrOp, val: &LogicVec) -> LogicVec {
             for b in result.bits.iter_mut() {
                 if carry {
                     match b {
-                        LogicVal::Zero => { *b = LogicVal::One; carry = false; }
-                        LogicVal::One => { *b = LogicVal::Zero; }
-                        LogicVal::X => { carry = false; }
-                        LogicVal::Z => { *b = LogicVal::X; carry = false; }
+                        LogicVal::Zero => {
+                            *b = LogicVal::One;
+                            carry = false;
+                        }
+                        LogicVal::One => {
+                            *b = LogicVal::Zero;
+                        }
+                        LogicVal::X => {
+                            carry = false;
+                        }
+                        LogicVal::Z => {
+                            *b = LogicVal::X;
+                            carry = false;
+                        }
                     }
                 }
             }
@@ -72,12 +82,20 @@ pub fn eval_unary(op: UnaryIrOp, val: &LogicVec) -> LogicVec {
             let mut result = LogicVal::One;
             for b in &val.bits {
                 match b {
-                    LogicVal::Zero => { result = LogicVal::Zero; break; }
-                    LogicVal::X | LogicVal::Z => { result = LogicVal::X; }
+                    LogicVal::Zero => {
+                        result = LogicVal::Zero;
+                        break;
+                    }
+                    LogicVal::X | LogicVal::Z => {
+                        result = LogicVal::X;
+                    }
                     _ => {}
                 }
             }
-            LogicVec { bits: vec![result], width: 1 }
+            LogicVec {
+                bits: vec![result],
+                width: 1,
+            }
         }
         UnaryIrOp::RedNand => {
             let and = eval_unary(UnaryIrOp::RedAnd, val);
@@ -87,12 +105,20 @@ pub fn eval_unary(op: UnaryIrOp, val: &LogicVec) -> LogicVec {
             let mut result = LogicVal::Zero;
             for b in &val.bits {
                 match b {
-                    LogicVal::One => { result = LogicVal::One; break; }
-                    LogicVal::X | LogicVal::Z => { result = LogicVal::X; }
+                    LogicVal::One => {
+                        result = LogicVal::One;
+                        break;
+                    }
+                    LogicVal::X | LogicVal::Z => {
+                        result = LogicVal::X;
+                    }
                     _ => {}
                 }
             }
-            LogicVec { bits: vec![result], width: 1 }
+            LogicVec {
+                bits: vec![result],
+                width: 1,
+            }
         }
         UnaryIrOp::RedNor => {
             let or = eval_unary(UnaryIrOp::RedOr, val);
@@ -110,11 +136,16 @@ pub fn eval_unary(op: UnaryIrOp, val: &LogicVec) -> LogicVec {
                             LogicVal::Z => LogicVal::X,
                         };
                     }
-                    LogicVal::X | LogicVal::Z => { result = LogicVal::X; }
+                    LogicVal::X | LogicVal::Z => {
+                        result = LogicVal::X;
+                    }
                     _ => {}
                 }
             }
-            LogicVec { bits: vec![result], width: 1 }
+            LogicVec {
+                bits: vec![result],
+                width: 1,
+            }
         }
         UnaryIrOp::RedXnor => {
             let xor = eval_unary(UnaryIrOp::RedXor, val);
@@ -160,10 +191,19 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
 
     match op {
         BinaryIrOp::Add | BinaryIrOp::Sub => {
-            let l_has_x = lhs_ext.bits.iter().any(|b| *b == LogicVal::X || *b == LogicVal::Z);
-            let r_has_x = rhs_ext.bits.iter().any(|b| *b == LogicVal::X || *b == LogicVal::Z);
+            let l_has_x = lhs_ext
+                .bits
+                .iter()
+                .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
+            let r_has_x = rhs_ext
+                .bits
+                .iter()
+                .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
             if l_has_x || r_has_x {
-                LogicVec { bits: vec![LogicVal::X; max_width], width: max_width }
+                LogicVec {
+                    bits: vec![LogicVal::X; max_width],
+                    width: max_width,
+                }
             } else {
                 let l = lhs_ext.to_u64();
                 let r = rhs_ext.to_u64();
@@ -176,51 +216,96 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
             }
         }
         BinaryIrOp::Mul => {
-            let l_has_x = lhs_ext.bits.iter().any(|b| *b == LogicVal::X || *b == LogicVal::Z);
-            let r_has_x = rhs_ext.bits.iter().any(|b| *b == LogicVal::X || *b == LogicVal::Z);
+            let l_has_x = lhs_ext
+                .bits
+                .iter()
+                .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
+            let r_has_x = rhs_ext
+                .bits
+                .iter()
+                .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
             if l_has_x || r_has_x {
-                LogicVec { bits: vec![LogicVal::X; max_width], width: max_width }
+                LogicVec {
+                    bits: vec![LogicVal::X; max_width],
+                    width: max_width,
+                }
             } else {
                 LogicVec::from_u64(lhs_ext.to_u64().wrapping_mul(rhs_ext.to_u64()), max_width)
             }
         }
         BinaryIrOp::Div => {
-            let l_has_x = lhs_ext.bits.iter().any(|b| *b == LogicVal::X || *b == LogicVal::Z);
-            let r_has_x = rhs_ext.bits.iter().any(|b| *b == LogicVal::X || *b == LogicVal::Z);
+            let l_has_x = lhs_ext
+                .bits
+                .iter()
+                .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
+            let r_has_x = rhs_ext
+                .bits
+                .iter()
+                .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
             if l_has_x || r_has_x {
-                LogicVec { bits: vec![LogicVal::X; max_width], width: max_width }
+                LogicVec {
+                    bits: vec![LogicVal::X; max_width],
+                    width: max_width,
+                }
             } else {
                 let l = lhs_ext.to_u64();
                 let r = rhs_ext.to_u64();
                 if r == 0 {
-                    LogicVec { bits: vec![LogicVal::X; max_width], width: max_width }
+                    LogicVec {
+                        bits: vec![LogicVal::X; max_width],
+                        width: max_width,
+                    }
                 } else {
                     LogicVec::from_u64(l / r, max_width)
                 }
             }
         }
         BinaryIrOp::Mod => {
-            let l_has_x = lhs_ext.bits.iter().any(|b| *b == LogicVal::X || *b == LogicVal::Z);
-            let r_has_x = rhs_ext.bits.iter().any(|b| *b == LogicVal::X || *b == LogicVal::Z);
+            let l_has_x = lhs_ext
+                .bits
+                .iter()
+                .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
+            let r_has_x = rhs_ext
+                .bits
+                .iter()
+                .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
             if l_has_x || r_has_x {
-                LogicVec { bits: vec![LogicVal::X; max_width], width: max_width }
+                LogicVec {
+                    bits: vec![LogicVal::X; max_width],
+                    width: max_width,
+                }
             } else {
                 let l = lhs_ext.to_u64();
                 let r = rhs_ext.to_u64();
                 if r == 0 {
-                    LogicVec { bits: vec![LogicVal::X; max_width], width: max_width }
+                    LogicVec {
+                        bits: vec![LogicVal::X; max_width],
+                        width: max_width,
+                    }
                 } else {
                     LogicVec::from_u64(l % r, max_width)
                 }
             }
         }
         BinaryIrOp::Power => {
-            let l_has_x = lhs_ext.bits.iter().any(|b| *b == LogicVal::X || *b == LogicVal::Z);
-            let r_has_x = rhs_ext.bits.iter().any(|b| *b == LogicVal::X || *b == LogicVal::Z);
+            let l_has_x = lhs_ext
+                .bits
+                .iter()
+                .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
+            let r_has_x = rhs_ext
+                .bits
+                .iter()
+                .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
             if l_has_x || r_has_x {
-                LogicVec { bits: vec![LogicVal::X; max_width], width: max_width }
+                LogicVec {
+                    bits: vec![LogicVal::X; max_width],
+                    width: max_width,
+                }
             } else {
-                LogicVec::from_u64(lhs_ext.to_u64().wrapping_pow(rhs_ext.to_u64() as u32), max_width)
+                LogicVec::from_u64(
+                    lhs_ext.to_u64().wrapping_pow(rhs_ext.to_u64() as u32),
+                    max_width,
+                )
             }
         }
         BinaryIrOp::Eq | BinaryIrOp::CaseEq => {
@@ -259,30 +344,24 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
             let r = rhs_ext.to_u64();
             LogicVec::from_u64(if l >= r { 1 } else { 0 }, 1)
         }
-        BinaryIrOp::BitAnd => bitwise_op(&lhs_ext, &rhs_ext, |a, b| {
-            match (a, b) {
-                (LogicVal::One, LogicVal::One) => LogicVal::One,
-                (LogicVal::Zero, _) | (_, LogicVal::Zero) => LogicVal::Zero,
-                (LogicVal::X, _) | (_, LogicVal::X) => LogicVal::X,
-                _ => LogicVal::X,
-            }
+        BinaryIrOp::BitAnd => bitwise_op(&lhs_ext, &rhs_ext, |a, b| match (a, b) {
+            (LogicVal::One, LogicVal::One) => LogicVal::One,
+            (LogicVal::Zero, _) | (_, LogicVal::Zero) => LogicVal::Zero,
+            (LogicVal::X, _) | (_, LogicVal::X) => LogicVal::X,
+            _ => LogicVal::X,
         }),
-        BinaryIrOp::BitOr => bitwise_op(&lhs_ext, &rhs_ext, |a, b| {
-            match (a, b) {
-                (LogicVal::Zero, LogicVal::Zero) => LogicVal::Zero,
-                (LogicVal::One, _) | (_, LogicVal::One) => LogicVal::One,
-                (LogicVal::X, _) | (_, LogicVal::X) => LogicVal::X,
-                _ => LogicVal::X,
-            }
+        BinaryIrOp::BitOr => bitwise_op(&lhs_ext, &rhs_ext, |a, b| match (a, b) {
+            (LogicVal::Zero, LogicVal::Zero) => LogicVal::Zero,
+            (LogicVal::One, _) | (_, LogicVal::One) => LogicVal::One,
+            (LogicVal::X, _) | (_, LogicVal::X) => LogicVal::X,
+            _ => LogicVal::X,
         }),
-        BinaryIrOp::BitXor => bitwise_op(&lhs_ext, &rhs_ext, |a, b| {
-            match (a, b) {
-                (LogicVal::Zero, LogicVal::Zero) => LogicVal::Zero,
-                (LogicVal::One, LogicVal::One) => LogicVal::Zero,
-                (LogicVal::Zero, LogicVal::One) => LogicVal::One,
-                (LogicVal::One, LogicVal::Zero) => LogicVal::One,
-                _ => LogicVal::X,
-            }
+        BinaryIrOp::BitXor => bitwise_op(&lhs_ext, &rhs_ext, |a, b| match (a, b) {
+            (LogicVal::Zero, LogicVal::Zero) => LogicVal::Zero,
+            (LogicVal::One, LogicVal::One) => LogicVal::Zero,
+            (LogicVal::Zero, LogicVal::One) => LogicVal::One,
+            (LogicVal::One, LogicVal::Zero) => LogicVal::One,
+            _ => LogicVal::X,
         }),
         BinaryIrOp::BitXnor => {
             let xor = eval_binary(BinaryIrOp::BitXor, lhs, rhs);
@@ -367,7 +446,8 @@ fn extend_to(val: &LogicVec, width: usize) -> LogicVec {
 }
 
 fn bitwise_op<F>(lhs: &LogicVec, rhs: &LogicVec, op: F) -> LogicVec
-    where F: Fn(LogicVal, LogicVal) -> LogicVal
+where
+    F: Fn(LogicVal, LogicVal) -> LogicVal,
 {
     let width = lhs.width.max(rhs.width);
     let mut bits = Vec::with_capacity(width);

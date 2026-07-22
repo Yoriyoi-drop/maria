@@ -142,7 +142,9 @@ impl NetType {
                     (LogicVal::Z, v) => v,
                     (v, LogicVal::Z) => v,
                     (LogicVal::X, _) | (_, LogicVal::X) => LogicVal::X,
-                    (LogicVal::Zero, LogicVal::One) | (LogicVal::One, LogicVal::Zero) => LogicVal::X,
+                    (LogicVal::Zero, LogicVal::One) | (LogicVal::One, LogicVal::Zero) => {
+                        LogicVal::X
+                    }
                     _ => current, // same value
                 }
             }
@@ -560,18 +562,16 @@ impl IrSequence {
             IrSequence::Expr(_) => Some(0),
             IrSequence::Delay(n) => Some(*n),
             IrSequence::DelayRange(_, max) => Some(*max),
-            IrSequence::Concat(a, b) => {
-                a.max_cycles().and_then(|am| b.max_cycles().map(|bm| am + bm + 1))
-            }
-            IrSequence::Or(a, b) => {
-                a.max_cycles().and_then(|am| b.max_cycles().map(|bm| am.max(bm)))
-            }
-            IrSequence::And(a, b) => {
-                a.max_cycles().and_then(|am| b.max_cycles().map(|bm| am.max(bm)))
-            }
-            IrSequence::Repeat(seq, n) => {
-                seq.max_cycles().map(|m| m * n)
-            }
+            IrSequence::Concat(a, b) => a
+                .max_cycles()
+                .and_then(|am| b.max_cycles().map(|bm| am + bm + 1)),
+            IrSequence::Or(a, b) => a
+                .max_cycles()
+                .and_then(|am| b.max_cycles().map(|bm| am.max(bm))),
+            IrSequence::And(a, b) => a
+                .max_cycles()
+                .and_then(|am| b.max_cycles().map(|bm| am.max(bm))),
+            IrSequence::Repeat(seq, n) => seq.max_cycles().map(|m| m * n),
         }
     }
 }
@@ -592,18 +592,46 @@ pub enum DistWeightType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryIrOp {
-    Plus, Minus, Not, BitNot,
-    RedAnd, RedNand, RedOr, RedNor, RedXor, RedXnor,
+    Plus,
+    Minus,
+    Not,
+    BitNot,
+    RedAnd,
+    RedNand,
+    RedOr,
+    RedNor,
+    RedXor,
+    RedXnor,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinaryIrOp {
-    Add, Sub, Mul, Div, Mod, Power,
-    Eq, Neq, CaseEq, CaseNeq, EqWild, NeqWild,
-    Lt, Le, Gt, Ge,
-    BitAnd, BitOr, BitXor, BitXnor,
-    Shl, Shr, Sshl, Sshr,
-    LogicalAnd, LogicalOr,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Power,
+    Eq,
+    Neq,
+    CaseEq,
+    CaseNeq,
+    EqWild,
+    NeqWild,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    BitAnd,
+    BitOr,
+    BitXor,
+    BitXnor,
+    Shl,
+    Shr,
+    Sshl,
+    Sshr,
+    LogicalAnd,
+    LogicalOr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -613,7 +641,9 @@ pub struct LogicVec {
 }
 
 impl Default for LogicVec {
-    fn default() -> Self { LogicVec::new(1) }
+    fn default() -> Self {
+        LogicVec::new(1)
+    }
 }
 
 impl LogicVec {
@@ -626,7 +656,10 @@ impl LogicVec {
     }
 
     pub fn fill(val: LogicVal, width: usize) -> Self {
-        LogicVec { bits: vec![val; width], width }
+        LogicVec {
+            bits: vec![val; width],
+            width,
+        }
     }
 
     pub fn from_u64(val: u64, width: usize) -> Self {
@@ -669,7 +702,10 @@ impl LogicVec {
         if self.width == 0 {
             return Some(false);
         }
-        let all_x_or_z = self.bits.iter().all(|b| *b == LogicVal::X || *b == LogicVal::Z);
+        let all_x_or_z = self
+            .bits
+            .iter()
+            .all(|b| *b == LogicVal::X || *b == LogicVal::Z);
         if all_x_or_z {
             return None;
         }
@@ -683,11 +719,17 @@ impl LogicVec {
         if new_width <= self.width {
             let mut bits = self.bits.clone();
             bits.truncate(new_width);
-            return LogicVec { bits, width: new_width };
+            return LogicVec {
+                bits,
+                width: new_width,
+            };
         }
         let mut bits = self.bits.clone();
         bits.resize(new_width, LogicVal::Zero);
-        LogicVec { bits, width: new_width }
+        LogicVec {
+            bits,
+            width: new_width,
+        }
     }
 
     pub fn extend(&self, other: &LogicVec) -> Self {

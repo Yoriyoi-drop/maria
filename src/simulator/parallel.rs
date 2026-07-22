@@ -1,8 +1,5 @@
 use crate::error::SimError;
-use crate::ir::{
-    CaseType, IrExpr, IrLValue, IrStmt, LogicVal, LogicVec,
-    SignalId,
-};
+use crate::ir::{CaseType, IrExpr, IrLValue, IrStmt, LogicVal, LogicVec, SignalId};
 use crate::simulator::util::string_to_logicvec;
 use crate::simulator::value::*;
 
@@ -40,48 +37,73 @@ impl Default for ParallelConfig {
 // Simplified expression evaluation for parallel context.
 /// This version does NOT need &IrDesign, making it safe to use in rayon closures.
 /// It handles the common expression types found in combinational processes.
-pub fn evaluate_expr_simple(
-    expr: &IrExpr,
-    signals: &[LogicVec],
-) -> Result<LogicVec, SimError> {
+pub fn evaluate_expr_simple(expr: &IrExpr, signals: &[LogicVec]) -> Result<LogicVec, SimError> {
     match expr {
         IrExpr::Const(val) => Ok(val.clone()),
         IrExpr::FillLit(val) => Ok(LogicVec::fill(*val, 1)),
-        IrExpr::Signal(id, _) => {
-            Ok(signals.get(*id).cloned().unwrap_or_else(|| LogicVec::new(1)))
-        }
+        IrExpr::Signal(id, _) => Ok(signals
+            .get(*id)
+            .cloned()
+            .unwrap_or_else(|| LogicVec::new(1))),
         IrExpr::RangeSelect(sig_id, msb, lsb) => {
             if let Some(val) = signals.get(*sig_id) {
-                let (start, end) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
+                let (start, end) = if *msb > *lsb {
+                    (*lsb, *msb)
+                } else {
+                    (*msb, *lsb)
+                };
                 if end >= val.width {
                     return Ok(LogicVec::new(1));
                 }
                 let mut bits = val.bits[start..=end].to_vec();
-                if *msb > *lsb { bits.reverse(); }
-                Ok(LogicVec { width: bits.len(), bits })
+                if *msb > *lsb {
+                    bits.reverse();
+                }
+                Ok(LogicVec {
+                    width: bits.len(),
+                    bits,
+                })
             } else {
                 Ok(LogicVec::new(1))
             }
         }
         IrExpr::BitSelect(sig_id, idx) => {
-            let val = signals.get(*sig_id).cloned().unwrap_or_else(|| LogicVec::new(1));
+            let val = signals
+                .get(*sig_id)
+                .cloned()
+                .unwrap_or_else(|| LogicVec::new(1));
             let bit = val.bits.get(*idx).copied().unwrap_or(LogicVal::X);
-            Ok(LogicVec { bits: vec![bit], width: 1 })
+            Ok(LogicVec {
+                bits: vec![bit],
+                width: 1,
+            })
         }
         IrExpr::ExprRangeSelect(inner, msb, lsb) => {
             let val = evaluate_expr_simple(inner, signals)?;
-            let (start, end) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
+            let (start, end) = if *msb > *lsb {
+                (*lsb, *msb)
+            } else {
+                (*msb, *lsb)
+            };
             if end >= val.width {
                 return Ok(LogicVec::new(1));
             }
             let mut bits = val.bits[start..=end].to_vec();
-            if *msb > *lsb { bits.reverse(); }
-            Ok(LogicVec { width: bits.len(), bits })
+            if *msb > *lsb {
+                bits.reverse();
+            }
+            Ok(LogicVec {
+                width: bits.len(),
+                bits,
+            })
         }
         IrExpr::ExprBitSelect(inner, idx) => {
             let val = evaluate_expr_simple(inner, signals)?;
             let bit = val.bits.get(*idx).copied().unwrap_or(LogicVal::X);
-            Ok(LogicVec { bits: vec![bit], width: 1 })
+            Ok(LogicVec {
+                bits: vec![bit],
+                width: 1,
+            })
         }
         IrExpr::ExprPartSelect(inner, base_expr, width_expr) => {
             let val = evaluate_expr_simple(inner, signals)?;
@@ -93,9 +115,16 @@ pub fn evaluate_expr_simple(
             let end = (base + width - 1).min(val.width - 1);
             let mut bits = val.bits[base..=end].to_vec();
             bits.reverse();
-            Ok(LogicVec { width: bits.len(), bits })
+            Ok(LogicVec {
+                width: bits.len(),
+                bits,
+            })
         }
-        IrExpr::ArrayIndex { sig_id, index, elem_width } => {
+        IrExpr::ArrayIndex {
+            sig_id,
+            index,
+            elem_width,
+        } => {
             let key_val = evaluate_expr_simple(index, signals)?;
             let idx = key_val.to_u64() as usize;
             if let Some(array_val) = signals.get(*sig_id) {
@@ -105,7 +134,10 @@ pub fn evaluate_expr_simple(
                 for i in start..=end.min(array_val.width.saturating_sub(1)) {
                     bits.push(array_val.bits.get(i).copied().unwrap_or(LogicVal::X));
                 }
-                Ok(LogicVec { width: *elem_width, bits })
+                Ok(LogicVec {
+                    width: *elem_width,
+                    bits,
+                })
             } else {
                 Ok(LogicVec::new(*elem_width))
             }
@@ -143,9 +175,7 @@ pub fn evaluate_expr_simple(
                 evaluate_expr_simple(false_val, signals)
             }
         }
-        IrExpr::Signed(inner) => {
-            evaluate_expr_simple(inner, signals)
-        }
+        IrExpr::Signed(inner) => evaluate_expr_simple(inner, signals),
         IrExpr::String(s) => Ok(string_to_logicvec(s)),
         IrExpr::Cast { width, expr } => {
             let val = evaluate_expr_simple(expr, signals)?;
@@ -161,9 +191,7 @@ pub fn evaluate_expr_simple(
             }
             Ok(LogicVec::from_u64(0, 1))
         }
-        _ => {
-            Ok(LogicVec::new(32))
-        }
+        _ => Ok(LogicVec::new(32)),
     }
 }
 
@@ -188,7 +216,11 @@ pub fn evaluate_stmt_block_parallel(
                 let val = eval_assign_rhs_simple(rhs, lhs, signals)?;
                 write_lvalue_simple(lhs, val, signals, writes)?;
             }
-            IrStmt::If { cond, true_branch, false_branch } => {
+            IrStmt::If {
+                cond,
+                true_branch,
+                false_branch,
+            } => {
                 let cond_val = evaluate_expr_simple(cond, signals)?;
                 if cond_val.to_bool().unwrap_or(false) {
                     evaluate_stmt_block_parallel(true_branch, signals, writes)?;
@@ -196,7 +228,12 @@ pub fn evaluate_stmt_block_parallel(
                     evaluate_stmt_block_parallel(false_branch, signals, writes)?;
                 }
             }
-            IrStmt::Case { case_type, expr: case_expr, items, default } => {
+            IrStmt::Case {
+                case_type,
+                expr: case_expr,
+                items,
+                default,
+            } => {
                 let case_val = evaluate_expr_simple(case_expr, signals)?;
                 let mut matched = false;
                 for case_item in items {
@@ -215,13 +252,20 @@ pub fn evaluate_stmt_block_parallel(
                             break;
                         }
                     }
-                    if item_matched { break; }
+                    if item_matched {
+                        break;
+                    }
                 }
                 if !matched && !default.is_empty() {
                     evaluate_stmt_block_parallel(default, signals, writes)?;
                 }
             }
-            IrStmt::LoopFor { init, cond, step, body } => {
+            IrStmt::LoopFor {
+                init,
+                cond,
+                step,
+                body,
+            } => {
                 let mut iter_count = 0u64;
                 if let Some(init_stmt) = init {
                     let cloned: IrStmt = init_stmt.as_ref().clone();
@@ -229,7 +273,9 @@ pub fn evaluate_stmt_block_parallel(
                 }
                 while iter_count < 1_000_000 {
                     let cond_val = evaluate_expr_simple(cond, signals)?;
-                    if !cond_val.to_bool().unwrap_or(false) { break; }
+                    if !cond_val.to_bool().unwrap_or(false) {
+                        break;
+                    }
                     evaluate_stmt_block_parallel(body, signals, writes)?;
                     if let Some(step_stmt) = step {
                         let cloned: IrStmt = step_stmt.as_ref().clone();
@@ -242,7 +288,9 @@ pub fn evaluate_stmt_block_parallel(
                 let mut iter_count = 0u64;
                 while iter_count < 1_000_000 {
                     let cond_val = evaluate_expr_simple(cond, signals)?;
-                    if !cond_val.to_bool().unwrap_or(false) { break; }
+                    if !cond_val.to_bool().unwrap_or(false) {
+                        break;
+                    }
                     evaluate_stmt_block_parallel(body, signals, writes)?;
                     iter_count += 1;
                 }
@@ -252,9 +300,13 @@ pub fn evaluate_stmt_block_parallel(
                 loop {
                     evaluate_stmt_block_parallel(body, signals, writes)?;
                     iter_count += 1;
-                    if iter_count >= 1_000_000 { break; }
+                    if iter_count >= 1_000_000 {
+                        break;
+                    }
                     let cond_val = evaluate_expr_simple(cond, signals)?;
-                    if !cond_val.to_bool().unwrap_or(false) { break; }
+                    if !cond_val.to_bool().unwrap_or(false) {
+                        break;
+                    }
                 }
             }
             IrStmt::Repeat { count, body } => {
@@ -264,7 +316,11 @@ pub fn evaluate_stmt_block_parallel(
                     evaluate_stmt_block_parallel(body, signals, writes)?;
                 }
             }
-            IrStmt::Foreach { array_var, index_var: _, body } => {
+            IrStmt::Foreach {
+                array_var,
+                index_var: _,
+                body,
+            } => {
                 let arr_val = evaluate_expr_simple(array_var, signals)?;
                 let elem_width = match array_var {
                     IrExpr::Signal(_, _) => {
@@ -274,7 +330,11 @@ pub fn evaluate_stmt_block_parallel(
                     }
                     _ => 1,
                 };
-                let num_elems = if elem_width > 0 { arr_val.width / elem_width } else { 0 };
+                let num_elems = if elem_width > 0 {
+                    arr_val.width / elem_width
+                } else {
+                    0
+                };
                 let idx_sig = signals.len();
                 signals.push(LogicVec::from_u64(0, 32));
                 for i in 0..num_elems.min(10_000) {
@@ -319,28 +379,37 @@ fn eval_assign_rhs_simple(
 }
 
 /// Get lvalue width (no design reference)
-fn get_lvalue_width_simple(
-    lvalue: &IrLValue,
-    signals: &[LogicVec],
-) -> usize {
+fn get_lvalue_width_simple(lvalue: &IrLValue, signals: &[LogicVec]) -> usize {
     match lvalue {
-        IrLValue::Signal(id, _) => {
-            signals.get(*id).map(|s| s.width).unwrap_or(1)
-        }
+        IrLValue::Signal(id, _) => signals.get(*id).map(|s| s.width).unwrap_or(1),
         IrLValue::RangeSelect(_, msb, lsb) => {
-            let (lo, hi) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
+            let (lo, hi) = if *msb > *lsb {
+                (*lsb, *msb)
+            } else {
+                (*msb, *lsb)
+            };
             hi - lo + 1
         }
         IrLValue::BitSelect(_, _) => 1,
         IrLValue::ArrayIndex { elem_width, .. } => *elem_width,
-        IrLValue::ArrayRangeSelect { elem_width, msb, lsb, .. } => {
-            let (lo, hi) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
+        IrLValue::ArrayRangeSelect {
+            elem_width,
+            msb,
+            lsb,
+            ..
+        } => {
+            let (lo, hi) = if *msb > *lsb {
+                (*lsb, *msb)
+            } else {
+                (*msb, *lsb)
+            };
             (hi - lo + 1) * elem_width
         }
         IrLValue::ArrayBitSelect { elem_width, .. } => *elem_width,
-        IrLValue::Concat(items) => {
-            items.iter().map(|i| get_lvalue_width_simple(i, signals)).sum()
-        }
+        IrLValue::Concat(items) => items
+            .iter()
+            .map(|i| get_lvalue_width_simple(i, signals))
+            .sum(),
     }
 }
 
@@ -354,15 +423,26 @@ fn write_lvalue_simple(
     match lvalue {
         IrLValue::Signal(id, _) => {
             let target_width = signals.get(*id).map(|s| s.width).unwrap_or(1);
-            let resized = if val.width != target_width { val.resize(target_width) } else { val };
+            let resized = if val.width != target_width {
+                val.resize(target_width)
+            } else {
+                val
+            };
             if *id < signals.len() {
                 signals[*id] = resized.clone();
             }
             writes.push((*id, resized));
         }
         IrLValue::RangeSelect(sig_id, msb, lsb) => {
-            let (start, end) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
-            let mut existing = signals.get(*sig_id).cloned().unwrap_or_else(|| LogicVec::new(1));
+            let (start, end) = if *msb > *lsb {
+                (*lsb, *msb)
+            } else {
+                (*msb, *lsb)
+            };
+            let mut existing = signals
+                .get(*sig_id)
+                .cloned()
+                .unwrap_or_else(|| LogicVec::new(1));
             for i in start..=end.min(existing.width.saturating_sub(1)) {
                 let src_idx = if *msb > *lsb { end - i } else { i - start };
                 existing.bits[i] = val.bits.get(src_idx).copied().unwrap_or(LogicVal::X);
@@ -373,7 +453,10 @@ fn write_lvalue_simple(
             writes.push((*sig_id, existing));
         }
         IrLValue::BitSelect(sig_id, idx) => {
-            let mut existing = signals.get(*sig_id).cloned().unwrap_or_else(|| LogicVec::new(1));
+            let mut existing = signals
+                .get(*sig_id)
+                .cloned()
+                .unwrap_or_else(|| LogicVec::new(1));
             if *idx < existing.width {
                 existing.bits[*idx] = val.bits.first().copied().unwrap_or(LogicVal::X);
             }
@@ -382,10 +465,17 @@ fn write_lvalue_simple(
             }
             writes.push((*sig_id, existing));
         }
-        IrLValue::ArrayIndex { sig_id, index, elem_width } => {
+        IrLValue::ArrayIndex {
+            sig_id,
+            index,
+            elem_width,
+        } => {
             let idx_val = evaluate_expr_simple(index, signals)?;
             let idx_u64 = idx_val.to_u64() as usize;
-            let mut existing = signals.get(*sig_id).cloned().unwrap_or_else(|| LogicVec::new(1));
+            let mut existing = signals
+                .get(*sig_id)
+                .cloned()
+                .unwrap_or_else(|| LogicVec::new(1));
             let start = idx_u64 * elem_width;
             for i in 0..*elem_width {
                 if start + i < existing.width {
@@ -407,7 +497,10 @@ fn write_lvalue_simple(
                     for i in offset..slice_end {
                         bits.push(val.bits.get(i).copied().unwrap_or(LogicVal::X));
                     }
-                    LogicVec { width: item_w, bits }
+                    LogicVec {
+                        width: item_w,
+                        bits,
+                    }
                 } else {
                     LogicVec::new(item_w)
                 };
@@ -425,4 +518,3 @@ pub fn parallel_snapshot(signals: &[LogicVec]) -> Vec<LogicVec> {
     use rayon::prelude::*;
     signals.par_iter().cloned().collect()
 }
-

@@ -7,9 +7,7 @@ pub struct JITCompiler {
 
 impl JITCompiler {
     pub fn new() -> Result<Self, String> {
-        Ok(JITCompiler {
-            compiled_count: 0,
-        })
+        Ok(JITCompiler { compiled_count: 0 })
     }
 
     pub fn compile_add(a: u64, b: u64) -> u64 {

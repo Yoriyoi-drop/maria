@@ -1,7 +1,7 @@
 use crate::ast::*;
+use crate::error::SimError;
 use crate::ir::*;
 use crate::simulator::state::SimulationState;
-use crate::error::SimError;
 use std::collections::HashMap;
 
 pub fn map_ast_binary_op(op: &BinaryOp) -> Result<BinaryIrOp, String> {
@@ -63,7 +63,9 @@ pub fn extract_signal_deps_inner(expr: &IrExpr, deps: &mut Vec<SignalId>) {
                 deps.push(*id);
             }
         }
-        IrExpr::RangeSelect(id, _, _) | IrExpr::BitSelect(id, _) | IrExpr::ArrayIndex { sig_id: id, .. } => {
+        IrExpr::RangeSelect(id, _, _)
+        | IrExpr::BitSelect(id, _)
+        | IrExpr::ArrayIndex { sig_id: id, .. } => {
             if !deps.contains(id) {
                 deps.push(*id);
             }
@@ -223,24 +225,54 @@ pub fn eval_display_arg(
         }
         IrExpr::Const(v) => Ok(v.clone()),
         IrExpr::String(s) => Ok(LogicVec {
-            bits: s.bytes().flat_map(|b| (0..8).map(move |i| if (b >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero })).collect(),
+            bits: s
+                .bytes()
+                .flat_map(|b| {
+                    (0..8).map(move |i| {
+                        if (b >> i) & 1 == 1 {
+                            LogicVal::One
+                        } else {
+                            LogicVal::Zero
+                        }
+                    })
+                })
+                .collect(),
             width: s.len() * 8,
         }),
-        IrExpr::Signal(id, _) | IrExpr::RangeSelect(id, _, _) | IrExpr::BitSelect(id, _) | IrExpr::ArrayIndex { sig_id: id, .. } => {
+        IrExpr::Signal(id, _)
+        | IrExpr::RangeSelect(id, _, _)
+        | IrExpr::BitSelect(id, _)
+        | IrExpr::ArrayIndex { sig_id: id, .. } => {
             return match arg {
                 IrExpr::RangeSelect(id, msb, lsb) => {
                     let val = state.read_signal(*id);
-                    let (start, end) = if msb > lsb { (*lsb, *msb) } else { (*msb, *lsb) };
+                    let (start, end) = if msb > lsb {
+                        (*lsb, *msb)
+                    } else {
+                        (*msb, *lsb)
+                    };
                     let mut bits = val.bits[start..=end.min(val.width - 1)].to_vec();
-                    if msb > lsb { bits.reverse(); }
-                    Ok(LogicVec { width: bits.len(), bits })
+                    if msb > lsb {
+                        bits.reverse();
+                    }
+                    Ok(LogicVec {
+                        width: bits.len(),
+                        bits,
+                    })
                 }
                 IrExpr::BitSelect(id, idx) => {
                     let val = state.read_signal(*id);
                     let bit = val.bits.get(*idx).copied().unwrap_or(LogicVal::X);
-                    Ok(LogicVec { width: 1, bits: vec![bit] })
+                    Ok(LogicVec {
+                        width: 1,
+                        bits: vec![bit],
+                    })
                 }
-                IrExpr::ArrayIndex { sig_id, index, elem_width } => {
+                IrExpr::ArrayIndex {
+                    sig_id,
+                    index,
+                    elem_width,
+                } => {
                     let idx_val = eval_display_arg(state, signals, hier_map, assoc_data, index)?;
                     let idx_u64 = idx_val.to_u64() as usize;
                     let val = state.read_signal(*sig_id);
@@ -254,7 +286,10 @@ pub fn eval_display_arg(
                     for i in start..start + elem_width {
                         bits.push(val.bits.get(i).copied().unwrap_or(LogicVal::X));
                     }
-                    Ok(LogicVec { width: *elem_width, bits })
+                    Ok(LogicVec {
+                        width: *elem_width,
+                        bits,
+                    })
                 }
                 _ => {
                     let val = state.read_signal(*id);
@@ -289,7 +324,8 @@ pub fn format_display(
         return parts.join(" ");
     };
 
-    let value_args: Vec<LogicVec> = ir_args[start_idx..].iter()
+    let value_args: Vec<LogicVec> = ir_args[start_idx..]
+        .iter()
         .filter_map(|a| eval_display_arg(state, signals, hier_map, assoc_data, a).ok())
         .collect();
 
@@ -320,7 +356,9 @@ pub fn format_display(
                         let s = format!("{}", val.to_u64());
                         if width > s.len() {
                             let pad = if zero_fill { '0' } else { ' ' };
-                            for _ in 0..(width - s.len()) { result.push(pad); }
+                            for _ in 0..(width - s.len()) {
+                                result.push(pad);
+                            }
                         }
                         result.push_str(&s);
                     }
@@ -333,7 +371,9 @@ pub fn format_display(
                         let s = if trimmed.is_empty() { "0" } else { trimmed };
                         if width > s.len() {
                             let pad = if zero_fill { '0' } else { ' ' };
-                            for _ in 0..(width - s.len()) { result.push(pad); }
+                            for _ in 0..(width - s.len()) {
+                                result.push(pad);
+                            }
                         }
                         result.push_str(s);
                     }
@@ -344,7 +384,9 @@ pub fn format_display(
                         let s = format!("{:x}", val.to_u64());
                         if width > s.len() {
                             let pad = if zero_fill { '0' } else { ' ' };
-                            for _ in 0..(width - s.len()) { result.push(pad); }
+                            for _ in 0..(width - s.len()) {
+                                result.push(pad);
+                            }
                         }
                         result.push_str(&s);
                     }
@@ -365,8 +407,12 @@ pub fn format_display(
                 }
                 Some(c2) => {
                     result.push('%');
-                    if zero_fill { result.push('0'); }
-                    if width > 0 { result.push_str(&format!("{}", width)); }
+                    if zero_fill {
+                        result.push('0');
+                    }
+                    if width > 0 {
+                        result.push_str(&format!("{}", width));
+                    }
                     result.push(c2);
                 }
                 None => {
@@ -377,7 +423,10 @@ pub fn format_display(
             match chars.next() {
                 Some('n') => result.push('\n'),
                 Some('t') => result.push('\t'),
-                Some(c2) => { result.push('\\'); result.push(c2); }
+                Some(c2) => {
+                    result.push('\\');
+                    result.push(c2);
+                }
                 None => result.push('\\'),
             }
         } else {
@@ -402,7 +451,9 @@ pub fn signal_is_2state(signals: &[SignalInfo], id: SignalId) -> bool {
 }
 
 pub fn sanitize_for_2state(signals: &[SignalInfo], id: SignalId, val: &mut LogicVec) {
-    if !signal_is_2state(signals, id) { return; }
+    if !signal_is_2state(signals, id) {
+        return;
+    }
     for bit in val.bits.iter_mut() {
         if *bit == LogicVal::X || *bit == LogicVal::Z {
             *bit = LogicVal::Zero;
@@ -421,34 +472,58 @@ pub fn resolve_net_values(net_type: NetType, current: &LogicVec, incoming: &Logi
     LogicVec { bits, width }
 }
 
-pub fn read_hex_file(filename: &str, elem_width: usize, array_depth: usize, start: Option<usize>, end: Option<usize>) -> Result<Vec<LogicVec>, SimError> {
-    let content = std::fs::read_to_string(filename).map_err(|e| SimError::waveform(format!("cannot read {}: {}", filename, e)))?;
+pub fn read_hex_file(
+    filename: &str,
+    elem_width: usize,
+    array_depth: usize,
+    start: Option<usize>,
+    end: Option<usize>,
+) -> Result<Vec<LogicVec>, SimError> {
+    let content = std::fs::read_to_string(filename)
+        .map_err(|e| SimError::waveform(format!("cannot read {}: {}", filename, e)))?;
     let start_addr = start.unwrap_or(0);
     let end_addr = end.unwrap_or(array_depth - 1);
     let len = end_addr - start_addr + 1;
     let mut data = Vec::new();
     for line in content.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with("//") || line.starts_with('#') { continue; }
-        let val = i64::from_str_radix(line, 16).map_err(|e| SimError::waveform(format!("bad hex value '{}': {}", line, e)))?;
+        if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
+            continue;
+        }
+        let val = i64::from_str_radix(line, 16)
+            .map_err(|e| SimError::waveform(format!("bad hex value '{}': {}", line, e)))?;
         data.push(LogicVec::from_u64(val as u64, elem_width));
-        if data.len() >= len { break; }
+        if data.len() >= len {
+            break;
+        }
     }
     Ok(data)
 }
 
-pub fn read_bin_file(filename: &str, elem_width: usize, array_depth: usize, start: Option<usize>, end: Option<usize>) -> Result<Vec<LogicVec>, SimError> {
-    let content = std::fs::read_to_string(filename).map_err(|e| SimError::waveform(format!("cannot read {}: {}", filename, e)))?;
+pub fn read_bin_file(
+    filename: &str,
+    elem_width: usize,
+    array_depth: usize,
+    start: Option<usize>,
+    end: Option<usize>,
+) -> Result<Vec<LogicVec>, SimError> {
+    let content = std::fs::read_to_string(filename)
+        .map_err(|e| SimError::waveform(format!("cannot read {}: {}", filename, e)))?;
     let start_addr = start.unwrap_or(0);
     let end_addr = end.unwrap_or(array_depth - 1);
     let len = end_addr - start_addr + 1;
     let mut data = Vec::new();
     for line in content.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with("//") || line.starts_with('#') { continue; }
-        let val = i64::from_str_radix(line, 2).map_err(|e| SimError::waveform(format!("bad binary value '{}': {}", line, e)))?;
+        if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
+            continue;
+        }
+        let val = i64::from_str_radix(line, 2)
+            .map_err(|e| SimError::waveform(format!("bad binary value '{}': {}", line, e)))?;
         data.push(LogicVec::from_u64(val as u64, elem_width));
-        if data.len() >= len { break; }
+        if data.len() >= len {
+            break;
+        }
     }
     Ok(data)
 }
@@ -458,12 +533,19 @@ pub fn string_to_logicvec(s: &str) -> LogicVec {
     let mut bits = Vec::with_capacity(width);
     for byte in s.bytes() {
         for i in 0..8 {
-            bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+            bits.push(if (byte >> i) & 1 == 1 {
+                LogicVal::One
+            } else {
+                LogicVal::Zero
+            });
         }
     }
     // Add null terminator
     for _ in 0..8 {
         bits.push(LogicVal::Zero);
     }
-    LogicVec { bits, width: width + 8 }
+    LogicVec {
+        bits,
+        width: width + 8,
+    }
 }

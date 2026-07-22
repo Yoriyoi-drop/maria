@@ -69,11 +69,13 @@ impl Debugger {
     }
 
     pub fn find_signal_id(&self, name: &str) -> Option<SignalId> {
-        self.engine.design.top.signals.iter()
+        self.engine
+            .design
+            .top
+            .signals
+            .iter()
             .position(|s| s.name == name)
-            .or_else(|| {
-                self.engine.design.hier_signal_map.get(name).copied()
-            })
+            .or_else(|| self.engine.design.hier_signal_map.get(name).copied())
     }
 
     pub fn read_signal_by_name(&self, name: &str) -> Option<LogicVec> {
@@ -133,7 +135,10 @@ impl Debugger {
             let lower = sig.name.to_lowercase();
             if lower == "pc" || sig.name == "PC" {
                 pc_val = format!("PC = {}", val);
-            } else if lower.contains("reg") || lower.contains("rf") || lower.starts_with('r') && sig.name.len() <= 3 {
+            } else if lower.contains("reg")
+                || lower.contains("rf")
+                || lower.starts_with('r') && sig.name.len() <= 3
+            {
                 reg_lines.push(s);
             } else {
                 other_lines.push(s);
@@ -161,20 +166,33 @@ impl Debugger {
             Some(h) => h,
             None => return format!("no timeline data for '{}'\n", name),
         };
-        let w = if history.is_empty() { 8 } else {
+        let w = if history.is_empty() {
+            8
+        } else {
             let mut max_len = 4usize;
             for (_, v) in history.iter() {
                 let s = format!("{}", v);
-                if s.len() > max_len { max_len = s.len(); }
+                if s.len() > max_len {
+                    max_len = s.len();
+                }
             }
             max_len
         };
         out.push_str(&format!("{:<8} {:>width$}\n", "Cycle", name, width = w));
         out.push_str(&"-".repeat(8 + w + 2));
         out.push('\n');
-        let start = if history.len() > max_entries { history.len() - max_entries } else { 0 };
+        let start = if history.len() > max_entries {
+            history.len() - max_entries
+        } else {
+            0
+        };
         for (cycle, val) in history.iter().skip(start) {
-            out.push_str(&format!("{:<8} {:>width$}\n", cycle, format!("{}", val), width = w));
+            out.push_str(&format!(
+                "{:<8} {:>width$}\n",
+                cycle,
+                format!("{}", val),
+                width = w
+            ));
         }
         out
     }
@@ -183,7 +201,11 @@ impl Debugger {
         let mut out = String::new();
         out.push_str(&format!("{}\n", self.engine.design.top.name));
         for (i, inst) in self.engine.design.top.sub_instances.iter().enumerate() {
-            let branch = if i == self.engine.design.top.sub_instances.len() - 1 { "└── " } else { "├── " };
+            let branch = if i == self.engine.design.top.sub_instances.len() - 1 {
+                "└── "
+            } else {
+                "├── "
+            };
             out.push_str(&format!("{}{}\n", branch, inst.instance_name));
         }
         out
@@ -277,7 +299,10 @@ impl Debugger {
             }
             self.engine.snapshots.pop();
         }
-        Err(SimError::debugger(format!("no snapshot at or before time {}", target_time)))
+        Err(SimError::debugger(format!(
+            "no snapshot at or before time {}",
+            target_time
+        )))
     }
 
     pub fn get_module_names(&self) -> Vec<String> {
@@ -351,7 +376,8 @@ mod tests {
 
     #[test]
     fn test_debug_step_cycle() {
-        let mut dbg = make_debugger(r#"
+        let mut dbg = make_debugger(
+            r#"
 module top;
     reg [7:0] cnt;
     initial begin
@@ -360,7 +386,8 @@ module top;
         cnt = 1;
         #1 $finish;
     end
-endmodule"#);
+endmodule"#,
+        );
         dbg.engine.debug_mode = DebugMode::Debug;
         let r = dbg.step_cycle();
         assert!(r.is_ok(), "step cycle failed: {:?}", r);
@@ -382,23 +409,29 @@ endmodule"#);
 
     #[test]
     fn test_breakpoint_signal_eq() {
-        let mut dbg = make_debugger(r#"
+        let mut dbg = make_debugger(
+            r#"
 module top;
     reg [7:0] x;
     initial begin
         x = 42;
         #1 $finish;
     end
-endmodule"#);
+endmodule"#,
+        );
         dbg.engine.debug_mode = DebugMode::Debug;
-        dbg.add_breakpoint(Breakpoint::SignalEq("x".to_string(), LogicVec::from_u64(42, 8)));
+        dbg.add_breakpoint(Breakpoint::SignalEq(
+            "x".to_string(),
+            LogicVec::from_u64(42, 8),
+        ));
         let r = dbg.run();
         assert!(r.is_ok(), "break signal eq failed: {:?}", r);
     }
 
     #[test]
     fn test_breakpoint_signal_change() {
-        let mut dbg = make_debugger(r#"
+        let mut dbg = make_debugger(
+            r#"
 module top;
     reg [7:0] x;
     initial begin
@@ -407,7 +440,8 @@ module top;
         x = 20;
         #1 $finish;
     end
-endmodule"#);
+endmodule"#,
+        );
         dbg.engine.debug_mode = DebugMode::Debug;
         dbg.add_breakpoint(Breakpoint::SignalChange("x".to_string()));
         let r = dbg.run();
@@ -416,7 +450,8 @@ endmodule"#);
 
     #[test]
     fn test_print_all_signals() {
-        let dbg = make_debugger(r#"
+        let dbg = make_debugger(
+            r#"
 module top;
     reg [7:0] a;
     reg [3:0] b;
@@ -425,7 +460,8 @@ module top;
         b = 5;
         #1 $finish;
     end
-endmodule"#);
+endmodule"#,
+        );
         let out = dbg.print_all_signals();
         assert!(out.contains("a"));
         assert!(out.contains("b"));
@@ -433,11 +469,13 @@ endmodule"#);
 
     #[test]
     fn test_print_signal_by_name() {
-        let dbg = make_debugger(r#"
+        let dbg = make_debugger(
+            r#"
 module top;
     reg [7:0] alu_result;
     initial #1 $finish;
-endmodule"#);
+endmodule"#,
+        );
         let out = dbg.print_signal("alu_result");
         assert!(out.contains("alu_result"));
     }
@@ -451,21 +489,24 @@ endmodule"#);
 
     #[test]
     fn test_hierarchy_tree() {
-        let dbg = make_debugger(r#"
+        let dbg = make_debugger(
+            r#"
 module top;
     wire a;
     sub u_sub(.a(a));
 endmodule
 module sub(input a);
     initial #1 $finish;
-endmodule"#);
+endmodule"#,
+        );
         let tree = dbg.hierarchy_tree();
         assert!(tree.contains("top"), "tree should contain 'top': {}", tree);
     }
 
     #[test]
     fn test_timeline() {
-        let mut dbg = make_debugger(r#"
+        let mut dbg = make_debugger(
+            r#"
 module top;
     reg [7:0] x;
     initial begin
@@ -476,7 +517,8 @@ module top;
         x = 3;
         #1 $finish;
     end
-endmodule"#);
+endmodule"#,
+        );
         dbg.engine.debug_mode = DebugMode::Debug;
         dbg.run().ok();
         let tl = dbg.timeline("x", 10);
@@ -485,7 +527,8 @@ endmodule"#);
 
     #[test]
     fn test_watchpoint() {
-        let mut dbg = make_debugger(r#"
+        let mut dbg = make_debugger(
+            r#"
 module top;
     reg [7:0] x;
     initial begin
@@ -494,7 +537,8 @@ module top;
         x = 5;
         #1 $finish;
     end
-endmodule"#);
+endmodule"#,
+        );
         dbg.engine.debug_mode = DebugMode::Debug;
         dbg.add_watchpoint(Watchpoint::Signal("x".to_string()));
         let r = dbg.run();
@@ -545,13 +589,15 @@ endmodule"#);
 
     #[test]
     fn test_breakpoint_module() {
-        let mut dbg = make_debugger(r#"
+        let mut dbg = make_debugger(
+            r#"
 module top;
     sub u_sub();
 endmodule
 module sub;
     initial #1 $finish;
-endmodule"#);
+endmodule"#,
+        );
         dbg.engine.debug_mode = DebugMode::Debug;
         dbg.add_breakpoint(Breakpoint::Module("sub".to_string()));
         let r = dbg.run();
@@ -560,40 +606,46 @@ endmodule"#);
 
     #[test]
     fn test_memory_inspect() {
-        let dbg = make_debugger(r#"
+        let dbg = make_debugger(
+            r#"
 module top;
     reg [31:0] mem [0:7];
     initial begin
         mem[0] = 32'hDEADBEEF;
         #1 $finish;
     end
-endmodule"#);
+endmodule"#,
+        );
         let mem = dbg.memory_inspect(0, 8);
         assert!(!mem.is_empty());
     }
 
     #[test]
     fn test_get_module_names() {
-        let dbg = make_debugger(r#"
+        let dbg = make_debugger(
+            r#"
 module top;
     sub u_sub();
 endmodule
 module sub;
     initial #1 $finish;
-endmodule"#);
+endmodule"#,
+        );
         let names = dbg.get_module_names();
         assert!(names.contains(&"top".to_string()));
     }
 
     #[test]
     fn test_print_signals_filtered() {
-        let dbg = make_debugger(r#"
+        let dbg = make_debugger(
+            r#"
 module top;
     reg [7:0] pc;
     reg [31:0] alu_result;
     reg mem_addr;
     initial #1 $finish;
-endmodule"#);
+endmodule"#,
+        );
         let out = dbg.print_signals_filtered("alu");
         assert!(out.contains("alu_result"));
         let empty = dbg.print_signals_filtered("zzzzz");

@@ -1,6 +1,5 @@
 /// Debug and breakpoint functionality for SimulationEngine.
 /// Contains signal history tracking, breakpoint checking, and watchpoint logic.
-
 use crate::error::SimError;
 use crate::simulator::types::*;
 use std::collections::VecDeque;
@@ -31,7 +30,8 @@ impl SimulationEngine {
             let id = self.find_signal(&sig.name);
             if let Some(id) = id {
                 let val = self.state.read_signal(id).clone();
-                self.signal_history.entry(sig.name.clone())
+                self.signal_history
+                    .entry(sig.name.clone())
                     .or_insert_with(VecDeque::new)
                     .push_back((time, val));
                 if let Some(hist) = self.signal_history.get(&sig.name) {
@@ -93,7 +93,10 @@ impl SimulationEngine {
                                 self.event_log.push(DebugEvent {
                                     kind: DebugEventKind::BreakpointHit,
                                     time,
-                                    message: format!("breakpoint change {} hit: {} → {}", name, prev.1, last.1),
+                                    message: format!(
+                                        "breakpoint change {} hit: {} → {}",
+                                        name, prev.1, last.1
+                                    ),
                                 });
                             }
                         }
@@ -124,7 +127,10 @@ impl SimulationEngine {
                                 self.event_log.push(DebugEvent {
                                     kind: DebugEventKind::WatchpointHit,
                                     time,
-                                    message: format!("WATCH: {} changed\n  old = {}\n  new = {}\n  cycle = {}", name, prev.1, last.1, time),
+                                    message: format!(
+                                        "WATCH: {} changed\n  old = {}\n  new = {}\n  cycle = {}",
+                                        name, prev.1, last.1, time
+                                    ),
                                 });
                                 self.paused = true;
                             }

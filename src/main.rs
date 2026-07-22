@@ -1,26 +1,30 @@
-use std::process;
-use std::path::PathBuf;
 use clap::Parser as ClapParser;
+use std::path::PathBuf;
+use std::process;
 
+use maria::debugger::Debugger;
+use maria::elaboration::Elaborator;
+use maria::error::{ErrorContext, SimError};
+use maria::ir::LogicVec;
 use maria::parser::lexer::Lexer;
 use maria::parser::parser::Parser;
 use maria::parser::preprocessor::Preprocessor;
-use maria::elaboration::Elaborator;
-use maria::simulator::SimulationEngine;
-use maria::simulator::DebugMode;
+use maria::read_project_file;
 use maria::simulator::Breakpoint;
+use maria::simulator::DebugMode;
+use maria::simulator::SimulationEngine;
 use maria::simulator::Watchpoint;
 use maria::waveform::VcdWriter;
-use maria::ir::LogicVec;
-use maria::error::{SimError, ErrorContext};
-use maria::read_project_file;
-use maria::debugger::Debugger;
+use rayon::prelude::*;
 
 #[derive(ClapParser)]
 #[command(name = "maria", about = "RTL Simulator untuk SystemVerilog")]
 struct Cli {
     /// Input SystemVerilog file(s) — last is top module
-    #[arg(required_unless_present = "start", required_unless_present = "filelist")]
+    #[arg(
+        required_unless_present = "start",
+        required_unless_present = "filelist"
+    )]
     files: Vec<String>,
 
     /// Top module name (default: first module)
@@ -68,7 +72,6 @@ struct Cli {
     print_ast: bool,
 
     // ── Debug flags ──
-
     /// Enable debug mode (pause at breakpoints/watchpoints)
     #[arg(long = "debug")]
     debug: bool,
@@ -140,6 +143,10 @@ struct Cli {
     /// Suppress preprocessor warnings (missing include files, etc.)
     #[arg(short = 'q', long = "quiet")]
     quiet: bool,
+
+    /// Compile-only mode: parse + elaborate, skip simulation & VCD
+    #[arg(long = "compile-only")]
+    compile_only: bool,
 }
 
 fn main() {
@@ -179,104 +186,56 @@ fn run(cli: Cli) -> Result<(), SimError> {
             base_pp.define(def, "");
         }
     }
-    // Auto-detect include paths:
-    //   1. Walk up from each source, at each ancestor scan subdirs for .svh/.sv files
-    //   2. Scan each source dir's own subtree (depth ≤ 3) for SV include files
-    let mut auto_seen = std::collections::HashSet::new();
-    fn scan_for_includes(dir: &std::path::Path, seen: &mut std::collections::HashSet<PathBuf>, pp: &mut Preprocessor, depth: usize) {
-        if depth > 3 { return; }
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                if let Ok(ft) = entry.file_type() {
-                    let path = entry.path();
-                    if ft.is_dir() {
-                        scan_for_includes(&path, seen, pp, depth + 1);
-                    } else if ft.is_file() {
-                        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                        if (ext == "svh" || ext == "sv") && seen.insert(path.clone()) {
-                            if let Some(parent) = path.parent() {
-                                pp.add_search_path(parent.to_str().unwrap());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // Auto-detect include paths: consolidated single-pass scan
+    // Walk up from each source dir's ancestors, recursively scan for SV files (depth ≤ 4)
+    let mut seen_dirs = std::collections::HashSet::new();
     let mut src_dirs = std::collections::HashSet::new();
     for src in &sources {
         if let Some(dir) = std::path::Path::new(src).parent() {
             let canonical = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-            if !src_dirs.insert(canonical.clone()) { continue; }
-            // Walk up from source dir, at each level scan ALL subdirs for SV files
-            let mut anc = Some(canonical.clone());
-            while let Some(ref d) = anc {
-                if let Ok(entries) = std::fs::read_dir(d) {
-                    for entry in entries.flatten() {
-                        if let Ok(ft) = entry.file_type() {
-                            if ft.is_dir() {
-                                let subdir = entry.path();
-                                if auto_seen.insert(subdir.clone()) {
-                                    if let Ok(sub_entries) = std::fs::read_dir(&subdir) {
-                                        let has_sv = sub_entries.flatten().any(|e| {
-                                            let p = e.path();
-                                            let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("");
-                                            ext == "svh" || ext == "sv"
-                                        });
-                                        if has_sv {
-                                            base_pp.add_search_path(subdir.to_str().unwrap());
-                                        }
-                                    }
-                                }
+            src_dirs.insert(canonical);
+        }
+    }
+    // Recursively scan subdirectories for SV files (max depth 4), add parent dirs to search paths
+    fn collect_sv_dirs(
+        dir: &std::path::PathBuf,
+        base_pp: &mut Preprocessor,
+        seen: &mut std::collections::HashSet<PathBuf>,
+        depth: usize,
+    ) {
+        if depth > 4 {
+            return;
+        }
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if let Ok(ft) = entry.file_type() {
+                    let path = entry.path();
+                    if ft.is_dir() && depth < 4 {
+                        collect_sv_dirs(&path, base_pp, seen, depth + 1);
+                    } else if ft.is_file() {
+                        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                        if (ext == "svh" || ext == "sv") && seen.insert(path.clone()) {
+                            if let Some(parent) = path.parent() {
+                                base_pp.add_search_path(parent.to_str().unwrap());
                             }
                         }
                     }
                 }
-                anc = d.parent().map(|p| p.to_path_buf());
             }
         }
     }
-    // Also scan each unique source dir's own subtree (depth ≤ 2) for SV files
-    for src_dir in src_dirs.iter() {
-        scan_for_includes(src_dir, &mut auto_seen, &mut base_pp, 0);
-    }
-
-    // Additional scan: walk up ancestors looking at ALL nested subdirectories recursively
-    // This helps find deeply nested SV files like opentitan/hw/ip/prim/rtl/prim_assert.sv
-    let max_scan_depth = 4usize;
-    for src_dir in src_dirs.iter() {
+    for src_dir in &src_dirs {
         let mut anc = Some(src_dir.clone());
-        let mut ancestors_checked = std::collections::HashSet::new();
         while let Some(ref d) = anc {
-            if !ancestors_checked.insert(d.clone()) { break; }
-            // Scan recursively from this ancestor level into subdirectories
+            if !seen_dirs.insert(d.clone()) {
+                break;
+            }
             if let Ok(entries) = std::fs::read_dir(d) {
                 for entry in entries.flatten() {
                     if let Ok(ft) = entry.file_type() {
                         let path = entry.path();
                         if ft.is_dir() {
-                            // Recursively walk this subdirectory to find SV files
-                            fn deep_scan_sv_inner(dir: &std::path::PathBuf, pp: &mut Preprocessor, seen: &mut std::collections::HashSet<PathBuf>, max_depth: usize, depth: usize) {
-                                if depth > max_depth { return; }
-                                if let Ok(entries) = std::fs::read_dir(dir) {
-                                    for entry in entries.flatten() {
-                                        if let Ok(ft) = entry.file_type() {
-                                            let path = entry.path();
-                                            if ft.is_dir() && depth < max_depth {
-                                                deep_scan_sv_inner(&path, pp, seen, max_depth, depth + 1);
-                                            } else if ft.is_file() {
-                                                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                                                if (ext == "svh" || ext == "sv") && seen.insert(path.clone()) {
-                                                    if let Some(parent) = path.parent() {
-                                                        pp.add_search_path(parent.to_str().unwrap());
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            deep_scan_sv_inner(&path, &mut base_pp, &mut auto_seen, max_scan_depth, 0);
+                            collect_sv_dirs(&path, &mut base_pp, &mut seen_dirs, 0);
                         }
                     }
                 }
@@ -285,15 +244,35 @@ fn run(cli: Cli) -> Result<(), SimError> {
         }
     }
 
-    // Combine all sources
+    // Combine all sources (parallel preprocessing for many files)
     let mut combined = String::new();
     let mut design_timescale = None;
-    for path in &sources {
-        let mut pp = base_pp.clone();
-        let processed = pp.preprocess_file(path)
-            .map_err(|e| SimError::new(None, format!("preprocessor '{}': {}", path, e)))?;
-        if pp.timescale.is_some() {
-            design_timescale = pp.timescale.clone();
+
+    // Preprocess files in parallel using rayon
+    let pp_for_parallel = &base_pp;
+    let pp_results: Vec<Result<(String, Option<(String, String)>), String>> = sources
+        .par_iter()
+        .map(|path| {
+            let mut pp = pp_for_parallel.clone();
+            match pp.preprocess_file(path) {
+                Ok(processed) => {
+                    let ts = pp.timescale.clone();
+                    Ok((processed, ts))
+                }
+                Err(e) => Err(format!("preprocessor '{}': {}", path, e)),
+            }
+        })
+        .collect();
+
+    for (i, path) in sources.iter().enumerate() {
+        let (processed, ts) = match &pp_results[i] {
+            Ok(r) => (r.0.clone(), r.1.clone()),
+            Err(e) => {
+                return Err(SimError::new(None, format!("preprocessing failed: {}", e)));
+            }
+        };
+        if let Some(ref ts) = ts {
+            design_timescale = Some(ts.clone());
         }
         combined.push_str(&format!("`line 1 \"{}\"\n", path));
         combined.push_str(&processed);
@@ -339,15 +318,19 @@ fn run(cli: Cli) -> Result<(), SimError> {
                         let path_str = path.to_string_lossy().to_string();
                         match pp.preprocess_file(&path_str) {
                             Ok(processed) => {
-                                let combined_lib = format!("`line 1 \"{}\"\n{}", path.display(), processed);
+                                let combined_lib =
+                                    format!("`line 1 \"{}\"\n{}", path.display(), processed);
                                 let mut lexer = Lexer::new(&combined_lib);
                                 let mut lib_tokens = Vec::new();
                                 loop {
                                     let (tok, line, col) = lexer.next_token();
-                                    if tok == maria::parser::lexer::Token::Eof { break; }
+                                    if tok == maria::parser::lexer::Token::Eof {
+                                        break;
+                                    }
                                     lib_tokens.push((tok, line, col));
                                 }
-                                let mut parser = Parser::new(lib_tokens, path.to_str().unwrap_or("<lib>"));
+                                let mut parser =
+                                    Parser::new(lib_tokens, path.to_str().unwrap_or("<lib>"));
                                 parser = parser.with_source_lines(&combined_lib);
                                 match parser.parse_design() {
                                     Ok(lib_design) => {
@@ -357,10 +340,18 @@ fn run(cli: Cli) -> Result<(), SimError> {
                                             }
                                         }
                                     }
-                                    Err(e) => eprintln!("warning: library file '{}' parse error: {}", path.display(), e),
+                                    Err(e) => eprintln!(
+                                        "warning: library file '{}' parse error: {}",
+                                        path.display(),
+                                        e
+                                    ),
                                 }
                             }
-                            Err(e) => eprintln!("warning: library file '{}' preprocess error: {}", path.display(), e),
+                            Err(e) => eprintln!(
+                                "warning: library file '{}' preprocess error: {}",
+                                path.display(),
+                                e
+                            ),
                         }
                     }
                 }
@@ -382,7 +373,9 @@ fn run(cli: Cli) -> Result<(), SimError> {
                 let mut lib_tokens = Vec::new();
                 loop {
                     let (tok, line, col) = lexer.next_token();
-                    if tok == maria::parser::lexer::Token::Eof { break; }
+                    if tok == maria::parser::lexer::Token::Eof {
+                        break;
+                    }
                     lib_tokens.push((tok, line, col));
                 }
                 let mut parser = Parser::new(lib_tokens, libfile);
@@ -398,36 +391,62 @@ fn run(cli: Cli) -> Result<(), SimError> {
                     Err(e) => eprintln!("warning: library file '{}' parse error: {}", libfile, e),
                 }
             }
-            Err(e) => eprintln!("warning: library file '{}' preprocess error: {}", libfile, e),
+            Err(e) => eprintln!(
+                "warning: library file '{}' preprocess error: {}",
+                libfile, e
+            ),
         }
     }
 
     if design.modules.is_empty() {
         // If there are packages, interfaces, or other items but no modules, it's not fatal
-        if !design.packages.is_empty() || !design.interfaces.is_empty() || !design.classes.is_empty() {
-            eprintln!("note: no modules found in design (packages/interfaces present, skipping simulation)");
+        if !design.packages.is_empty()
+            || !design.interfaces.is_empty()
+            || !design.classes.is_empty()
+        {
+            if !cli.quiet {
+                eprintln!("note: no modules found in design (packages/interfaces present, skipping simulation)");
+            }
             return Ok(());
         }
         return Err(SimError::new(None, "no modules found in design"));
     }
 
     let top_name = cli.top.as_deref();
-    println!("Compiling design ({} files sources)...", sources.len());
+    if !cli.quiet {
+        println!("Compiling design ({} file sources)...", sources.len());
+    }
     let mut elaborator = Elaborator::new(design);
     let mut ir_design = elaborator.elaborate(top_name)?;
     ir_design.timescale = ts_for_ir;
 
-    println!("Module '{}': {} signals, {} processes",
-        ir_design.top.name,
-        ir_design.top.signals.len(),
-        ir_design.top.processes.len());
+    if !cli.quiet {
+        println!(
+            "Module '{}': {} signals, {} processes",
+            ir_design.top.name,
+            ir_design.top.signals.len(),
+            ir_design.top.processes.len()
+        );
+    }
+
+    // ── Compile-only mode: skip simulation & VCD ──
+    if cli.compile_only {
+        if !cli.quiet {
+            println!("Compile-only mode: skipping simulation");
+        }
+        return Ok(());
+    }
 
     // ── Setup ──
     let debug_mode = if cli.deep_debug {
         DebugMode::DeepDebug
-    } else if cli.debug || cli.step || !cli.break_cycle.is_empty()
-        || !cli.break_change.is_empty() || !cli.break_eq.is_empty()
-        || !cli.watch.is_empty() {
+    } else if cli.debug
+        || cli.step
+        || !cli.break_cycle.is_empty()
+        || !cli.break_change.is_empty()
+        || !cli.break_eq.is_empty()
+        || !cli.watch.is_empty()
+    {
         DebugMode::Debug
     } else {
         DebugMode::Normal
@@ -449,30 +468,53 @@ fn run(cli: Cli) -> Result<(), SimError> {
     // Apply breakpoints
     for c in &cli.break_cycle {
         engine.breakpoints.push(Breakpoint::Cycle(*c));
-        println!("  breakpoint: cycle {}", c);
+        if !cli.quiet {
+            println!("  breakpoint: cycle {}", c);
+        }
     }
     for name in &cli.break_change {
-        engine.breakpoints.push(Breakpoint::SignalChange(name.clone()));
-        println!("  breakpoint: change {}", name);
+        engine
+            .breakpoints
+            .push(Breakpoint::SignalChange(name.clone()));
+        if !cli.quiet {
+            println!("  breakpoint: change {}", name);
+        }
     }
     for eq in &cli.break_eq {
         if let Some((name, val_hex)) = eq.split_once('=') {
-            if let Ok(val) = u64::from_str_radix(val_hex.trim_start_matches("0x").trim_start_matches("0X"), 16) {
-                let w = engine.design.top.signals.iter()
-                    .find(|s| s.name == name).map(|s| s.width).unwrap_or(32);
-                engine.breakpoints.push(Breakpoint::SignalEq(name.to_string(), LogicVec::from_u64(val, w)));
-                println!("  breakpoint: {} == 0x{:X}", name, val);
+            if let Ok(val) = u64::from_str_radix(
+                val_hex.trim_start_matches("0x").trim_start_matches("0X"),
+                16,
+            ) {
+                let w = engine
+                    .design
+                    .top
+                    .signals
+                    .iter()
+                    .find(|s| s.name == name)
+                    .map(|s| s.width)
+                    .unwrap_or(32);
+                engine.breakpoints.push(Breakpoint::SignalEq(
+                    name.to_string(),
+                    LogicVec::from_u64(val, w),
+                ));
+                if !cli.quiet {
+                    println!("  breakpoint: {} == 0x{:X}", name, val);
+                }
             }
         }
     }
     // Apply watchpoints
     for name in &cli.watch {
         engine.watchpoints.push(Watchpoint::Signal(name.clone()));
-        println!("  watchpoint: {}", name);
+        if !cli.quiet {
+            println!("  watchpoint: {}", name);
+        }
     }
 
     // VCD setup
-    let vcd_path = cli.output
+    let vcd_path = cli
+        .output
         .unwrap_or_else(|| format!("{}.vcd", engine.design.top.name));
     let vcd = VcdWriter::new(&vcd_path, &engine.design)
         .map_err(|e| SimError::new(None, format!("VCD creation failed: {}", e)))?;
@@ -486,21 +528,35 @@ fn run(cli: Cli) -> Result<(), SimError> {
     }
 
     if cli.step && debug_mode != DebugMode::Normal {
-        println!("\nStep mode: running one cycle...");
+        if !cli.quiet {
+            println!("\nStep mode: running one cycle...");
+        }
         debugger.step_cycle()?;
-        println!("{}\n", debugger.print_state_summary());
-        if !debugger.engine.event_log.is_empty() {
+        if !cli.quiet {
+            println!("{}\n", debugger.print_state_summary());
+        }
+        if !debugger.engine.event_log.is_empty() && !cli.quiet {
             println!("{}", debugger.print_event_log());
         }
     } else {
-        println!("\nStarting simulation (max time={}, vcd={})", cli.max_time, vcd_path);
+        if !cli.quiet {
+            println!(
+                "\nStarting simulation (max time={}, vcd={})",
+                cli.max_time, vcd_path
+            );
+        }
         debugger.run()?;
     }
 
     // ── Post-simulation output ──
-    println!("\nSimulation completed at time {}", debugger.engine.state.time);
+    if !cli.quiet {
+        println!(
+            "\nSimulation completed at time {}",
+            debugger.engine.state.time
+        );
+    }
 
-    if debug_mode != DebugMode::Normal {
+    if debug_mode != DebugMode::Normal && !cli.quiet {
         if debugger.engine.paused {
             println!("(debugger paused)");
         }
@@ -521,12 +577,20 @@ fn run(cli: Cli) -> Result<(), SimError> {
         println!("\n{}", debugger.timeline(name, cli.timeline_len));
     }
     if cli.mem.len() == 2 {
-        if let (Ok(addr), Ok(len)) = (u64::from_str_radix(cli.mem[0].trim_start_matches("0x").trim_start_matches("0X"), 16), cli.mem[1].parse::<usize>()) {
+        if let (Ok(addr), Ok(len)) = (
+            u64::from_str_radix(
+                cli.mem[0].trim_start_matches("0x").trim_start_matches("0X"),
+                16,
+            ),
+            cli.mem[1].parse::<usize>(),
+        ) {
             println!("\n{}", debugger.memory_inspect(addr, len));
         }
     }
 
-    println!("VCD waveform written to '{}'", vcd_path);
+    if !cli.quiet {
+        println!("VCD waveform written to '{}'", vcd_path);
+    }
 
     // UCIS coverage export
     if let Some(ref ucis_path) = cli.coverage_ucis {
@@ -536,7 +600,11 @@ fn run(cli: Cli) -> Result<(), SimError> {
             ucis_path.clone()
         };
         match debugger.engine.export_coverage_ucis(&path) {
-            Ok(()) => println!("UCIS coverage written to '{}'", path),
+            Ok(()) => {
+                if !cli.quiet {
+                    println!("UCIS coverage written to '{}'", path);
+                }
+            }
             Err(e) => eprintln!("UCIS export failed: {}", e),
         }
     }

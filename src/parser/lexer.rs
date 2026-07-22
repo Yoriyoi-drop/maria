@@ -3,104 +3,256 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Keywords
-    Module, Endmodule, Input, Output, Inout, Ref,
-    Wire, Reg, Logic, Int, Integer, Signed, Unsigned,
-    Wand, Wor, Tri, Tri0, Tri1, TriAnd, TriOr,
-    Supply0, Supply1,
-    Always, AlwaysComb, AlwaysFF, AlwaysLatch,
-    Initial, Final, Assign, Begin, End,
-    If, Else, Case, CaseX, CaseZ, Endcase,
-    For, While, Do, Repeat, Forever,
-    PosEdge, NegEdge, Or,
-    Param, Parameter, LocalParam,
-    GenVar, Generate, EndGenerate,
-    Function, EndFunction, Task, EndTask,
+    Module,
+    Endmodule,
+    Input,
+    Output,
+    Inout,
+    Ref,
+    Wire,
+    Reg,
+    Logic,
+    Int,
+    Integer,
+    Signed,
+    Unsigned,
+    Wand,
+    Wor,
+    Tri,
+    Tri0,
+    Tri1,
+    TriAnd,
+    TriOr,
+    Supply0,
+    Supply1,
+    Always,
+    AlwaysComb,
+    AlwaysFF,
+    AlwaysLatch,
+    Initial,
+    Final,
+    Assign,
+    Begin,
+    End,
+    If,
+    Else,
+    Case,
+    CaseX,
+    CaseZ,
+    Endcase,
+    For,
+    While,
+    Do,
+    Repeat,
+    Forever,
+    PosEdge,
+    NegEdge,
+    Or,
+    Param,
+    Parameter,
+    LocalParam,
+    GenVar,
+    Generate,
+    EndGenerate,
+    Function,
+    EndFunction,
+    Task,
+    EndTask,
     Foreach,
-    Auto, Static,
-    Real, Time, RealTime,
+    Auto,
+    Static,
+    Real,
+    Time,
+    RealTime,
     String,
-    Class, EndClass, Virtual, Extends, This, New, Void,
-    Break, Continue,
-    Default, Disable, Force, Release, Deassign, Return, Wait,
+    Class,
+    EndClass,
+    Virtual,
+    Extends,
+    This,
+    New,
+    Void,
+    Break,
+    Continue,
+    Default,
+    Disable,
+    Force,
+    Release,
+    Deassign,
+    Return,
+    Wait,
     Null,
-    None, Some_,
-    And, Xor, Nand, Nor, Xnor, Buf, NotGate,
-    Module_, Interface, EndInterface, ModPort,
-    Program, EndProgram,
-    Fork, Join, JoinAny, JoinNone,
-    Bit, Enum, Typedef, Byte, Shortint, Longint, Struct, Union, EndEnum,
+    None,
+    Some_,
+    And,
+    Xor,
+    Nand,
+    Nor,
+    Xnor,
+    Buf,
+    NotGate,
+    Module_,
+    Interface,
+    EndInterface,
+    ModPort,
+    Program,
+    EndProgram,
+    Fork,
+    Join,
+    JoinAny,
+    JoinNone,
+    Bit,
+    Enum,
+    Typedef,
+    Byte,
+    Shortint,
+    Longint,
+    Struct,
+    Union,
+    EndEnum,
     // Multi-character operators
-    Arrow, // ->
+    Arrow,      // ->
     BiDirArrow, // <->
-    StarArrow, // *>
+    StarArrow,  // *>
     // Literals
-    Number { value: String, base: Option<u8>, width: Option<usize>, is_signed: bool },
+    Number {
+        value: String,
+        base: Option<u8>,
+        width: Option<usize>,
+        is_signed: bool,
+    },
     RealNum(String),
     StringLit(String),
     Ident(String),
 
     // Operators
-    Plus, Minus, Star, Slash, Percent,
-    Equiv, // ===
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Equiv,    // ===
     NotEquiv, // !==
-    CaseEq, // ==?
-    CaseNeq, // !=?
-    Eq, Neq, Lt, Le, Gt, Ge,
-    Tilde, Not, Amp, Pipe, Caret,
-    TildeAmp, // ~&
-    TildePipe, // ~|
+    CaseEq,   // ==?
+    CaseNeq,  // !=?
+    Eq,
+    Neq,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Tilde,
+    Not,
+    Amp,
+    Pipe,
+    Caret,
+    TildeAmp,   // ~&
+    TildePipe,  // ~|
     CaretTilde, // ^~ or ~^
-    AmpAmp, PipePipe,
-    Shl, Shr, Sshl, Sshr, // <<, >>, <<<, >>>
-    PlusColon, MinusColon, // +:, -:
-    StarStar, // **
+    AmpAmp,
+    PipePipe,
+    Shl,
+    Shr,
+    Sshl,
+    Sshr, // <<, >>, <<<, >>>
+    PlusColon,
+    MinusColon, // +:, -:
+    StarStar,   // **
 
     // Increment / Decrement
     Increment, // ++
     Decrement, // --
     // Assignment
     AssignOp, // =
-    PlusAssign, MinusAssign, XorAssign,
+    PlusAssign,
+    MinusAssign,
+    XorAssign,
     // Blocking / Non-blocking
-    BlockingAssign, // =
+    BlockingAssign,    // =
     NonBlockingAssign, // <=
 
     // Punctuation
-    LParen, RParen, LBrace, RBrace,
-    LBrack, RBrack,
-    Semi, Comma, Colon, Scope, // ::
-    Dot, Hash,
-    At, Dollar,
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
+    LBrack,
+    RBrack,
+    Semi,
+    Comma,
+    Colon,
+    Scope, // ::
+    Dot,
+    Hash,
+    At,
+    Dollar,
     Question, // ?
     // SystemVerilog-specific
-    WildcardEq, // ==*
+    WildcardEq,  // ==*
     WildcardNeq, // !=*
 
     // SystemVerilog keywords
-    Inside, Unique, Priority, Unique0,
-    Rand, RandC, Constraint, Const, Var, Solve,
-    Assert, Assume, Cover, Expect, WaitOrder, Property,
-    Sequence, EndSequence,
+    Inside,
+    Unique,
+    Priority,
+    Unique0,
+    Rand,
+    RandC,
+    Constraint,
+    Const,
+    Var,
+    Solve,
+    Assert,
+    Assume,
+    Cover,
+    Expect,
+    WaitOrder,
+    Property,
+    Sequence,
+    EndSequence,
     // Package
-    Package, EndPackage, Import, Export,
-    Mailbox, Semaphore,
+    Package,
+    EndPackage,
+    Import,
+    Export,
+    Mailbox,
+    Semaphore,
     // Bind
     Bind,
     // Specify
-    Specify, EndSpecify, SpecParam,
+    Specify,
+    EndSpecify,
+    SpecParam,
     // Clocking
-    Clocking, EndClocking,
+    Clocking,
+    EndClocking,
     // Config
-    Config, EndConfig, Design, Liblist, Cell, Use, Instance,
+    Config,
+    EndConfig,
+    Design,
+    Liblist,
+    Cell,
+    Use,
+    Instance,
     // Coverage
-    Covergroup, EndGroup, Coverpoint, Cross, Bins, IllegalBins, IgnoreBins, Option_,
+    Covergroup,
+    EndGroup,
+    Coverpoint,
+    Cross,
+    Bins,
+    IllegalBins,
+    IgnoreBins,
+    Option_,
     // UDP
-    Primitive, EndPrimitive, Table, EndTable,
+    Primitive,
+    EndPrimitive,
+    Table,
+    EndTable,
     // Parameter type
     Type,
     // Special
     FillLit(crate::ir::LogicVal),
-    Quote,  // bare ' (for type casts: int'(x))
+    Quote, // bare ' (for type casts: int'(x))
     Error(String),
     Eof,
 }
@@ -242,7 +394,12 @@ pub struct Lexer {
 impl Lexer {
     pub fn new(input: &str) -> Self {
         let chars: Vec<char> = input.chars().collect();
-        Self { chars, pos: 0, line: 1, col: 1 }
+        Self {
+            chars,
+            pos: 0,
+            line: 1,
+            col: 1,
+        }
     }
 
     pub fn next_token(&mut self) -> (Token, usize, usize) {
@@ -585,7 +742,6 @@ impl Lexer {
     }
 
     fn read_number(&mut self) -> Token {
-
         // Or simple decimal
         let mut s = String::new();
 
@@ -593,18 +749,18 @@ impl Lexer {
         while let Some(c) = self.peek() {
             if c.is_ascii_digit() || c == '_' || c == 'x' || c == 'z' || c == 'X' || c == 'Z' {
                 s.push(self.advance());
-        } else if c == '\'' {
-            // Check for size cast: 22'(expr) — next char after ' should not be '('
-            if self.peek_next() == Some('(') {
-                // This is a cast: 22'(expr). Leave ' for the next token (Quote).
-                break;
-            }
-            // Could be sized format like 8'b1010
-            s.push(self.advance());
-            // Read base character
-            if self.peek().is_some() {
+            } else if c == '\'' {
+                // Check for size cast: 22'(expr) — next char after ' should not be '('
+                if self.peek_next() == Some('(') {
+                    // This is a cast: 22'(expr). Leave ' for the next token (Quote).
+                    break;
+                }
+                // Could be sized format like 8'b1010
                 s.push(self.advance());
-            }
+                // Read base character
+                if self.peek().is_some() {
+                    s.push(self.advance());
+                }
                 // Skip whitespace before value (e.g., 32'h 0000_0000)
                 while let Some(c) = self.peek() {
                     if c.is_ascii_whitespace() {
@@ -615,7 +771,14 @@ impl Lexer {
                 }
                 // Read the value part
                 while let Some(c) = self.peek() {
-                    if c.is_ascii_alphanumeric() || c == '_' || c == 'x' || c == 'z' || c == 'X' || c == 'Z' || c == '?' {
+                    if c.is_ascii_alphanumeric()
+                        || c == '_'
+                        || c == 'x'
+                        || c == 'z'
+                        || c == 'X'
+                        || c == 'Z'
+                        || c == '?'
+                    {
                         s.push(self.advance());
                     } else {
                         break;
@@ -655,7 +818,12 @@ impl Lexer {
         }
 
         // Plain decimal
-        Token::Number { value: s, base: None, width: None, is_signed: false }
+        Token::Number {
+            value: s,
+            base: None,
+            width: None,
+            is_signed: false,
+        }
     }
 
     fn parse_verilog_number(&self, s: &str) -> Token {
@@ -663,7 +831,12 @@ impl Lexer {
         // e.g., 8'b10101010, 32'habcd, '1, '0
         let parts: Vec<&str> = s.split('\'').collect();
         if parts.len() != 2 {
-            return Token::Number { value: s.to_string(), base: None, width: None, is_signed: false };
+            return Token::Number {
+                value: s.to_string(),
+                base: None,
+                width: None,
+                is_signed: false,
+            };
         }
 
         let width_str = parts[0];
@@ -675,7 +848,12 @@ impl Lexer {
 
         let rest = parts[1];
         if rest.is_empty() {
-            return Token::Number { value: s.to_string(), base: None, width: None, is_signed: false };
+            return Token::Number {
+                value: s.to_string(),
+                base: None,
+                width: None,
+                is_signed: false,
+            };
         }
 
         let mut chars = rest.chars();
@@ -718,7 +896,10 @@ impl Lexer {
                         't' => s.push('\t'),
                         '\\' => s.push('\\'),
                         '"' => s.push('"'),
-                        other => { s.push('\\'); s.push(other); }
+                        other => {
+                            s.push('\\');
+                            s.push(other);
+                        }
                     }
                     self.advance();
                 }
@@ -733,99 +914,208 @@ impl Lexer {
         let c = self.advance();
         match c {
             '+' => {
-                if self.peek() == Some('+') { self.advance(); Token::Increment }
-                else if self.peek() == Some('=') { self.advance(); Token::PlusAssign }
-                else if self.peek() == Some(':') { self.advance(); Token::PlusColon }
-                else { Token::Plus }
+                if self.peek() == Some('+') {
+                    self.advance();
+                    Token::Increment
+                } else if self.peek() == Some('=') {
+                    self.advance();
+                    Token::PlusAssign
+                } else if self.peek() == Some(':') {
+                    self.advance();
+                    Token::PlusColon
+                } else {
+                    Token::Plus
+                }
             }
             '-' => {
-                if self.peek() == Some('-') { self.advance(); Token::Decrement }
-                else if self.peek() == Some('>') { self.advance(); Token::Arrow } // ->
-                else if self.peek() == Some(':') { self.advance(); Token::MinusColon }
-                else { Token::Minus }
+                if self.peek() == Some('-') {
+                    self.advance();
+                    Token::Decrement
+                } else if self.peek() == Some('>') {
+                    self.advance();
+                    Token::Arrow
+                }
+                // ->
+                else if self.peek() == Some(':') {
+                    self.advance();
+                    Token::MinusColon
+                } else {
+                    Token::Minus
+                }
             }
             '*' => {
-                if self.peek() == Some('*') { self.advance(); Token::StarStar }
-                else if self.peek() == Some('>') { self.advance(); Token::StarArrow } // *>
-                else { Token::Star }
+                if self.peek() == Some('*') {
+                    self.advance();
+                    Token::StarStar
+                } else if self.peek() == Some('>') {
+                    self.advance();
+                    Token::StarArrow
+                }
+                // *>
+                else {
+                    Token::Star
+                }
             }
             '/' => Token::Slash,
             '%' => Token::Percent,
             '=' => {
                 if self.peek() == Some('=') && self.peek_next() == Some('=') {
                     // ===
-                    self.advance(); self.advance();
+                    self.advance();
+                    self.advance();
                     Token::Equiv
-                }
-                else if self.peek() == Some('=') && self.peek_next() == Some('?') {
+                } else if self.peek() == Some('=') && self.peek_next() == Some('?') {
                     // ==?
-                    self.advance(); self.advance();
+                    self.advance();
+                    self.advance();
                     Token::CaseEq
+                } else if self.peek() == Some('=') {
+                    self.advance();
+                    Token::Eq
                 }
-                else if self.peek() == Some('=') { self.advance(); Token::Eq } // ==
-                else if self.peek() == Some('*') { self.advance(); Token::WildcardEq } // ==*
-                else { Token::BlockingAssign } // =
+                // ==
+                else if self.peek() == Some('*') {
+                    self.advance();
+                    Token::WildcardEq
+                }
+                // ==*
+                else {
+                    Token::BlockingAssign
+                } // =
             }
             '<' => {
                 if self.peek() == Some('=') {
                     self.advance();
-                    if self.peek() == Some('<') { self.advance(); Token::Sshl } // <=<
-                    else { Token::NonBlockingAssign } // <=
-                }
-                else if self.peek() == Some('<') {
+                    if self.peek() == Some('<') {
+                        self.advance();
+                        Token::Sshl
+                    }
+                    // <=<
+                    else {
+                        Token::NonBlockingAssign
+                    } // <=
+                } else if self.peek() == Some('<') {
                     self.advance();
-                    if self.peek() == Some('<') { self.advance(); Token::Sshl } // <<<
-                    else { Token::Shl }
-                }
-                else if self.peek() == Some('-') {
+                    if self.peek() == Some('<') {
+                        self.advance();
+                        Token::Sshl
+                    }
+                    // <<<
+                    else {
+                        Token::Shl
+                    }
+                } else if self.peek() == Some('-') {
                     self.advance();
-                    if self.peek() == Some('>') { self.advance(); Token::BiDirArrow } // <->
-                    else { Token::Minus /* not really, but keep as fallback */ }
+                    if self.peek() == Some('>') {
+                        self.advance();
+                        Token::BiDirArrow
+                    }
+                    // <->
+                    else {
+                        Token::Minus /* not really, but keep as fallback */
+                    }
+                } else {
+                    Token::Lt
                 }
-                else { Token::Lt }
             }
             '>' => {
-                if self.peek() == Some('=') { self.advance(); Token::Ge }
-                else if self.peek() == Some('>') {
+                if self.peek() == Some('=') {
                     self.advance();
-                    if self.peek() == Some('>') { self.advance(); Token::Sshr } // >>>
-                    else { Token::Shr }
+                    Token::Ge
+                } else if self.peek() == Some('>') {
+                    self.advance();
+                    if self.peek() == Some('>') {
+                        self.advance();
+                        Token::Sshr
+                    }
+                    // >>>
+                    else {
+                        Token::Shr
+                    }
+                } else {
+                    Token::Gt
                 }
-                else { Token::Gt }
             }
             '!' => {
                 if self.peek() == Some('=') {
                     self.advance();
-                    if self.peek() == Some('=') { self.advance(); Token::NotEquiv } // !==
-                    else if self.peek() == Some('?') { self.advance(); Token::CaseNeq } // !=?
-                    else if self.peek() == Some('*') { self.advance(); Token::WildcardNeq } // !=*
-                    else { Token::Neq }
+                    if self.peek() == Some('=') {
+                        self.advance();
+                        Token::NotEquiv
+                    }
+                    // !==
+                    else if self.peek() == Some('?') {
+                        self.advance();
+                        Token::CaseNeq
+                    }
+                    // !=?
+                    else if self.peek() == Some('*') {
+                        self.advance();
+                        Token::WildcardNeq
+                    }
+                    // !=*
+                    else {
+                        Token::Neq
+                    }
+                } else {
+                    Token::Not
                 }
-                else { Token::Not }
             }
             '~' => {
-                if self.peek() == Some('&') { self.advance(); Token::TildeAmp }
-                else if self.peek() == Some('|') { self.advance(); Token::TildePipe }
-                else if self.peek() == Some('^') { self.advance(); Token::CaretTilde }
-                else { Token::Tilde }
+                if self.peek() == Some('&') {
+                    self.advance();
+                    Token::TildeAmp
+                } else if self.peek() == Some('|') {
+                    self.advance();
+                    Token::TildePipe
+                } else if self.peek() == Some('^') {
+                    self.advance();
+                    Token::CaretTilde
+                } else {
+                    Token::Tilde
+                }
             }
             '&' => {
-                if self.peek() == Some('&') { self.advance(); Token::AmpAmp }
-                else { Token::Amp }
+                if self.peek() == Some('&') {
+                    self.advance();
+                    Token::AmpAmp
+                } else {
+                    Token::Amp
+                }
             }
             '|' => {
-                if self.peek() == Some('|') { self.advance(); Token::PipePipe }
-                else { Token::Pipe }
+                if self.peek() == Some('|') {
+                    self.advance();
+                    Token::PipePipe
+                } else {
+                    Token::Pipe
+                }
             }
             '^' => {
-                if self.peek() == Some('~') { self.advance(); Token::CaretTilde }
-                else if self.peek() == Some('=') { self.advance(); Token::XorAssign }
-                else { Token::Caret }
+                if self.peek() == Some('~') {
+                    self.advance();
+                    Token::CaretTilde
+                } else if self.peek() == Some('=') {
+                    self.advance();
+                    Token::XorAssign
+                } else {
+                    Token::Caret
+                }
             }
             ':' => {
-                if self.peek() == Some(':') { self.advance(); Token::Scope } // ::
-                else if self.peek() == Some('=') { self.advance(); Token::AssignOp } // :=
-                else { Token::Colon }
+                if self.peek() == Some(':') {
+                    self.advance();
+                    Token::Scope
+                }
+                // ::
+                else if self.peek() == Some('=') {
+                    self.advance();
+                    Token::AssignOp
+                }
+                // :=
+                else {
+                    Token::Colon
+                }
             }
             '?' => Token::Question,
             '(' => Token::LParen,
@@ -843,37 +1133,86 @@ impl Lexer {
             '\'' => {
                 let next = self.peek();
                 match next {
-                    Some('0') => { self.advance(); Token::FillLit(crate::ir::LogicVal::Zero) }
-                    Some('1') => { self.advance(); Token::FillLit(crate::ir::LogicVal::One) }
-                    Some('x') | Some('X') => { self.advance(); Token::FillLit(crate::ir::LogicVal::X) }
-                    Some('z') | Some('Z') => { self.advance(); Token::FillLit(crate::ir::LogicVal::Z) }
+                    Some('0') => {
+                        self.advance();
+                        Token::FillLit(crate::ir::LogicVal::Zero)
+                    }
+                    Some('1') => {
+                        self.advance();
+                        Token::FillLit(crate::ir::LogicVal::One)
+                    }
+                    Some('x') | Some('X') => {
+                        self.advance();
+                        Token::FillLit(crate::ir::LogicVal::X)
+                    }
+                    Some('z') | Some('Z') => {
+                        self.advance();
+                        Token::FillLit(crate::ir::LogicVal::Z)
+                    }
                     // Unsized literals: 'b, 'o, 'd, 'h (without leading digit)
-                    Some('b') | Some('B') | Some('o') | Some('O') | Some('d') | Some('D') | Some('h') | Some('H') => {
+                    Some('b') | Some('B') | Some('o') | Some('O') | Some('d') | Some('D')
+                    | Some('h') | Some('H') => {
                         let base_char = next.unwrap();
                         self.advance();
-                        let base = match base_char { 'b'|'B' => 2, 'o'|'O' => 8, 'd'|'D' => 10, _ => 16 };
+                        let base = match base_char {
+                            'b' | 'B' => 2,
+                            'o' | 'O' => 8,
+                            'd' | 'D' => 10,
+                            _ => 16,
+                        };
                         let mut value = String::new();
                         while let Some(c) = self.peek() {
-                            if c.is_ascii_alphanumeric() || c == '_' || c == 'x' || c == 'z' || c == 'X' || c == 'Z' {
+                            if c.is_ascii_alphanumeric()
+                                || c == '_'
+                                || c == 'x'
+                                || c == 'z'
+                                || c == 'X'
+                                || c == 'Z'
+                            {
                                 value.push(self.advance());
-                            } else { break; }
+                            } else {
+                                break;
+                            }
                         }
-                        Token::Number { value: value.replace('_', ""), base: Some(base), width: None, is_signed: false }
+                        Token::Number {
+                            value: value.replace('_', ""),
+                            base: Some(base),
+                            width: None,
+                            is_signed: false,
+                        }
                     }
                     // Unsized signed literals: 'sb, 'sd, 'sh, 'so
                     Some('s') | Some('S') => {
                         self.advance();
                         match self.peek() {
-                            Some(c @ ('b'|'B'|'o'|'O'|'d'|'D'|'h'|'H')) => {
+                            Some(c @ ('b' | 'B' | 'o' | 'O' | 'd' | 'D' | 'h' | 'H')) => {
                                 self.advance();
-                                let base = match c { 'b'|'B' => 2, 'o'|'O' => 8, 'd'|'D' => 10, _ => 16 };
+                                let base = match c {
+                                    'b' | 'B' => 2,
+                                    'o' | 'O' => 8,
+                                    'd' | 'D' => 10,
+                                    _ => 16,
+                                };
                                 let mut value = String::new();
                                 while let Some(c) = self.peek() {
-                                    if c.is_ascii_alphanumeric() || c == '_' || c == 'x' || c == 'z' || c == 'X' || c == 'Z' {
+                                    if c.is_ascii_alphanumeric()
+                                        || c == '_'
+                                        || c == 'x'
+                                        || c == 'z'
+                                        || c == 'X'
+                                        || c == 'Z'
+                                    {
                                         value.push(self.advance());
-                                    } else { break; }
+                                    } else {
+                                        break;
+                                    }
                                 }
-                                Token::Number { value: value.replace('_', ""), base: Some(base), width: None, is_signed: true }
+                                Token::Number {
+                                    value: value.replace('_', ""),
+                                    base: Some(base),
+                                    width: None,
+                                    is_signed: true,
+                                }
                             }
                             _ => Token::Error(format!("expected base after 's in literal")),
                         }

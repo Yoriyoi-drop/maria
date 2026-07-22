@@ -1,6 +1,5 @@
 /// Coverage tracking and reporting for SimulationEngine.
 /// Manages covergroup sampling, coverage reporting, and UCIS XML export.
-
 use crate::error::SimError;
 use crate::ir::*;
 use crate::simulator::util::*;
@@ -13,21 +12,21 @@ use super::SimulationEngine;
 fn wildcard_match(value: u64, pattern: &str) -> bool {
     let val_str = format!("{}", value);
     let p = pattern.trim();
-    
+
     let pat_chars: Vec<char> = p.chars().collect();
     let val_chars: Vec<char> = val_str.chars().collect();
-    
+
     let vlen = val_chars.len();
     let plen = pat_chars.len();
     let mut dp = vec![vec![false; plen + 1]; vlen + 1];
     dp[0][0] = true;
-    
+
     for j in 1..=plen {
         if pat_chars[j - 1] == '*' {
             dp[0][j] = dp[0][j - 1];
         }
     }
-    
+
     for i in 1..=vlen {
         for j in 1..=plen {
             if pat_chars[j - 1] == '*' {
@@ -45,7 +44,10 @@ fn wildcard_match(value: u64, pattern: &str) -> bool {
 impl SimulationEngine {
     /// Sample a named covergroup: evaluate coverpoints, update hit counts and bins.
     pub(crate) fn sample_covergroup(&mut self, cg_name: &str) -> Result<(), SimError> {
-        let cg = self.design.covergroups.iter()
+        let cg = self
+            .design
+            .covergroups
+            .iter()
             .find(|c| c.name == cg_name)
             .cloned();
         if let Some(cg) = cg {
@@ -54,12 +56,17 @@ impl SimulationEngine {
                 let key = format!("{}.{}", cg.name, cp.name);
                 let total = self.cover_total.entry(key.clone()).or_insert(0);
                 *total += 1;
-                let val = self.evaluate_expr(&cp.expr).unwrap_or(LogicVec::from_u64(0, 32));
+                let val = self
+                    .evaluate_expr(&cp.expr)
+                    .unwrap_or(LogicVec::from_u64(0, 32));
                 cp_values.insert(cp.name.clone(), val.to_u64());
-                
+
                 // Default bin: just record the actual value
                 let bin_key = format!("{}={}", cp.name, val.to_u64());
-                let bins = self.cover_bins.entry(key.clone()).or_insert_with(HashMap::new);
+                let bins = self
+                    .cover_bins
+                    .entry(key.clone())
+                    .or_insert_with(HashMap::new);
                 let entry = bins.entry(bin_key).or_insert(0);
                 *entry += 1;
                 let hits = self.cover_hits.entry(key.clone()).or_insert(0);
@@ -76,7 +83,10 @@ impl SimulationEngine {
                     parts.push(format!("{}={}", cp_name, val));
                 }
                 let bin_key = parts.join(" x ");
-                let bins = self.cover_bins.entry(key.clone()).or_insert_with(HashMap::new);
+                let bins = self
+                    .cover_bins
+                    .entry(key.clone())
+                    .or_insert_with(HashMap::new);
                 let entry = bins.entry(bin_key).or_insert(0);
                 *entry += 1;
                 let hits = self.cover_hits.entry(key).or_insert(0);
@@ -99,8 +109,15 @@ impl SimulationEngine {
                 let total = self.cover_total.get(&key).copied().unwrap_or(0);
                 let hits = self.cover_hits.get(&key).copied().unwrap_or(0);
                 let bins = self.cover_bins.get(&key);
-                let pct = if total > 0 { (hits as f64 / total as f64) * 100.0 } else { 0.0 };
-                eprintln!("  {}: {} hits / {} samples ({:.1}%)", cp.name, hits, total, pct);
+                let pct = if total > 0 {
+                    (hits as f64 / total as f64) * 100.0
+                } else {
+                    0.0
+                };
+                eprintln!(
+                    "  {}: {} hits / {} samples ({:.1}%)",
+                    cp.name, hits, total, pct
+                );
                 if let Some(bins) = bins {
                     for (bin_key, count) in bins.iter() {
                         eprintln!("    - {}: {} hits", bin_key, count);
@@ -112,8 +129,15 @@ impl SimulationEngine {
                 let total = self.cover_total.get(&key).copied().unwrap_or(0);
                 let hits = self.cover_hits.get(&key).copied().unwrap_or(0);
                 let bins = self.cover_bins.get(&key);
-                let pct = if total > 0 { (hits as f64 / total as f64) * 100.0 } else { 0.0 };
-                eprintln!("  {} (cross): {} hits / {} samples ({:.1}%)", cross.name, hits, total, pct);
+                let pct = if total > 0 {
+                    (hits as f64 / total as f64) * 100.0
+                } else {
+                    0.0
+                };
+                eprintln!(
+                    "  {} (cross): {} hits / {} samples ({:.1}%)",
+                    cross.name, hits, total, pct
+                );
                 if let Some(bins) = bins {
                     for (bin_key, count) in bins.iter() {
                         eprintln!("    - {}: {} hits", bin_key, count);
@@ -132,7 +156,10 @@ impl SimulationEngine {
         let mut xml = String::new();
         xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         xml.push_str("<ucis xmlns=\"urn:ucis:0.1\">\n");
-        xml.push_str(&format!("  <scope name=\"{}\" type=\"module\">\n", self.design.top.name));
+        xml.push_str(&format!(
+            "  <scope name=\"{}\" type=\"module\">\n",
+            self.design.top.name
+        ));
 
         for cg in &self.design.covergroups {
             xml.push_str(&format!("    <covergroup name=\"{}\">\n", cg.name));
@@ -143,13 +170,18 @@ impl SimulationEngine {
                 let hits = self.cover_hits.get(&key).copied().unwrap_or(0);
                 let bins = self.cover_bins.get(&key);
 
-                xml.push_str(&format!("      <coverpoint name=\"{}\" total=\"{}\" hits=\"{}\">\n",
-                    cp.name, total, hits));
+                xml.push_str(&format!(
+                    "      <coverpoint name=\"{}\" total=\"{}\" hits=\"{}\">\n",
+                    cp.name, total, hits
+                ));
 
                 if let Some(bins) = bins {
                     for (bin_key, count) in bins.iter() {
-                        xml.push_str(&format!("        <bin name=\"{}\" hits=\"{}\"/>\n",
-                            escape_xml(bin_key), count));
+                        xml.push_str(&format!(
+                            "        <bin name=\"{}\" hits=\"{}\"/>\n",
+                            escape_xml(bin_key),
+                            count
+                        ));
                     }
                 }
 
@@ -162,13 +194,18 @@ impl SimulationEngine {
                 let hits = self.cover_hits.get(&key).copied().unwrap_or(0);
                 let bins = self.cover_bins.get(&key);
 
-                xml.push_str(&format!("      <cross name=\"{}\" total=\"{}\" hits=\"{}\">\n",
-                    cross.name, total, hits));
+                xml.push_str(&format!(
+                    "      <cross name=\"{}\" total=\"{}\" hits=\"{}\">\n",
+                    cross.name, total, hits
+                ));
 
                 if let Some(bins) = bins {
                     for (bin_key, count) in bins.iter() {
-                        xml.push_str(&format!("        <bin name=\"{}\" hits=\"{}\"/>\n",
-                            escape_xml(bin_key), count));
+                        xml.push_str(&format!(
+                            "        <bin name=\"{}\" hits=\"{}\"/>\n",
+                            escape_xml(bin_key),
+                            count
+                        ));
                     }
                 }
 

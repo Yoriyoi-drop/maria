@@ -1,22 +1,22 @@
-pub mod debug;
 pub mod coverage;
+pub mod debug;
 pub mod waveform;
 
+use super::util::*;
+use crate::ast::*;
 use crate::error::SimError;
 use crate::ir::*;
-use crate::simulator::state::SimulationState;
-use crate::simulator::value::*;
-use crate::simulator::types::*;
-use crate::simulator::sdf::SdfData;
 use crate::simulator::parallel::{self, ParallelConfig};
-use super::util::*;
-use crate::waveform::VcdWriter;
+use crate::simulator::sdf::SdfData;
+use crate::simulator::state::SimulationState;
+use crate::simulator::types::*;
+use crate::simulator::value::*;
 use crate::waveform::FstWaveWriter;
-use crate::ast::*;
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::Write;
+use crate::waveform::VcdWriter;
 use rand::Rng;
 use rand::SeedableRng;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::io::Write;
 
 const MAX_LOOP_ITER: usize = 10_000_000;
 
@@ -122,7 +122,6 @@ pub struct SimulationEngine {
     objection_triggered: bool,
 }
 
-
 impl SimulationEngine {
     pub fn new(design: IrDesign, max_time: u64) -> Self {
         let state = SimulationState::new(&design);
@@ -199,14 +198,14 @@ impl SimulationEngine {
             assert_kill_all: false,
             assert_modules_off: HashSet::new(),
             coverage_options: HashMap::new(),
-        coverage_enabled: true,
-        coverage_model_handles: HashMap::new(),
-        next_coverage_model_handle: 1,
-        sequence_attempts: Vec::new(),
-        recursion_depth: HashMap::new(),
-        max_recursion_depth: 256,
-        objection_count: 0,
-        objection_triggered: false,
+            coverage_enabled: true,
+            coverage_model_handles: HashMap::new(),
+            next_coverage_model_handle: 1,
+            sequence_attempts: Vec::new(),
+            recursion_depth: HashMap::new(),
+            max_recursion_depth: 256,
+            objection_count: 0,
+            objection_triggered: false,
         }
     }
 
@@ -267,7 +266,9 @@ impl SimulationEngine {
                                         if re.region == region {
                                             to_process.push(re.event.clone());
                                             false
-                                        } else { true }
+                                        } else {
+                                            true
+                                        }
                                     });
                                     if !to_process.is_empty() {
                                         activity = true;
@@ -291,7 +292,9 @@ impl SimulationEngine {
                                         if re.region == EventRegion::Observed {
                                             to_process.push(re.event.clone());
                                             false
-                                        } else { true }
+                                        } else {
+                                            true
+                                        }
                                     });
                                     if !to_process.is_empty() {
                                         activity = true;
@@ -306,17 +309,22 @@ impl SimulationEngine {
                         EventRegion::Active | EventRegion::Inactive => {
                             if t < self.events.len() {
                                 loop {
-                                    let events: Vec<RegionEvent> = self.events[t].drain(..)
+                                    let events: Vec<RegionEvent> = self.events[t]
+                                        .drain(..)
                                         .filter(|re| re.region == region)
                                         .collect();
-                                    if events.is_empty() { break; }
+                                    if events.is_empty() {
+                                        break;
+                                    }
                                     activity = true;
                                     for re in events {
                                         self.process_event(re.event, t)?;
                                     }
                                     // Inactive re-drains; Active drains once (outer loop
                                     // re-circulates if new events appear later)
-                                    if region == EventRegion::Active { break; }
+                                    if region == EventRegion::Active {
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -324,7 +332,8 @@ impl SimulationEngine {
                             // NBA region: commit pending non-blocking assignments
                             self.commit_nba();
                             if t < self.events.len() {
-                                let events: Vec<RegionEvent> = self.events[t].drain(..)
+                                let events: Vec<RegionEvent> = self.events[t]
+                                    .drain(..)
                                     .filter(|re| re.region == EventRegion::Nba)
                                     .collect();
                                 if !events.is_empty() {
@@ -349,7 +358,8 @@ impl SimulationEngine {
                             }
                             // Process Reactive events (from events[t] and reactive_events buffer)
                             if t < self.events.len() {
-                                let events: Vec<RegionEvent> = self.events[t].drain(..)
+                                let events: Vec<RegionEvent> = self.events[t]
+                                    .drain(..)
                                     .filter(|re| re.region == EventRegion::Reactive)
                                     .collect();
                                 if !events.is_empty() {
@@ -371,7 +381,9 @@ impl SimulationEngine {
                 }
 
                 if delta_count > 10_000_000 {
-                    return Err(SimError::runtime("simulation exceeded max delta cycles per time step (10M)"));
+                    return Err(SimError::runtime(
+                        "simulation exceeded max delta cycles per time step (10M)",
+                    ));
                 }
                 delta_count += 1;
 
@@ -392,11 +404,20 @@ impl SimulationEngine {
                 // Re-circulate if any events remain or NBA is pending
                 let has_remaining = t < self.events.len()
                     && self.events[t].iter().any(|re| {
-                        matches!(re.region, EventRegion::PreActive | EventRegion::Active
-                            | EventRegion::Inactive | EventRegion::PreNba | EventRegion::Nba
-                            | EventRegion::PostNba | EventRegion::PreObserved
-                            | EventRegion::Observed | EventRegion::PostObserved
-                            | EventRegion::Reactive | EventRegion::PostReactive)
+                        matches!(
+                            re.region,
+                            EventRegion::PreActive
+                                | EventRegion::Active
+                                | EventRegion::Inactive
+                                | EventRegion::PreNba
+                                | EventRegion::Nba
+                                | EventRegion::PostNba
+                                | EventRegion::PreObserved
+                                | EventRegion::Observed
+                                | EventRegion::PostObserved
+                                | EventRegion::Reactive
+                                | EventRegion::PostReactive
+                        )
                     })
                     || !self.nba_pending.is_empty();
 
@@ -419,7 +440,9 @@ impl SimulationEngine {
             // ── Debug check at start of cycle ──
             if self.debug_mode != DebugMode::Normal {
                 self.debug_check()?;
-                if self.paused { break; }
+                if self.paused {
+                    break;
+                }
                 if self.step_mode == StepMode::StepCycle {
                     self.paused = true;
                     break;
@@ -446,12 +469,6 @@ impl SimulationEngine {
         Ok(())
     }
 
-
-
-
-
-
-
     fn initialize_time_zero(&mut self) -> Result<(), SimError> {
         let t = 0usize;
         let processes = self.design.top.processes.clone();
@@ -464,21 +481,33 @@ impl SimulationEngine {
         // Pass 1: Initial blocks (execute first at time 0)
         for (pid, process) in processes.iter().enumerate() {
             if matches!(process, Process::Initial { .. }) {
-                self.events[t].push(RegionEvent { region: EventRegion::Active, event: EventKind::EvalProcess(pid) });
+                self.events[t].push(RegionEvent {
+                    region: EventRegion::Active,
+                    event: EventKind::EvalProcess(pid),
+                });
             }
         }
 
         // Pass 2: Combinational/Reactive processes (evaluate after initial)
         for (pid, process) in processes.iter().enumerate() {
-            if matches!(process, Process::Combinational { .. } | Process::CombReactive { .. }) {
-                self.events[t].push(RegionEvent { region: EventRegion::Active, event: EventKind::EvalProcess(pid) });
+            if matches!(
+                process,
+                Process::Combinational { .. } | Process::CombReactive { .. }
+            ) {
+                self.events[t].push(RegionEvent {
+                    region: EventRegion::Active,
+                    event: EventKind::EvalProcess(pid),
+                });
             }
         }
 
         // Pass 3: AlwaysWithDelay (time-0 processes that schedule future events)
         for (pid, process) in processes.iter().enumerate() {
             if matches!(process, Process::AlwaysWithDelay { .. }) {
-                self.events[t].push(RegionEvent { region: EventRegion::Active, event: EventKind::EvalProcess(pid) });
+                self.events[t].push(RegionEvent {
+                    region: EventRegion::Active,
+                    event: EventKind::EvalProcess(pid),
+                });
             }
         }
 
@@ -503,7 +532,6 @@ impl SimulationEngine {
         }
         Ok(())
     }
-
 
     pub fn annotate_sdf(&mut self, sdf: &SdfData) -> Result<(), SimError> {
         // Apply cell delays to signals (simplified annotation)
@@ -545,9 +573,12 @@ impl SimulationEngine {
         Ok(())
     }
 
-
     fn execute_final_blocks(&mut self) -> Result<(), SimError> {
-        let bodies: Vec<Vec<IrStmt>> = self.design.top.processes.iter()
+        let bodies: Vec<Vec<IrStmt>> = self
+            .design
+            .top
+            .processes
+            .iter()
             .filter_map(|p| {
                 if let Process::Final { body, .. } = p {
                     Some(body.clone())
@@ -583,7 +614,10 @@ impl SimulationEngine {
                             self.evaluate_block_with_delay(body)?;
                             let next_t = t + *delay as usize;
                             if next_t < self.events.len() {
-                                self.events[next_t].push(RegionEvent { region: EventRegion::Active, event: EventKind::EvalProcess(pid) });
+                                self.events[next_t].push(RegionEvent {
+                                    region: EventRegion::Active,
+                                    event: EventKind::EvalProcess(pid),
+                                });
                             }
                         }
                     }
@@ -598,7 +632,8 @@ impl SimulationEngine {
             }
             EventKind::ContinueBlock(cont) => {
                 if t < self.events.len() {
-                    let all_consumed = self.evaluate_block_with_delay_fork(&cont.stmts_to_exec, cont.fork_id)?;
+                    let all_consumed =
+                        self.evaluate_block_with_delay_fork(&cont.stmts_to_exec, cont.fork_id)?;
                     // Detect natural process completion: when a continuation runs to completion (all_consumed)
                     // and has a stored process_id, mark that process as Finished and trigger await continuations
                     if all_consumed {
@@ -654,23 +689,29 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn evaluate_block_with_delay(
-        &mut self, stmts: &[IrStmt]
-    ) -> Result<bool, SimError> {
+    fn evaluate_block_with_delay(&mut self, stmts: &[IrStmt]) -> Result<bool, SimError> {
         self.evaluate_block_with_delay_fork(stmts, None)
     }
 
     fn evaluate_block_with_delay_fork(
-        &mut self, stmts: &[IrStmt], fork_id: Option<usize>
+        &mut self,
+        stmts: &[IrStmt],
+        fork_id: Option<usize>,
     ) -> Result<bool, SimError> {
         for (i, stmt) in stmts.iter().enumerate() {
-            if self.disable_pending.is_some() { return Ok(true); }
-            if self.control_flow.is_some() { return Ok(true); }
+            if self.disable_pending.is_some() {
+                return Ok(true);
+            }
+            if self.control_flow.is_some() {
+                return Ok(true);
+            }
             match stmt {
                 IrStmt::Block { stmts: inner } => {
                     self.evaluate_block_with_delay_fork(inner, fork_id)?;
                 }
-                IrStmt::NamedBlock { name, stmts: inner, .. } => {
+                IrStmt::NamedBlock {
+                    name, stmts: inner, ..
+                } => {
                     if self.disable_pending.as_deref() == Some(name) {
                         self.disable_pending = None;
                         return Ok(true);
@@ -684,7 +725,11 @@ impl SimulationEngine {
                     }
                     self.disable_pending = self.disable_pending.take().or(old);
                 }
-                IrStmt::If { cond, true_branch: then_stmts, false_branch: else_stmts } => {
+                IrStmt::If {
+                    cond,
+                    true_branch: then_stmts,
+                    false_branch: else_stmts,
+                } => {
                     let cond_val = self.evaluate_expr(cond)?;
                     if cond_val.to_bool().unwrap_or(false) {
                         self.evaluate_block_with_delay_fork(then_stmts, fork_id)?;
@@ -692,7 +737,12 @@ impl SimulationEngine {
                         self.evaluate_block_with_delay_fork(else_stmts, fork_id)?;
                     }
                 }
-                IrStmt::Case { case_type, expr: case_expr, items, default } => {
+                IrStmt::Case {
+                    case_type,
+                    expr: case_expr,
+                    items,
+                    default,
+                } => {
                     let case_val = self.evaluate_expr(case_expr)?;
                     let mut matched = false;
                     for case_item in items {
@@ -706,13 +756,17 @@ impl SimulationEngine {
                             };
                             if eq {
                                 self.evaluate_block_with_delay_fork(&case_item.body, fork_id)?;
-                                if self.disable_pending.is_some() { return Ok(true); }
+                                if self.disable_pending.is_some() {
+                                    return Ok(true);
+                                }
                                 item_matched = true;
                                 matched = true;
                                 break;
                             }
                         }
-                        if item_matched { break; }
+                        if item_matched {
+                            break;
+                        }
                     }
                     if !matched && !default.is_empty() {
                         self.evaluate_block_with_delay_fork(default, fork_id)?;
@@ -772,7 +826,10 @@ impl SimulationEngine {
                     let triggered = match edge {
                         Some(ClockEdge::PosEdge(_)) => {
                             if let Some(ref snap) = self.signal_snapshot {
-                                let old_val = snap.get(*sig_id).cloned().unwrap_or_else(|| LogicVec::new(1));
+                                let old_val = snap
+                                    .get(*sig_id)
+                                    .cloned()
+                                    .unwrap_or_else(|| LogicVec::new(1));
                                 old_val.to_bool() != Some(true) && sig_val.to_bool() == Some(true)
                             } else {
                                 sig_val.to_bool() == Some(true)
@@ -780,7 +837,10 @@ impl SimulationEngine {
                         }
                         Some(ClockEdge::NegEdge(_)) => {
                             if let Some(ref snap) = self.signal_snapshot {
-                                let old_val = snap.get(*sig_id).cloned().unwrap_or_else(|| LogicVec::new(1));
+                                let old_val = snap
+                                    .get(*sig_id)
+                                    .cloned()
+                                    .unwrap_or_else(|| LogicVec::new(1));
                                 old_val.to_bool() != Some(false) && sig_val.to_bool() == Some(false)
                             } else {
                                 sig_val.to_bool() == Some(false)
@@ -833,7 +893,10 @@ impl SimulationEngine {
                     }
                     return Ok(true);
                 }
-                IrStmt::WaitOrder { events, failure_stmts } => {
+                IrStmt::WaitOrder {
+                    events,
+                    failure_stmts,
+                } => {
                     let remaining = stmts[i + 1..].to_vec();
                     self.pending_wait_orders.push(WaitOrderState {
                         events: events.clone(),
@@ -844,61 +907,102 @@ impl SimulationEngine {
                     return Ok(false);
                 }
                 IrStmt::RandCase { items } => {
-                    let total: u64 = items.iter().map(|(w_expr, _)| {
-                        self.evaluate_expr(w_expr).unwrap_or(LogicVec::from_u64(1, 32)).to_u64()
-                    }).sum();
+                    let total: u64 = items
+                        .iter()
+                        .map(|(w_expr, _)| {
+                            self.evaluate_expr(w_expr)
+                                .unwrap_or(LogicVec::from_u64(1, 32))
+                                .to_u64()
+                        })
+                        .sum();
                     if total > 0 {
                         let r = self.rng.gen::<u64>() % total;
                         let mut cumulative = 0u64;
                         for (w_expr, body) in items {
-                            let weight = self.evaluate_expr(w_expr).unwrap_or(LogicVec::from_u64(1, 32)).to_u64();
+                            let weight = self
+                                .evaluate_expr(w_expr)
+                                .unwrap_or(LogicVec::from_u64(1, 32))
+                                .to_u64();
                             cumulative += weight;
                             if r < cumulative {
-                                let completed = self.evaluate_block_with_delay_fork(body, fork_id)?;
-                                if !completed { return Ok(false); }
+                                let completed =
+                                    self.evaluate_block_with_delay_fork(body, fork_id)?;
+                                if !completed {
+                                    return Ok(false);
+                                }
                                 break;
                             }
                         }
                     }
                 }
-                                IrStmt::RandSequence { productions } => {
+                IrStmt::RandSequence { productions } => {
                     if let Some((_, items)) = productions.first() {
-                        let total: u64 = items.iter().map(|(w, _)| {
-                            self.evaluate_expr(w).unwrap_or(LogicVec::from_u64(1, 32)).to_u64()
-                        }).sum();
+                        let total: u64 = items
+                            .iter()
+                            .map(|(w, _)| {
+                                self.evaluate_expr(w)
+                                    .unwrap_or(LogicVec::from_u64(1, 32))
+                                    .to_u64()
+                            })
+                            .sum();
                         if total > 0 {
                             let r = self.rng.gen::<u64>() % total;
                             let mut acc = 0u64;
                             for (w, body) in items {
-                                acc += self.evaluate_expr(w).unwrap_or(LogicVec::from_u64(1, 32)).to_u64();
+                                acc += self
+                                    .evaluate_expr(w)
+                                    .unwrap_or(LogicVec::from_u64(1, 32))
+                                    .to_u64();
                                 if r < acc {
-                                    let completed = self.evaluate_block_with_delay_fork(body, fork_id)?;
-                                    if !completed { return Ok(false); }
+                                    let completed =
+                                        self.evaluate_block_with_delay_fork(body, fork_id)?;
+                                    if !completed {
+                                        return Ok(false);
+                                    }
                                     break;
                                 }
                             }
                         }
                     }
                 }
-                IrStmt::SysCall { name, args: ir_args } => {
+                IrStmt::SysCall {
+                    name,
+                    args: ir_args,
+                } => {
                     // Handle wrapped $value$plusargs / $test$plusargs from elaborator
                     if name.is_empty() {
-                        if let Some(IrExpr::SysFunc { name: fn_name, args: fn_args }) = ir_args.first() {
+                        if let Some(IrExpr::SysFunc {
+                            name: fn_name,
+                            args: fn_args,
+                        }) = ir_args.first()
+                        {
                             if fn_name == "value$plusargs" {
-                                if let Ok(pat_val) = self.evaluate_expr(fn_args.first().unwrap_or(&IrExpr::Const(LogicVec::new(0)))) {
+                                if let Ok(pat_val) = self.evaluate_expr(
+                                    fn_args.first().unwrap_or(&IrExpr::Const(LogicVec::new(0))),
+                                ) {
                                     let pattern = logicvec_to_string(&pat_val);
-                                    let plusarg_name = pattern.split('%').next().unwrap_or(&pattern).trim_end_matches('=');
+                                    let plusarg_name = pattern
+                                        .split('%')
+                                        .next()
+                                        .unwrap_or(&pattern)
+                                        .trim_end_matches('=');
                                     let plusargs = self.plusargs.clone();
                                     for (key, val) in &plusargs {
                                         if key == plusarg_name {
                                             if let Some(var_arg) = fn_args.get(1) {
-                                                let num = if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
+                                                let num = if let Some(hex) = val
+                                                    .strip_prefix("0x")
+                                                    .or_else(|| val.strip_prefix("0X"))
+                                                {
                                                     u64::from_str_radix(hex, 16).unwrap_or(0)
                                                 } else {
                                                     val.parse::<u64>().unwrap_or(0)
                                                 };
                                                 if let IrExpr::Signal(id, _) = var_arg {
-                                                    self.state.write_signal(*id, LogicVec::from_u64(num, 32));
+                                                    self.state.write_signal(
+                                                        *id,
+                                                        LogicVec::from_u64(num, 32),
+                                                    );
                                                 }
                                             }
                                             break;
@@ -910,32 +1014,56 @@ impl SimulationEngine {
                         }
                     }
                     if name == "display" || name == "write" {
-                        let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, ir_args);
+                        let msg = format_display(
+                            &self.state,
+                            &self.design.top.signals,
+                            &self.design.hier_signal_map,
+                            &self.assoc_data,
+                            ir_args,
+                        );
                         print!("{}", msg);
                     } else if name == "strobe" {
                         self.strobe_events.push(ir_args.clone());
                     } else if name == "fstrobe" {
-                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             self.fstrobe_events.push((h, ir_args[1..].to_vec()));
                         }
                     } else if name == "fmonitor" {
-                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
-                            let vals: Vec<LogicVec> = ir_args[1..].iter()
+                            let vals: Vec<LogicVec> = ir_args[1..]
+                                .iter()
                                 .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
                                 .collect();
                             self.fmonitor_map.insert(h, (ir_args[1..].to_vec(), vals));
                         }
                     } else if name == "monitor" {
-                        let vals: Vec<LogicVec> = ir_args.iter()
+                        let vals: Vec<LogicVec> = ir_args
+                            .iter()
                             .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
                             .collect();
                         self.monitor_args = Some(ir_args.clone());
                         self.monitor_last_values = Some(vals);
                     } else if name == "readmemh" {
-                        let file = ir_args.first().and_then(|a| if let IrExpr::String(s) = a { Some(s.clone()) } else { None });
-                        let sig_id = ir_args.get(1).and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                        let file = ir_args.first().and_then(|a| {
+                            if let IrExpr::String(s) = a {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        });
+                        let sig_id = ir_args.get(1).and_then(|a| {
+                            if let IrExpr::Signal(id, _) = a {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        });
                         if let (Some(file), Some(sig_id)) = (file, sig_id) {
                             let data = read_hex_file(&file, 8, 4096, None, None)?;
                             let elem_width = data.first().map(|d| d.width).unwrap_or(8);
@@ -943,12 +1071,27 @@ impl SimulationEngine {
                             for d in &data {
                                 all_bits.extend(d.bits.iter().cloned());
                             }
-                            let packed = LogicVec { bits: all_bits, width: data.len() * elem_width };
+                            let packed = LogicVec {
+                                bits: all_bits,
+                                width: data.len() * elem_width,
+                            };
                             self.state.write_signal(sig_id, packed);
                         }
                     } else if name == "readmemb" {
-                        let file = ir_args.first().and_then(|a| if let IrExpr::String(s) = a { Some(s.clone()) } else { None });
-                        let sig_id = ir_args.get(1).and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                        let file = ir_args.first().and_then(|a| {
+                            if let IrExpr::String(s) = a {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        });
+                        let sig_id = ir_args.get(1).and_then(|a| {
+                            if let IrExpr::Signal(id, _) = a {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        });
                         if let (Some(file), Some(sig_id)) = (file, sig_id) {
                             let data = read_bin_file(&file, 8, 4096, None, None)?;
                             let elem_width = data.first().map(|d| d.width).unwrap_or(8);
@@ -956,7 +1099,10 @@ impl SimulationEngine {
                             for d in &data {
                                 all_bits.extend(d.bits.iter().cloned());
                             }
-                            let packed = LogicVec { bits: all_bits, width: data.len() * elem_width };
+                            let packed = LogicVec {
+                                bits: all_bits,
+                                width: data.len() * elem_width,
+                            };
                             self.state.write_signal(sig_id, packed);
                         }
                     } else if name == "random" {
@@ -969,18 +1115,33 @@ impl SimulationEngine {
                             }
                         }
                         let val: i32 = self.rng.gen();
-                        let sig_id = ir_args.first().and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                        let sig_id = ir_args.first().and_then(|a| {
+                            if let IrExpr::Signal(id, _) = a {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        });
                         if let Some(sid) = sig_id {
-                            self.state.write_signal(sid, LogicVec::from_u64(val as u64, 32));
+                            self.state
+                                .write_signal(sid, LogicVec::from_u64(val as u64, 32));
                         }
                     } else if name == "urandom" {
                         let val: u32 = self.rng.gen();
-                        let sig_id = ir_args.first().and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                        let sig_id = ir_args.first().and_then(|a| {
+                            if let IrExpr::Signal(id, _) = a {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        });
                         if let Some(sid) = sig_id {
-                            self.state.write_signal(sid, LogicVec::from_u64(val as u64, 32));
+                            self.state
+                                .write_signal(sid, LogicVec::from_u64(val as u64, 32));
                         }
                     } else if name == "urandom_range" {
-                        let args_eval: Vec<LogicVec> = ir_args.iter()
+                        let args_eval: Vec<LogicVec> = ir_args
+                            .iter()
                             .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
                             .collect();
                         let maxval = args_eval.first().map(|v| v.to_u64()).unwrap_or(0);
@@ -989,10 +1150,19 @@ impl SimulationEngine {
                             minval
                         } else {
                             let range = maxval - minval + 1;
-                            if range <= 1 { minval }
-                            else { minval + (self.rng.gen::<u64>() % range) }
+                            if range <= 1 {
+                                minval
+                            } else {
+                                minval + (self.rng.gen::<u64>() % range)
+                            }
                         };
-                        let sig_id = ir_args.first().and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                        let sig_id = ir_args.first().and_then(|a| {
+                            if let IrExpr::Signal(id, _) = a {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        });
                         if let Some(sid) = sig_id {
                             self.state.write_signal(sid, LogicVec::from_u64(val, 32));
                         }
@@ -1018,7 +1188,10 @@ impl SimulationEngine {
                             vcd.dump_all(design, state)?;
                         }
                     } else if name == "dumplimit" {
-                        if let Some(limit) = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64())) {
+                        if let Some(limit) = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64()))
+                        {
                             if let Some(ref mut vcd) = self.vcd {
                                 vcd.max_dump_size = Some(limit);
                             }
@@ -1036,13 +1209,28 @@ impl SimulationEngine {
                             vcd.enabled = false;
                         }
                     } else if name == "fopen" {
-                        let fname = ir_args.first().and_then(|a| if let IrExpr::String(s) = a { Some(s.clone()) } else { None });
+                        let fname = ir_args.first().and_then(|a| {
+                            if let IrExpr::String(s) = a {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        });
                         if let Some(fname) = fname {
-                            let mode = ir_args.get(1).and_then(|a| if let IrExpr::String(s) = a { Some(s.as_str()) } else { None });
+                            let mode = ir_args.get(1).and_then(|a| {
+                                if let IrExpr::String(s) = a {
+                                    Some(s.as_str())
+                                } else {
+                                    None
+                                }
+                            });
                             let open_result = match mode {
                                 Some("r") | Some("rb") => std::fs::File::open(&fname),
                                 _ => std::fs::OpenOptions::new()
-                                    .read(true).write(true).create(true).truncate(true)
+                                    .read(true)
+                                    .write(true)
+                                    .create(true)
+                                    .truncate(true)
                                     .open(&fname),
                             };
                             match open_result {
@@ -1051,13 +1239,28 @@ impl SimulationEngine {
                                     self.next_file_handle += 1;
                                     self.file_handles.insert(handle, f);
                                     self.file_read_pos.insert(handle, 0);
-                                    let sig_id = ir_args.get(1).and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                                    let sig_id = ir_args.get(1).and_then(|a| {
+                                        if let IrExpr::Signal(id, _) = a {
+                                            Some(*id)
+                                        } else {
+                                            None
+                                        }
+                                    });
                                     if let Some(sid) = sig_id {
-                                        self.state.write_signal(sid, LogicVec::from_u64(handle as u64, 32));
+                                        self.state.write_signal(
+                                            sid,
+                                            LogicVec::from_u64(handle as u64, 32),
+                                        );
                                     }
                                 }
                                 Err(_) => {
-                                    let sig_id = ir_args.get(1).and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                                    let sig_id = ir_args.get(1).and_then(|a| {
+                                        if let IrExpr::Signal(id, _) = a {
+                                            Some(*id)
+                                        } else {
+                                            None
+                                        }
+                                    });
                                     if let Some(sid) = sig_id {
                                         self.state.write_signal(sid, LogicVec::from_u64(0, 32));
                                     }
@@ -1065,32 +1268,56 @@ impl SimulationEngine {
                             }
                         }
                     } else if name == "fdisplay" {
-                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, &ir_args[1..]);
+                                let msg = format_display(
+                                    &self.state,
+                                    &self.design.top.signals,
+                                    &self.design.hier_signal_map,
+                                    &self.assoc_data,
+                                    &ir_args[1..],
+                                );
                                 let _ = write!(f, "{}", msg);
                             }
                         }
                     } else if name == "fwrite" {
-                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, &ir_args[1..]);
+                                let msg = format_display(
+                                    &self.state,
+                                    &self.design.top.signals,
+                                    &self.design.hier_signal_map,
+                                    &self.assoc_data,
+                                    &ir_args[1..],
+                                );
                                 let _ = write!(f, "{}", msg);
                             }
                         }
                     } else if name == "fscanf" {
-                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                use std::io::{Seek, Read};
+                                use std::io::{Read, Seek};
                                 let read_pos = self.file_read_pos.entry(h).or_insert(0);
                                 f.seek(std::io::SeekFrom::Start(*read_pos)).ok();
                                 let mut content = String::new();
                                 let _bytes_read = f.read_to_string(&mut content).unwrap_or(0);
                                 *read_pos = f.stream_position().unwrap_or(0);
-                                let fmt = ir_args.get(1).and_then(|a| if let IrExpr::String(s) = a { Some(s.clone()) } else { None });
+                                let fmt = ir_args.get(1).and_then(|a| {
+                                    if let IrExpr::String(s) = a {
+                                        Some(s.clone())
+                                    } else {
+                                        None
+                                    }
+                                });
                                 if let Some(ref fmt_str) = fmt {
                                     let tokens: Vec<&str> = content.split_whitespace().collect();
                                     let mut ti = 0;
@@ -1101,11 +1328,24 @@ impl SimulationEngine {
                                             if let Some(spec) = chars.next() {
                                                 if spec == 'd' || spec == 'h' || spec == 'b' {
                                                     if let Some(tok) = tokens.get(ti) {
-                                                        if let Ok(val) = if spec == 'h' { i64::from_str_radix(tok, 16) } else if spec == 'b' { i64::from_str_radix(tok, 2) } else { tok.parse::<i64>() } {
+                                                        if let Ok(val) = if spec == 'h' {
+                                                            i64::from_str_radix(tok, 16)
+                                                        } else if spec == 'b' {
+                                                            i64::from_str_radix(tok, 2)
+                                                        } else {
+                                                            tok.parse::<i64>()
+                                                        } {
                                                             let out_idx = 2 + ai;
-                                                            if let Some(arg) = ir_args.get(out_idx) {
-                                                                if let IrExpr::Signal(sid, _) = arg {
-                                                                    self.state.write_signal(*sid, LogicVec::from_u64(val as u64, 32));
+                                                            if let Some(arg) = ir_args.get(out_idx)
+                                                            {
+                                                                if let IrExpr::Signal(sid, _) = arg
+                                                                {
+                                                                    self.state.write_signal(
+                                                                        *sid,
+                                                                        LogicVec::from_u64(
+                                                                            val as u64, 32,
+                                                                        ),
+                                                                    );
                                                                 }
                                                             }
                                                             ai += 1;
@@ -1120,45 +1360,79 @@ impl SimulationEngine {
                             }
                         }
                     } else if name == "fread" {
-                        let target = ir_args.first().and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                        let target = ir_args.first().and_then(|a| {
+                            if let IrExpr::Signal(id, _) = a {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        });
                         let src = ir_args.get(1);
                         let data = if let Some(IrExpr::String(fname)) = src {
                             std::fs::read(fname).ok()
                         } else if let Some(arg) = src {
-                            let handle = self.evaluate_expr(arg).ok().map(|v| v.to_u64() as u32).unwrap_or(0);
+                            let handle = self
+                                .evaluate_expr(arg)
+                                .ok()
+                                .map(|v| v.to_u64() as u32)
+                                .unwrap_or(0);
                             if handle > 0 {
                                 use std::io::Read;
                                 self.file_handles.get_mut(&handle).and_then(|f| {
                                     let mut buf = Vec::new();
                                     f.read_to_end(&mut buf).ok().map(|_| buf)
                                 })
-                            } else { None }
-                        } else { None };
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
                         if let (Some(sid), Some(bytes)) = (target, data) {
                             let mut bits = Vec::with_capacity(bytes.len() * 8);
                             for byte in bytes {
                                 for i in 0..8 {
-                                    bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                                    bits.push(if (byte >> i) & 1 == 1 {
+                                        LogicVal::One
+                                    } else {
+                                        LogicVal::Zero
+                                    });
                                 }
                             }
-                            self.state.write_signal(sid, LogicVec { width: bits.len(), bits });
+                            self.state.write_signal(
+                                sid,
+                                LogicVec {
+                                    width: bits.len(),
+                                    bits,
+                                },
+                            );
                         }
                     } else if name == "fclose" {
-                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             self.file_handles.remove(&h);
                         }
                     } else if name == "fflush" {
-                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
                                 let _ = f.flush();
                             }
                         }
                     } else if name == "fseek" {
-                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        let offset = ir_args.get(1).and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as i64));
-                        let op = ir_args.get(2).and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64()));
+                        let handle = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let offset = ir_args
+                            .get(1)
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as i64));
+                        let op = ir_args
+                            .get(2)
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64()));
                         if let (Some(h), Some(off)) = (handle, offset) {
                             if let Some(f) = self.file_handles.get_mut(&h) {
                                 use std::io::{Seek, SeekFrom};
@@ -1177,14 +1451,24 @@ impl SimulationEngine {
                         if let Some(arg) = ir_args.first() {
                             self.evaluate_expr(arg)?;
                         }
-                     } else if name == "value$plusargs" {
-                        let pattern = ir_args.first().and_then(|a| self.evaluate_expr(a).ok()).map(|v| logicvec_to_string(&v)).unwrap_or_default();
-                        let plusarg_name = pattern.split('%').next().unwrap_or(&pattern).trim_end_matches('=');
+                    } else if name == "value$plusargs" {
+                        let pattern = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok())
+                            .map(|v| logicvec_to_string(&v))
+                            .unwrap_or_default();
+                        let plusarg_name = pattern
+                            .split('%')
+                            .next()
+                            .unwrap_or(&pattern)
+                            .trim_end_matches('=');
                         let plusargs = self.plusargs.clone();
                         for (key, val) in &plusargs {
                             if key == plusarg_name {
                                 if let Some(var_arg) = ir_args.get(1) {
-                                    let num = if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
+                                    let num = if let Some(hex) =
+                                        val.strip_prefix("0x").or_else(|| val.strip_prefix("0X"))
+                                    {
                                         u64::from_str_radix(hex, 16).unwrap_or(0)
                                     } else {
                                         val.parse::<u64>().unwrap_or(0)
@@ -1257,28 +1541,52 @@ impl SimulationEngine {
                                 }
                             }
                         }
-                        let pct = if total > 0 { (hit as f64 / total as f64) * 100.0 } else { 0.0 };
+                        let pct = if total > 0 {
+                            (hit as f64 / total as f64) * 100.0
+                        } else {
+                            0.0
+                        };
                         if let Some(sig_arg) = ir_args.first() {
                             if let IrExpr::Signal(id, _) = sig_arg {
-                                self.state.write_signal(*id, LogicVec::from_u64(pct as u64, 64));
+                                self.state
+                                    .write_signal(*id, LogicVec::from_u64(pct as u64, 64));
                             }
                         }
                     } else if name == "coverage_save" {
                         // $coverage_save — save coverage data to a file
-                        let path = ir_args.first().and_then(|a| if let IrExpr::String(s) = a { Some(s.clone()) } else { None })
+                        let path = ir_args
+                            .first()
+                            .and_then(|a| {
+                                if let IrExpr::String(s) = a {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
+                            })
                             .unwrap_or_else(|| "coverage.ucis".to_string());
                         let _ = self.export_coverage_ucis(&path);
                     } else if name == "coverage_model" {
                         // $coverage_model — get coverage model handle for a covergroup
                         // Usage: $coverage_model(output_signal [, "covergroup_name"])
                         let cg_name = ir_args.get(1).and_then(|a| {
-                            if let IrExpr::String(s) = a { Some(s.clone()) }
-                            else { None }
+                            if let IrExpr::String(s) = a {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
                         });
                         let handle: u32 = if let Some(ref name) = cg_name {
-                            let exists = self.design.covergroups.iter().any(|cg| cg.name.as_str() == name.as_str());
+                            let exists = self
+                                .design
+                                .covergroups
+                                .iter()
+                                .any(|cg| cg.name.as_str() == name.as_str());
                             if exists {
-                                if let Some((&h, _)) = self.coverage_model_handles.iter().find(|(_, n)| n.as_str() == name.as_str()) {
+                                if let Some((&h, _)) = self
+                                    .coverage_model_handles
+                                    .iter()
+                                    .find(|(_, n)| n.as_str() == name.as_str())
+                                {
                                     h
                                 } else {
                                     let h = self.next_coverage_model_handle;
@@ -1287,11 +1595,18 @@ impl SimulationEngine {
                                     h
                                 }
                             } else {
-                                eprintln!("warning: $coverage_model: covergroup '{}' not found", name);
+                                eprintln!(
+                                    "warning: $coverage_model: covergroup '{}' not found",
+                                    name
+                                );
                                 0
                             }
                         } else if let Some(first_cg) = self.design.covergroups.first() {
-                            if let Some((&h, _)) = self.coverage_model_handles.iter().find(|(_, n)| n.as_str() == first_cg.name.as_str()) {
+                            if let Some((&h, _)) = self
+                                .coverage_model_handles
+                                .iter()
+                                .find(|(_, n)| n.as_str() == first_cg.name.as_str())
+                            {
                                 h
                             } else {
                                 let h = self.next_coverage_model_handle;
@@ -1304,7 +1619,8 @@ impl SimulationEngine {
                         };
                         if let Some(sig_arg) = ir_args.first() {
                             if let IrExpr::Signal(id, _) = sig_arg {
-                                self.state.write_signal(*id, LogicVec::from_u64(handle as u64, 32));
+                                self.state
+                                    .write_signal(*id, LogicVec::from_u64(handle as u64, 32));
                             }
                         }
                     } else if name == "load_coverage_db" {
@@ -1316,7 +1632,13 @@ impl SimulationEngine {
                         // Note: $swrite appends newline, $sformat does not
                         if let Some(IrExpr::Signal(out_id, _)) = ir_args.first() {
                             let format_args = &ir_args[1..];
-                            let mut msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, format_args);
+                            let mut msg = format_display(
+                                &self.state,
+                                &self.design.top.signals,
+                                &self.design.hier_signal_map,
+                                &self.assoc_data,
+                                format_args,
+                            );
                             if name == "swrite" {
                                 msg.push('\n');
                             }
@@ -1324,10 +1646,20 @@ impl SimulationEngine {
                             for c in msg.chars() {
                                 let byte = c as u8;
                                 for i in 0..8 {
-                                    bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                                    bits.push(if (byte >> i) & 1 == 1 {
+                                        LogicVal::One
+                                    } else {
+                                        LogicVal::Zero
+                                    });
                                 }
                             }
-                            self.state.write_signal(*out_id, LogicVec { width: bits.len(), bits });
+                            self.state.write_signal(
+                                *out_id,
+                                LogicVec {
+                                    width: bits.len(),
+                                    bits,
+                                },
+                            );
                         }
                     } else if name == "sscanf" {
                         // $sscanf — scan values from string
@@ -1337,8 +1669,16 @@ impl SimulationEngine {
                                 s.clone()
                             } else if let Ok(val) = self.evaluate_expr(input_arg) {
                                 logicvec_to_string(&val)
-                            } else { String::new() };
-                            let fmt = ir_args.get(1).and_then(|a| if let IrExpr::String(s) = a { Some(s.clone()) } else { None });
+                            } else {
+                                String::new()
+                            };
+                            let fmt = ir_args.get(1).and_then(|a| {
+                                if let IrExpr::String(s) = a {
+                                    Some(s.clone())
+                                } else {
+                                    None
+                                }
+                            });
                             if let Some(ref fmt_str) = fmt {
                                 let tokens: Vec<&str> = input_str.split_whitespace().collect();
                                 let mut ti = 0;
@@ -1347,13 +1687,32 @@ impl SimulationEngine {
                                 while let Some(c) = chars.next() {
                                     if c == '%' {
                                         if let Some(spec) = chars.next() {
-                                            if spec == 'd' || spec == 'h' || spec == 'b' || spec == 'o' {
+                                            if spec == 'd'
+                                                || spec == 'h'
+                                                || spec == 'b'
+                                                || spec == 'o'
+                                            {
                                                 if let Some(tok) = tokens.get(ti) {
-                                                    let radix = if spec == 'h' { 16 } else if spec == 'o' { 8 } else if spec == 'b' { 2 } else { 10 };
-                                                    if let Ok(val) = i64::from_str_radix(tok, radix) {
+                                                    let radix = if spec == 'h' {
+                                                        16
+                                                    } else if spec == 'o' {
+                                                        8
+                                                    } else if spec == 'b' {
+                                                        2
+                                                    } else {
+                                                        10
+                                                    };
+                                                    if let Ok(val) = i64::from_str_radix(tok, radix)
+                                                    {
                                                         if let Some(out_arg) = ir_args.get(2 + ai) {
-                                                            if let IrExpr::Signal(sid, _) = out_arg {
-                                                                self.state.write_signal(*sid, LogicVec::from_u64(val as u64, 32));
+                                                            if let IrExpr::Signal(sid, _) = out_arg
+                                                            {
+                                                                self.state.write_signal(
+                                                                    *sid,
+                                                                    LogicVec::from_u64(
+                                                                        val as u64, 32,
+                                                                    ),
+                                                                );
                                                             }
                                                         }
                                                         ai += 1;
@@ -1365,14 +1724,27 @@ impl SimulationEngine {
                                                 if let Some(out_arg) = ir_args.get(2 + ai) {
                                                     if let IrExpr::Signal(sid, _) = out_arg {
                                                         let s = tokens[ti..].join(" ");
-                                                        let mut bits = Vec::with_capacity(s.len() * 8);
+                                                        let mut bits =
+                                                            Vec::with_capacity(s.len() * 8);
                                                         for c in s.chars() {
                                                             let byte = c as u8;
                                                             for i in 0..8 {
-                                                                bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                                                                bits.push(
+                                                                    if (byte >> i) & 1 == 1 {
+                                                                        LogicVal::One
+                                                                    } else {
+                                                                        LogicVal::Zero
+                                                                    },
+                                                                );
                                                             }
                                                         }
-                                                        self.state.write_signal(*sid, LogicVec { width: bits.len(), bits });
+                                                        self.state.write_signal(
+                                                            *sid,
+                                                            LogicVec {
+                                                                width: bits.len(),
+                                                                bits,
+                                                            },
+                                                        );
                                                     }
                                                 }
                                                 break;
@@ -1391,7 +1763,9 @@ impl SimulationEngine {
                 IrStmt::SysFinish => {
                     // Flush all pending await continuations before stopping
                     for (_, pi) in self.process_map.iter_mut() {
-                        if pi.status == ProcessStatus::Running || pi.status == ProcessStatus::Waiting {
+                        if pi.status == ProcessStatus::Running
+                            || pi.status == ProcessStatus::Waiting
+                        {
                             pi.status = ProcessStatus::Finished;
                         }
                     }
@@ -1399,7 +1773,14 @@ impl SimulationEngine {
                     return Ok(true);
                 }
                 IrStmt::Null => {}
-                IrStmt::Assert { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence } => {
+                IrStmt::Assert {
+                    cond,
+                    pass_stmt,
+                    fail_stmt,
+                    clock_event,
+                    disable_iff,
+                    sequence,
+                } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => !self.assert_off_all,
@@ -1436,7 +1817,14 @@ impl SimulationEngine {
                         }
                     }
                 }
-                IrStmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence: _ } => {
+                IrStmt::Assume {
+                    cond,
+                    pass_stmt,
+                    fail_stmt,
+                    clock_event,
+                    disable_iff,
+                    sequence: _,
+                } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => !self.assert_off_all,
@@ -1461,7 +1849,13 @@ impl SimulationEngine {
                         }
                     }
                 }
-                IrStmt::Cover { cond, pass_stmt, clock_event, disable_iff, sequence: _ } => {
+                IrStmt::Cover {
+                    cond,
+                    pass_stmt,
+                    clock_event,
+                    disable_iff,
+                    sequence: _,
+                } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => !self.assert_off_all,
@@ -1490,31 +1884,53 @@ impl SimulationEngine {
                     self.control_flow = Some(FlowControl::Continue);
                     return Ok(true);
                 }
-                IrStmt::LoopFor { init, cond, step, body } => {
+                IrStmt::LoopFor {
+                    init,
+                    cond,
+                    step,
+                    body,
+                } => {
                     if let Some(init_stmt) = init {
                         self.evaluate_block_with_delay_fork(&[*init_stmt.clone()], fork_id)?;
                     }
                     let mut iter_count = 0usize;
                     loop {
                         if iter_count >= MAX_LOOP_ITER {
-                            eprintln!("warning: for loop exceeded {} iterations, breaking", MAX_LOOP_ITER);
+                            eprintln!(
+                                "warning: for loop exceeded {} iterations, breaking",
+                                MAX_LOOP_ITER
+                            );
                             break;
                         }
                         iter_count += 1;
-                        if self.disable_pending.is_some() { break; }
-                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
+                        if self.control_flow.is_some() {
+                            self.control_flow = None;
+                            break;
+                        }
                         let cond_val = self.evaluate_expr(cond)?;
-                        if !cond_val.to_bool().unwrap_or(false) { break; }
+                        if !cond_val.to_bool().unwrap_or(false) {
+                            break;
+                        }
                         self.evaluate_block_with_delay_fork(body, fork_id)?;
                         let cf = self.control_flow.take();
                         if cf == Some(FlowControl::Continue) {
                             if let Some(step_stmt) = step {
-                                self.evaluate_block_with_delay_fork(&[*step_stmt.clone()], fork_id)?;
+                                self.evaluate_block_with_delay_fork(
+                                    &[*step_stmt.clone()],
+                                    fork_id,
+                                )?;
                             }
                             continue;
                         }
-                        if cf == Some(FlowControl::Break) { break; }
-                        if self.disable_pending.is_some() { break; }
+                        if cf == Some(FlowControl::Break) {
+                            break;
+                        }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
                         if let Some(step_stmt) = step {
                             self.evaluate_block_with_delay_fork(&[*step_stmt.clone()], fork_id)?;
                         }
@@ -1524,68 +1940,130 @@ impl SimulationEngine {
                     let mut iter_count = 0usize;
                     loop {
                         if iter_count >= MAX_LOOP_ITER {
-                            eprintln!("warning: while loop exceeded {} iterations, breaking", MAX_LOOP_ITER);
+                            eprintln!(
+                                "warning: while loop exceeded {} iterations, breaking",
+                                MAX_LOOP_ITER
+                            );
                             break;
                         }
                         iter_count += 1;
-                        if self.disable_pending.is_some() { break; }
-                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
+                        if self.control_flow.is_some() {
+                            self.control_flow = None;
+                            break;
+                        }
                         let cond_val = self.evaluate_expr(cond)?;
-                        if !cond_val.to_bool().unwrap_or(false) { break; }
+                        if !cond_val.to_bool().unwrap_or(false) {
+                            break;
+                        }
                         let old_loop_cont = self.loop_continuation.take();
-                        self.loop_continuation = Some(vec![IrStmt::LoopWhile { cond: cond.clone(), body: body.clone() }]);
+                        self.loop_continuation = Some(vec![IrStmt::LoopWhile {
+                            cond: cond.clone(),
+                            body: body.clone(),
+                        }]);
                         let completed = self.evaluate_block_with_delay_fork(body, fork_id)?;
                         self.loop_continuation = old_loop_cont;
-                        if !completed { return Ok(false); }
+                        if !completed {
+                            return Ok(false);
+                        }
                         let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) { continue; }
-                        if cf == Some(FlowControl::Break) { break; }
+                        if cf == Some(FlowControl::Continue) {
+                            continue;
+                        }
+                        if cf == Some(FlowControl::Break) {
+                            break;
+                        }
                     }
                 }
                 IrStmt::LoopDoWhile { cond, body } => {
                     let mut iter_count = 0usize;
                     loop {
                         if iter_count >= MAX_LOOP_ITER {
-                            eprintln!("warning: do-while loop exceeded {} iterations, breaking", MAX_LOOP_ITER);
+                            eprintln!(
+                                "warning: do-while loop exceeded {} iterations, breaking",
+                                MAX_LOOP_ITER
+                            );
                             break;
                         }
                         iter_count += 1;
-                        if self.disable_pending.is_some() { break; }
-                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
+                        if self.control_flow.is_some() {
+                            self.control_flow = None;
+                            break;
+                        }
                         let old_loop_cont = self.loop_continuation.take();
-                        self.loop_continuation = Some(vec![IrStmt::LoopDoWhile { cond: cond.clone(), body: body.clone() }]);
+                        self.loop_continuation = Some(vec![IrStmt::LoopDoWhile {
+                            cond: cond.clone(),
+                            body: body.clone(),
+                        }]);
                         let completed = self.evaluate_block_with_delay_fork(body, fork_id)?;
                         self.loop_continuation = old_loop_cont;
-                        if !completed { return Ok(false); }
+                        if !completed {
+                            return Ok(false);
+                        }
                         let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) { continue; }
-                        if cf == Some(FlowControl::Break) { break; }
+                        if cf == Some(FlowControl::Continue) {
+                            continue;
+                        }
+                        if cf == Some(FlowControl::Break) {
+                            break;
+                        }
                         let cond_val = self.evaluate_expr(cond)?;
-                        if !cond_val.to_bool().unwrap_or(false) { break; }
+                        if !cond_val.to_bool().unwrap_or(false) {
+                            break;
+                        }
                     }
                 }
                 IrStmt::Repeat { count, body } => {
                     let count_val = self.evaluate_expr(count)?;
                     let n = (count_val.to_u64() as usize).min(MAX_LOOP_ITER);
                     for _ in 0..n {
-                        if self.disable_pending.is_some() { break; }
-                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
+                        if self.control_flow.is_some() {
+                            self.control_flow = None;
+                            break;
+                        }
                         self.evaluate_block_with_delay_fork(body, fork_id)?;
                         let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) { continue; }
-                        if cf == Some(FlowControl::Break) { break; }
+                        if cf == Some(FlowControl::Continue) {
+                            continue;
+                        }
+                        if cf == Some(FlowControl::Break) {
+                            break;
+                        }
                     }
                 }
-                IrStmt::Foreach { array_var, index_var, body } => {
+                IrStmt::Foreach {
+                    array_var,
+                    index_var,
+                    body,
+                } => {
                     let lv = self.evaluate_expr(array_var)?;
                     let sig_info = if let IrExpr::Signal(id, _) = array_var {
                         self.design.top.signals.get(*id)
-                    } else { None };
+                    } else {
+                        None
+                    };
                     let elem_width = sig_info.map(|s| s.elem_width).unwrap_or(1);
-                    let count = if elem_width > 0 { lv.width / elem_width } else { 0 };
+                    let count = if elem_width > 0 {
+                        lv.width / elem_width
+                    } else {
+                        0
+                    };
                     for i in 0..count {
-                        if self.disable_pending.is_some() { break; }
-                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
+                        if self.control_flow.is_some() {
+                            self.control_flow = None;
+                            break;
+                        }
                         let idx_val = LogicVec::from_u64(i as u64, 32);
                         let mut scope = HashMap::new();
                         scope.insert(index_var.clone(), idx_val);
@@ -1594,16 +2072,31 @@ impl SimulationEngine {
                         self.evaluate_block_with_delay_fork(body, fork_id)?;
                         self.method_locals.truncate(depth);
                         let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) { continue; }
-                        if cf == Some(FlowControl::Break) { break; }
+                        if cf == Some(FlowControl::Continue) {
+                            continue;
+                        }
+                        if cf == Some(FlowControl::Break) {
+                            break;
+                        }
                     }
                 }
-                IrStmt::MethodCallStmt { obj, method, args, with_clause } => {
+                IrStmt::MethodCallStmt {
+                    obj,
+                    method,
+                    args,
+                    with_clause,
+                } => {
                     if let IrExpr::Signal(id, _) = obj {
                         let sig_info = self.design.top.signals.get(*id).cloned();
                         if let Some(ref sig) = sig_info {
                             if sig.is_dynamic || sig.is_queue || sig.is_associative {
-                                let _ = self.evaluate_array_method(*id, sig, method, args, with_clause.as_deref())?;
+                                let _ = self.evaluate_array_method(
+                                    *id,
+                                    sig,
+                                    method,
+                                    args,
+                                    with_clause.as_deref(),
+                                )?;
                                 continue;
                             }
                             // Auto-create object for class/covergroup variables
@@ -1612,15 +2105,22 @@ impl SimulationEngine {
                                 if is_cg || self.design.classes.contains_key(cn) {
                                     let obj_val = self.state.read_signal(*id);
                                     let obj_id = obj_val.to_u64() as ObjId;
-                                    if obj_id == 0 && self.state.objects.len() > 0 && self.state.objects[0].class_name.is_empty() {
+                                    if obj_id == 0
+                                        && self.state.objects.len() > 0
+                                        && self.state.objects[0].class_name.is_empty()
+                                    {
                                         let class_for_obj = if is_cg {
                                             format!("__covergroup_{}", cn)
                                         } else {
                                             cn.clone()
                                         };
                                         let new_id = self.state.alloc_object(&class_for_obj);
-                                        self.state.write_signal(*id, LogicVec::from_u64(new_id as u64, 64));
-                                        let arg_vals: Vec<LogicVec> = args.iter()
+                                        self.state.write_signal(
+                                            *id,
+                                            LogicVec::from_u64(new_id as u64, 64),
+                                        );
+                                        let arg_vals: Vec<LogicVec> = args
+                                            .iter()
                                             .map(|a| self.evaluate_expr(a))
                                             .collect::<Result<_, _>>()?;
                                         self.execute_method(new_id, method, &arg_vals)?;
@@ -1632,12 +2132,16 @@ impl SimulationEngine {
                     }
                     let obj_val = self.evaluate_expr(obj)?;
                     let obj_id = obj_val.to_u64() as ObjId;
-                    let arg_vals: Vec<LogicVec> = args.iter()
+                    let arg_vals: Vec<LogicVec> = args
+                        .iter()
                         .map(|a| self.evaluate_expr(a))
                         .collect::<Result<_, _>>()?;
                     self.execute_method(obj_id, method, &arg_vals)?;
                 }
-                IrStmt::Fork { processes, join_type } => {
+                IrStmt::Fork {
+                    processes,
+                    join_type,
+                } => {
                     let fid = self.fork_groups.len();
                     let remaining: Vec<IrStmt> = stmts[i + 1..].to_vec();
                     let count = processes.len();
@@ -1653,7 +2157,8 @@ impl SimulationEngine {
                                         self.fork_groups[fid].remaining -= 1;
                                     }
                                 } else {
-                                    let all_consumed = self.evaluate_block_with_delay_fork(&p, Some(fid))?;
+                                    let all_consumed =
+                                        self.evaluate_block_with_delay_fork(&p, Some(fid))?;
                                     if all_consumed && self.fork_groups[fid].remaining > 0 {
                                         self.fork_groups[fid].remaining -= 1;
                                     }
@@ -1671,7 +2176,8 @@ impl SimulationEngine {
                                 if p.is_empty() {
                                     any_immediate = true;
                                 } else {
-                                    let all_consumed = self.evaluate_block_with_delay_fork(&p, Some(fid))?;
+                                    let all_consumed =
+                                        self.evaluate_block_with_delay_fork(&p, Some(fid))?;
                                     if all_consumed {
                                         any_immediate = true;
                                     }
@@ -1717,16 +2223,26 @@ impl SimulationEngine {
     }
 
     fn evaluate_ast_block_with_delay_fork(
-        &mut self, stmts: &[crate::ast::Stmt], fork_id: Option<usize>
+        &mut self,
+        stmts: &[crate::ast::Stmt],
+        fork_id: Option<usize>,
     ) -> Result<bool, SimError> {
         for (i, stmt) in stmts.iter().enumerate() {
-            if self.disable_pending.is_some() { return Ok(true); }
-            if self.control_flow.is_some() { return Ok(true); }
+            if self.disable_pending.is_some() {
+                return Ok(true);
+            }
+            if self.control_flow.is_some() {
+                return Ok(true);
+            }
             match stmt {
                 crate::ast::Stmt::Block { stmts: inner } => {
                     self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
                 }
-                crate::ast::Stmt::NamedBlock { name, stmts: inner, decls: _ } => {
+                crate::ast::Stmt::NamedBlock {
+                    name,
+                    stmts: inner,
+                    decls: _,
+                } => {
                     if self.disable_pending.as_deref() == Some(name) {
                         self.disable_pending = None;
                         return Ok(true);
@@ -1753,7 +2269,11 @@ impl SimulationEngine {
                         self.write_ast_lvalue(lhs, val)?;
                     }
                 }
-                crate::ast::Stmt::IfElse { cond, true_branch, false_branch } => {
+                crate::ast::Stmt::IfElse {
+                    cond,
+                    true_branch,
+                    false_branch,
+                } => {
                     let cond_val = self.evaluate_ast_expr(cond)?;
                     if cond_val.to_bool().unwrap_or(false) {
                         self.evaluate_ast_block_with_delay_fork(&[*true_branch.clone()], fork_id)?;
@@ -1761,7 +2281,11 @@ impl SimulationEngine {
                         self.evaluate_ast_block_with_delay_fork(&[*fb.clone()], fork_id)?;
                     }
                 }
-                crate::ast::Stmt::Case { expr, items, default } => {
+                crate::ast::Stmt::Case {
+                    expr,
+                    items,
+                    default,
+                } => {
                     let case_val = self.evaluate_ast_expr(expr)?;
                     let mut matched = false;
                     for item in items {
@@ -1769,14 +2293,21 @@ impl SimulationEngine {
                         for pat in &item.labels {
                             let pat_val = self.evaluate_ast_expr(pat)?;
                             if case_val.eq(&pat_val) {
-                                self.evaluate_ast_block_with_delay_fork(&[*item.stmt.clone()], fork_id)?;
-                                if self.disable_pending.is_some() { return Ok(true); }
+                                self.evaluate_ast_block_with_delay_fork(
+                                    &[*item.stmt.clone()],
+                                    fork_id,
+                                )?;
+                                if self.disable_pending.is_some() {
+                                    return Ok(true);
+                                }
                                 item_matched = true;
                                 matched = true;
                                 break;
                             }
                         }
-                        if item_matched { break; }
+                        if item_matched {
+                            break;
+                        }
                     }
                     if !matched {
                         if let Some(def) = default {
@@ -1784,18 +2315,28 @@ impl SimulationEngine {
                         }
                     }
                 }
-                crate::ast::Stmt::CaseX { expr, items, default } => {
+                crate::ast::Stmt::CaseX {
+                    expr,
+                    items,
+                    default,
+                } => {
                     let case_val = self.evaluate_ast_expr(expr)?;
                     let mut matched = false;
                     for item in items {
                         for pat in &item.labels {
                             let pat_val = self.evaluate_ast_expr(pat)?;
                             if case_val.casex_eq(&pat_val) {
-                                self.evaluate_ast_block_with_delay_fork(&[*item.stmt.clone()], fork_id)?;
-                                matched = true; break;
+                                self.evaluate_ast_block_with_delay_fork(
+                                    &[*item.stmt.clone()],
+                                    fork_id,
+                                )?;
+                                matched = true;
+                                break;
                             }
                         }
-                        if matched { break; }
+                        if matched {
+                            break;
+                        }
                     }
                     if !matched {
                         if let Some(def) = default {
@@ -1803,18 +2344,28 @@ impl SimulationEngine {
                         }
                     }
                 }
-                crate::ast::Stmt::CaseZ { expr, items, default } => {
+                crate::ast::Stmt::CaseZ {
+                    expr,
+                    items,
+                    default,
+                } => {
                     let case_val = self.evaluate_ast_expr(expr)?;
                     let mut matched = false;
                     for item in items {
                         for pat in &item.labels {
                             let pat_val = self.evaluate_ast_expr(pat)?;
                             if case_val.casez_eq(&pat_val) {
-                                self.evaluate_ast_block_with_delay_fork(&[*item.stmt.clone()], fork_id)?;
-                                matched = true; break;
+                                self.evaluate_ast_block_with_delay_fork(
+                                    &[*item.stmt.clone()],
+                                    fork_id,
+                                )?;
+                                matched = true;
+                                break;
                             }
                         }
-                        if matched { break; }
+                        if matched {
+                            break;
+                        }
                     }
                     if !matched {
                         if let Some(def) = default {
@@ -1822,50 +2373,87 @@ impl SimulationEngine {
                         }
                     }
                 }
-                crate::ast::Stmt::LoopForever { stmts: inner } => {
-                    loop {
-                        if self.disable_pending.is_some() { break; }
-                        if self.control_flow.is_some() { self.control_flow = None; break; }
-                        self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
-                        let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Break) { break; }
-                        if cf == Some(FlowControl::Continue) { continue; }
+                crate::ast::Stmt::LoopForever { stmts: inner } => loop {
+                    if self.disable_pending.is_some() {
+                        break;
                     }
-                }
-                crate::ast::Stmt::LoopWhile { cond, stmts: inner } => {
-                    loop {
-                        if self.disable_pending.is_some() { break; }
-                        if self.control_flow.is_some() { self.control_flow = None; break; }
-                        let cond_val = self.evaluate_ast_expr(cond)?;
-                        if !cond_val.to_bool().unwrap_or(false) { break; }
-                        self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
-                        let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Break) { break; }
-                        if cf == Some(FlowControl::Continue) { continue; }
+                    if self.control_flow.is_some() {
+                        self.control_flow = None;
+                        break;
                     }
-                }
-                crate::ast::Stmt::DoWhile { cond, stmts: inner } => {
-                    loop {
-                        if self.disable_pending.is_some() { break; }
-                        if self.control_flow.is_some() { self.control_flow = None; break; }
-                        self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
-                        let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) { continue; }
-                        if cf == Some(FlowControl::Break) { break; }
-                        let cond_val = self.evaluate_ast_expr(cond)?;
-                        if !cond_val.to_bool().unwrap_or(false) { break; }
+                    self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                    let cf = self.control_flow.take();
+                    if cf == Some(FlowControl::Break) {
+                        break;
                     }
-                }
-                crate::ast::Stmt::LoopFor { init, cond, step, stmts: inner } => {
+                    if cf == Some(FlowControl::Continue) {
+                        continue;
+                    }
+                },
+                crate::ast::Stmt::LoopWhile { cond, stmts: inner } => loop {
+                    if self.disable_pending.is_some() {
+                        break;
+                    }
+                    if self.control_flow.is_some() {
+                        self.control_flow = None;
+                        break;
+                    }
+                    let cond_val = self.evaluate_ast_expr(cond)?;
+                    if !cond_val.to_bool().unwrap_or(false) {
+                        break;
+                    }
+                    self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                    let cf = self.control_flow.take();
+                    if cf == Some(FlowControl::Break) {
+                        break;
+                    }
+                    if cf == Some(FlowControl::Continue) {
+                        continue;
+                    }
+                },
+                crate::ast::Stmt::DoWhile { cond, stmts: inner } => loop {
+                    if self.disable_pending.is_some() {
+                        break;
+                    }
+                    if self.control_flow.is_some() {
+                        self.control_flow = None;
+                        break;
+                    }
+                    self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                    let cf = self.control_flow.take();
+                    if cf == Some(FlowControl::Continue) {
+                        continue;
+                    }
+                    if cf == Some(FlowControl::Break) {
+                        break;
+                    }
+                    let cond_val = self.evaluate_ast_expr(cond)?;
+                    if !cond_val.to_bool().unwrap_or(false) {
+                        break;
+                    }
+                },
+                crate::ast::Stmt::LoopFor {
+                    init,
+                    cond,
+                    step,
+                    stmts: inner,
+                } => {
                     if let Some(init_stmt) = init {
                         self.evaluate_ast_block_with_delay_fork(&[*init_stmt.clone()], fork_id)?;
                     }
                     loop {
-                        if self.disable_pending.is_some() { break; }
-                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
+                        if self.control_flow.is_some() {
+                            self.control_flow = None;
+                            break;
+                        }
                         if let Some(ref c) = cond {
                             let cv = self.evaluate_ast_expr(c)?;
-                            if !cv.to_bool().unwrap_or(false) { break; }
+                            if !cv.to_bool().unwrap_or(false) {
+                                break;
+                            }
                         }
                         self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
                         let cf = self.control_flow.take();
@@ -1875,23 +2463,39 @@ impl SimulationEngine {
                             }
                             continue;
                         }
-                        if cf == Some(FlowControl::Break) { break; }
-                        if self.disable_pending.is_some() { break; }
+                        if cf == Some(FlowControl::Break) {
+                            break;
+                        }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
                         if let Some(s) = step {
                             self.evaluate_ast_block_with_delay_fork(&[*s.clone()], fork_id)?;
                         }
                     }
                 }
-                crate::ast::Stmt::Repeat { count, stmts: inner } => {
+                crate::ast::Stmt::Repeat {
+                    count,
+                    stmts: inner,
+                } => {
                     let count_val = self.evaluate_ast_expr(count)?;
                     let n = count_val.to_u64() as usize;
                     for _ in 0..n {
-                        if self.disable_pending.is_some() { break; }
-                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
+                        if self.control_flow.is_some() {
+                            self.control_flow = None;
+                            break;
+                        }
                         self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
                         let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) { continue; }
-                        if cf == Some(FlowControl::Break) { break; }
+                        if cf == Some(FlowControl::Continue) {
+                            continue;
+                        }
+                        if cf == Some(FlowControl::Break) {
+                            break;
+                        }
                     }
                 }
                 crate::ast::Stmt::Delay { delay, stmt: body } => {
@@ -1907,7 +2511,11 @@ impl SimulationEngine {
                             }
                             v
                         };
-                        let region = if d == 0 { EventRegion::Inactive } else { EventRegion::Active };
+                        let region = if d == 0 {
+                            EventRegion::Inactive
+                        } else {
+                            EventRegion::Active
+                        };
                         self.events[delay_t].push(RegionEvent {
                             region,
                             event: EventKind::ContinueAstBlock(remaining, fork_id),
@@ -2013,11 +2621,16 @@ impl SimulationEngine {
                     self.disable_pending = Some(name.clone());
                     return Ok(true);
                 }
-                crate::ast::Stmt::Fork { processes, join_type } => {
+                crate::ast::Stmt::Fork {
+                    processes,
+                    join_type,
+                } => {
                     let fid = self.fork_groups.len();
                     let remaining: Vec<crate::ast::Stmt> = if i + 1 < stmts.len() {
                         stmts[i + 1..].to_vec()
-                    } else { Vec::new() };
+                    } else {
+                        Vec::new()
+                    };
                     // Convert join type
                     let _ir_join = match join_type {
                         crate::ast::JoinType::Join => IrJoinType::Join,
@@ -2035,7 +2648,12 @@ impl SimulationEngine {
                     }
                     return Ok(true);
                 }
-                crate::ast::Stmt::Assert { cond, pass_stmt, fail_stmt, .. } => {
+                crate::ast::Stmt::Assert {
+                    cond,
+                    pass_stmt,
+                    fail_stmt,
+                    ..
+                } => {
                     let ok = self.evaluate_ast_expr(cond)?.to_bool().unwrap_or(false);
                     if ok {
                         if let Some(ps) = pass_stmt {
@@ -2048,7 +2666,12 @@ impl SimulationEngine {
                         }
                     }
                 }
-                crate::ast::Stmt::Assume { cond, pass_stmt, fail_stmt, .. } => {
+                crate::ast::Stmt::Assume {
+                    cond,
+                    pass_stmt,
+                    fail_stmt,
+                    ..
+                } => {
                     let ok = self.evaluate_ast_expr(cond)?.to_bool().unwrap_or(false);
                     if ok {
                         if let Some(ps) = pass_stmt {
@@ -2061,7 +2684,9 @@ impl SimulationEngine {
                         }
                     }
                 }
-                crate::ast::Stmt::Cover { cond, pass_stmt, .. } => {
+                crate::ast::Stmt::Cover {
+                    cond, pass_stmt, ..
+                } => {
                     let ok = self.evaluate_ast_expr(cond)?.to_bool().unwrap_or(false);
                     if ok {
                         if let Some(ps) = pass_stmt {
@@ -2079,8 +2704,12 @@ impl SimulationEngine {
 
     fn evaluate_stmt_block(&mut self, stmts: &[IrStmt]) -> Result<(), SimError> {
         for (i, stmt) in stmts.iter().enumerate() {
-            if self.disable_pending.is_some() { return Ok(()); }
-            if self.control_flow.is_some() { return Ok(()); }
+            if self.disable_pending.is_some() {
+                return Ok(());
+            }
+            if self.control_flow.is_some() {
+                return Ok(());
+            }
             match stmt {
                 IrStmt::BlockingAssign { lhs, rhs, delay: _ } => {
                     if !self.is_forced(lhs) {
@@ -2101,7 +2730,11 @@ impl SimulationEngine {
                         self.forced_signals.insert(id);
                     }
                 }
-                IrStmt::If { cond, true_branch: then_stmts, false_branch: else_stmts } => {
+                IrStmt::If {
+                    cond,
+                    true_branch: then_stmts,
+                    false_branch: else_stmts,
+                } => {
                     let cond_val = self.evaluate_expr(cond)?;
                     if cond_val.to_bool().unwrap_or(false) {
                         self.evaluate_stmt_block(then_stmts)?;
@@ -2112,7 +2745,9 @@ impl SimulationEngine {
                 IrStmt::Block { stmts: inner } => {
                     self.evaluate_stmt_block(inner)?;
                 }
-                IrStmt::NamedBlock { name, stmts: inner, .. } => {
+                IrStmt::NamedBlock {
+                    name, stmts: inner, ..
+                } => {
                     if self.disable_pending.as_deref() == Some(name) {
                         self.disable_pending = None;
                         return Ok(());
@@ -2126,39 +2761,62 @@ impl SimulationEngine {
                     }
                     self.disable_pending = self.disable_pending.take().or(old);
                 }
-                IrStmt::SysCall { name, args: ir_args } => {
+                IrStmt::SysCall {
+                    name,
+                    args: ir_args,
+                } => {
                     if name == "display" || name == "write" {
-                        let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, ir_args);
+                        let msg = format_display(
+                            &self.state,
+                            &self.design.top.signals,
+                            &self.design.hier_signal_map,
+                            &self.assoc_data,
+                            ir_args,
+                        );
                         print!("{}", msg);
                     } else if name == "strobe" {
                         self.strobe_events.push(ir_args.clone());
                     } else if name == "fstrobe" {
-                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             self.fstrobe_events.push((h, ir_args[1..].to_vec()));
                         }
                     } else if name == "fmonitor" {
-                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
-                            let vals: Vec<LogicVec> = ir_args[1..].iter()
+                            let vals: Vec<LogicVec> = ir_args[1..]
+                                .iter()
                                 .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
                                 .collect();
                             self.fmonitor_map.insert(h, (ir_args[1..].to_vec(), vals));
                         }
                     } else if name == "monitor" {
-                        let vals: Vec<LogicVec> = ir_args.iter()
+                        let vals: Vec<LogicVec> = ir_args
+                            .iter()
                             .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
                             .collect();
                         self.monitor_args = Some(ir_args.clone());
                         self.monitor_last_values = Some(vals);
                     } else if name == "urandom" {
                         let val: u32 = self.rng.gen();
-                        let sig_id = ir_args.first().and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                        let sig_id = ir_args.first().and_then(|a| {
+                            if let IrExpr::Signal(id, _) = a {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        });
                         if let Some(sid) = sig_id {
-                            self.state.write_signal(sid, LogicVec::from_u64(val as u64, 32));
+                            self.state
+                                .write_signal(sid, LogicVec::from_u64(val as u64, 32));
                         }
                     } else if name == "urandom_range" {
-                        let args_eval: Vec<LogicVec> = ir_args.iter()
+                        let args_eval: Vec<LogicVec> = ir_args
+                            .iter()
                             .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
                             .collect();
                         let maxval = args_eval.first().map(|v| v.to_u64()).unwrap_or(0);
@@ -2167,10 +2825,19 @@ impl SimulationEngine {
                             minval
                         } else {
                             let range = maxval - minval + 1;
-                            if range <= 1 { minval }
-                            else { minval + (self.rng.gen::<u64>() % range) }
+                            if range <= 1 {
+                                minval
+                            } else {
+                                minval + (self.rng.gen::<u64>() % range)
+                            }
                         };
-                        let sig_id = ir_args.first().and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                        let sig_id = ir_args.first().and_then(|a| {
+                            if let IrExpr::Signal(id, _) = a {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        });
                         if let Some(sid) = sig_id {
                             self.state.write_signal(sid, LogicVec::from_u64(val, 32));
                         }
@@ -2184,9 +2851,16 @@ impl SimulationEngine {
                             }
                         }
                         let val: i32 = self.rng.gen();
-                        let sig_id = ir_args.first().and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                        let sig_id = ir_args.first().and_then(|a| {
+                            if let IrExpr::Signal(id, _) = a {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        });
                         if let Some(sid) = sig_id {
-                            self.state.write_signal(sid, LogicVec::from_u64(val as u64, 32));
+                            self.state
+                                .write_signal(sid, LogicVec::from_u64(val as u64, 32));
                         }
                     } else if name == "dumpfile" {
                         if let Some(IrExpr::String(fname)) = ir_args.first() {
@@ -2210,7 +2884,10 @@ impl SimulationEngine {
                             vcd.dump_all(design, state)?;
                         }
                     } else if name == "dumplimit" {
-                        if let Some(limit) = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64())) {
+                        if let Some(limit) = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64()))
+                        {
                             if let Some(ref mut vcd) = self.vcd {
                                 vcd.max_dump_size = Some(limit);
                             }
@@ -2224,13 +2901,28 @@ impl SimulationEngine {
                             vcd.enabled = false;
                         }
                     } else if name == "fopen" {
-                        let fname = ir_args.first().and_then(|a| if let IrExpr::String(s) = a { Some(s.clone()) } else { None });
+                        let fname = ir_args.first().and_then(|a| {
+                            if let IrExpr::String(s) = a {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        });
                         if let Some(fname) = fname {
-                            let mode = ir_args.get(1).and_then(|a| if let IrExpr::String(s) = a { Some(s.as_str()) } else { None });
+                            let mode = ir_args.get(1).and_then(|a| {
+                                if let IrExpr::String(s) = a {
+                                    Some(s.as_str())
+                                } else {
+                                    None
+                                }
+                            });
                             let open_result = match mode {
                                 Some("r") | Some("rb") => std::fs::File::open(&fname),
                                 _ => std::fs::OpenOptions::new()
-                                    .read(true).write(true).create(true).truncate(true)
+                                    .read(true)
+                                    .write(true)
+                                    .create(true)
+                                    .truncate(true)
                                     .open(&fname),
                             };
                             match open_result {
@@ -2239,13 +2931,28 @@ impl SimulationEngine {
                                     self.next_file_handle += 1;
                                     self.file_handles.insert(handle, f);
                                     self.file_read_pos.insert(handle, 0);
-                                    let sig_id = ir_args.get(1).and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                                    let sig_id = ir_args.get(1).and_then(|a| {
+                                        if let IrExpr::Signal(id, _) = a {
+                                            Some(*id)
+                                        } else {
+                                            None
+                                        }
+                                    });
                                     if let Some(sid) = sig_id {
-                                        self.state.write_signal(sid, LogicVec::from_u64(handle as u64, 32));
+                                        self.state.write_signal(
+                                            sid,
+                                            LogicVec::from_u64(handle as u64, 32),
+                                        );
                                     }
                                 }
                                 Err(_) => {
-                                    let sig_id = ir_args.get(1).and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                                    let sig_id = ir_args.get(1).and_then(|a| {
+                                        if let IrExpr::Signal(id, _) = a {
+                                            Some(*id)
+                                        } else {
+                                            None
+                                        }
+                                    });
                                     if let Some(sid) = sig_id {
                                         self.state.write_signal(sid, LogicVec::from_u64(0, 32));
                                     }
@@ -2253,32 +2960,56 @@ impl SimulationEngine {
                             }
                         }
                     } else if name == "fdisplay" {
-                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, &ir_args[1..]);
+                                let msg = format_display(
+                                    &self.state,
+                                    &self.design.top.signals,
+                                    &self.design.hier_signal_map,
+                                    &self.assoc_data,
+                                    &ir_args[1..],
+                                );
                                 let _ = write!(f, "{}", msg);
                             }
                         }
                     } else if name == "fwrite" {
-                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, &ir_args[1..]);
+                                let msg = format_display(
+                                    &self.state,
+                                    &self.design.top.signals,
+                                    &self.design.hier_signal_map,
+                                    &self.assoc_data,
+                                    &ir_args[1..],
+                                );
                                 let _ = write!(f, "{}", msg);
                             }
                         }
                     } else if name == "fscanf" {
-                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                use std::io::{Seek, Read};
+                                use std::io::{Read, Seek};
                                 let read_pos = self.file_read_pos.entry(h).or_insert(0);
                                 f.seek(std::io::SeekFrom::Start(*read_pos)).ok();
                                 let mut content = String::new();
                                 let _bytes_read = f.read_to_string(&mut content).unwrap_or(0);
                                 *read_pos = f.stream_position().unwrap_or(0);
-                                let fmt = ir_args.get(1).and_then(|a| if let IrExpr::String(s) = a { Some(s.clone()) } else { None });
+                                let fmt = ir_args.get(1).and_then(|a| {
+                                    if let IrExpr::String(s) = a {
+                                        Some(s.clone())
+                                    } else {
+                                        None
+                                    }
+                                });
                                 if let Some(ref fmt_str) = fmt {
                                     let tokens: Vec<&str> = content.split_whitespace().collect();
                                     let mut ti = 0;
@@ -2289,11 +3020,24 @@ impl SimulationEngine {
                                             if let Some(spec) = chars.next() {
                                                 if spec == 'd' || spec == 'h' || spec == 'b' {
                                                     if let Some(tok) = tokens.get(ti) {
-                                                        if let Ok(val) = if spec == 'h' { i64::from_str_radix(tok, 16) } else if spec == 'b' { i64::from_str_radix(tok, 2) } else { tok.parse::<i64>() } {
+                                                        if let Ok(val) = if spec == 'h' {
+                                                            i64::from_str_radix(tok, 16)
+                                                        } else if spec == 'b' {
+                                                            i64::from_str_radix(tok, 2)
+                                                        } else {
+                                                            tok.parse::<i64>()
+                                                        } {
                                                             let out_idx = 2 + ai;
-                                                            if let Some(arg) = ir_args.get(out_idx) {
-                                                                if let IrExpr::Signal(sid, _) = arg {
-                                                                    self.state.write_signal(*sid, LogicVec::from_u64(val as u64, 32));
+                                                            if let Some(arg) = ir_args.get(out_idx)
+                                                            {
+                                                                if let IrExpr::Signal(sid, _) = arg
+                                                                {
+                                                                    self.state.write_signal(
+                                                                        *sid,
+                                                                        LogicVec::from_u64(
+                                                                            val as u64, 32,
+                                                                        ),
+                                                                    );
                                                                 }
                                                             }
                                                             ai += 1;
@@ -2308,37 +3052,65 @@ impl SimulationEngine {
                             }
                         }
                     } else if name == "fread" {
-                        let target = ir_args.first().and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                        let target = ir_args.first().and_then(|a| {
+                            if let IrExpr::Signal(id, _) = a {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        });
                         let src = ir_args.get(1);
                         let data = if let Some(IrExpr::String(fname)) = src {
                             std::fs::read(fname).ok()
                         } else if let Some(arg) = src {
-                            let handle = self.evaluate_expr(arg).ok().map(|v| v.to_u64() as u32).unwrap_or(0);
+                            let handle = self
+                                .evaluate_expr(arg)
+                                .ok()
+                                .map(|v| v.to_u64() as u32)
+                                .unwrap_or(0);
                             if handle > 0 {
                                 use std::io::Read;
                                 self.file_handles.get_mut(&handle).and_then(|f| {
                                     let mut buf = Vec::new();
                                     f.read_to_end(&mut buf).ok().map(|_| buf)
                                 })
-                            } else { None }
-                        } else { None };
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
                         if let (Some(sid), Some(bytes)) = (target, data) {
                             let mut bits = Vec::with_capacity(bytes.len() * 8);
                             for byte in bytes {
                                 for i in 0..8 {
-                                    bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                                    bits.push(if (byte >> i) & 1 == 1 {
+                                        LogicVal::One
+                                    } else {
+                                        LogicVal::Zero
+                                    });
                                 }
                             }
-                            self.state.write_signal(sid, LogicVec { width: bits.len(), bits });
+                            self.state.write_signal(
+                                sid,
+                                LogicVec {
+                                    width: bits.len(),
+                                    bits,
+                                },
+                            );
                         }
                     } else if name == "fclose" {
-                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             self.file_handles.remove(&h);
                             self.file_read_pos.remove(&h);
                         }
                     } else if name == "fflush" {
-                        let handle = ir_args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
                                 let _ = f.flush();
@@ -2348,14 +3120,24 @@ impl SimulationEngine {
                         if let Some(arg) = ir_args.first() {
                             self.evaluate_expr(arg)?;
                         }
-                     } else if name == "value$plusargs" {
-                        let pattern = ir_args.first().and_then(|a| self.evaluate_expr(a).ok()).map(|v| logicvec_to_string(&v)).unwrap_or_default();
-                        let plusarg_name = pattern.split('%').next().unwrap_or(&pattern).trim_end_matches('=');
+                    } else if name == "value$plusargs" {
+                        let pattern = ir_args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok())
+                            .map(|v| logicvec_to_string(&v))
+                            .unwrap_or_default();
+                        let plusarg_name = pattern
+                            .split('%')
+                            .next()
+                            .unwrap_or(&pattern)
+                            .trim_end_matches('=');
                         let plusargs = self.plusargs.clone();
                         for (key, val) in &plusargs {
                             if key == plusarg_name {
                                 if let Some(var_arg) = ir_args.get(1) {
-                                    let num = if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
+                                    let num = if let Some(hex) =
+                                        val.strip_prefix("0x").or_else(|| val.strip_prefix("0X"))
+                                    {
                                         u64::from_str_radix(hex, 16).unwrap_or(0)
                                     } else {
                                         val.parse::<u64>().unwrap_or(0)
@@ -2376,7 +3158,12 @@ impl SimulationEngine {
                     self.running = false;
                     return Ok(());
                 }
-                IrStmt::Case { case_type, expr: case_expr, items, default } => {
+                IrStmt::Case {
+                    case_type,
+                    expr: case_expr,
+                    items,
+                    default,
+                } => {
                     let case_val = self.evaluate_expr(case_expr)?;
                     let mut matched = false;
                     for case_item in items {
@@ -2390,20 +3177,31 @@ impl SimulationEngine {
                             };
                             if eq {
                                 self.evaluate_stmt_block(&case_item.body)?;
-                                if self.disable_pending.is_some() { return Ok(()); }
+                                if self.disable_pending.is_some() {
+                                    return Ok(());
+                                }
                                 item_matched = true;
                                 matched = true;
                                 break;
                             }
                         }
-                        if item_matched { break; }
+                        if item_matched {
+                            break;
+                        }
                     }
                     if !matched && !default.is_empty() {
                         self.evaluate_stmt_block(default)?;
                     }
                 }
                 IrStmt::Null => {}
-                IrStmt::Assert { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence: _ } => {
+                IrStmt::Assert {
+                    cond,
+                    pass_stmt,
+                    fail_stmt,
+                    clock_event,
+                    disable_iff,
+                    sequence: _,
+                } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => true,
@@ -2428,7 +3226,14 @@ impl SimulationEngine {
                         }
                     }
                 }
-                IrStmt::Assume { cond, pass_stmt, fail_stmt, clock_event, disable_iff, sequence: _ } => {
+                IrStmt::Assume {
+                    cond,
+                    pass_stmt,
+                    fail_stmt,
+                    clock_event,
+                    disable_iff,
+                    sequence: _,
+                } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => true,
@@ -2453,7 +3258,13 @@ impl SimulationEngine {
                         }
                     }
                 }
-                IrStmt::Cover { cond, pass_stmt, clock_event, disable_iff, sequence: _ } => {
+                IrStmt::Cover {
+                    cond,
+                    pass_stmt,
+                    clock_event,
+                    disable_iff,
+                    sequence: _,
+                } => {
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => true,
@@ -2482,21 +3293,36 @@ impl SimulationEngine {
                     self.control_flow = Some(FlowControl::Continue);
                     return Ok(());
                 }
-                IrStmt::LoopFor { init, cond, step, body } => {
+                IrStmt::LoopFor {
+                    init,
+                    cond,
+                    step,
+                    body,
+                } => {
                     if let Some(init_stmt) = init {
                         self.evaluate_stmt_block(&[*init_stmt.clone()])?;
                     }
                     let mut iter_count = 0usize;
                     loop {
                         if iter_count >= MAX_LOOP_ITER {
-                            eprintln!("warning: for loop exceeded {} iterations, breaking", MAX_LOOP_ITER);
+                            eprintln!(
+                                "warning: for loop exceeded {} iterations, breaking",
+                                MAX_LOOP_ITER
+                            );
                             break;
                         }
                         iter_count += 1;
-                        if self.disable_pending.is_some() { break; }
-                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
+                        if self.control_flow.is_some() {
+                            self.control_flow = None;
+                            break;
+                        }
                         let cond_val = self.evaluate_expr(cond)?;
-                        if !cond_val.to_bool().unwrap_or(false) { break; }
+                        if !cond_val.to_bool().unwrap_or(false) {
+                            break;
+                        }
                         self.evaluate_stmt_block(body)?;
                         let cf = self.control_flow.take();
                         if cf == Some(FlowControl::Continue) {
@@ -2505,8 +3331,12 @@ impl SimulationEngine {
                             }
                             continue;
                         }
-                        if cf == Some(FlowControl::Break) { break; }
-                        if self.disable_pending.is_some() { break; }
+                        if cf == Some(FlowControl::Break) {
+                            break;
+                        }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
                         if let Some(step_stmt) = step {
                             self.evaluate_stmt_block(&[*step_stmt.clone()])?;
                         }
@@ -2516,59 +3346,104 @@ impl SimulationEngine {
                     let mut iter_count = 0usize;
                     loop {
                         if iter_count >= MAX_LOOP_ITER {
-                            eprintln!("warning: while loop exceeded {} iterations, breaking", MAX_LOOP_ITER);
+                            eprintln!(
+                                "warning: while loop exceeded {} iterations, breaking",
+                                MAX_LOOP_ITER
+                            );
                             break;
                         }
                         iter_count += 1;
-                        if self.disable_pending.is_some() { break; }
-                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
+                        if self.control_flow.is_some() {
+                            self.control_flow = None;
+                            break;
+                        }
                         let cond_val = self.evaluate_expr(cond)?;
-                        if !cond_val.to_bool().unwrap_or(false) { break; }
+                        if !cond_val.to_bool().unwrap_or(false) {
+                            break;
+                        }
                         self.evaluate_stmt_block(body)?;
                         let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) { continue; }
-                        if cf == Some(FlowControl::Break) { break; }
+                        if cf == Some(FlowControl::Continue) {
+                            continue;
+                        }
+                        if cf == Some(FlowControl::Break) {
+                            break;
+                        }
                     }
                 }
                 IrStmt::LoopDoWhile { cond, body } => {
                     let mut iter_count = 0usize;
                     loop {
                         if iter_count >= MAX_LOOP_ITER {
-                            eprintln!("warning: do-while loop exceeded {} iterations, breaking", MAX_LOOP_ITER);
+                            eprintln!(
+                                "warning: do-while loop exceeded {} iterations, breaking",
+                                MAX_LOOP_ITER
+                            );
                             break;
                         }
                         iter_count += 1;
-                        if self.disable_pending.is_some() { break; }
-                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
+                        if self.control_flow.is_some() {
+                            self.control_flow = None;
+                            break;
+                        }
                         self.evaluate_stmt_block(body)?;
                         let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) { continue; }
-                        if cf == Some(FlowControl::Break) { break; }
+                        if cf == Some(FlowControl::Continue) {
+                            continue;
+                        }
+                        if cf == Some(FlowControl::Break) {
+                            break;
+                        }
                         let cond_val = self.evaluate_expr(cond)?;
-                        if !cond_val.to_bool().unwrap_or(false) { break; }
+                        if !cond_val.to_bool().unwrap_or(false) {
+                            break;
+                        }
                     }
                 }
                 IrStmt::Repeat { count, body } => {
                     let count_val = self.evaluate_expr(count)?;
                     let n = (count_val.to_u64() as usize).min(MAX_LOOP_ITER);
                     for _ in 0..n {
-                        if self.disable_pending.is_some() { break; }
-                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
+                        if self.control_flow.is_some() {
+                            self.control_flow = None;
+                            break;
+                        }
                         self.evaluate_stmt_block(body)?;
                         let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) { continue; }
-                        if cf == Some(FlowControl::Break) { break; }
+                        if cf == Some(FlowControl::Continue) {
+                            continue;
+                        }
+                        if cf == Some(FlowControl::Break) {
+                            break;
+                        }
                     }
                 }
                 IrStmt::RandCase { items } => {
-                    let total: u64 = items.iter().map(|(w_expr, _)| {
-                        self.evaluate_expr(w_expr).unwrap_or(LogicVec::from_u64(1, 32)).to_u64()
-                    }).sum();
+                    let total: u64 = items
+                        .iter()
+                        .map(|(w_expr, _)| {
+                            self.evaluate_expr(w_expr)
+                                .unwrap_or(LogicVec::from_u64(1, 32))
+                                .to_u64()
+                        })
+                        .sum();
                     if total > 0 {
                         let r = self.rng.gen::<u64>() % total;
                         let mut cumulative = 0u64;
                         for (w_expr, body) in items {
-                            let weight = self.evaluate_expr(w_expr).unwrap_or(LogicVec::from_u64(1, 32)).to_u64();
+                            let weight = self
+                                .evaluate_expr(w_expr)
+                                .unwrap_or(LogicVec::from_u64(1, 32))
+                                .to_u64();
                             cumulative += weight;
                             if r < cumulative {
                                 self.evaluate_stmt_block(body)?;
@@ -2577,16 +3452,24 @@ impl SimulationEngine {
                         }
                     }
                 }
-                                IrStmt::RandSequence { productions } => {
+                IrStmt::RandSequence { productions } => {
                     if let Some((_, items)) = productions.first() {
-                        let total: u64 = items.iter().map(|(w, _)| {
-                            self.evaluate_expr(w).unwrap_or(LogicVec::from_u64(1, 32)).to_u64()
-                        }).sum();
+                        let total: u64 = items
+                            .iter()
+                            .map(|(w, _)| {
+                                self.evaluate_expr(w)
+                                    .unwrap_or(LogicVec::from_u64(1, 32))
+                                    .to_u64()
+                            })
+                            .sum();
                         if total > 0 {
                             let r = self.rng.gen::<u64>() % total;
                             let mut acc = 0u64;
                             for (w, body) in items {
-                                acc += self.evaluate_expr(w).unwrap_or(LogicVec::from_u64(1, 32)).to_u64();
+                                acc += self
+                                    .evaluate_expr(w)
+                                    .unwrap_or(LogicVec::from_u64(1, 32))
+                                    .to_u64();
                                 if r < acc {
                                     self.evaluate_stmt_block(body)?;
                                     break;
@@ -2595,16 +3478,31 @@ impl SimulationEngine {
                         }
                     }
                 }
-                IrStmt::Foreach { array_var, index_var, body } => {
+                IrStmt::Foreach {
+                    array_var,
+                    index_var,
+                    body,
+                } => {
                     let lv = self.evaluate_expr(array_var)?;
                     let sig_info = if let IrExpr::Signal(id, _) = array_var {
                         self.design.top.signals.get(*id)
-                    } else { None };
+                    } else {
+                        None
+                    };
                     let elem_width = sig_info.map(|s| s.elem_width).unwrap_or(1);
-                    let count = if elem_width > 0 { lv.width / elem_width } else { 0 };
+                    let count = if elem_width > 0 {
+                        lv.width / elem_width
+                    } else {
+                        0
+                    };
                     for i in 0..count {
-                        if self.disable_pending.is_some() { break; }
-                        if self.control_flow.is_some() { self.control_flow = None; break; }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
+                        if self.control_flow.is_some() {
+                            self.control_flow = None;
+                            break;
+                        }
                         let idx_val = LogicVec::from_u64(i as u64, 32);
                         let mut scope = HashMap::new();
                         scope.insert(index_var.clone(), idx_val);
@@ -2613,48 +3511,71 @@ impl SimulationEngine {
                         self.evaluate_stmt_block(body)?;
                         self.method_locals.truncate(depth);
                         let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) { continue; }
-                        if cf == Some(FlowControl::Break) { break; }
-                    }
-                }
-                IrStmt::MethodCallStmt { obj, method, args, with_clause } => {
-                if let IrExpr::Signal(id, _) = obj {
-                    let sig_info = self.design.top.signals.get(*id).cloned();
-                    if let Some(ref sig) = sig_info {
-                        if sig.is_dynamic || sig.is_queue || sig.is_associative {
-                            let _ = self.evaluate_array_method(*id, sig, method, args, with_clause.as_deref())?;
+                        if cf == Some(FlowControl::Continue) {
                             continue;
                         }
-                        if let Some(ref cn) = sig.class_name {
-                            let is_cg = self.design.covergroups.iter().any(|c| c.name == *cn);
-                            if is_cg || self.design.classes.contains_key(cn) {
-                                let obj_val = self.state.read_signal(*id);
-                                let obj_id = obj_val.to_u64() as ObjId;
-                                if obj_id == 0 && self.state.objects.len() > 0 && self.state.objects[0].class_name.is_empty() {
-                                    let class_for_obj = if is_cg {
-                                        format!("__covergroup_{}", cn)
-                                    } else {
-                                        cn.clone()
-                                    };
-                                    let new_id = self.state.alloc_object(&class_for_obj);
-                                    self.state.write_signal(*id, LogicVec::from_u64(new_id as u64, 64));
-                                    let arg_vals: Vec<LogicVec> = args.iter()
-                                        .map(|a| self.evaluate_expr(a))
-                                        .collect::<Result<_, _>>()?;
-                                    self.execute_method(new_id, method, &arg_vals)?;
-                                    continue;
+                        if cf == Some(FlowControl::Break) {
+                            break;
+                        }
+                    }
+                }
+                IrStmt::MethodCallStmt {
+                    obj,
+                    method,
+                    args,
+                    with_clause,
+                } => {
+                    if let IrExpr::Signal(id, _) = obj {
+                        let sig_info = self.design.top.signals.get(*id).cloned();
+                        if let Some(ref sig) = sig_info {
+                            if sig.is_dynamic || sig.is_queue || sig.is_associative {
+                                let _ = self.evaluate_array_method(
+                                    *id,
+                                    sig,
+                                    method,
+                                    args,
+                                    with_clause.as_deref(),
+                                )?;
+                                continue;
+                            }
+                            if let Some(ref cn) = sig.class_name {
+                                let is_cg = self.design.covergroups.iter().any(|c| c.name == *cn);
+                                if is_cg || self.design.classes.contains_key(cn) {
+                                    let obj_val = self.state.read_signal(*id);
+                                    let obj_id = obj_val.to_u64() as ObjId;
+                                    if obj_id == 0
+                                        && self.state.objects.len() > 0
+                                        && self.state.objects[0].class_name.is_empty()
+                                    {
+                                        let class_for_obj = if is_cg {
+                                            format!("__covergroup_{}", cn)
+                                        } else {
+                                            cn.clone()
+                                        };
+                                        let new_id = self.state.alloc_object(&class_for_obj);
+                                        self.state.write_signal(
+                                            *id,
+                                            LogicVec::from_u64(new_id as u64, 64),
+                                        );
+                                        let arg_vals: Vec<LogicVec> = args
+                                            .iter()
+                                            .map(|a| self.evaluate_expr(a))
+                                            .collect::<Result<_, _>>()?;
+                                        self.execute_method(new_id, method, &arg_vals)?;
+                                        continue;
+                                    }
                                 }
                             }
                         }
                     }
+                    let obj_val = self.evaluate_expr(obj)?;
+                    let obj_id = obj_val.to_u64() as ObjId;
+                    let arg_vals: Vec<LogicVec> = args
+                        .iter()
+                        .map(|a| self.evaluate_expr(a))
+                        .collect::<Result<_, _>>()?;
+                    self.execute_method(obj_id, method, &arg_vals)?;
                 }
-                let obj_val = self.evaluate_expr(obj)?;
-                let obj_id = obj_val.to_u64() as ObjId;
-                let arg_vals: Vec<LogicVec> = args.iter()
-                    .map(|a| self.evaluate_expr(a))
-                    .collect::<Result<_, _>>()?;
-                self.execute_method(obj_id, method, &arg_vals)?;
-            }
                 IrStmt::Delay { delay, body } => {
                     let delay_val = *delay as usize;
                     let delay_t = self.state.time as usize + delay_val;
@@ -2708,7 +3629,10 @@ impl SimulationEngine {
                         self.evaluate_stmt_block(body)?;
                     }
                 }
-                IrStmt::WaitOrder { events, failure_stmts } => {
+                IrStmt::WaitOrder {
+                    events,
+                    failure_stmts,
+                } => {
                     let continuation: Vec<IrStmt> = stmts[i + 1..].to_vec();
                     self.pending_wait_orders.push(WaitOrderState {
                         events: events.clone(),
@@ -2732,7 +3656,10 @@ impl SimulationEngine {
                         self.forced_signals.remove(&id);
                     }
                 }
-                IrStmt::Fork { processes, join_type } => {
+                IrStmt::Fork {
+                    processes,
+                    join_type,
+                } => {
                     let fid = self.fork_groups.len();
                     let remaining: Vec<IrStmt> = stmts[i + 1..].to_vec();
                     let count = processes.len();
@@ -2748,7 +3675,8 @@ impl SimulationEngine {
                                         self.fork_groups[fid].remaining -= 1;
                                     }
                                 } else {
-                                    let all_consumed = self.evaluate_block_with_delay_fork(&p, Some(fid))?;
+                                    let all_consumed =
+                                        self.evaluate_block_with_delay_fork(&p, Some(fid))?;
                                     if all_consumed && self.fork_groups[fid].remaining > 0 {
                                         self.fork_groups[fid].remaining -= 1;
                                     }
@@ -2766,7 +3694,8 @@ impl SimulationEngine {
                                 if p.is_empty() {
                                     any_immediate = true;
                                 } else {
-                                    let all_consumed = self.evaluate_block_with_delay_fork(&p, Some(fid))?;
+                                    let all_consumed =
+                                        self.evaluate_block_with_delay_fork(&p, Some(fid))?;
                                     if all_consumed {
                                         any_immediate = true;
                                     }
@@ -2854,7 +3783,11 @@ impl SimulationEngine {
         Ok(any_done)
     }
 
-    fn trigger_sensitive_processes(&mut self, changed: &[(usize, LogicVec, LogicVec)], _t: usize) -> Result<(), SimError> {
+    fn trigger_sensitive_processes(
+        &mut self,
+        changed: &[(usize, LogicVec, LogicVec)],
+        _t: usize,
+    ) -> Result<(), SimError> {
         let processes = self.design.top.processes.clone();
 
         // Collect triggered combinational processes for potential parallel execution
@@ -2878,13 +3811,18 @@ impl SimulationEngine {
             let snapshot: Vec<LogicVec> = (0..signal_count)
                 .map(|i| self.state.read_signal(i).clone())
                 .collect();
-            let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = comb_indices.par_iter()
+            let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = comb_indices
+                .par_iter()
                 .map(|&pid| {
                     let process = &processes[pid];
                     if let Process::Combinational { body, .. } = process {
                         let mut local_signals = snapshot.clone();
                         let mut writes = Vec::new();
-                        match parallel::evaluate_stmt_block_parallel(body, &mut local_signals, &mut writes) {
+                        match parallel::evaluate_stmt_block_parallel(
+                            body,
+                            &mut local_signals,
+                            &mut writes,
+                        ) {
                             Ok(()) => {
                                 // Apply writes from parallel eval
                                 Ok(writes)
@@ -2923,22 +3861,23 @@ impl SimulationEngine {
                         self.reactive_events.push(EventKind::EvalProcess(pid));
                     }
                 }
-                Process::Sequential { clock, reset: _reset, body, .. } => {
+                Process::Sequential {
+                    clock,
+                    reset: _reset,
+                    body,
+                    ..
+                } => {
                     let trigger = match clock {
-                        ClockEdge::PosEdge(sig_id) => {
-                            changed.iter().any(|(id, old, new)| {
-                                id == sig_id
-                                    && old.to_bool() != Some(true)
-                                    && new.to_bool() == Some(true)
-                            })
-                        }
-                        ClockEdge::NegEdge(sig_id) => {
-                            changed.iter().any(|(id, old, new)| {
-                                id == sig_id
-                                    && old.to_bool() != Some(false)
-                                    && new.to_bool() == Some(false)
-                            })
-                        }
+                        ClockEdge::PosEdge(sig_id) => changed.iter().any(|(id, old, new)| {
+                            id == sig_id
+                                && old.to_bool() != Some(true)
+                                && new.to_bool() == Some(true)
+                        }),
+                        ClockEdge::NegEdge(sig_id) => changed.iter().any(|(id, old, new)| {
+                            id == sig_id
+                                && old.to_bool() != Some(false)
+                                && new.to_bool() == Some(false)
+                        }),
                     };
                     if trigger {
                         self.evaluate_stmt_block(body)?;
@@ -2972,7 +3911,8 @@ impl SimulationEngine {
     }
 
     fn is_forced(&self, lvalue: &IrLValue) -> bool {
-        self.signal_id_from_lvalue(lvalue).map_or(false, |id| self.forced_signals.contains(&id))
+        self.signal_id_from_lvalue(lvalue)
+            .map_or(false, |id| self.forced_signals.contains(&id))
     }
 
     fn eval_assign_rhs(&mut self, expr: &IrExpr, lhs: &IrLValue) -> Result<LogicVec, SimError> {
@@ -3017,30 +3957,57 @@ impl SimulationEngine {
             }
             IrExpr::RangeSelect(sig_id, msb, lsb) => {
                 let val = self.state.read_signal(*sig_id);
-                let (start, end) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
+                let (start, end) = if *msb > *lsb {
+                    (*lsb, *msb)
+                } else {
+                    (*msb, *lsb)
+                };
                 let mut bits = val.bits[start..=end].to_vec();
-                if *msb > *lsb { bits.reverse(); }
-                Ok(LogicVec { width: bits.len(), bits })
+                if *msb > *lsb {
+                    bits.reverse();
+                }
+                Ok(LogicVec {
+                    width: bits.len(),
+                    bits,
+                })
             }
             IrExpr::BitSelect(sig_id, idx) => {
                 let val = self.state.read_signal(*sig_id);
                 let bit = val.bits.get(*idx).copied().unwrap_or(LogicVal::X);
-                Ok(LogicVec { bits: vec![bit], width: 1 })
+                Ok(LogicVec {
+                    bits: vec![bit],
+                    width: 1,
+                })
             }
             IrExpr::ExprRangeSelect(inner, msb, lsb) => {
                 let val = self.evaluate_expr(inner)?;
-                let (start, end) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
+                let (start, end) = if *msb > *lsb {
+                    (*lsb, *msb)
+                } else {
+                    (*msb, *lsb)
+                };
                 if end >= val.width {
-                    return Err(SimError::runtime(format!("range select out of bounds: {}:{} on width {}", msb, lsb, val.width)));
+                    return Err(SimError::runtime(format!(
+                        "range select out of bounds: {}:{} on width {}",
+                        msb, lsb, val.width
+                    )));
                 }
                 let mut bits = val.bits[start..=end].to_vec();
-                if *msb > *lsb { bits.reverse(); }
-                Ok(LogicVec { width: bits.len(), bits })
+                if *msb > *lsb {
+                    bits.reverse();
+                }
+                Ok(LogicVec {
+                    width: bits.len(),
+                    bits,
+                })
             }
             IrExpr::ExprBitSelect(inner, idx) => {
                 let val = self.evaluate_expr(inner)?;
                 let bit = val.bits.get(*idx).copied().unwrap_or(LogicVal::X);
-                Ok(LogicVec { bits: vec![bit], width: 1 })
+                Ok(LogicVec {
+                    bits: vec![bit],
+                    width: 1,
+                })
             }
             IrExpr::ExprPartSelect(inner, base_expr, width_expr) => {
                 let val = self.evaluate_expr(inner)?;
@@ -3055,9 +4022,16 @@ impl SimulationEngine {
                 let mut bits = val.bits[base..=end].to_vec();
                 // PartSelect is always [high:low] with high >= low, so reverse
                 bits.reverse();
-                Ok(LogicVec { width: bits.len(), bits })
+                Ok(LogicVec {
+                    width: bits.len(),
+                    bits,
+                })
             }
-            IrExpr::ArrayIndex { sig_id, index, elem_width } => {
+            IrExpr::ArrayIndex {
+                sig_id,
+                index,
+                elem_width,
+            } => {
                 let key_val = self.evaluate_expr(index)?;
                 // Check if this is an associative array
                 let sig_info = self.design.top.signals.get(*sig_id);
@@ -3076,7 +4050,10 @@ impl SimulationEngine {
                 for i in start..=end {
                     bits.push(array_val.bits.get(i).copied().unwrap_or(LogicVal::X));
                 }
-                Ok(LogicVec { width: *elem_width, bits })
+                Ok(LogicVec {
+                    width: *elem_width,
+                    bits,
+                })
             }
             IrExpr::Concat(exprs) => {
                 let mut result = LogicVec::new(0);
@@ -3123,18 +4100,32 @@ impl SimulationEngine {
                         BinaryIrOp::Div => a / b,
                         BinaryIrOp::Mod => a % b,
                         BinaryIrOp::Power => a.powf(b),
-                        BinaryIrOp::Lt => return Ok(LogicVec::from_u64(if a < b { 1 } else { 0 }, 32)),
-                        BinaryIrOp::Le => return Ok(LogicVec::from_u64(if a <= b { 1 } else { 0 }, 32)),
-                        BinaryIrOp::Gt => return Ok(LogicVec::from_u64(if a > b { 1 } else { 0 }, 32)),
-                        BinaryIrOp::Ge => return Ok(LogicVec::from_u64(if a >= b { 1 } else { 0 }, 32)),
-                        BinaryIrOp::Eq => return Ok(LogicVec::from_u64(if a == b { 1 } else { 0 }, 32)),
-                        BinaryIrOp::Neq => return Ok(LogicVec::from_u64(if a != b { 1 } else { 0 }, 32)),
+                        BinaryIrOp::Lt => {
+                            return Ok(LogicVec::from_u64(if a < b { 1 } else { 0 }, 32))
+                        }
+                        BinaryIrOp::Le => {
+                            return Ok(LogicVec::from_u64(if a <= b { 1 } else { 0 }, 32))
+                        }
+                        BinaryIrOp::Gt => {
+                            return Ok(LogicVec::from_u64(if a > b { 1 } else { 0 }, 32))
+                        }
+                        BinaryIrOp::Ge => {
+                            return Ok(LogicVec::from_u64(if a >= b { 1 } else { 0 }, 32))
+                        }
+                        BinaryIrOp::Eq => {
+                            return Ok(LogicVec::from_u64(if a == b { 1 } else { 0 }, 32))
+                        }
+                        BinaryIrOp::Neq => {
+                            return Ok(LogicVec::from_u64(if a != b { 1 } else { 0 }, 32))
+                        }
                         _ => return Ok(eval_binary(op.clone(), &lval, &rval)),
                     };
                     Ok(LogicVec::from_u64(result.to_bits(), 64))
-                } else if matches!(op, BinaryIrOp::Lt | BinaryIrOp::Le | BinaryIrOp::Gt | BinaryIrOp::Ge)
-                    && (is_signed_expr(lhs.as_ref(), &self.design.top.signals)
-                        || is_signed_expr(rhs.as_ref(), &self.design.top.signals))
+                } else if matches!(
+                    op,
+                    BinaryIrOp::Lt | BinaryIrOp::Le | BinaryIrOp::Gt | BinaryIrOp::Ge
+                ) && (is_signed_expr(lhs.as_ref(), &self.design.top.signals)
+                    || is_signed_expr(rhs.as_ref(), &self.design.top.signals))
                 {
                     Ok(eval_binary_signed(op.clone(), &lval, &rval))
                 } else {
@@ -3155,10 +4146,17 @@ impl SimulationEngine {
                 for c in s.chars() {
                     let byte = c as u8;
                     for i in 0..8 {
-                        bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                        bits.push(if (byte >> i) & 1 == 1 {
+                            LogicVal::One
+                        } else {
+                            LogicVal::Zero
+                        });
                     }
                 }
-                Ok(LogicVec { width: bits.len(), bits })
+                Ok(LogicVec {
+                    width: bits.len(),
+                    bits,
+                })
             }
             IrExpr::SysFunc { name, args } => {
                 match name.as_str() {
@@ -3178,7 +4176,8 @@ impl SimulationEngine {
                         Ok(LogicVec::from_u64(val as u64, 32))
                     }
                     "$urandom_range" => {
-                        let args_eval: Vec<LogicVec> = args.iter()
+                        let args_eval: Vec<LogicVec> = args
+                            .iter()
                             .map(|a| self.evaluate_expr(a))
                             .collect::<Result<_, _>>()?;
                         let maxval = args_eval.first().map(|v| v.to_u64()).unwrap_or(0);
@@ -3204,7 +4203,10 @@ impl SimulationEngine {
                                 let new_width = val.width.max(1);
                                 let mut bits = val.bits.clone();
                                 bits.resize(new_width, msb);
-                                Ok(LogicVec { width: new_width, bits })
+                                Ok(LogicVec {
+                                    width: new_width,
+                                    bits,
+                                })
                             } else {
                                 Ok(val)
                             }
@@ -3224,7 +4226,8 @@ impl SimulationEngine {
                     "$countones" => {
                         if let Some(arg) = args.first() {
                             let val = self.evaluate_expr(arg)?;
-                            let count = val.bits.iter().filter(|b| **b == LogicVal::One).count() as u64;
+                            let count =
+                                val.bits.iter().filter(|b| **b == LogicVal::One).count() as u64;
                             Ok(LogicVec::from_u64(count, 32))
                         } else {
                             Err(SimError::runtime("$countones expects 1 argument"))
@@ -3243,7 +4246,10 @@ impl SimulationEngine {
                     "$isunknown" => {
                         if let Some(arg) = args.first() {
                             let val = self.evaluate_expr(arg)?;
-                            let has_x_or_z = val.bits.iter().any(|b| *b == LogicVal::X || *b == LogicVal::Z);
+                            let has_x_or_z = val
+                                .bits
+                                .iter()
+                                .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
                             Ok(LogicVec::from_u64(if has_x_or_z { 1 } else { 0 }, 1))
                         } else {
                             Err(SimError::runtime("$isunknown expects 1 argument"))
@@ -3251,15 +4257,27 @@ impl SimulationEngine {
                     }
                     "$fopen" => {
                         let fname = args.first().and_then(|a| {
-                            if let IrExpr::String(s) = a { Some(s.clone()) }
-                            else { None }
+                            if let IrExpr::String(s) = a {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
                         });
                         if let Some(fname) = fname {
-                            let mode = args.get(1).and_then(|a| if let IrExpr::String(s) = a { Some(s.as_str()) } else { None });
+                            let mode = args.get(1).and_then(|a| {
+                                if let IrExpr::String(s) = a {
+                                    Some(s.as_str())
+                                } else {
+                                    None
+                                }
+                            });
                             let open_result = match mode {
                                 Some("r") | Some("rb") => std::fs::File::open(&fname),
                                 _ => std::fs::OpenOptions::new()
-                                    .read(true).write(true).create(true).truncate(true)
+                                    .read(true)
+                                    .write(true)
+                                    .create(true)
+                                    .truncate(true)
                                     .open(&fname),
                             };
                             match open_result {
@@ -3270,50 +4288,84 @@ impl SimulationEngine {
                                     self.file_read_pos.insert(handle, 0);
                                     Ok(LogicVec::from_u64(handle as u64, 32))
                                 }
-                                Err(_) => Ok(LogicVec::from_u64(0, 32))
+                                Err(_) => Ok(LogicVec::from_u64(0, 32)),
                             }
                         } else {
                             Ok(LogicVec::from_u64(0, 32))
                         }
                     }
                     "$fdisplay" => {
-                        let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, &args[1..]);
+                                let msg = format_display(
+                                    &self.state,
+                                    &self.design.top.signals,
+                                    &self.design.hier_signal_map,
+                                    &self.assoc_data,
+                                    &args[1..],
+                                );
                                 let _ = write!(f, "{}", msg);
                             }
                         }
                         Ok(LogicVec::from_u64(0, 1))
                     }
                     "$fread" => {
-                        let target = args.first().and_then(|a| if let IrExpr::Signal(id, _) = a { Some(*id) } else { None });
+                        let target = args.first().and_then(|a| {
+                            if let IrExpr::Signal(id, _) = a {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        });
                         let src = args.get(1);
                         let data = if let Some(IrExpr::String(fname)) = src {
                             std::fs::read(fname).ok()
                         } else if let Some(arg) = src {
-                            let handle = self.evaluate_expr(arg).ok().map(|v| v.to_u64() as u32).unwrap_or(0);
+                            let handle = self
+                                .evaluate_expr(arg)
+                                .ok()
+                                .map(|v| v.to_u64() as u32)
+                                .unwrap_or(0);
                             if handle > 0 {
                                 use std::io::Read;
                                 self.file_handles.get_mut(&handle).and_then(|f| {
                                     let mut buf = Vec::new();
                                     f.read_to_end(&mut buf).ok().map(|_| buf)
                                 })
-                            } else { None }
-                        } else { None };
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
                         if let (Some(sid), Some(bytes)) = (target, data) {
                             let mut bits = Vec::with_capacity(bytes.len() * 8);
                             for byte in bytes {
                                 for i in 0..8 {
-                                    bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                                    bits.push(if (byte >> i) & 1 == 1 {
+                                        LogicVal::One
+                                    } else {
+                                        LogicVal::Zero
+                                    });
                                 }
                             }
-                            self.state.write_signal(sid, LogicVec { width: bits.len(), bits });
+                            self.state.write_signal(
+                                sid,
+                                LogicVec {
+                                    width: bits.len(),
+                                    bits,
+                                },
+                            );
                         }
                         Ok(LogicVec::from_u64(0, 1))
                     }
                     "$fclose" => {
-                        let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             self.file_handles.remove(&h);
                             self.file_read_pos.remove(&h);
@@ -3321,7 +4373,9 @@ impl SimulationEngine {
                         Ok(LogicVec::from_u64(0, 1))
                     }
                     "$fflush" => {
-                        let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
                                 use std::io::Write;
@@ -3331,9 +4385,15 @@ impl SimulationEngine {
                         Ok(LogicVec::from_u64(0, 1))
                     }
                     "$fseek" => {
-                        let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        let offset = args.get(1).and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as i64));
-                        let op = args.get(2).and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64()));
+                        let handle = args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let offset = args
+                            .get(1)
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as i64));
+                        let op = args
+                            .get(2)
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64()));
                         if let (Some(h), Some(off)) = (handle, offset) {
                             if let Some(f) = self.file_handles.get_mut(&h) {
                                 use std::io::{Seek, SeekFrom};
@@ -3351,7 +4411,9 @@ impl SimulationEngine {
                         Ok(LogicVec::from_u64(0, 1))
                     }
                     "$ftell" => {
-                        let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
                                 use std::io::Seek;
@@ -3362,10 +4424,12 @@ impl SimulationEngine {
                         Ok(LogicVec::from_u64(0, 32))
                     }
                     "$feof" => {
-                        let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                use std::io::{Seek, Read};
+                                use std::io::{Read, Seek};
                                 let pos = f.stream_position().unwrap_or(0);
                                 let mut byte = [0u8; 1];
                                 let n = f.read(&mut byte).unwrap_or(0);
@@ -3377,7 +4441,9 @@ impl SimulationEngine {
                     }
                     "$rewind" => {
                         // $rewind(fd) — rewind file to beginning (same as $fseek(fd, 0, 0))
-                        let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
                                 use std::io::{Seek, SeekFrom};
@@ -3391,7 +4457,9 @@ impl SimulationEngine {
                     "$fgets" => {
                         // $fgets(str_var, fd) — read a line from file handle into string var
                         let str_arg = args.first();
-                        let handle = args.get(1).and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = args
+                            .get(1)
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
                                 use std::io::{BufRead, BufReader};
@@ -3400,19 +4468,33 @@ impl SimulationEngine {
                                 let bytes = reader.read_line(&mut line).unwrap_or(0);
                                 if bytes > 0 {
                                     // Trim trailing newline for Verilog string compatibility
-                                    if line.ends_with('\n') { line.pop(); }
-                                    if line.ends_with('\r') { line.pop(); }
+                                    if line.ends_with('\n') {
+                                        line.pop();
+                                    }
+                                    if line.ends_with('\r') {
+                                        line.pop();
+                                    }
                                     // Convert string to LogicVec
                                     let mut bits = Vec::with_capacity(line.len() * 8);
                                     for c in line.chars() {
                                         let byte = c as u8;
                                         for i in 0..8 {
-                                            bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                                            bits.push(if (byte >> i) & 1 == 1 {
+                                                LogicVal::One
+                                            } else {
+                                                LogicVal::Zero
+                                            });
                                         }
                                     }
                                     // Write into the string variable
                                     if let Some(IrExpr::Signal(sid, _)) = str_arg {
-                                        self.state.write_signal(*sid, LogicVec { width: bits.len(), bits });
+                                        self.state.write_signal(
+                                            *sid,
+                                            LogicVec {
+                                                width: bits.len(),
+                                                bits,
+                                            },
+                                        );
                                     }
                                     return Ok(LogicVec::from_u64(bytes as u64, 32));
                                 }
@@ -3422,7 +4504,9 @@ impl SimulationEngine {
                     }
                     "$fgetc" => {
                         // $fgetc(fd) — read a single character from file handle
-                        let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             // Check ungetc buffer first
                             if let Some(buf) = self.file_ungetc_buf.get_mut(&h) {
@@ -3443,24 +4527,36 @@ impl SimulationEngine {
                     }
                     "$ungetc" => {
                         // $ungetc(char, fd) — push back a character to file handle
-                        let char_val = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u8));
-                        let handle = args.get(1).and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let char_val = args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u8));
+                        let handle = args
+                            .get(1)
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let (Some(c), Some(h)) = (char_val, handle) {
                             self.file_ungetc_buf.entry(h).or_default().push(c);
                         }
                         Ok(LogicVec::from_u64(0, 1))
                     }
                     "$fscanf" => {
-                        let handle = args.first().and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
+                        let handle = args
+                            .first()
+                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                use std::io::{Seek, Read};
+                                use std::io::{Read, Seek};
                                 let read_pos = self.file_read_pos.entry(h).or_insert(0);
                                 f.seek(std::io::SeekFrom::Start(*read_pos)).ok();
                                 let mut content = String::new();
                                 let _bytes_read = f.read_to_string(&mut content).unwrap_or(0);
                                 *read_pos = f.stream_position().unwrap_or(0);
-                                let fmt = args.get(1).and_then(|a| if let IrExpr::String(s) = a { Some(s.clone()) } else { None });
+                                let fmt = args.get(1).and_then(|a| {
+                                    if let IrExpr::String(s) = a {
+                                        Some(s.clone())
+                                    } else {
+                                        None
+                                    }
+                                });
                                 if let Some(ref fmt_str) = fmt {
                                     let tokens: Vec<&str> = content.split_whitespace().collect();
                                     let mut ti = 0;
@@ -3471,11 +4567,23 @@ impl SimulationEngine {
                                             if let Some(spec) = chars.next() {
                                                 if spec == 'd' || spec == 'h' || spec == 'b' {
                                                     if let Some(tok) = tokens.get(ti) {
-                                                        if let Ok(val) = if spec == 'h' { i64::from_str_radix(tok, 16) } else if spec == 'b' { i64::from_str_radix(tok, 2) } else { tok.parse::<i64>() } {
+                                                        if let Ok(val) = if spec == 'h' {
+                                                            i64::from_str_radix(tok, 16)
+                                                        } else if spec == 'b' {
+                                                            i64::from_str_radix(tok, 2)
+                                                        } else {
+                                                            tok.parse::<i64>()
+                                                        } {
                                                             let out_idx = 2 + ai;
                                                             if let Some(arg) = args.get(out_idx) {
-                                                                if let IrExpr::Signal(sid, _) = arg {
-                                                                    self.state.write_signal(*sid, LogicVec::from_u64(val as u64, 32));
+                                                                if let IrExpr::Signal(sid, _) = arg
+                                                                {
+                                                                    self.state.write_signal(
+                                                                        *sid,
+                                                                        LogicVec::from_u64(
+                                                                            val as u64, 32,
+                                                                        ),
+                                                                    );
                                                                 }
                                                             }
                                                             ai += 1;
@@ -3497,22 +4605,36 @@ impl SimulationEngine {
                         if args.is_empty() {
                             return Ok(LogicVec::new(0));
                         }
-            let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, args);
+                        let msg = format_display(
+                            &self.state,
+                            &self.design.top.signals,
+                            &self.design.hier_signal_map,
+                            &self.assoc_data,
+                            args,
+                        );
                         let mut bits = Vec::with_capacity(msg.len() * 8);
                         for c in msg.chars() {
                             let byte = c as u8;
                             for i in 0..8 {
-                                bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                                bits.push(if (byte >> i) & 1 == 1 {
+                                    LogicVal::One
+                                } else {
+                                    LogicVal::Zero
+                                });
                             }
                         }
-                        Ok(LogicVec { width: bits.len(), bits })
+                        Ok(LogicVec {
+                            width: bits.len(),
+                            bits,
+                        })
                     }
                     "$clog2" => {
                         if let Some(arg) = args.first() {
                             let val = self.evaluate_expr(arg)?;
                             let n = val.to_u64();
-                            if n <= 1 { Ok(LogicVec::from_u64(0, 32)) }
-                            else {
+                            if n <= 1 {
+                                Ok(LogicVec::from_u64(0, 32))
+                            } else {
                                 let bits = (64 - n.leading_zeros()) as u64;
                                 if n.is_power_of_two() {
                                     Ok(LogicVec::from_u64(bits - 1, 32))
@@ -3524,9 +4646,7 @@ impl SimulationEngine {
                             Ok(LogicVec::from_u64(0, 32))
                         }
                     }
-                    "$time" => {
-                        Ok(LogicVec::from_u64(self.state.time as u64, 64))
-                    }
+                    "$time" => Ok(LogicVec::from_u64(self.state.time as u64, 64)),
                     "$realtime" => {
                         let t = self.state.time as f64;
                         Ok(LogicVec::from_u64(t.to_bits(), 64))
@@ -3535,30 +4655,59 @@ impl SimulationEngine {
                         let pid = self.current_process_id.unwrap_or(0);
                         if pid == 0 {
                             let pid = self.state.alloc_object("__process");
-                            self.process_map.insert(pid, ProcessInfo {
-                                status: ProcessStatus::Running,
-                                await_continuations: Vec::new(),
-                            });
+                            self.process_map.insert(
+                                pid,
+                                ProcessInfo {
+                                    status: ProcessStatus::Running,
+                                    await_continuations: Vec::new(),
+                                },
+                            );
                             self.current_process_id = Some(pid);
                         }
-                        Ok(LogicVec::from_u64(self.current_process_id.unwrap_or(0) as u64, 64))
+                        Ok(LogicVec::from_u64(
+                            self.current_process_id.unwrap_or(0) as u64,
+                            64,
+                        ))
                     }
                     "uvm_config_db::set" => {
-                        let arg_vals: Vec<LogicVec> = args.iter()
+                        let arg_vals: Vec<LogicVec> = args
+                            .iter()
                             .map(|a| self.evaluate_expr(a))
                             .collect::<Result<_, _>>()?;
-                        let inst_name = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
-                        let field_name = if arg_vals.len() > 2 { logicvec_to_string(&arg_vals[2]) } else { String::new() };
-                        let value = if arg_vals.len() > 3 { arg_vals[3].clone() } else { LogicVec::new(1) };
-                        self.uvm_config_db_data.insert((inst_name, field_name), value);
+                        let inst_name = if arg_vals.len() > 1 {
+                            logicvec_to_string(&arg_vals[1])
+                        } else {
+                            String::new()
+                        };
+                        let field_name = if arg_vals.len() > 2 {
+                            logicvec_to_string(&arg_vals[2])
+                        } else {
+                            String::new()
+                        };
+                        let value = if arg_vals.len() > 3 {
+                            arg_vals[3].clone()
+                        } else {
+                            LogicVec::new(1)
+                        };
+                        self.uvm_config_db_data
+                            .insert((inst_name, field_name), value);
                         Ok(LogicVec::from_u64(1, 1))
                     }
                     "uvm_config_db::get" => {
-                        let arg_vals: Vec<LogicVec> = args.iter()
+                        let arg_vals: Vec<LogicVec> = args
+                            .iter()
                             .map(|a| self.evaluate_expr(a))
                             .collect::<Result<_, _>>()?;
-                        let inst_name = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
-                        let field_name = if arg_vals.len() > 2 { logicvec_to_string(&arg_vals[2]) } else { String::new() };
+                        let inst_name = if arg_vals.len() > 1 {
+                            logicvec_to_string(&arg_vals[1])
+                        } else {
+                            String::new()
+                        };
+                        let field_name = if arg_vals.len() > 2 {
+                            logicvec_to_string(&arg_vals[2])
+                        } else {
+                            String::new()
+                        };
                         let key = (inst_name, field_name);
                         let stored = self.uvm_config_db_data.get(&key).cloned();
                         if let Some(val) = stored {
@@ -3573,21 +4722,43 @@ impl SimulationEngine {
                         }
                     }
                     "uvm_resource_db::set" => {
-                        let arg_vals: Vec<LogicVec> = args.iter()
+                        let arg_vals: Vec<LogicVec> = args
+                            .iter()
                             .map(|a| self.evaluate_expr(a))
                             .collect::<Result<_, _>>()?;
-                        let scope = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
-                        let name = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
-                        let value = if arg_vals.len() > 2 { arg_vals[2].clone() } else { LogicVec::new(1) };
+                        let scope = if !arg_vals.is_empty() {
+                            logicvec_to_string(&arg_vals[0])
+                        } else {
+                            String::new()
+                        };
+                        let name = if arg_vals.len() > 1 {
+                            logicvec_to_string(&arg_vals[1])
+                        } else {
+                            String::new()
+                        };
+                        let value = if arg_vals.len() > 2 {
+                            arg_vals[2].clone()
+                        } else {
+                            LogicVec::new(1)
+                        };
                         self.uvm_resource_db_data.insert((scope, name), value);
                         Ok(LogicVec::from_u64(1, 1))
                     }
                     "uvm_resource_db::get" => {
-                        let arg_vals: Vec<LogicVec> = args.iter()
+                        let arg_vals: Vec<LogicVec> = args
+                            .iter()
                             .map(|a| self.evaluate_expr(a))
                             .collect::<Result<_, _>>()?;
-                        let scope = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
-                        let rname = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
+                        let scope = if !arg_vals.is_empty() {
+                            logicvec_to_string(&arg_vals[0])
+                        } else {
+                            String::new()
+                        };
+                        let rname = if arg_vals.len() > 1 {
+                            logicvec_to_string(&arg_vals[1])
+                        } else {
+                            String::new()
+                        };
                         let key = (scope, rname);
                         let stored = self.uvm_resource_db_data.get(&key).cloned();
                         if let Some(val) = stored {
@@ -3602,11 +4773,20 @@ impl SimulationEngine {
                         }
                     }
                     "uvm_factory::set_type_override_by_type" => {
-                        let arg_vals: Vec<LogicVec> = args.iter()
+                        let arg_vals: Vec<LogicVec> = args
+                            .iter()
                             .map(|a| self.evaluate_expr(a))
                             .collect::<Result<_, _>>()?;
-                        let orig = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
-                        let override_type = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
+                        let orig = if !arg_vals.is_empty() {
+                            logicvec_to_string(&arg_vals[0])
+                        } else {
+                            String::new()
+                        };
+                        let override_type = if arg_vals.len() > 1 {
+                            logicvec_to_string(&arg_vals[1])
+                        } else {
+                            String::new()
+                        };
                         self.factory_type_overrides.insert(orig, override_type);
                         Ok(LogicVec::from_u64(1, 1))
                     }
@@ -3627,12 +4807,19 @@ impl SimulationEngine {
                         if let Some(pattern) = args.first() {
                             if let Ok(pat_val) = self.evaluate_expr(pattern) {
                                 let pat_str = logicvec_to_string(&pat_val);
-                                let plusarg_name = pat_str.split('%').next().unwrap_or(&pat_str).trim_end_matches('=');
+                                let plusarg_name = pat_str
+                                    .split('%')
+                                    .next()
+                                    .unwrap_or(&pat_str)
+                                    .trim_end_matches('=');
                                 let plusargs = self.plusargs.clone();
                                 for (key, val) in &plusargs {
                                     if key == plusarg_name {
                                         if let Some(var_arg) = args.get(1) {
-                                            let num = if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
+                                            let num = if let Some(hex) = val
+                                                .strip_prefix("0x")
+                                                .or_else(|| val.strip_prefix("0X"))
+                                            {
                                                 u64::from_str_radix(hex, 16).unwrap_or(0)
                                             } else {
                                                 val.parse::<u64>().unwrap_or(0)
@@ -3653,8 +4840,12 @@ impl SimulationEngine {
                         if let Some(arg) = args.first() {
                             let val = self.evaluate_expr(arg)?;
                             let key = format!("$rose({:?})", arg);
-                            let prev = self.sysfunc_prev.entry(key).or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
-                            let rose = prev.to_bool().unwrap_or(false) == false && val.to_bool().unwrap_or(false) == true;
+                            let prev = self
+                                .sysfunc_prev
+                                .entry(key)
+                                .or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
+                            let rose = prev.to_bool().unwrap_or(false) == false
+                                && val.to_bool().unwrap_or(false) == true;
                             *prev = val;
                             Ok(LogicVec::from_u64(if rose { 1 } else { 0 }, 1))
                         } else {
@@ -3665,8 +4856,12 @@ impl SimulationEngine {
                         if let Some(arg) = args.first() {
                             let val = self.evaluate_expr(arg)?;
                             let key = format!("$fell({:?})", arg);
-                            let prev = self.sysfunc_prev.entry(key).or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
-                            let fell = prev.to_bool().unwrap_or(false) == true && val.to_bool().unwrap_or(false) == false;
+                            let prev = self
+                                .sysfunc_prev
+                                .entry(key)
+                                .or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
+                            let fell = prev.to_bool().unwrap_or(false) == true
+                                && val.to_bool().unwrap_or(false) == false;
                             *prev = val;
                             Ok(LogicVec::from_u64(if fell { 1 } else { 0 }, 1))
                         } else {
@@ -3677,7 +4872,10 @@ impl SimulationEngine {
                         if let Some(arg) = args.first() {
                             let val = self.evaluate_expr(arg)?;
                             let key = format!("$stable({:?})", arg);
-                            let prev = self.sysfunc_prev.entry(key).or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
+                            let prev = self
+                                .sysfunc_prev
+                                .entry(key)
+                                .or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
                             let stable = *prev == val;
                             *prev = val;
                             Ok(LogicVec::from_u64(if stable { 1 } else { 0 }, 1))
@@ -3689,7 +4887,10 @@ impl SimulationEngine {
                         if let Some(arg) = args.first() {
                             let val = self.evaluate_expr(arg)?;
                             let key = format!("$changed({:?})", arg);
-                            let prev = self.sysfunc_prev.entry(key).or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
+                            let prev = self
+                                .sysfunc_prev
+                                .entry(key)
+                                .or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
                             let changed = *prev != val;
                             *prev = val;
                             Ok(LogicVec::from_u64(if changed { 1 } else { 0 }, 1))
@@ -3703,10 +4904,17 @@ impl SimulationEngine {
                             let n = if args.len() > 1 {
                                 if let Ok(nv) = self.evaluate_expr(&args[1]) {
                                     nv.to_u64().max(1) as usize
-                                } else { 1 }
-                            } else { 1 };
+                                } else {
+                                    1
+                                }
+                            } else {
+                                1
+                            };
                             let key = format!("$past({:?})", arg);
-                            let hist = self.sysfunc_history.entry(key).or_insert_with(|| VecDeque::new());
+                            let hist = self
+                                .sysfunc_history
+                                .entry(key)
+                                .or_insert_with(|| VecDeque::new());
                             hist.push_back(val);
                             if hist.len() > n {
                                 let past = hist[hist.len() - 1 - n].clone();
@@ -3725,11 +4933,16 @@ impl SimulationEngine {
                 }
             }
             IrExpr::NewCall { class_name, args } => {
-                let arg_vals: Vec<LogicVec> = args.iter()
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
                     .map(|a| self.evaluate_expr(a))
                     .collect::<Result<_, _>>()?;
                 // Check if this is a covergroup instantiation
-                let is_cg = self.design.covergroups.iter().any(|c| c.name == *class_name);
+                let is_cg = self
+                    .design
+                    .covergroups
+                    .iter()
+                    .any(|c| c.name == *class_name);
                 let effective_name = if is_cg {
                     format!("__covergroup_{}", class_name)
                 } else if let Some(override_type) = self.factory_type_overrides.get(class_name) {
@@ -3741,7 +4954,11 @@ impl SimulationEngine {
                 if class_name == "__mailbox" {
                     self.mailbox_queues.insert(obj_id, Vec::new());
                 } else if class_name == "__semaphore" {
-                    let init = if !arg_vals.is_empty() { arg_vals[0].to_u64() as u32 } else { 0 };
+                    let init = if !arg_vals.is_empty() {
+                        arg_vals[0].to_u64() as u32
+                    } else {
+                        0
+                    };
                     self.semaphore_counts.insert(obj_id, init);
                 } else if is_cg {
                     // Auto-sample covergroup immediately on new()
@@ -3750,29 +4967,66 @@ impl SimulationEngine {
                     if let Some(cls) = self.design.classes.get(class_name.as_str()) {
                         if let Some(obj) = self.state.get_object_mut(obj_id) {
                             for field in &cls.fields {
-                                obj.fields.entry(field.name.clone()).or_insert_with(|| LogicVec::from_u64(0, field.width));
+                                obj.fields
+                                    .entry(field.name.clone())
+                                    .or_insert_with(|| LogicVec::from_u64(0, field.width));
                             }
                         }
                     }
                     if self.is_uvm_object_hierarchy(&class_name) {
-                        self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name: String::new() });
+                        self.uvm_object_data
+                            .entry(obj_id)
+                            .or_insert_with(|| UvmObjectData {
+                                name: String::new(),
+                            });
                     }
                     if self.is_uvm_analysis_port_hierarchy(&class_name) {
-                        let pname = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
-                        self.uvm_analysis_port_data.entry(obj_id).or_insert_with(|| UvmAnalysisPortData { connections: Vec::new(), name: pname.clone() });
-                        self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name: pname });
+                        let pname = if !arg_vals.is_empty() {
+                            logicvec_to_string(&arg_vals[0])
+                        } else {
+                            String::new()
+                        };
+                        self.uvm_analysis_port_data
+                            .entry(obj_id)
+                            .or_insert_with(|| UvmAnalysisPortData {
+                                connections: Vec::new(),
+                                name: pname.clone(),
+                            });
+                        self.uvm_object_data
+                            .entry(obj_id)
+                            .or_insert_with(|| UvmObjectData { name: pname });
                     }
                     if self.is_uvm_analysis_imp_hierarchy(&class_name) {
-                        let pname = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
+                        let pname = if !arg_vals.is_empty() {
+                            logicvec_to_string(&arg_vals[0])
+                        } else {
+                            String::new()
+                        };
                         let parent_obj = arg_vals.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
-                        self.uvm_analysis_imp_data.entry(obj_id).or_insert_with(|| UvmAnalysisImpData { parent: if parent_obj != 0 { Some(parent_obj) } else { None }, name: pname.clone() });
-                        self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name: pname });
+                        self.uvm_analysis_imp_data.entry(obj_id).or_insert_with(|| {
+                            UvmAnalysisImpData {
+                                parent: if parent_obj != 0 {
+                                    Some(parent_obj)
+                                } else {
+                                    None
+                                },
+                                name: pname.clone(),
+                            }
+                        });
+                        self.uvm_object_data
+                            .entry(obj_id)
+                            .or_insert_with(|| UvmObjectData { name: pname });
                     }
                     if self.is_uvm_component_hierarchy(&class_name) {
                         let name = logicvec_to_string(&arg_vals[0]);
                         let parent_obj = arg_vals.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
-                        self.uvm_object_data.insert(obj_id, UvmObjectData { name: name.clone() });
-                        let mut cd = UvmComponentData { parent: None, children: Vec::new(), report_verbosity: 2 };
+                        self.uvm_object_data
+                            .insert(obj_id, UvmObjectData { name: name.clone() });
+                        let mut cd = UvmComponentData {
+                            parent: None,
+                            children: Vec::new(),
+                            report_verbosity: 2,
+                        };
                         if parent_obj != 0 {
                             cd.parent = Some(parent_obj);
                             if let Some(pd) = self.uvm_component_data.get_mut(&parent_obj) {
@@ -3794,9 +5048,15 @@ impl SimulationEngine {
                     Err(SimError::runtime("'this' used outside of class method"))
                 }
             }
-            IrExpr::MethodCall { obj, method, args, with_clause } => {
+            IrExpr::MethodCall {
+                obj,
+                method,
+                args,
+                with_clause,
+            } => {
                 if let IrExpr::String(s) = obj.as_ref() {
-                    let arg_vals: Vec<LogicVec> = args.iter()
+                    let arg_vals: Vec<LogicVec> = args
+                        .iter()
                         .map(|a| self.evaluate_expr(a))
                         .collect::<Result<_, _>>()?;
                     let result = evaluate_string_method(s, method, &arg_vals)?;
@@ -3807,7 +5067,8 @@ impl SimulationEngine {
                         if sig.is_string {
                             let lv = self.state.read_signal(*id);
                             let s = logicvec_to_string(lv);
-                            let arg_vals: Vec<LogicVec> = args.iter()
+                            let arg_vals: Vec<LogicVec> = args
+                                .iter()
                                 .map(|a| self.evaluate_expr(a))
                                 .collect::<Result<_, _>>()?;
                             let result = evaluate_string_method(&s, method, &arg_vals)?;
@@ -3820,19 +5081,25 @@ impl SimulationEngine {
                             if !is_arr && !sig.is_string {
                                 // Check if this class_name matches a covergroup or class
                                 let is_cg = self.design.covergroups.iter().any(|c| c.name == *cn);
-                                if is_cg || self.design.classes.contains_key(cn)
-                                {
+                                if is_cg || self.design.classes.contains_key(cn) {
                                     let obj_val = self.state.read_signal(*id);
                                     let obj_id = obj_val.to_u64() as ObjId;
-                                    if obj_id == 0 && self.state.objects.len() > 0 && self.state.objects[0].class_name.is_empty() {
+                                    if obj_id == 0
+                                        && self.state.objects.len() > 0
+                                        && self.state.objects[0].class_name.is_empty()
+                                    {
                                         let class_for_obj = if is_cg {
                                             format!("__covergroup_{}", cn)
                                         } else {
                                             cn.clone()
                                         };
                                         let new_id = self.state.alloc_object(&class_for_obj);
-                                        self.state.write_signal(*id, LogicVec::from_u64(new_id as u64, 64));
-                                        let arg_vals: Vec<LogicVec> = args.iter()
+                                        self.state.write_signal(
+                                            *id,
+                                            LogicVec::from_u64(new_id as u64, 64),
+                                        );
+                                        let arg_vals: Vec<LogicVec> = args
+                                            .iter()
                                             .map(|a| self.evaluate_expr(a))
                                             .collect::<Result<_, _>>()?;
                                         return self.execute_method(new_id, method, &arg_vals);
@@ -3841,23 +5108,42 @@ impl SimulationEngine {
                             }
                         }
                     }
-                    let is_arr = self.design.top.signals.get(*id).map(|s| s.is_dynamic || s.is_queue).unwrap_or(false);
+                    let is_arr = self
+                        .design
+                        .top
+                        .signals
+                        .get(*id)
+                        .map(|s| s.is_dynamic || s.is_queue)
+                        .unwrap_or(false);
                     if is_arr {
                         let sig_info = self.design.top.signals[*id].clone();
-                        return self.evaluate_array_method(*id, &sig_info, method, args, with_clause.as_deref());
+                        return self.evaluate_array_method(
+                            *id,
+                            &sig_info,
+                            method,
+                            args,
+                            with_clause.as_deref(),
+                        );
                     }
                 }
                 let obj_val = self.evaluate_expr(obj)?;
                 let obj_id = obj_val.to_u64() as ObjId;
-                let arg_vals: Vec<LogicVec> = args.iter()
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
                     .map(|a| self.evaluate_expr(a))
                     .collect::<Result<_, _>>()?;
                 // Handle randomize() with inline constraint
                 if method == "randomize" && with_clause.is_some() {
-                    let class_name = self.state.get_object(obj_id)
+                    let class_name = self
+                        .state
+                        .get_object(obj_id)
                         .map(|o| o.class_name.clone())
                         .unwrap_or_default();
-                    return self.execute_randomize_with(obj_id, &class_name, with_clause.as_deref());
+                    return self.execute_randomize_with(
+                        obj_id,
+                        &class_name,
+                        with_clause.as_deref(),
+                    );
                 }
                 let result = self.execute_method(obj_id, method, &arg_vals)?;
                 Ok(result)
@@ -3865,23 +5151,32 @@ impl SimulationEngine {
             IrExpr::MemberAccess { obj, field } => {
                 let obj_val = self.evaluate_expr(obj)?;
                 let obj_id = obj_val.to_u64() as ObjId;
-                let obj_data = self.state.get_object(obj_id)
+                let obj_data = self
+                    .state
+                    .get_object(obj_id)
                     .ok_or_else(|| format!("object {} not found", obj_id))?;
-                let val = obj_data.fields.get(field)
+                let val = obj_data
+                    .fields
+                    .get(field)
                     .cloned()
                     .unwrap_or_else(|| LogicVec::new(1));
                 Ok(val)
             }
-            IrExpr::DpiCall { name, args, return_width } => {
-                self.evaluate_dpi_call(name, args, *return_width)
-            }
+            IrExpr::DpiCall {
+                name,
+                args,
+                return_width,
+            } => self.evaluate_dpi_call(name, args, *return_width),
             IrExpr::HierRef(name) => {
                 if let Some(sig_id) = self.find_signal(name) {
                     let mut val = self.state.read_signal(sig_id).clone();
                     sanitize_for_2state(&self.design.top.signals, sig_id, &mut val);
                     Ok(val)
                 } else {
-                    Err(SimError::runtime(format!("hierarchical signal '{}' not found", name)))
+                    Err(SimError::runtime(format!(
+                        "hierarchical signal '{}' not found",
+                        name
+                    )))
                 }
             }
             IrExpr::Inside { expr, list } => {
@@ -3898,16 +5193,19 @@ impl SimulationEngine {
             IrExpr::Dist { expr: _expr, items } => {
                 // Dist expression in randomize context: use weighted random selection
                 if self.current_method.as_deref() == Some("randomize") {
-                    let total_weight: i64 = items.iter().map(|item| {
-                        let count = match (item.range_lo, item.range_hi) {
-                            (Some(lo), Some(hi)) if hi >= lo => (hi - lo + 1).max(1),
-                            _ => 1,
-                        };
-                        match item.weight_type {
-                            DistWeightType::Item => item.weight * count,
-                            DistWeightType::Range => item.weight,
-                        }
-                    }).sum();
+                    let total_weight: i64 = items
+                        .iter()
+                        .map(|item| {
+                            let count = match (item.range_lo, item.range_hi) {
+                                (Some(lo), Some(hi)) if hi >= lo => (hi - lo + 1).max(1),
+                                _ => 1,
+                            };
+                            match item.weight_type {
+                                DistWeightType::Item => item.weight * count,
+                                DistWeightType::Range => item.weight,
+                            }
+                        })
+                        .sum();
                     if total_weight > 0 {
                         let r = (self.rng.gen::<u64>() % total_weight as u64) as i64;
                         let mut cumulative = 0i64;
@@ -3940,12 +5238,17 @@ impl SimulationEngine {
                 let val = self.evaluate_expr(expr)?;
                 Ok(val.resize(*width))
             }
-            IrExpr::StreamingConcat { op, slice_size, slices } => {
+            IrExpr::StreamingConcat {
+                op,
+                slice_size,
+                slices,
+            } => {
                 let mut vals = Vec::new();
                 for sl in slices {
                     vals.push(self.evaluate_expr(sl)?);
                 }
-                let all_bits: Vec<LogicVal> = vals.iter().flat_map(|v| v.bits.iter().copied()).collect();
+                let all_bits: Vec<LogicVal> =
+                    vals.iter().flat_map(|v| v.bits.iter().copied()).collect();
                 let slen = slice_size.unwrap_or(1);
                 if slen == 0 {
                     return Err(SimError::runtime("streaming slice size must be > 0"));
@@ -3962,25 +5265,35 @@ impl SimulationEngine {
                         result.extend(chunk.iter());
                     }
                 }
-                Ok(LogicVec { width: result.len(), bits: result })
+                Ok(LogicVec {
+                    width: result.len(),
+                    bits: result,
+                })
             }
             IrExpr::UdpLookup { udp_name, args } => {
-                let udp = self.design.udp_defs.iter()
+                let udp = self
+                    .design
+                    .udp_defs
+                    .iter()
                     .find(|u| u.name == *udp_name)
                     .cloned()
                     .ok_or_else(|| format!("UDP '{}' not found", udp_name))?;
-                let arg_vals: Vec<LogicVec> = args.iter()
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
                     .map(|a| self.evaluate_expr(a))
                     .collect::<Result<_, _>>()?;
 
                 // Get previous arg values for edge detection
                 let prev_vals = self.udp_prev_args.get(udp_name.as_str());
-                let current_bits: Vec<LogicVal> = arg_vals.iter()
+                let current_bits: Vec<LogicVal> = arg_vals
+                    .iter()
                     .map(|v| v.bits.first().copied().unwrap_or(LogicVal::X))
                     .collect();
-                let prev_bits: Option<Vec<LogicVal>> = prev_vals.map(|pv|
-                    pv.iter().map(|v| v.bits.first().copied().unwrap_or(LogicVal::X)).collect()
-                );
+                let prev_bits: Option<Vec<LogicVal>> = prev_vals.map(|pv| {
+                    pv.iter()
+                        .map(|v| v.bits.first().copied().unwrap_or(LogicVal::X))
+                        .collect()
+                });
 
                 // Scan table entries for first match
                 'table: for entry in &udp.table {
@@ -3997,7 +5310,8 @@ impl SimulationEngine {
                                     let prev_bit = pb.get(i).copied().unwrap_or(LogicVal::X);
                                     let chars: Vec<char> = edge_str.chars().collect();
                                     if chars.len() == 2 {
-                                        sym_char_matches(chars[0], prev_bit) && sym_char_matches(chars[1], bit)
+                                        sym_char_matches(chars[0], prev_bit)
+                                            && sym_char_matches(chars[1], bit)
                                     } else {
                                         // Abbreviated edge: r, f, p, n, *
                                         edge_matches_abbrev(edge_str, prev_bit, bit)
@@ -4021,58 +5335,92 @@ impl SimulationEngine {
                         UdpSymbol::DontCare => LogicVec::fill(LogicVal::X, 1),
                         UdpSymbol::NoChange => {
                             // For sequential UDP, return the current output value (last arg = state)
-                            arg_vals.last().cloned().unwrap_or(LogicVec::fill(LogicVal::X, 1))
+                            arg_vals
+                                .last()
+                                .cloned()
+                                .unwrap_or(LogicVec::fill(LogicVal::X, 1))
                         }
                         UdpSymbol::Edge(s) => {
-                            let v = s.chars().last().map(|c| match c {
-                                '0' => LogicVal::Zero,
-                                '1' => LogicVal::One,
-                                _ => LogicVal::X,
-                            }).unwrap_or(LogicVal::X);
+                            let v = s
+                                .chars()
+                                .last()
+                                .map(|c| match c {
+                                    '0' => LogicVal::Zero,
+                                    '1' => LogicVal::One,
+                                    _ => LogicVal::X,
+                                })
+                                .unwrap_or(LogicVal::X);
                             LogicVec::fill(v, 1)
                         }
                     };
                     // Store current arg values for next evaluation
-                    self.udp_prev_args.insert(udp_name.clone(), arg_vals.clone());
+                    self.udp_prev_args
+                        .insert(udp_name.clone(), arg_vals.clone());
                     return Ok(result);
                 }
                 // No match — return X (or retain current value for sequential)
                 let result = if udp.is_sequential {
-                    arg_vals.last().cloned().unwrap_or(LogicVec::fill(LogicVal::X, 1))
+                    arg_vals
+                        .last()
+                        .cloned()
+                        .unwrap_or(LogicVec::fill(LogicVal::X, 1))
                 } else {
                     LogicVec::fill(LogicVal::X, 1)
                 };
-                self.udp_prev_args.insert(udp_name.clone(), arg_vals.clone());
+                self.udp_prev_args
+                    .insert(udp_name.clone(), arg_vals.clone());
                 Ok(result)
             }
             IrExpr::FuncCall { func_name, args } => {
                 let name = func_name;
                 // Check recursion depth
-                let depth = self.recursion_depth.get(name.as_str()).copied().unwrap_or(0);
+                let depth = self
+                    .recursion_depth
+                    .get(name.as_str())
+                    .copied()
+                    .unwrap_or(0);
                 if depth >= self.max_recursion_depth {
-                    return Err(SimError::runtime(format!("recursion depth exceeded for function '{}' (max {})", name, self.max_recursion_depth)));
+                    return Err(SimError::runtime(format!(
+                        "recursion depth exceeded for function '{}' (max {})",
+                        name, self.max_recursion_depth
+                    )));
                 }
                 self.recursion_depth.insert(name.clone(), depth + 1);
 
                 // Find the function declaration
-                let func = self.design.module_functions.get(name.as_str())
+                let func = self
+                    .design
+                    .module_functions
+                    .get(name.as_str())
                     .cloned()
-                    .ok_or_else(|| SimError::runtime(format!("function '{}' not found for runtime call", name)))?;
+                    .ok_or_else(|| {
+                        SimError::runtime(format!("function '{}' not found for runtime call", name))
+                    })?;
 
                 // Compute return width from function declaration
                 let ret_width = if let Some(er) = &func.range {
-                    if let (Ok(msb), Ok(lsb)) = (crate::ast::types::const_eval_simple(&er.msb), crate::ast::types::const_eval_simple(&er.lsb)) {
+                    if let (Ok(msb), Ok(lsb)) = (
+                        crate::ast::types::const_eval_simple(&er.msb),
+                        crate::ast::types::const_eval_simple(&er.lsb),
+                    ) {
                         let msb = msb as usize;
                         let lsb = lsb as usize;
-                        if msb >= lsb { msb - lsb + 1 } else { lsb - msb + 1 }
-                    } else { 1 }
+                        if msb >= lsb {
+                            msb - lsb + 1
+                        } else {
+                            lsb - msb + 1
+                        }
+                    } else {
+                        1
+                    }
                 } else {
                     match &func.return_type {
                         Some(dt) => match dt.as_ref() {
                             crate::ast::types::DataType::Void => 0,
                             crate::ast::types::DataType::Byte => 8,
                             crate::ast::types::DataType::Shortint => 16,
-                            crate::ast::types::DataType::Int | crate::ast::types::DataType::Integer => 32,
+                            crate::ast::types::DataType::Int
+                            | crate::ast::types::DataType::Integer => 32,
                             crate::ast::types::DataType::Longint => 64,
                             crate::ast::types::DataType::Time => 64,
                             _ => 1,
@@ -4082,7 +5430,8 @@ impl SimulationEngine {
                 };
 
                 // Evaluate all arguments
-                let arg_vals: Vec<LogicVec> = args.iter()
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
                     .map(|a| self.evaluate_expr(a))
                     .collect::<Result<_, _>>()?;
 
@@ -4104,8 +5453,11 @@ impl SimulationEngine {
                 for decl in &func.decls {
                     for var in &decl.names {
                         if !locals.contains_key(&var.name) {
-                            let width = if let Some(r) = &var.range { r.width() }
-                                else { 1 };
+                            let width = if let Some(r) = &var.range {
+                                r.width()
+                            } else {
+                                1
+                            };
                             locals.insert(var.name.clone(), LogicVec::new(width));
                         }
                     }
@@ -4124,7 +5476,8 @@ impl SimulationEngine {
 
                 // Read return value from method_locals
                 let return_val = if ret_width > 0 {
-                    self.get_local("__func_ret").unwrap_or_else(|| LogicVec::new(ret_width))
+                    self.get_local("__func_ret")
+                        .unwrap_or_else(|| LogicVec::new(ret_width))
                 } else {
                     LogicVec::new(0)
                 };
@@ -4163,7 +5516,11 @@ impl SimulationEngine {
                     None => Ok(LogicVec::fill(LogicVal::X, 64)),
                 }
             }
-            IrExpr::VirtualIfaceAccess { vif_name, field, field_width } => {
+            IrExpr::VirtualIfaceAccess {
+                vif_name,
+                field,
+                field_width,
+            } => {
                 // Find the vif signal and read its binding handle (SignalId of a signal in the bound instance)
                 let mut result = LogicVec::fill(LogicVal::X, *field_width);
                 for (sid, sig) in self.design.top.signals.iter().enumerate() {
@@ -4177,7 +5534,8 @@ impl SimulationEngine {
                             if let Some(dot_pos) = bound_sig_name.rfind('.') {
                                 let inst_path = &bound_sig_name[..dot_pos];
                                 let sig_key = format!("{}.{}", inst_path, field);
-                                if let Some(&field_sid) = self.design.hier_signal_map.get(&sig_key) {
+                                if let Some(&field_sid) = self.design.hier_signal_map.get(&sig_key)
+                                {
                                     result = self.state.read_signal(field_sid).clone();
                                 }
                             }
@@ -4195,16 +5553,28 @@ impl SimulationEngine {
         if let Some(id) = self.signal_id_from_lvalue(lvalue) {
             if let Some(sig) = self.design.top.signals.get(id) {
                 if sig.is_const {
-                    return Err(SimError::runtime(format!("cannot write to const signal '{}'", sig.name)));
+                    return Err(SimError::runtime(format!(
+                        "cannot write to const signal '{}'",
+                        sig.name
+                    )));
                 }
             }
         }
         match lvalue {
             IrLValue::Signal(id, _) => {
                 sanitize_for_2state(&self.design.top.signals, *id, &mut val);
-                let is_str = self.design.top.signals.get(*id).map(|s| s.is_string).unwrap_or(false);
+                let is_str = self
+                    .design
+                    .top
+                    .signals
+                    .get(*id)
+                    .map(|s| s.is_string)
+                    .unwrap_or(false);
                 let sig_info = self.design.top.signals.get(*id).cloned();
-                let is_dyn = sig_info.as_ref().map(|s| s.is_dynamic || s.is_queue).unwrap_or(false);
+                let is_dyn = sig_info
+                    .as_ref()
+                    .map(|s| s.is_dynamic || s.is_queue)
+                    .unwrap_or(false);
                 let resized = if is_str || is_dyn {
                     val
                 } else {
@@ -4217,7 +5587,9 @@ impl SimulationEngine {
                 };
                 // Apply resolution for multi-driver nets
                 if let Some(ref info) = sig_info {
-                    if info.multi_driver && (info.kind == SignalKind::Wire || info.kind == SignalKind::Inout) {
+                    if info.multi_driver
+                        && (info.kind == SignalKind::Wire || info.kind == SignalKind::Inout)
+                    {
                         let current = self.state.read_signal(*id).clone();
                         let resolved = resolve_net_values(info.net_type, &current, &resized);
                         self.state.write_signal(*id, resolved);
@@ -4230,7 +5602,11 @@ impl SimulationEngine {
             IrLValue::RangeSelect(sig_id, msb, lsb) => {
                 sanitize_for_2state(&self.design.top.signals, *sig_id, &mut val);
                 let mut existing = self.state.read_signal(*sig_id).clone();
-                let (start, end) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
+                let (start, end) = if *msb > *lsb {
+                    (*lsb, *msb)
+                } else {
+                    (*msb, *lsb)
+                };
                 for (i, b) in val.bits.iter().enumerate() {
                     if start + i <= end {
                         existing.bits[start + i] = *b;
@@ -4250,7 +5626,11 @@ impl SimulationEngine {
                 self.state.write_signal(*sig_id, existing);
                 self.signal_last_change.insert(*sig_id, self.state.time);
             }
-            IrLValue::ArrayIndex { sig_id, index, elem_width } => {
+            IrLValue::ArrayIndex {
+                sig_id,
+                index,
+                elem_width,
+            } => {
                 let key_val = self.evaluate_expr(index)?;
                 // Check if this is an associative array
                 let sig_info = self.design.top.signals.get(*sig_id);
@@ -4277,12 +5657,22 @@ impl SimulationEngine {
                 self.state.write_signal(*sig_id, existing);
                 self.signal_last_change.insert(*sig_id, self.state.time);
             }
-            IrLValue::ArrayRangeSelect { sig_id, index, elem_width, msb, lsb } => {
+            IrLValue::ArrayRangeSelect {
+                sig_id,
+                index,
+                elem_width,
+                msb,
+                lsb,
+            } => {
                 let mut existing = self.state.read_signal(*sig_id).clone();
                 let idx_val = self.evaluate_expr(index)?;
                 let idx = idx_val.to_u64() as usize;
                 let base = idx * elem_width;
-                let (start, end) = if *msb > *lsb { (*lsb, *msb) } else { (*msb, *lsb) };
+                let (start, end) = if *msb > *lsb {
+                    (*lsb, *msb)
+                } else {
+                    (*msb, *lsb)
+                };
                 let abs_start = base + start;
                 for (i, b) in val.bits.iter().enumerate() {
                     if abs_start + i <= base + end {
@@ -4292,7 +5682,12 @@ impl SimulationEngine {
                 self.state.write_signal(*sig_id, existing);
                 self.signal_last_change.insert(*sig_id, self.state.time);
             }
-            IrLValue::ArrayBitSelect { sig_id, index, elem_width, bit } => {
+            IrLValue::ArrayBitSelect {
+                sig_id,
+                index,
+                elem_width,
+                bit,
+            } => {
                 let mut existing = self.state.read_signal(*sig_id).clone();
                 let idx_val = self.evaluate_expr(index)?;
                 let idx = idx_val.to_u64() as usize;
@@ -4327,13 +5722,22 @@ impl SimulationEngine {
 
     fn check_timing_constraints(&mut self) -> Result<(), SimError> {
         let current_time = self.state.time;
-        let signal_names: Vec<(String, SignalId)> = self.design.top.signals.iter()
-            .enumerate().map(|(i, s)| (s.name.clone(), i))
+        let signal_names: Vec<(String, SignalId)> = self
+            .design
+            .top
+            .signals
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.name.clone(), i))
             .collect();
         let items = self.design.specify_items.clone();
         for item in &items {
             match item {
-                SpecifyItem::SetupCheck { data, ref_event: _ref_event, limit } => {
+                SpecifyItem::SetupCheck {
+                    data,
+                    ref_event: _ref_event,
+                    limit,
+                } => {
                     // _ref_event is parsed but runtime edge detection is simplified
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
@@ -4348,7 +5752,11 @@ impl SimulationEngine {
                         }
                     }
                 }
-                SpecifyItem::HoldCheck { ref_event: _ref_event, data, limit } => {
+                SpecifyItem::HoldCheck {
+                    ref_event: _ref_event,
+                    data,
+                    limit,
+                } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
@@ -4362,7 +5770,12 @@ impl SimulationEngine {
                         }
                     }
                 }
-                SpecifyItem::SetupHoldCheck { ref_event: _ref_event, data, setup_limit, hold_limit } => {
+                SpecifyItem::SetupHoldCheck {
+                    ref_event: _ref_event,
+                    data,
+                    setup_limit,
+                    hold_limit,
+                } => {
                     let setup_val = const_eval_simple(setup_limit).unwrap_or(0) as u64;
                     let hold_val = const_eval_simple(hold_limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
@@ -4381,7 +5794,11 @@ impl SimulationEngine {
                         }
                     }
                 }
-                SpecifyItem::RecoveryCheck { data, ref_event: _ref_event, limit } => {
+                SpecifyItem::RecoveryCheck {
+                    data,
+                    ref_event: _ref_event,
+                    limit,
+                } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
@@ -4394,7 +5811,11 @@ impl SimulationEngine {
                         }
                     }
                 }
-                SpecifyItem::RemovalCheck { ref_event: _ref_event, data, limit } => {
+                SpecifyItem::RemovalCheck {
+                    ref_event: _ref_event,
+                    data,
+                    limit,
+                } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
@@ -4407,7 +5828,12 @@ impl SimulationEngine {
                         }
                     }
                 }
-                SpecifyItem::RecoveryRemovalCheck { ref_event: _ref_event, data, recovery_limit, removal_limit } => {
+                SpecifyItem::RecoveryRemovalCheck {
+                    ref_event: _ref_event,
+                    data,
+                    recovery_limit,
+                    removal_limit,
+                } => {
                     let recov_val = const_eval_simple(recovery_limit).unwrap_or(0) as u64;
                     let remov_val = const_eval_simple(removal_limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
@@ -4437,7 +5863,11 @@ impl SimulationEngine {
                         }
                     }
                 }
-                SpecifyItem::WidthCheck { ref_event, limit, threshold: _threshold } => {
+                SpecifyItem::WidthCheck {
+                    ref_event,
+                    limit,
+                    threshold: _threshold,
+                } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident(ref_sig) = ref_event {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == ref_sig) {
@@ -4450,15 +5880,26 @@ impl SimulationEngine {
                         }
                     }
                 }
-                SpecifyItem::SkewCheck { ref_event, data, limit } => {
+                SpecifyItem::SkewCheck {
+                    ref_event,
+                    data,
+                    limit,
+                } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
                             if let Some(&data_change) = self.signal_last_change.get(sid) {
                                 if let Expr::Ident(ref_sig) = &ref_event {
-                                    if let Some((_, rsid)) = signal_names.iter().find(|(n, _)| n == ref_sig) {
-                                        if let Some(&ref_change) = self.signal_last_change.get(rsid) {
-                                            let skew = if data_change > ref_change { data_change - ref_change } else { ref_change - data_change };
+                                    if let Some((_, rsid)) =
+                                        signal_names.iter().find(|(n, _)| n == ref_sig)
+                                    {
+                                        if let Some(&ref_change) = self.signal_last_change.get(rsid)
+                                        {
+                                            let skew = if data_change > ref_change {
+                                                data_change - ref_change
+                                            } else {
+                                                ref_change - data_change
+                                            };
                                             if skew > limit_val {
                                                 eprintln!("TIMING WARNING: $skew violation: skew {}ns > max {}ns between '{}' and '{}'", skew, limit_val, data_sig, ref_sig);
                                             }
@@ -4469,15 +5910,27 @@ impl SimulationEngine {
                         }
                     }
                 }
-                SpecifyItem::TimeskewCheck { ref_event, data, limit, threshold: _threshold } => {
+                SpecifyItem::TimeskewCheck {
+                    ref_event,
+                    data,
+                    limit,
+                    threshold: _threshold,
+                } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
                             if let Some(&data_change) = self.signal_last_change.get(sid) {
                                 if let Expr::Ident(ref_sig) = &ref_event {
-                                    if let Some((_, rsid)) = signal_names.iter().find(|(n, _)| n == ref_sig) {
-                                        if let Some(&ref_change) = self.signal_last_change.get(rsid) {
-                                            let skew = if data_change > ref_change { data_change - ref_change } else { ref_change - data_change };
+                                    if let Some((_, rsid)) =
+                                        signal_names.iter().find(|(n, _)| n == ref_sig)
+                                    {
+                                        if let Some(&ref_change) = self.signal_last_change.get(rsid)
+                                        {
+                                            let skew = if data_change > ref_change {
+                                                data_change - ref_change
+                                            } else {
+                                                ref_change - data_change
+                                            };
                                             if skew > limit_val {
                                                 eprintln!("TIMING WARNING: $timeskew violation: skew {}ns > max {}ns between '{}' and '{}'", skew, limit_val, data_sig, ref_sig);
                                             }
@@ -4488,7 +5941,12 @@ impl SimulationEngine {
                         }
                     }
                 }
-                SpecifyItem::NochangeCheck { ref_event: _ref_event, data, start_limit, end_limit } => {
+                SpecifyItem::NochangeCheck {
+                    ref_event: _ref_event,
+                    data,
+                    start_limit,
+                    end_limit,
+                } => {
                     let start_val = const_eval_simple(start_limit).unwrap_or(0) as u64;
                     let end_val = const_eval_simple(end_limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
@@ -4508,15 +5966,24 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn evaluate_dpi_call(&mut self, name: &str, args: &[IrExpr], return_width: usize) -> Result<LogicVec, SimError> {
+    fn evaluate_dpi_call(
+        &mut self,
+        name: &str,
+        args: &[IrExpr],
+        return_width: usize,
+    ) -> Result<LogicVec, SimError> {
         // Check if we have a matching DPI import
-        let dpi = self.design.dpi_imports.iter()
+        let dpi = self
+            .design
+            .dpi_imports
+            .iter()
             .find(|d| d.name == name)
             .ok_or_else(|| format!("DPI function '{}' not found in imports", name))?;
         if dpi.is_task {
             return Ok(LogicVec::new(0));
         }
-        let arg_vals: Vec<LogicVec> = args.iter()
+        let arg_vals: Vec<LogicVec> = args
+            .iter()
             .map(|a| self.evaluate_expr(a))
             .collect::<Result<_, _>>()?;
         // Known DPI functions
@@ -4559,9 +6026,7 @@ impl SimulationEngine {
                 // Handled in SysFunc dispatch — fallback here
                 Ok(LogicVec::from_u64(0, return_width))
             }
-            "$value$plusargs" | "svValuePlusArgs" => {
-                Ok(LogicVec::from_u64(0, return_width))
-            }
+            "$value$plusargs" | "svValuePlusArgs" => Ok(LogicVec::from_u64(0, return_width)),
             _ => {
                 // Unknown DPI — return 0
                 Ok(LogicVec::from_u64(0, return_width))
@@ -4569,17 +6034,24 @@ impl SimulationEngine {
         }
     }
 
-
     fn get_lvalue_width(&self, lvalue: &IrLValue) -> usize {
         match lvalue {
             IrLValue::Signal(id, _) => self.state.read_signal(*id).width,
             IrLValue::RangeSelect(_, msb, lsb) => {
-                if *msb > *lsb { msb - lsb + 1 } else { lsb - msb + 1 }
+                if *msb > *lsb {
+                    msb - lsb + 1
+                } else {
+                    lsb - msb + 1
+                }
             }
             IrLValue::BitSelect(_, _) => 1,
             IrLValue::ArrayIndex { elem_width, .. } => *elem_width,
             IrLValue::ArrayRangeSelect { msb, lsb, .. } => {
-                if *msb > *lsb { msb - lsb + 1 } else { lsb - msb + 1 }
+                if *msb > *lsb {
+                    msb - lsb + 1
+                } else {
+                    lsb - msb + 1
+                }
             }
             IrLValue::ArrayBitSelect { .. } => 1,
             IrLValue::Concat(parts) => parts.iter().map(|p| self.get_lvalue_width(p)).sum(),
@@ -4603,9 +6075,7 @@ impl SimulationEngine {
 
     fn write_ast_lvalue(&mut self, lhs: &crate::ast::Expr, val: LogicVec) -> Result<(), SimError> {
         match lhs {
-            crate::ast::Expr::Ident(name) => {
-                self.write_local_or_field(name, val)
-            }
+            crate::ast::Expr::Ident(name) => self.write_local_or_field(name, val),
             crate::ast::Expr::MemberAccess { obj, field } => {
                 let obj_val = self.evaluate_ast_expr(obj)?;
                 let obj_id = obj_val.to_u64() as ObjId;
@@ -4613,10 +6083,16 @@ impl SimulationEngine {
                     obj_data.fields.insert(field.clone(), val);
                     Ok(())
                 } else {
-                    Err(SimError::runtime(format!("object {} not found for field '{}'", obj_id, field)))
+                    Err(SimError::runtime(format!(
+                        "object {} not found for field '{}'",
+                        obj_id, field
+                    )))
                 }
             }
-            _ => Err(SimError::runtime(format!("unsupported lvalue type in task method: {:?}", lhs)))
+            _ => Err(SimError::runtime(format!(
+                "unsupported lvalue type in task method: {:?}",
+                lhs
+            ))),
         }
     }
 
@@ -4626,23 +6102,34 @@ impl SimulationEngine {
                 let sig_id = self.find_signal(name)?;
                 Some(IrLValue::Signal(sig_id, 0))
             }
-            _ => None
+            _ => None,
         }
     }
 
     fn find_ast_signal_id(&self, expr: &crate::ast::Expr) -> Option<SignalId> {
         match expr {
             crate::ast::Expr::Ident(name) => self.find_signal(name),
-            _ => None
+            _ => None,
         }
     }
 
-    fn handle_ast_syscall(&mut self, name: &str, args: &[crate::ast::Expr]) -> Result<(), SimError> {
+    fn handle_ast_syscall(
+        &mut self,
+        name: &str,
+        args: &[crate::ast::Expr],
+    ) -> Result<(), SimError> {
         if name == "display" || name == "write" {
-            let ir_args: Vec<IrExpr> = args.iter()
+            let ir_args: Vec<IrExpr> = args
+                .iter()
                 .map(|a| IrExpr::Const(self.evaluate_ast_expr(a).unwrap_or(LogicVec::new(32))))
                 .collect();
-            let msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, &ir_args);
+            let msg = format_display(
+                &self.state,
+                &self.design.top.signals,
+                &self.design.hier_signal_map,
+                &self.assoc_data,
+                &ir_args,
+            );
             print!("{}", msg);
         } else if name == "finish" {
             self.running = false;
@@ -4661,20 +6148,27 @@ impl SimulationEngine {
                 return Ok(());
             }
         }
-        Err(SimError::runtime(format!("cannot resolve '{}' in method context (not a local or field)", name)))
+        Err(SimError::runtime(format!(
+            "cannot resolve '{}' in method context (not a local or field)",
+            name
+        )))
     }
 
     fn evaluate_ast_expr(&mut self, expr: &Expr) -> Result<LogicVec, SimError> {
         match expr {
-            Expr::Value(v) => {
-                match v {
-                    Value::Decimal(i) => Ok(LogicVec::from_u64(*i as u64, 32)),
-                    Value::Binary { bits, .. } => LogicVec::from_bin(bits).map_err(|e| SimError::runtime(e)),
-                    Value::Hex { bits, .. } => LogicVec::from_hex(bits).map_err(|e| SimError::runtime(e)),
-                    Value::Octal { bits, .. } => LogicVec::from_hex(bits).map_err(|e| SimError::runtime(e)),
-                    Value::Real(r) => Ok(LogicVec::from_u64(r.to_bits(), 64)),
+            Expr::Value(v) => match v {
+                Value::Decimal(i) => Ok(LogicVec::from_u64(*i as u64, 32)),
+                Value::Binary { bits, .. } => {
+                    LogicVec::from_bin(bits).map_err(|e| SimError::runtime(e))
                 }
-            }
+                Value::Hex { bits, .. } => {
+                    LogicVec::from_hex(bits).map_err(|e| SimError::runtime(e))
+                }
+                Value::Octal { bits, .. } => {
+                    LogicVec::from_hex(bits).map_err(|e| SimError::runtime(e))
+                }
+                Value::Real(r) => Ok(LogicVec::from_u64(r.to_bits(), 64)),
+            },
             Expr::Ident(name) => {
                 if name == "this" {
                     if let Some(obj_id) = self.current_this {
@@ -4696,8 +6190,14 @@ impl SimulationEngine {
                 if let Some(sig_id) = self.find_signal(name) {
                     return Ok(self.state.read_signal(sig_id).clone());
                 }
-                let ctx = self.current_this.map(|id| format!("obj_id={}", id)).unwrap_or_else(|| "no current_this".to_string());
-                Err(SimError::runtime(format!("cannot resolve identifier '{}' in method context ({})", name, ctx)))
+                let ctx = self
+                    .current_this
+                    .map(|id| format!("obj_id={}", id))
+                    .unwrap_or_else(|| "no current_this".to_string());
+                Err(SimError::runtime(format!(
+                    "cannot resolve identifier '{}' in method context ({})",
+                    name, ctx
+                )))
             }
             Expr::BinaryOp { op, lhs, rhs } => {
                 let lval = self.evaluate_ast_expr(lhs)?;
@@ -4728,7 +6228,11 @@ impl SimulationEngine {
                 }
                 Ok(result)
             }
-            Expr::TernaryOp { cond, true_expr, false_expr } => {
+            Expr::TernaryOp {
+                cond,
+                true_expr,
+                false_expr,
+            } => {
                 let cval = self.evaluate_ast_expr(cond)?;
                 if cval.to_bool().unwrap_or(false) {
                     self.evaluate_ast_expr(true_expr)
@@ -4737,7 +6241,8 @@ impl SimulationEngine {
                 }
             }
             Expr::FuncCall { name, args } if name == "new" => {
-                let _arg_vals: Vec<LogicVec> = args.iter()
+                let _arg_vals: Vec<LogicVec> = args
+                    .iter()
                     .map(|a| self.evaluate_ast_expr(a))
                     .collect::<Result<_, _>>()?;
                 let obj_id = self.state.alloc_object("");
@@ -4745,29 +6250,77 @@ impl SimulationEngine {
             }
             Expr::FuncCall { name, args } if name.ends_with("::new") => {
                 let raw_name = name.strip_suffix("::new").unwrap().to_string();
-                let is_builtin = matches!(raw_name.as_str(),
-                    "uvm_object" | "uvm_component" | "uvm_sequence_item" | "uvm_sequence"
-                    | "uvm_sequencer" | "uvm_driver" | "uvm_monitor" | "uvm_scoreboard"
-                    | "uvm_analysis_port" | "uvm_analysis_imp" | "uvm_test" | "uvm_report_object"
-                    | "uvm_factory" | "uvm_resource_db"
+                let is_builtin = matches!(
+                    raw_name.as_str(),
+                    "uvm_object"
+                        | "uvm_component"
+                        | "uvm_sequence_item"
+                        | "uvm_sequence"
+                        | "uvm_sequencer"
+                        | "uvm_driver"
+                        | "uvm_monitor"
+                        | "uvm_scoreboard"
+                        | "uvm_analysis_port"
+                        | "uvm_analysis_imp"
+                        | "uvm_test"
+                        | "uvm_report_object"
+                        | "uvm_factory"
+                        | "uvm_resource_db"
                 );
-                let effective = if is_builtin { format!("__{}", raw_name) } else { raw_name.clone() };
-                let effective = self.factory_type_overrides.get(&effective).unwrap_or(&effective).clone();
+                let effective = if is_builtin {
+                    format!("__{}", raw_name)
+                } else {
+                    raw_name.clone()
+                };
+                let effective = self
+                    .factory_type_overrides
+                    .get(&effective)
+                    .unwrap_or(&effective)
+                    .clone();
                 let obj_id = self.state.alloc_object(&effective);
-                let arg_vals: Vec<LogicVec> = args.iter()
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
                     .map(|a| self.evaluate_ast_expr(a))
                     .collect::<Result<_, _>>()?;
                 // Initialize built-in data
                 if is_builtin {
                     if raw_name == "uvm_analysis_port" {
-                        let pname = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
-                        self.uvm_analysis_port_data.insert(obj_id, UvmAnalysisPortData { connections: Vec::new(), name: pname.clone() });
-                        self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name: pname });
+                        let pname = if !arg_vals.is_empty() {
+                            logicvec_to_string(&arg_vals[0])
+                        } else {
+                            String::new()
+                        };
+                        self.uvm_analysis_port_data.insert(
+                            obj_id,
+                            UvmAnalysisPortData {
+                                connections: Vec::new(),
+                                name: pname.clone(),
+                            },
+                        );
+                        self.uvm_object_data
+                            .entry(obj_id)
+                            .or_insert_with(|| UvmObjectData { name: pname });
                     } else if raw_name == "uvm_analysis_imp" {
-                        let pname = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
+                        let pname = if !arg_vals.is_empty() {
+                            logicvec_to_string(&arg_vals[0])
+                        } else {
+                            String::new()
+                        };
                         let parent_obj = arg_vals.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
-                        self.uvm_analysis_imp_data.insert(obj_id, UvmAnalysisImpData { parent: if parent_obj != 0 { Some(parent_obj) } else { None }, name: pname.clone() });
-                        self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name: pname });
+                        self.uvm_analysis_imp_data.insert(
+                            obj_id,
+                            UvmAnalysisImpData {
+                                parent: if parent_obj != 0 {
+                                    Some(parent_obj)
+                                } else {
+                                    None
+                                },
+                                name: pname.clone(),
+                            },
+                        );
+                        self.uvm_object_data
+                            .entry(obj_id)
+                            .or_insert_with(|| UvmObjectData { name: pname });
                     }
                 }
                 if self.find_method_in_hierarchy(&effective, "new").is_ok() {
@@ -4776,21 +6329,44 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(obj_id as u64, 64))
             }
             Expr::FuncCall { name, args } if name == "uvm_config_db::set" => {
-                let arg_vals: Vec<LogicVec> = args.iter()
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
                     .map(|a| self.evaluate_ast_expr(a))
                     .collect::<Result<_, _>>()?;
-                let inst_name = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
-                let field_name = if arg_vals.len() > 2 { logicvec_to_string(&arg_vals[2]) } else { String::new() };
-                let value = if arg_vals.len() > 3 { arg_vals[3].clone() } else { LogicVec::new(1) };
-                self.uvm_config_db_data.insert((inst_name, field_name), value);
+                let inst_name = if arg_vals.len() > 1 {
+                    logicvec_to_string(&arg_vals[1])
+                } else {
+                    String::new()
+                };
+                let field_name = if arg_vals.len() > 2 {
+                    logicvec_to_string(&arg_vals[2])
+                } else {
+                    String::new()
+                };
+                let value = if arg_vals.len() > 3 {
+                    arg_vals[3].clone()
+                } else {
+                    LogicVec::new(1)
+                };
+                self.uvm_config_db_data
+                    .insert((inst_name, field_name), value);
                 Ok(LogicVec::from_u64(1, 1))
             }
             Expr::FuncCall { name, args } if name == "uvm_config_db::get" => {
-                let arg_vals: Vec<LogicVec> = args.iter()
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
                     .map(|a| self.evaluate_ast_expr(a))
                     .collect::<Result<_, _>>()?;
-                let inst_name = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
-                let field_name = if arg_vals.len() > 2 { logicvec_to_string(&arg_vals[2]) } else { String::new() };
+                let inst_name = if arg_vals.len() > 1 {
+                    logicvec_to_string(&arg_vals[1])
+                } else {
+                    String::new()
+                };
+                let field_name = if arg_vals.len() > 2 {
+                    logicvec_to_string(&arg_vals[2])
+                } else {
+                    String::new()
+                };
                 let key = (inst_name, field_name);
                 let stored = self.uvm_config_db_data.get(&key).cloned();
                 if let Some(val) = stored {
@@ -4815,27 +6391,51 @@ impl SimulationEngine {
                 }
             }
             Expr::FuncCall { name, args } if name == "uvm_resource_db::set" => {
-                let arg_vals: Vec<LogicVec> = args.iter()
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
                     .map(|a| self.evaluate_ast_expr(a))
                     .collect::<Result<_, _>>()?;
-                let scope = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
-                let rname = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
-                let value = if arg_vals.len() > 2 { arg_vals[2].clone() } else { LogicVec::new(1) };
+                let scope = if !arg_vals.is_empty() {
+                    logicvec_to_string(&arg_vals[0])
+                } else {
+                    String::new()
+                };
+                let rname = if arg_vals.len() > 1 {
+                    logicvec_to_string(&arg_vals[1])
+                } else {
+                    String::new()
+                };
+                let value = if arg_vals.len() > 2 {
+                    arg_vals[2].clone()
+                } else {
+                    LogicVec::new(1)
+                };
                 self.uvm_resource_db_data.insert((scope, rname), value);
                 Ok(LogicVec::from_u64(1, 1))
             }
             Expr::FuncCall { name, args } if name == "uvm_resource_db::get" => {
-                let arg_vals: Vec<LogicVec> = args.iter()
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
                     .map(|a| self.evaluate_ast_expr(a))
                     .collect::<Result<_, _>>()?;
-                let scope = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
-                let rname = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
+                let scope = if !arg_vals.is_empty() {
+                    logicvec_to_string(&arg_vals[0])
+                } else {
+                    String::new()
+                };
+                let rname = if arg_vals.len() > 1 {
+                    logicvec_to_string(&arg_vals[1])
+                } else {
+                    String::new()
+                };
                 let key = (scope, rname);
                 let stored = self.uvm_resource_db_data.get(&key).cloned();
                 if let Some(val) = stored {
                     if let Some(last_arg) = args.get(2) {
                         match last_arg {
-                            Expr::Ident(var) => { self.write_local_or_field(var, val.clone())?; }
+                            Expr::Ident(var) => {
+                                self.write_local_or_field(var, val.clone())?;
+                            }
                             Expr::MemberAccess { obj, field } => {
                                 let obj_val = self.evaluate_ast_expr(obj)?;
                                 let obj_id = obj_val.to_u64() as ObjId;
@@ -4852,34 +6452,55 @@ impl SimulationEngine {
                 }
             }
             Expr::FuncCall { name, args } if name == "uvm_factory::set_type_override_by_type" => {
-                let arg_vals: Vec<LogicVec> = args.iter()
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
                     .map(|a| self.evaluate_ast_expr(a))
                     .collect::<Result<_, _>>()?;
-                let orig = if !arg_vals.is_empty() { logicvec_to_string(&arg_vals[0]) } else { String::new() };
-                let override_type = if arg_vals.len() > 1 { logicvec_to_string(&arg_vals[1]) } else { String::new() };
+                let orig = if !arg_vals.is_empty() {
+                    logicvec_to_string(&arg_vals[0])
+                } else {
+                    String::new()
+                };
+                let override_type = if arg_vals.len() > 1 {
+                    logicvec_to_string(&arg_vals[1])
+                } else {
+                    String::new()
+                };
                 self.factory_type_overrides.insert(orig, override_type);
                 Ok(LogicVec::from_u64(1, 1))
             }
             Expr::FuncCall { name, args } => {
-                let _arg_vals: Vec<LogicVec> = args.iter()
+                let _arg_vals: Vec<LogicVec> = args
+                    .iter()
                     .map(|a| self.evaluate_ast_expr(a))
                     .collect::<Result<_, _>>()?;
                 if name == "$clog2" {
                     if let Some(arg) = args.first() {
                         let val = self.evaluate_ast_expr(arg)?;
                         let n = val.to_u64();
-                        if n <= 1 { return Ok(LogicVec::from_u64(0, 32)); }
+                        if n <= 1 {
+                            return Ok(LogicVec::from_u64(0, 32));
+                        }
                         let msb = (64 - n.leading_zeros()) as u64;
                         let result = if n.is_power_of_two() { msb - 1 } else { msb };
                         return Ok(LogicVec::from_u64(result, 32));
                     }
                 }
-                Err(SimError::runtime(format!("unknown function '{}' in method context", name)))
+                Err(SimError::runtime(format!(
+                    "unknown function '{}' in method context",
+                    name
+                )))
             }
-            Expr::MethodCall { obj, method, args, with_clause: _ } => {
+            Expr::MethodCall {
+                obj,
+                method,
+                args,
+                with_clause: _,
+            } => {
                 if let Expr::Ident(s) = obj.as_ref() {
                     if s == "super" {
-                        let arg_vals: Vec<LogicVec> = args.iter()
+                        let arg_vals: Vec<LogicVec> = args
+                            .iter()
                             .map(|a| self.evaluate_ast_expr(a))
                             .collect::<Result<_, _>>()?;
                         return self.execute_super_method(method, &arg_vals);
@@ -4887,7 +6508,8 @@ impl SimulationEngine {
                 }
                 let obj_val = self.evaluate_ast_expr(obj)?;
                 let obj_id = obj_val.to_u64() as ObjId;
-                let arg_vals: Vec<LogicVec> = args.iter()
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
                     .map(|a| self.evaluate_ast_expr(a))
                     .collect::<Result<_, _>>()?;
                 self.execute_method(obj_id, method, &arg_vals)
@@ -4901,9 +6523,13 @@ impl SimulationEngine {
                 // Fall back to object field access (class objects)
                 let obj_val = self.evaluate_ast_expr(obj)?;
                 let obj_id = obj_val.to_u64() as ObjId;
-                let obj_data = self.state.get_object(obj_id)
+                let obj_data = self
+                    .state
+                    .get_object(obj_id)
                     .ok_or_else(|| format!("object {} not found", obj_id))?;
-                Ok(obj_data.fields.get(field)
+                Ok(obj_data
+                    .fields
+                    .get(field)
                     .cloned()
                     .unwrap_or_else(|| LogicVec::new(1)))
             }
@@ -4919,13 +6545,23 @@ impl SimulationEngine {
                     if bits.len() < elem_width {
                         bits.resize(elem_width, LogicVal::X);
                     }
-                    Ok(LogicVec { width: bits.len(), bits })
+                    Ok(LogicVec {
+                        width: bits.len(),
+                        bits,
+                    })
                 } else {
                     let bit = val.bits.get(i).copied().unwrap_or(LogicVal::X);
-                    Ok(LogicVec { bits: vec![bit], width: 1 })
+                    Ok(LogicVec {
+                        bits: vec![bit],
+                        width: 1,
+                    })
                 }
             }
-            Expr::RangeSelect { expr: inner, msb, lsb } => {
+            Expr::RangeSelect {
+                expr: inner,
+                msb,
+                lsb,
+            } => {
                 let val = self.evaluate_ast_expr(inner)?;
                 let msb_val = self.evaluate_ast_expr(msb)?;
                 let lsb_val = self.evaluate_ast_expr(lsb)?;
@@ -4933,10 +6569,19 @@ impl SimulationEngine {
                 let l = lsb_val.to_u64() as usize;
                 let (start, end) = if m > l { (l, m) } else { (m, l) };
                 let mut bits = val.bits[start..=end].to_vec();
-                if m > l { bits.reverse(); }
-                Ok(LogicVec { width: bits.len(), bits })
+                if m > l {
+                    bits.reverse();
+                }
+                Ok(LogicVec {
+                    width: bits.len(),
+                    bits,
+                })
             }
-            Expr::PartSelect { expr: inner, base, width } => {
+            Expr::PartSelect {
+                expr: inner,
+                base,
+                width,
+            } => {
                 let val = self.evaluate_ast_expr(inner)?;
                 let base_val = self.evaluate_ast_expr(base)?;
                 let width_val = self.evaluate_ast_expr(width)?;
@@ -4958,14 +6603,24 @@ impl SimulationEngine {
                 for c in s.chars() {
                     let byte = c as u8;
                     for i in 0..8 {
-                        bits.push(if (byte >> i) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                        bits.push(if (byte >> i) & 1 == 1 {
+                            LogicVal::One
+                        } else {
+                            LogicVal::Zero
+                        });
                     }
                 }
-                Ok(LogicVec { width: bits.len(), bits })
+                Ok(LogicVec {
+                    width: bits.len(),
+                    bits,
+                })
             }
             Expr::Null => Ok(LogicVec::from_u64(0, 64)),
             Expr::FillLit(v) => Ok(LogicVec::fill(*v, 1)),
-            Expr::Inside { expr: inner, range_list } => {
+            Expr::Inside {
+                expr: inner,
+                range_list,
+            } => {
                 let val = self.evaluate_ast_expr(inner)?;
                 for item in range_list {
                     let item_val = self.evaluate_ast_expr(item)?;
@@ -4976,16 +6631,23 @@ impl SimulationEngine {
                 }
                 Ok(LogicVec::from_u64(0, 1))
             }
-            Expr::StreamingConcat { op, slice_size, slices } => {
+            Expr::StreamingConcat {
+                op,
+                slice_size,
+                slices,
+            } => {
                 let mut vals = Vec::new();
                 for sl in slices {
                     vals.push(self.evaluate_ast_expr(sl)?);
                 }
-                let all_bits: Vec<LogicVal> = vals.iter().flat_map(|v| v.bits.iter().copied()).collect();
+                let all_bits: Vec<LogicVal> =
+                    vals.iter().flat_map(|v| v.bits.iter().copied()).collect();
                 let slen = if let Some(ss_expr) = slice_size {
                     let ss_val = self.evaluate_ast_expr(ss_expr)?;
                     let n = ss_val.to_u64() as usize;
-                    if n == 0 { return Err(SimError::runtime("streaming slice size must be > 0")); }
+                    if n == 0 {
+                        return Err(SimError::runtime("streaming slice size must be > 0"));
+                    }
                     n
                 } else {
                     1
@@ -5000,33 +6662,64 @@ impl SimulationEngine {
                         result.extend(chunk.iter());
                     }
                 }
-                Ok(LogicVec { width: result.len(), bits: result })
+                Ok(LogicVec {
+                    width: result.len(),
+                    bits: result,
+                })
             }
             Expr::Dist { expr: inner, items } => {
                 let inner_val = self.evaluate_ast_expr(inner)?;
-                let ir_items = items.iter().map(|di| {
-                    match di {
+                let ir_items = items
+                    .iter()
+                    .map(|di| match di {
                         crate::ast::DistItem::Value(e, crate::ast::DistWeight::Item(w)) => {
-                            let ev = self.evaluate_ast_expr(e).unwrap_or(LogicVec::from_u64(0, 32));
-                            crate::ir::IrDistItem { range_lo: Some(ev.to_u64() as i64), range_hi: Some(ev.to_u64() as i64), weight_type: crate::ir::DistWeightType::Item, weight: *w as i64 }
+                            let ev = self
+                                .evaluate_ast_expr(e)
+                                .unwrap_or(LogicVec::from_u64(0, 32));
+                            crate::ir::IrDistItem {
+                                range_lo: Some(ev.to_u64() as i64),
+                                range_hi: Some(ev.to_u64() as i64),
+                                weight_type: crate::ir::DistWeightType::Item,
+                                weight: *w as i64,
+                            }
                         }
                         crate::ast::DistItem::Value(e, crate::ast::DistWeight::Range(w)) => {
-                            let ev = self.evaluate_ast_expr(e).unwrap_or(LogicVec::from_u64(0, 32));
-                            crate::ir::IrDistItem { range_lo: Some(ev.to_u64() as i64), range_hi: Some(ev.to_u64() as i64), weight_type: crate::ir::DistWeightType::Range, weight: *w as i64 }
+                            let ev = self
+                                .evaluate_ast_expr(e)
+                                .unwrap_or(LogicVec::from_u64(0, 32));
+                            crate::ir::IrDistItem {
+                                range_lo: Some(ev.to_u64() as i64),
+                                range_hi: Some(ev.to_u64() as i64),
+                                weight_type: crate::ir::DistWeightType::Range,
+                                weight: *w as i64,
+                            }
                         }
                         crate::ast::DistItem::Range(lo, hi, crate::ast::DistWeight::Item(w)) => {
                             let lo_v = self.evaluate_ast_expr(lo).ok().map(|v| v.to_u64() as i64);
                             let hi_v = self.evaluate_ast_expr(hi).ok().map(|v| v.to_u64() as i64);
-                            crate::ir::IrDistItem { range_lo: lo_v, range_hi: hi_v, weight_type: crate::ir::DistWeightType::Item, weight: *w as i64 }
+                            crate::ir::IrDistItem {
+                                range_lo: lo_v,
+                                range_hi: hi_v,
+                                weight_type: crate::ir::DistWeightType::Item,
+                                weight: *w as i64,
+                            }
                         }
                         crate::ast::DistItem::Range(lo, hi, crate::ast::DistWeight::Range(w)) => {
                             let lo_v = self.evaluate_ast_expr(lo).ok().map(|v| v.to_u64() as i64);
                             let hi_v = self.evaluate_ast_expr(hi).ok().map(|v| v.to_u64() as i64);
-                            crate::ir::IrDistItem { range_lo: lo_v, range_hi: hi_v, weight_type: crate::ir::DistWeightType::Range, weight: *w as i64 }
+                            crate::ir::IrDistItem {
+                                range_lo: lo_v,
+                                range_hi: hi_v,
+                                weight_type: crate::ir::DistWeightType::Range,
+                                weight: *w as i64,
+                            }
                         }
-                    }
-                }).collect::<Vec<_>>();
-                Ok(self.evaluate_expr(&IrExpr::Dist { expr: Box::new(IrExpr::Const(inner_val)), items: ir_items })?)
+                    })
+                    .collect::<Vec<_>>();
+                Ok(self.evaluate_expr(&IrExpr::Dist {
+                    expr: Box::new(IrExpr::Const(inner_val)),
+                    items: ir_items,
+                })?)
             }
             Expr::Cast { dtype, expr: inner } => {
                 let val = self.evaluate_ast_expr(inner)?;
@@ -5047,21 +6740,29 @@ impl SimulationEngine {
                 };
                 Ok(val.resize(cast_width))
             }
-            Expr::ScopedIdent { package, item } => {
-                Err(SimError::runtime(format!("scoped identifier '{}.{}' not resolved at runtime", package, item)))
-            }
+            Expr::ScopedIdent { package, item } => Err(SimError::runtime(format!(
+                "scoped identifier '{}.{}' not resolved at runtime",
+                package, item
+            ))),
         }
     }
 
     fn find_signal(&self, name: &str) -> Option<usize> {
-        self.design.top.signals.iter().position(|s| s.name == name)
+        self.design
+            .top
+            .signals
+            .iter()
+            .position(|s| s.name == name)
             .or_else(|| self.design.hier_signal_map.get(name).copied())
     }
 
     fn build_hier_name(obj: &Expr, field: &str) -> String {
         match obj {
             Expr::Ident(prefix) => format!("{}.{}", prefix, field),
-            Expr::MemberAccess { obj: inner, field: inner_field } => {
+            Expr::MemberAccess {
+                obj: inner,
+                field: inner_field,
+            } => {
                 format!("{}.{}", Self::build_hier_name(inner, inner_field), field)
             }
             _ => String::new(),
@@ -5079,9 +6780,7 @@ impl SimulationEngine {
             Stmt::BlockingAssign { lhs, rhs, delay: _ } => {
                 let val = self.evaluate_ast_expr(rhs)?;
                 match lhs {
-                    Expr::Ident(name) => {
-                        self.write_local_or_field(name, val)
-                    }
+                    Expr::Ident(name) => self.write_local_or_field(name, val),
                     Expr::MemberAccess { obj, field } => {
                         let obj_val = self.evaluate_ast_expr(obj)?;
                         let obj_id = obj_val.to_u64() as ObjId;
@@ -5089,7 +6788,10 @@ impl SimulationEngine {
                             obj.fields.insert(field.clone(), val);
                             Ok(())
                         } else {
-                            Err(SimError::runtime(format!("object {} not found for field write", obj_id)))
+                            Err(SimError::runtime(format!(
+                                "object {} not found for field write",
+                                obj_id
+                            )))
                         }
                     }
                     Expr::BitSelect { expr: inner, index } => {
@@ -5104,9 +6806,14 @@ impl SimulationEngine {
                                     bits[start + j] = *b;
                                 }
                             }
-                            let new_val = LogicVec { width: bits.len(), bits };
+                            let new_val = LogicVec {
+                                width: bits.len(),
+                                bits,
+                            };
                             match inner.as_ref() {
-                                Expr::Ident(name) => { self.write_local_or_field(name, new_val)?; }
+                                Expr::Ident(name) => {
+                                    self.write_local_or_field(name, new_val)?;
+                                }
                                 Expr::MemberAccess { obj, field } => {
                                     let ov = self.evaluate_ast_expr(obj)?;
                                     let oid = ov.to_u64() as ObjId;
@@ -5127,7 +6834,9 @@ impl SimulationEngine {
                             let width = bits.len();
                             let new_val = LogicVec { width, bits };
                             match inner.as_ref() {
-                                Expr::Ident(name) => { self.write_local_or_field(name, new_val)?; }
+                                Expr::Ident(name) => {
+                                    self.write_local_or_field(name, new_val)?;
+                                }
                                 Expr::MemberAccess { obj, field } => {
                                     let ov = self.evaluate_ast_expr(obj)?;
                                     let oid = ov.to_u64() as ObjId;
@@ -5140,7 +6849,11 @@ impl SimulationEngine {
                             Ok(())
                         }
                     }
-                    Expr::RangeSelect { expr: inner, msb, lsb } => {
+                    Expr::RangeSelect {
+                        expr: inner,
+                        msb,
+                        lsb,
+                    } => {
                         let lhs_val = self.evaluate_ast_expr(inner)?;
                         let msb_val = self.evaluate_ast_expr(msb)?;
                         let lsb_val = self.evaluate_ast_expr(lsb)?;
@@ -5154,9 +6867,14 @@ impl SimulationEngine {
                                 bits[start + j] = val.bits[j];
                             }
                         }
-                        let new_val = LogicVec { width: bits.len(), bits };
+                        let new_val = LogicVec {
+                            width: bits.len(),
+                            bits,
+                        };
                         match inner.as_ref() {
-                            Expr::Ident(name) => { self.write_local_or_field(name, new_val)?; }
+                            Expr::Ident(name) => {
+                                self.write_local_or_field(name, new_val)?;
+                            }
                             Expr::MemberAccess { obj, field } => {
                                 let ov = self.evaluate_ast_expr(obj)?;
                                 let oid = ov.to_u64() as ObjId;
@@ -5168,15 +6886,16 @@ impl SimulationEngine {
                         }
                         Ok(())
                     }
-                    _ => Err(SimError::runtime(format!("unsupported LHS in method: {:?}", lhs))),
+                    _ => Err(SimError::runtime(format!(
+                        "unsupported LHS in method: {:?}",
+                        lhs
+                    ))),
                 }
             }
             Stmt::NonBlockingAssign { lhs, rhs, delay: _ } => {
                 let val = self.evaluate_ast_expr(rhs)?;
                 match lhs {
-                    Expr::Ident(name) => {
-                        self.write_local_or_field(name, val)
-                    }
+                    Expr::Ident(name) => self.write_local_or_field(name, val),
                     Expr::MemberAccess { obj, field } => {
                         let obj_val = self.evaluate_ast_expr(obj)?;
                         let obj_id = obj_val.to_u64() as ObjId;
@@ -5184,7 +6903,10 @@ impl SimulationEngine {
                             obj.fields.insert(field.clone(), val);
                             Ok(())
                         } else {
-                            Err(SimError::runtime(format!("object {} not found for field write", obj_id)))
+                            Err(SimError::runtime(format!(
+                                "object {} not found for field write",
+                                obj_id
+                            )))
                         }
                     }
                     Expr::BitSelect { expr: inner, index } => {
@@ -5199,9 +6921,14 @@ impl SimulationEngine {
                                     bits[start + j] = *b;
                                 }
                             }
-                            let new_val = LogicVec { width: bits.len(), bits: bits.clone() };
+                            let new_val = LogicVec {
+                                width: bits.len(),
+                                bits: bits.clone(),
+                            };
                             match inner.as_ref() {
-                                Expr::Ident(name) => { self.write_local_or_field(name, new_val)?; }
+                                Expr::Ident(name) => {
+                                    self.write_local_or_field(name, new_val)?;
+                                }
                                 Expr::MemberAccess { obj, field } => {
                                     let ov = self.evaluate_ast_expr(obj)?;
                                     let oid = ov.to_u64() as ObjId;
@@ -5222,7 +6949,9 @@ impl SimulationEngine {
                             let width = bits.len();
                             let new_val = LogicVec { width, bits };
                             match inner.as_ref() {
-                                Expr::Ident(name) => { self.write_local_or_field(name, new_val)?; }
+                                Expr::Ident(name) => {
+                                    self.write_local_or_field(name, new_val)?;
+                                }
                                 Expr::MemberAccess { obj, field } => {
                                     let ov = self.evaluate_ast_expr(obj)?;
                                     let oid = ov.to_u64() as ObjId;
@@ -5235,7 +6964,11 @@ impl SimulationEngine {
                             Ok(())
                         }
                     }
-                    Expr::RangeSelect { expr: inner, msb, lsb } => {
+                    Expr::RangeSelect {
+                        expr: inner,
+                        msb,
+                        lsb,
+                    } => {
                         let lhs_val = self.evaluate_ast_expr(inner)?;
                         let msb_val = self.evaluate_ast_expr(msb)?;
                         let lsb_val = self.evaluate_ast_expr(lsb)?;
@@ -5249,9 +6982,14 @@ impl SimulationEngine {
                                 bits[start + j] = val.bits[j];
                             }
                         }
-                        let new_val = LogicVec { width: bits.len(), bits };
+                        let new_val = LogicVec {
+                            width: bits.len(),
+                            bits,
+                        };
                         match inner.as_ref() {
-                            Expr::Ident(name) => { self.write_local_or_field(name, new_val)?; }
+                            Expr::Ident(name) => {
+                                self.write_local_or_field(name, new_val)?;
+                            }
                             Expr::MemberAccess { obj, field } => {
                                 let ov = self.evaluate_ast_expr(obj)?;
                                 let oid = ov.to_u64() as ObjId;
@@ -5263,10 +7001,17 @@ impl SimulationEngine {
                         }
                         Ok(())
                     }
-                    _ => Err(SimError::runtime(format!("unsupported LHS in method: {:?}", lhs))),
+                    _ => Err(SimError::runtime(format!(
+                        "unsupported LHS in method: {:?}",
+                        lhs
+                    ))),
                 }
             }
-            Stmt::IfElse { cond, true_branch, false_branch } => {
+            Stmt::IfElse {
+                cond,
+                true_branch,
+                false_branch,
+            } => {
                 let cval = self.evaluate_ast_expr(cond)?;
                 if cval.to_bool().unwrap_or(false) {
                     self.evaluate_ast_stmt(true_branch)
@@ -5276,7 +7021,11 @@ impl SimulationEngine {
                     Ok(())
                 }
             }
-            Stmt::Case { expr, items, default } => {
+            Stmt::Case {
+                expr,
+                items,
+                default,
+            } => {
                 let case_val = self.evaluate_ast_expr(expr)?;
                 let mut matched = false;
                 for item in items {
@@ -5288,7 +7037,9 @@ impl SimulationEngine {
                             break;
                         }
                     }
-                    if matched { break; }
+                    if matched {
+                        break;
+                    }
                 }
                 if !matched {
                     if let Some(default_body) = default {
@@ -5297,7 +7048,11 @@ impl SimulationEngine {
                 }
                 Ok(())
             }
-            Stmt::CaseX { expr, items, default } => {
+            Stmt::CaseX {
+                expr,
+                items,
+                default,
+            } => {
                 let case_val = self.evaluate_ast_expr(expr)?;
                 let mut matched = false;
                 for item in items {
@@ -5309,7 +7064,9 @@ impl SimulationEngine {
                             break;
                         }
                     }
-                    if matched { break; }
+                    if matched {
+                        break;
+                    }
                 }
                 if !matched {
                     if let Some(default_body) = default {
@@ -5318,7 +7075,11 @@ impl SimulationEngine {
                 }
                 Ok(())
             }
-            Stmt::CaseZ { expr, items, default } => {
+            Stmt::CaseZ {
+                expr,
+                items,
+                default,
+            } => {
                 let case_val = self.evaluate_ast_expr(expr)?;
                 let mut matched = false;
                 for item in items {
@@ -5330,7 +7091,9 @@ impl SimulationEngine {
                             break;
                         }
                     }
-                    if matched { break; }
+                    if matched {
+                        break;
+                    }
                 }
                 if !matched {
                     if let Some(default_body) = default {
@@ -5339,22 +7102,41 @@ impl SimulationEngine {
                 }
                 Ok(())
             }
-            Stmt::StmtCase { expr, items, default } => {
-                self.evaluate_ast_stmt(&Stmt::Case { expr: expr.clone(), items: items.clone(), default: default.clone() })
-            }
-            Stmt::LoopFor { init, cond, step, stmts } => {
+            Stmt::StmtCase {
+                expr,
+                items,
+                default,
+            } => self.evaluate_ast_stmt(&Stmt::Case {
+                expr: expr.clone(),
+                items: items.clone(),
+                default: default.clone(),
+            }),
+            Stmt::LoopFor {
+                init,
+                cond,
+                step,
+                stmts,
+            } => {
                 if let Some(init_stmt) = init {
                     self.evaluate_ast_stmt(init_stmt)?;
                 }
-                while self.disable_pending.is_none() && cond.as_ref().map_or(true, |c| self.evaluate_ast_expr(c).ok()
-                    .map(|v| v.to_bool().unwrap_or(false))
-                    .unwrap_or(false))
+                while self.disable_pending.is_none()
+                    && cond.as_ref().map_or(true, |c| {
+                        self.evaluate_ast_expr(c)
+                            .ok()
+                            .map(|v| v.to_bool().unwrap_or(false))
+                            .unwrap_or(false)
+                    })
                 {
                     for s in stmts {
                         self.evaluate_ast_stmt(s)?;
-                        if self.disable_pending.is_some() { break; }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
                     }
-                    if self.disable_pending.is_some() { break; }
+                    if self.disable_pending.is_some() {
+                        break;
+                    }
                     if let Some(step_stmt) = step {
                         self.evaluate_ast_stmt(step_stmt)?;
                     }
@@ -5362,23 +7144,32 @@ impl SimulationEngine {
                 Ok(())
             }
             Stmt::LoopWhile { cond, stmts } => {
-                while self.disable_pending.is_none() && self.evaluate_ast_expr(cond).ok()
-                    .map(|v| v.to_bool().unwrap_or(false))
-                    .unwrap_or(false)
+                while self.disable_pending.is_none()
+                    && self
+                        .evaluate_ast_expr(cond)
+                        .ok()
+                        .map(|v| v.to_bool().unwrap_or(false))
+                        .unwrap_or(false)
                 {
                     for s in stmts {
                         self.evaluate_ast_stmt(s)?;
-                        if self.disable_pending.is_some() { break; }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
                     }
                 }
                 Ok(())
             }
             Stmt::LoopForever { stmts } => {
                 for _ in 0..1_000_000 {
-                    if self.disable_pending.is_some() { break; }
+                    if self.disable_pending.is_some() {
+                        break;
+                    }
                     for s in stmts {
                         self.evaluate_ast_stmt(s)?;
-                        if self.disable_pending.is_some() { break; }
+                        if self.disable_pending.is_some() {
+                            break;
+                        }
                     }
                 }
                 Ok(())
@@ -5411,9 +7202,16 @@ impl SimulationEngine {
                 self.disable_pending = Some(name.clone());
                 Ok(())
             }
-            Stmt::ForeachLoop { array_var, index_vars, stmts } => {
+            Stmt::ForeachLoop {
+                array_var,
+                index_vars,
+                stmts,
+            } => {
                 let count = self.get_foreach_count(array_var);
-                let iv = index_vars.first().cloned().unwrap_or_else(|| "i".to_string());
+                let iv = index_vars
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "i".to_string());
                 for i in 0..count {
                     let idx_val = LogicVec::from_u64(i as u64, 32);
                     let mut scope = HashMap::new();
@@ -5438,9 +7236,7 @@ impl SimulationEngine {
             Stmt::StmtAssign { lhs, rhs } => {
                 let val = self.evaluate_ast_expr(rhs)?;
                 match lhs {
-                    Expr::Ident(name) => {
-                        self.write_local_or_field(name, val)
-                    }
+                    Expr::Ident(name) => self.write_local_or_field(name, val),
                     Expr::MemberAccess { obj, field } => {
                         let obj_val = self.evaluate_ast_expr(obj)?;
                         let obj_id = obj_val.to_u64() as ObjId;
@@ -5448,13 +7244,22 @@ impl SimulationEngine {
                             obj.fields.insert(field.clone(), val);
                             Ok(())
                         } else {
-                            Err(SimError::runtime(format!("object {} not found for field write", obj_id)))
+                            Err(SimError::runtime(format!(
+                                "object {} not found for field write",
+                                obj_id
+                            )))
                         }
                     }
-                    _ => Err(SimError::runtime(format!("unsupported LHS in StmtAssign: {:?}", lhs))),
+                    _ => Err(SimError::runtime(format!(
+                        "unsupported LHS in StmtAssign: {:?}",
+                        lhs
+                    ))),
                 }
             }
-            _ => Err(SimError::runtime(format!("unsupported statement in method context: {:?}", stmt))),
+            _ => Err(SimError::runtime(format!(
+                "unsupported statement in method context: {:?}",
+                stmt
+            ))),
         }
     }
 
@@ -5462,8 +7267,11 @@ impl SimulationEngine {
         let phase_methods = ["build_phase", "connect_phase", "run_phase"];
         let mut best: Option<(String, usize)> = None;
         for (name, cls) in &self.design.classes {
-            if !self.is_uvm_test_hierarchy(name) { continue; }
-            let count = phase_methods.iter()
+            if !self.is_uvm_test_hierarchy(name) {
+                continue;
+            }
+            let count = phase_methods
+                .iter()
                 .filter(|pm| cls.methods.iter().any(|m| &m.name == *pm))
                 .count();
             if count > 0 && best.as_ref().map_or(true, |b| count > b.1) {
@@ -5473,7 +7281,8 @@ impl SimulationEngine {
         // fallback: any class with phase methods
         if best.is_none() {
             for (name, cls) in &self.design.classes {
-                let count = phase_methods.iter()
+                let count = phase_methods
+                    .iter()
                     .filter(|pm| cls.methods.iter().any(|m| &m.name == *pm))
                     .count();
                 if count > 0 && best.as_ref().map_or(true, |b| count > b.1) {
@@ -5487,7 +7296,9 @@ impl SimulationEngine {
     fn is_uvm_test_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
-            if current == "__uvm_test" { return true; }
+            if current == "__uvm_test" {
+                return true;
+            }
             match self.design.classes.get(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
@@ -5508,21 +7319,30 @@ impl SimulationEngine {
         self.root_test_obj_id = Some(obj_id);
 
         // build_phase: root then children
-        if self.find_method_in_hierarchy(&class_name, "build_phase").is_ok() {
+        if self
+            .find_method_in_hierarchy(&class_name, "build_phase")
+            .is_ok()
+        {
             self.current_this = Some(obj_id);
             self.execute_method(obj_id, "build_phase", &[])?;
             self.current_this = None;
             self.call_phase_on_children(obj_id, "build_phase")?;
         }
         // connect_phase: root then children
-        if self.find_method_in_hierarchy(&class_name, "connect_phase").is_ok() {
+        if self
+            .find_method_in_hierarchy(&class_name, "connect_phase")
+            .is_ok()
+        {
             self.current_this = Some(obj_id);
             self.execute_method(obj_id, "connect_phase", &[])?;
             self.current_this = None;
             self.call_phase_on_children(obj_id, "connect_phase")?;
         }
         // run_phase: call root's run_phase (blocking since delays in methods are no-ops)
-        if self.find_method_in_hierarchy(&class_name, "run_phase").is_ok() {
+        if self
+            .find_method_in_hierarchy(&class_name, "run_phase")
+            .is_ok()
+        {
             self.current_this = Some(obj_id);
             self.execute_method(obj_id, "run_phase", &[])?;
             self.current_this = None;
@@ -5551,7 +7371,9 @@ impl SimulationEngine {
     fn is_uvm_object_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
-            if current == "__uvm_object" { return true; }
+            if current == "__uvm_object" {
+                return true;
+            }
             match self.design.classes.get(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
@@ -5565,7 +7387,9 @@ impl SimulationEngine {
     fn is_uvm_component_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
-            if current == "__uvm_component" { return true; }
+            if current == "__uvm_component" {
+                return true;
+            }
             match self.design.classes.get(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
@@ -5579,7 +7403,9 @@ impl SimulationEngine {
     fn is_uvm_report_object_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
-            if current == "__uvm_report_object" { return true; }
+            if current == "__uvm_report_object" {
+                return true;
+            }
             match self.design.classes.get(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
@@ -5593,7 +7419,9 @@ impl SimulationEngine {
     fn is_uvm_sequence_item_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
-            if current == "__uvm_sequence_item" { return true; }
+            if current == "__uvm_sequence_item" {
+                return true;
+            }
             match self.design.classes.get(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
@@ -5607,7 +7435,9 @@ impl SimulationEngine {
     fn is_uvm_sequence_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
-            if current == "__uvm_sequence" { return true; }
+            if current == "__uvm_sequence" {
+                return true;
+            }
             match self.design.classes.get(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
@@ -5621,7 +7451,9 @@ impl SimulationEngine {
     fn is_uvm_sequencer_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
-            if current == "__uvm_sequencer" { return true; }
+            if current == "__uvm_sequencer" {
+                return true;
+            }
             match self.design.classes.get(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
@@ -5635,7 +7467,9 @@ impl SimulationEngine {
     fn is_uvm_monitor_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
-            if current == "__uvm_monitor" { return true; }
+            if current == "__uvm_monitor" {
+                return true;
+            }
             match self.design.classes.get(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
@@ -5649,7 +7483,9 @@ impl SimulationEngine {
     fn is_uvm_analysis_port_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
-            if current == "__uvm_analysis_port" { return true; }
+            if current == "__uvm_analysis_port" {
+                return true;
+            }
             match self.design.classes.get(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
@@ -5663,7 +7499,9 @@ impl SimulationEngine {
     fn is_uvm_analysis_imp_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
-            if current == "__uvm_analysis_imp" { return true; }
+            if current == "__uvm_analysis_imp" {
+                return true;
+            }
             match self.design.classes.get(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
@@ -5677,7 +7515,9 @@ impl SimulationEngine {
     fn is_uvm_driver_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
-            if current == "__uvm_driver" { return true; }
+            if current == "__uvm_driver" {
+                return true;
+            }
             match self.design.classes.get(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
@@ -5688,14 +7528,22 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_method(&mut self, obj_id: ObjId, method: &str,
-                      args: &[LogicVec]) -> Result<LogicVec, SimError>
-    {
-        let class_name = self.state.get_object(obj_id)
+    fn execute_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
+        let class_name = self
+            .state
+            .get_object(obj_id)
             .map(|o| o.class_name.clone())
             .unwrap_or_default();
         if class_name.is_empty() {
-            return Err(SimError::runtime(format!("cannot call method '{}' on object with unknown class", method)));
+            return Err(SimError::runtime(format!(
+                "cannot call method '{}' on object with unknown class",
+                method
+            )));
         }
         if class_name == "__mailbox" {
             return self.execute_mailbox_method(obj_id, method, args);
@@ -5710,7 +7558,9 @@ impl SimulationEngine {
         if method == "sample" && class_name.starts_with("__covergroup_") {
             let cg_name = &class_name["__covergroup_".len()..];
             if self.design.covergroups.iter().any(|c| c.name == cg_name) {
-                return self.sample_covergroup(cg_name).map(|_| LogicVec::from_u64(1, 1));
+                return self
+                    .sample_covergroup(cg_name)
+                    .map(|_| LogicVec::from_u64(1, 1));
             }
         }
         // Check uvm_driver hierarchy (most specific first)
@@ -5794,14 +7644,22 @@ impl SimulationEngine {
         // Normal dispatch: find method in the full class hierarchy (virtual dispatch)
         let method_def = self.find_method_in_hierarchy(&class_name, method)?.clone();
         // Static methods don't receive `this`
-        let this_opt = if method_def.is_static { None } else { Some(obj_id) };
+        let this_opt = if method_def.is_static {
+            None
+        } else {
+            Some(obj_id)
+        };
         self.execute_method_body(this_opt, &method_def, args, method)
     }
 
     fn execute_randomize(&mut self, obj_id: ObjId, class_name: &str) -> Result<LogicVec, SimError> {
         // Clone all data we need to avoid borrow conflicts
-        let class_def = self.design.classes.get(class_name)
-            .ok_or_else(|| format!("class '{}' not found", class_name))?.clone();
+        let class_def = self
+            .design
+            .classes
+            .get(class_name)
+            .ok_or_else(|| format!("class '{}' not found", class_name))?
+            .clone();
         if class_def.rand_fields.is_empty() {
             return Ok(LogicVec::from_u64(1, 1));
         }
@@ -5809,14 +7667,16 @@ impl SimulationEngine {
         self.current_this = Some(obj_id);
 
         // Extract solve...before ordering constraints
-        let mut before_map: std::collections::HashMap<String, std::collections::HashSet<String>> = std::collections::HashMap::new();
+        let mut before_map: std::collections::HashMap<String, std::collections::HashSet<String>> =
+            std::collections::HashMap::new();
         for (_, body) in &class_def.constraints {
             for item in body {
                 if let ConstraintItem::SolveBefore { vars } = item {
                     if vars.len() >= 2 {
                         let first = &vars[0];
                         for later in &vars[1..] {
-                            before_map.entry(first.clone())
+                            before_map
+                                .entry(first.clone())
                                 .or_insert_with(std::collections::HashSet::new)
                                 .insert(later.clone());
                         }
@@ -5827,7 +7687,8 @@ impl SimulationEngine {
 
         // Order rand_fields: fields in solve-before come first
         let mut ordered_fields: Vec<String> = Vec::new();
-        let mut remaining: std::collections::HashSet<String> = class_def.rand_fields.iter().cloned().collect();
+        let mut remaining: std::collections::HashSet<String> =
+            class_def.rand_fields.iter().cloned().collect();
         for fname in &class_def.rand_fields {
             if before_map.contains_key(fname) && remaining.contains(fname) {
                 ordered_fields.push(fname.clone());
@@ -5847,7 +7708,9 @@ impl SimulationEngine {
             for fname in &ordered_fields {
                 let field_info = class_def.fields.iter().find(|f| &f.name == fname);
                 let width = field_info.map(|f| f.width).unwrap_or(1);
-                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 let rv = LogicVec::from_u64(seed, width);
                 if let Some(obj) = self.state.objects.get_mut(obj_id) {
                     obj.fields.insert(fname.clone(), rv);
@@ -5871,7 +7734,9 @@ impl SimulationEngine {
                         }
                     }
                 }
-                if !all_satisfied { break; }
+                if !all_satisfied {
+                    break;
+                }
             }
 
             if all_satisfied {
@@ -5881,12 +7746,24 @@ impl SimulationEngine {
         }
 
         self.current_this = old_this;
-        Err(SimError::runtime(format!("randomize failed: could not satisfy all constraints after {} attempts", max_attempts)))
+        Err(SimError::runtime(format!(
+            "randomize failed: could not satisfy all constraints after {} attempts",
+            max_attempts
+        )))
     }
 
-    fn execute_randomize_with(&mut self, obj_id: ObjId, class_name: &str, with_clause: Option<&IrExpr>) -> Result<LogicVec, SimError> {
-        let class_def = self.design.classes.get(class_name)
-            .ok_or_else(|| format!("class '{}' not found", class_name))?.clone();
+    fn execute_randomize_with(
+        &mut self,
+        obj_id: ObjId,
+        class_name: &str,
+        with_clause: Option<&IrExpr>,
+    ) -> Result<LogicVec, SimError> {
+        let class_def = self
+            .design
+            .classes
+            .get(class_name)
+            .ok_or_else(|| format!("class '{}' not found", class_name))?
+            .clone();
         if class_def.rand_fields.is_empty() {
             return Ok(LogicVec::from_u64(1, 1));
         }
@@ -5897,14 +7774,16 @@ impl SimulationEngine {
         let old_this = self.current_this;
         self.current_this = Some(obj_id);
 
-        let mut before_map: std::collections::HashMap<String, std::collections::HashSet<String>> = std::collections::HashMap::new();
+        let mut before_map: std::collections::HashMap<String, std::collections::HashSet<String>> =
+            std::collections::HashMap::new();
         for (_, body) in &class_def.constraints {
             for item in body {
                 if let ConstraintItem::SolveBefore { vars } = item {
                     if vars.len() >= 2 {
                         let first = &vars[0];
                         for later in &vars[1..] {
-                            before_map.entry(first.clone())
+                            before_map
+                                .entry(first.clone())
                                 .or_insert_with(std::collections::HashSet::new)
                                 .insert(later.clone());
                         }
@@ -5914,7 +7793,8 @@ impl SimulationEngine {
         }
 
         let mut ordered_fields: Vec<String> = Vec::new();
-        let mut remaining: std::collections::HashSet<String> = class_def.rand_fields.iter().cloned().collect();
+        let mut remaining: std::collections::HashSet<String> =
+            class_def.rand_fields.iter().cloned().collect();
         for fname in &class_def.rand_fields {
             if before_map.contains_key(fname) && remaining.contains(fname) {
                 ordered_fields.push(fname.clone());
@@ -5933,7 +7813,9 @@ impl SimulationEngine {
             for fname in &ordered_fields {
                 let field_info = class_def.fields.iter().find(|f| &f.name == fname);
                 let width = field_info.map(|f| f.width).unwrap_or(1);
-                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 let rv = LogicVec::from_u64(seed, width);
                 if let Some(obj) = self.state.objects.get_mut(obj_id) {
                     obj.fields.insert(fname.clone(), rv);
@@ -5955,7 +7837,9 @@ impl SimulationEngine {
                         ConstraintItem::SolveBefore { .. } => {}
                     }
                 }
-                if !all_satisfied { break; }
+                if !all_satisfied {
+                    break;
+                }
             }
             // Evaluate inline constraint (with_clause)
             if all_satisfied {
@@ -5972,25 +7856,44 @@ impl SimulationEngine {
         }
 
         self.current_this = old_this;
-        Err(SimError::runtime(format!("randomize with failed: could not satisfy constraints after {} attempts", max_attempts)))
+        Err(SimError::runtime(format!(
+            "randomize with failed: could not satisfy constraints after {} attempts",
+            max_attempts
+        )))
     }
 
-    fn execute_mailbox_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+    fn execute_mailbox_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
         match method {
             "new" => Ok(LogicVec::from_u64(1, 1)),
             "put" => {
-                if args.is_empty() { return Err(SimError::runtime("mailbox::put expects 1 argument")); }
-                self.mailbox_queues.entry(obj_id).or_default().push(args[0].clone());
+                if args.is_empty() {
+                    return Err(SimError::runtime("mailbox::put expects 1 argument"));
+                }
+                self.mailbox_queues
+                    .entry(obj_id)
+                    .or_default()
+                    .push(args[0].clone());
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get" => {
-                let q = self.mailbox_queues.get_mut(&obj_id)
+                let q = self
+                    .mailbox_queues
+                    .get_mut(&obj_id)
                     .ok_or_else(|| SimError::runtime("mailbox not initialized"))?;
-                if q.is_empty() { return Ok(LogicVec::default()); }
+                if q.is_empty() {
+                    return Ok(LogicVec::default());
+                }
                 Ok(q.remove(0))
             }
             "try_get" => {
-                let q = self.mailbox_queues.get_mut(&obj_id)
+                let q = self
+                    .mailbox_queues
+                    .get_mut(&obj_id)
                     .ok_or_else(|| SimError::runtime("mailbox not initialized"))?;
                 if q.is_empty() {
                     return Ok(LogicVec::from_u64(0, 1));
@@ -5999,44 +7902,83 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "try_put" => {
-                if args.is_empty() { return Err(SimError::runtime("mailbox::try_put expects 1 argument")); }
-                self.mailbox_queues.entry(obj_id).or_default().push(args[0].clone());
+                if args.is_empty() {
+                    return Err(SimError::runtime("mailbox::try_put expects 1 argument"));
+                }
+                self.mailbox_queues
+                    .entry(obj_id)
+                    .or_default()
+                    .push(args[0].clone());
                 Ok(LogicVec::from_u64(1, 1))
             }
             "num" => {
-                let q = self.mailbox_queues.get(&obj_id)
+                let q = self
+                    .mailbox_queues
+                    .get(&obj_id)
                     .ok_or_else(|| SimError::runtime("mailbox not initialized"))?;
                 Ok(LogicVec::from_u64(q.len() as u64, 32))
             }
-            _ => Err(SimError::runtime(format!("unknown mailbox method: {}", method))),
+            _ => Err(SimError::runtime(format!(
+                "unknown mailbox method: {}",
+                method
+            ))),
         }
     }
 
-    fn execute_semaphore_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+    fn execute_semaphore_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
-                let init = if !args.is_empty() { args[0].to_u64() as u32 } else { 0 };
+                let init = if !args.is_empty() {
+                    args[0].to_u64() as u32
+                } else {
+                    0
+                };
                 self.semaphore_counts.insert(obj_id, init);
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get" => {
-                let key_count = if !args.is_empty() { args[0].to_u64() as u32 } else { 1 };
-                let c = self.semaphore_counts.get_mut(&obj_id)
+                let key_count = if !args.is_empty() {
+                    args[0].to_u64() as u32
+                } else {
+                    1
+                };
+                let c = self
+                    .semaphore_counts
+                    .get_mut(&obj_id)
                     .ok_or_else(|| SimError::runtime("semaphore not initialized"))?;
-                if *c < key_count { return Err(SimError::runtime("semaphore::get: insufficient keys")); }
+                if *c < key_count {
+                    return Err(SimError::runtime("semaphore::get: insufficient keys"));
+                }
                 *c -= key_count;
                 Ok(LogicVec::from_u64(*c as u64, 32))
             }
             "put" => {
-                let key_count = if !args.is_empty() { args[0].to_u64() as u32 } else { 1 };
-                let c = self.semaphore_counts.get_mut(&obj_id)
+                let key_count = if !args.is_empty() {
+                    args[0].to_u64() as u32
+                } else {
+                    1
+                };
+                let c = self
+                    .semaphore_counts
+                    .get_mut(&obj_id)
                     .ok_or_else(|| SimError::runtime("semaphore not initialized"))?;
                 *c += key_count;
                 Ok(LogicVec::from_u64(*c as u64, 32))
             }
             "try_get" => {
-                let key_count = if !args.is_empty() { args[0].to_u64() as u32 } else { 1 };
-                let c = self.semaphore_counts.get_mut(&obj_id)
+                let key_count = if !args.is_empty() {
+                    args[0].to_u64() as u32
+                } else {
+                    1
+                };
+                let c = self
+                    .semaphore_counts
+                    .get_mut(&obj_id)
                     .ok_or_else(|| SimError::runtime("semaphore not initialized"))?;
                 if *c >= key_count {
                     *c -= key_count;
@@ -6045,14 +7987,26 @@ impl SimulationEngine {
                     Ok(LogicVec::from_u64(0, 1))
                 }
             }
-            _ => Err(SimError::runtime(format!("unknown semaphore method: {}", method))),
+            _ => Err(SimError::runtime(format!(
+                "unknown semaphore method: {}",
+                method
+            ))),
         }
     }
 
-    fn execute_process_method(&mut self, _obj_id: ObjId, method: &str, _args: &[LogicVec]) -> Result<LogicVec, SimError> {
+    fn execute_process_method(
+        &mut self,
+        _obj_id: ObjId,
+        method: &str,
+        _args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
         match method {
             "status" => {
-                let status = self.process_map.get(&_obj_id).map(|p| p.status as u64).unwrap_or(0);
+                let status = self
+                    .process_map
+                    .get(&_obj_id)
+                    .map(|p| p.status as u64)
+                    .unwrap_or(0);
                 Ok(LogicVec::from_u64(status, 32))
             }
             "kill" => {
@@ -6068,7 +8022,11 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "await" => {
-                let status = self.process_map.get(&_obj_id).map(|p| p.status).unwrap_or(ProcessStatus::Finished);
+                let status = self
+                    .process_map
+                    .get(&_obj_id)
+                    .map(|p| p.status)
+                    .unwrap_or(ProcessStatus::Finished);
                 if status == ProcessStatus::Finished || status == ProcessStatus::Killed {
                     return Ok(LogicVec::from_u64(1, 1));
                 }
@@ -6076,9 +8034,7 @@ impl SimulationEngine {
                 self.pending_await_target = Some(_obj_id);
                 Ok(LogicVec::from_u64(1, 1))
             }
-            "self" => {
-                Ok(LogicVec::from_u64(_obj_id as u64, 64))
-            }
+            "self" => Ok(LogicVec::from_u64(_obj_id as u64, 64)),
             "suspend" => {
                 if let Some(pi) = self.process_map.get_mut(&_obj_id) {
                     pi.status = ProcessStatus::Suspended;
@@ -6091,56 +8047,97 @@ impl SimulationEngine {
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
-            _ => Err(SimError::runtime(format!("unknown process method: {}", method))),
+            _ => Err(SimError::runtime(format!(
+                "unknown process method: {}",
+                method
+            ))),
         }
     }
 
-    fn execute_uvm_object_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+    fn execute_uvm_object_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
-                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                let name = if !args.is_empty() {
+                    logicvec_to_string(&args[0])
+                } else {
+                    String::new()
+                };
                 self.uvm_object_data.insert(obj_id, UvmObjectData { name });
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get_name" => {
-                let data = self.uvm_object_data.get(&obj_id)
+                let data = self
+                    .uvm_object_data
+                    .get(&obj_id)
                     .ok_or_else(|| SimError::runtime("uvm_object not initialized"))?;
                 Ok(string_to_logicvec(&data.name))
             }
             "set_name" => {
-                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                let name = if !args.is_empty() {
+                    logicvec_to_string(&args[0])
+                } else {
+                    String::new()
+                };
                 if let Some(data) = self.uvm_object_data.get_mut(&obj_id) {
                     data.name = name;
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get_type_name" => {
-                let class_name = self.state.get_object(obj_id)
+                let class_name = self
+                    .state
+                    .get_object(obj_id)
                     .map(|o| o.class_name.clone())
                     .unwrap_or_default();
                 Ok(string_to_logicvec(&class_name))
             }
             "print" => {
-                let data = self.uvm_object_data.get(&obj_id)
+                let data = self
+                    .uvm_object_data
+                    .get(&obj_id)
                     .ok_or_else(|| SimError::runtime("uvm_object not initialized"))?;
-                let class_name = self.state.get_object(obj_id)
+                let class_name = self
+                    .state
+                    .get_object(obj_id)
                     .map(|o| o.class_name.clone())
                     .unwrap_or_default();
-                println!("UVM_INFO @ {}: {} [{}]", self.current_time, data.name, class_name);
+                println!(
+                    "UVM_INFO @ {}: {} [{}]",
+                    self.current_time, data.name, class_name
+                );
                 Ok(LogicVec::from_u64(1, 1))
             }
             "raise_objection" => {
                 self.objection_count = self.objection_count.saturating_add(1);
-                let name = self.uvm_object_data.get(&obj_id).map(|d| d.name.as_str()).unwrap_or("unknown");
-                println!("UVM_OBJECTION: {} raised (count={})", name, self.objection_count);
+                let name = self
+                    .uvm_object_data
+                    .get(&obj_id)
+                    .map(|d| d.name.as_str())
+                    .unwrap_or("unknown");
+                println!(
+                    "UVM_OBJECTION: {} raised (count={})",
+                    name, self.objection_count
+                );
                 Ok(LogicVec::from_u64(1, 1))
-            },
+            }
             "drop_objection" => {
-                let name = self.uvm_object_data.get(&obj_id).map(|d| d.name.as_str()).unwrap_or("unknown");
+                let name = self
+                    .uvm_object_data
+                    .get(&obj_id)
+                    .map(|d| d.name.as_str())
+                    .unwrap_or("unknown");
                 if self.objection_count > 0 {
                     self.objection_count -= 1;
                 }
-                println!("UVM_OBJECTION: {} dropped (count={})", name, self.objection_count);
+                println!(
+                    "UVM_OBJECTION: {} dropped (count={})",
+                    name, self.objection_count
+                );
                 if self.objection_count == 0 && !self.objection_triggered {
                     self.objection_triggered = true;
                     println!("UVM_PHASE: All objections dropped, ending test");
@@ -6148,34 +8145,66 @@ impl SimulationEngine {
                     self.running = false;
                 }
                 Ok(LogicVec::from_u64(1, 1))
-            },
-            _ => Err(SimError::runtime(format!("uvm_object::{} not implemented", method))),
+            }
+            _ => Err(SimError::runtime(format!(
+                "uvm_object::{} not implemented",
+                method
+            ))),
         }
     }
 
-    fn execute_uvm_report_object_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+    fn execute_uvm_report_object_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
         match method {
             "uvm_report_info" => {
-                let id = args.get(0).map(|a| logicvec_to_string(a)).unwrap_or_default();
-                let msg = args.get(1).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                let id = args
+                    .get(0)
+                    .map(|a| logicvec_to_string(a))
+                    .unwrap_or_default();
+                let msg = args
+                    .get(1)
+                    .map(|a| logicvec_to_string(a))
+                    .unwrap_or_default();
                 eprintln!("UVM_INFO @ {}: {} [{}]", self.current_time, msg, id);
                 Ok(LogicVec::from_u64(1, 1))
             }
             "uvm_report_warning" => {
-                let id = args.get(0).map(|a| logicvec_to_string(a)).unwrap_or_default();
-                let msg = args.get(1).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                let id = args
+                    .get(0)
+                    .map(|a| logicvec_to_string(a))
+                    .unwrap_or_default();
+                let msg = args
+                    .get(1)
+                    .map(|a| logicvec_to_string(a))
+                    .unwrap_or_default();
                 eprintln!("UVM_WARNING @ {}: {} [{}]", self.current_time, msg, id);
                 Ok(LogicVec::from_u64(1, 1))
             }
             "uvm_report_error" => {
-                let id = args.get(0).map(|a| logicvec_to_string(a)).unwrap_or_default();
-                let msg = args.get(1).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                let id = args
+                    .get(0)
+                    .map(|a| logicvec_to_string(a))
+                    .unwrap_or_default();
+                let msg = args
+                    .get(1)
+                    .map(|a| logicvec_to_string(a))
+                    .unwrap_or_default();
                 eprintln!("UVM_ERROR @ {}: {} [{}]", self.current_time, msg, id);
                 Ok(LogicVec::from_u64(1, 1))
             }
             "uvm_report_fatal" => {
-                let id = args.get(0).map(|a| logicvec_to_string(a)).unwrap_or_default();
-                let msg = args.get(1).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                let id = args
+                    .get(0)
+                    .map(|a| logicvec_to_string(a))
+                    .unwrap_or_default();
+                let msg = args
+                    .get(1)
+                    .map(|a| logicvec_to_string(a))
+                    .unwrap_or_default();
                 eprintln!("UVM_FATAL @ {}: {} [{}]", self.current_time, msg, id);
                 self.running = false;
                 Ok(LogicVec::from_u64(1, 1))
@@ -6184,13 +8213,27 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_uvm_component_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+    fn execute_uvm_component_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
-                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                let name = if !args.is_empty() {
+                    logicvec_to_string(&args[0])
+                } else {
+                    String::new()
+                };
                 let parent_obj = args.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
-                self.uvm_object_data.insert(obj_id, UvmObjectData { name: name.clone() });
-                let mut cd = UvmComponentData { parent: None, children: Vec::new(), report_verbosity: 2 };
+                self.uvm_object_data
+                    .insert(obj_id, UvmObjectData { name: name.clone() });
+                let mut cd = UvmComponentData {
+                    parent: None,
+                    children: Vec::new(),
+                    report_verbosity: 2,
+                };
                 if parent_obj != 0 {
                     cd.parent = Some(parent_obj);
                     if let Some(pd) = self.uvm_component_data.get_mut(&parent_obj) {
@@ -6204,7 +8247,11 @@ impl SimulationEngine {
                 let mut names = Vec::new();
                 let mut current = Some(obj_id);
                 while let Some(id) = current {
-                    let n = self.uvm_object_data.get(&id).map(|d| d.name.clone()).unwrap_or_default();
+                    let n = self
+                        .uvm_object_data
+                        .get(&id)
+                        .map(|d| d.name.clone())
+                        .unwrap_or_default();
                     names.push(n);
                     current = self.uvm_component_data.get(&id).and_then(|d| d.parent);
                 }
@@ -6213,26 +8260,46 @@ impl SimulationEngine {
                 Ok(string_to_logicvec(&full))
             }
             "get_parent" => {
-                let pid = self.uvm_component_data.get(&obj_id).and_then(|d| d.parent).unwrap_or(0);
+                let pid = self
+                    .uvm_component_data
+                    .get(&obj_id)
+                    .and_then(|d| d.parent)
+                    .unwrap_or(0);
                 Ok(LogicVec::from_u64(pid as u64, 64))
             }
             "get_num_children" => {
-                let n = self.uvm_component_data.get(&obj_id).map(|d| d.children.len() as u64).unwrap_or(0);
+                let n = self
+                    .uvm_component_data
+                    .get(&obj_id)
+                    .map(|d| d.children.len() as u64)
+                    .unwrap_or(0);
                 Ok(LogicVec::from_u64(n, 32))
             }
             "get_child" => {
                 let idx = args.first().map(|a| a.to_u64() as usize).unwrap_or(0);
-                let cid = self.uvm_component_data.get(&obj_id)
+                let cid = self
+                    .uvm_component_data
+                    .get(&obj_id)
                     .and_then(|d| d.children.get(idx).copied())
                     .unwrap_or(0);
                 Ok(LogicVec::from_u64(cid as u64, 64))
             }
             "has_child" => {
-                let name = args.first().map(|a| logicvec_to_string(a)).unwrap_or_default();
-                let found = self.uvm_component_data.get(&obj_id)
-                    .map(|d| d.children.iter().any(|cid| {
-                        self.uvm_object_data.get(cid).map(|od| od.name == name).unwrap_or(false)
-                    }))
+                let name = args
+                    .first()
+                    .map(|a| logicvec_to_string(a))
+                    .unwrap_or_default();
+                let found = self
+                    .uvm_component_data
+                    .get(&obj_id)
+                    .map(|d| {
+                        d.children.iter().any(|cid| {
+                            self.uvm_object_data
+                                .get(cid)
+                                .map(|od| od.name == name)
+                                .unwrap_or(false)
+                        })
+                    })
                     .unwrap_or(false);
                 Ok(LogicVec::from_u64(if found { 1 } else { 0 }, 1))
             }
@@ -6244,25 +8311,40 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get_report_verbosity" => {
-                let level = self.uvm_component_data.get(&obj_id).map(|d| d.report_verbosity).unwrap_or(2);
+                let level = self
+                    .uvm_component_data
+                    .get(&obj_id)
+                    .map(|d| d.report_verbosity)
+                    .unwrap_or(2);
                 Ok(LogicVec::from_u64(level as u64, 32))
             }
-            "build_phase" | "connect_phase" | "run_phase" => {
-                Ok(LogicVec::from_u64(1, 1))
-            }
+            "build_phase" | "connect_phase" | "run_phase" => Ok(LogicVec::from_u64(1, 1)),
             _ => self.execute_uvm_report_object_method(obj_id, method, args),
         }
     }
 
-    fn execute_uvm_sequence_item_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+    fn execute_uvm_sequence_item_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
-                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
-                self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name });
+                let name = if !args.is_empty() {
+                    logicvec_to_string(&args[0])
+                } else {
+                    String::new()
+                };
+                self.uvm_object_data
+                    .entry(obj_id)
+                    .or_insert_with(|| UvmObjectData { name });
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get_type_name" => {
-                let class_name = self.state.get_object(obj_id)
+                let class_name = self
+                    .state
+                    .get_object(obj_id)
                     .map(|o| o.class_name.clone())
                     .unwrap_or_default();
                 Ok(string_to_logicvec(&class_name))
@@ -6271,11 +8353,22 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_uvm_sequence_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+    fn execute_uvm_sequence_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
-                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
-                self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name });
+                let name = if !args.is_empty() {
+                    logicvec_to_string(&args[0])
+                } else {
+                    String::new()
+                };
+                self.uvm_object_data
+                    .entry(obj_id)
+                    .or_insert_with(|| UvmObjectData { name });
                 Ok(LogicVec::from_u64(1, 1))
             }
             "start" => {
@@ -6283,12 +8376,24 @@ impl SimulationEngine {
                 let seqr_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
                 // Store sequencer obj_id on the sequence object's fields
                 if let Some(obj) = self.state.get_object_mut(obj_id) {
-                    obj.fields.insert("__sequencer".to_string(), LogicVec::from_u64(seqr_id as u64, 64));
+                    obj.fields.insert(
+                        "__sequencer".to_string(),
+                        LogicVec::from_u64(seqr_id as u64, 64),
+                    );
                 }
                 // Call body()
-                if self.find_method_in_hierarchy(&{
-                    self.state.get_object(obj_id).map(|o| o.class_name.clone()).unwrap_or_default()
-                }, "body").is_ok() {
+                if self
+                    .find_method_in_hierarchy(
+                        &{
+                            self.state
+                                .get_object(obj_id)
+                                .map(|o| o.class_name.clone())
+                                .unwrap_or_default()
+                        },
+                        "body",
+                    )
+                    .is_ok()
+                {
                     self.execute_method(obj_id, "body", &[])?;
                 }
                 Ok(LogicVec::from_u64(1, 1))
@@ -6297,41 +8402,57 @@ impl SimulationEngine {
             "start_item" => {
                 let item_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
                 // Get sequencer from stored field
-                let seqr_id = self.state.get_object(obj_id)
+                let seqr_id = self
+                    .state
+                    .get_object(obj_id)
                     .and_then(|o| o.fields.get("__sequencer"))
                     .map(|v| v.to_u64() as ObjId)
                     .unwrap_or(0);
                 if seqr_id != 0 {
-                    self.uvm_sequencer_data.entry(seqr_id)
-                        .or_insert_with(|| UvmSequencerData { item_queue: Vec::new(), current_item: None })
-                        .item_queue.push(item_id);
+                    self.uvm_sequencer_data
+                        .entry(seqr_id)
+                        .or_insert_with(|| UvmSequencerData {
+                            item_queue: Vec::new(),
+                            current_item: None,
+                        })
+                        .item_queue
+                        .push(item_id);
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
-            "finish_item" => {
-                Ok(LogicVec::from_u64(1, 1))
-            }
+            "finish_item" => Ok(LogicVec::from_u64(1, 1)),
             "get_sequencer" => {
-                let seqr_id = self.state.get_object(obj_id)
+                let seqr_id = self
+                    .state
+                    .get_object(obj_id)
                     .and_then(|o| o.fields.get("__sequencer"))
                     .cloned()
                     .unwrap_or(LogicVec::from_u64(0, 64));
                 Ok(seqr_id)
             }
             "create" => {
-                let name = args.first().map(|a| logicvec_to_string(a)).unwrap_or_default();
+                let name = args
+                    .first()
+                    .map(|a| logicvec_to_string(a))
+                    .unwrap_or_default();
                 // Create a new object of the sequence's type
-                let class_name = self.state.get_object(obj_id)
+                let class_name = self
+                    .state
+                    .get_object(obj_id)
                     .map(|o| o.class_name.clone())
                     .unwrap_or_default();
                 let child = self.state.alloc_object(&class_name);
                 // Set name on the new object
-                self.uvm_object_data.entry(child).or_insert_with(|| UvmObjectData { name });
+                self.uvm_object_data
+                    .entry(child)
+                    .or_insert_with(|| UvmObjectData { name });
                 // Initialize fields from class def
                 if let Some(cls) = self.design.classes.get(&class_name) {
                     if let Some(obj) = self.state.get_object_mut(child) {
                         for field in &cls.fields {
-                            obj.fields.entry(field.name.clone()).or_insert_with(|| LogicVec::from_u64(0, field.width));
+                            obj.fields
+                                .entry(field.name.clone())
+                                .or_insert_with(|| LogicVec::from_u64(0, field.width));
                         }
                     }
                 }
@@ -6341,13 +8462,27 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_uvm_sequencer_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+    fn execute_uvm_sequencer_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
-                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                let name = if !args.is_empty() {
+                    logicvec_to_string(&args[0])
+                } else {
+                    String::new()
+                };
                 let parent_obj = args.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
-                self.uvm_object_data.insert(obj_id, UvmObjectData { name: name.clone() });
-                let mut cd = UvmComponentData { parent: None, children: Vec::new(), report_verbosity: 2 };
+                self.uvm_object_data
+                    .insert(obj_id, UvmObjectData { name: name.clone() });
+                let mut cd = UvmComponentData {
+                    parent: None,
+                    children: Vec::new(),
+                    report_verbosity: 2,
+                };
                 if parent_obj != 0 {
                     cd.parent = Some(parent_obj);
                     if let Some(pd) = self.uvm_component_data.get_mut(&parent_obj) {
@@ -6355,11 +8490,19 @@ impl SimulationEngine {
                     }
                 }
                 self.uvm_component_data.insert(obj_id, cd);
-                self.uvm_sequencer_data.insert(obj_id, UvmSequencerData { item_queue: Vec::new(), current_item: None });
+                self.uvm_sequencer_data.insert(
+                    obj_id,
+                    UvmSequencerData {
+                        item_queue: Vec::new(),
+                        current_item: None,
+                    },
+                );
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get_next_item" => {
-                let data = self.uvm_sequencer_data.get_mut(&obj_id)
+                let data = self
+                    .uvm_sequencer_data
+                    .get_mut(&obj_id)
                     .ok_or_else(|| SimError::runtime("sequencer not initialized"))?;
                 let item = data.item_queue.first().copied().unwrap_or(0);
                 data.current_item = data.item_queue.first().copied();
@@ -6378,13 +8521,27 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_uvm_driver_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+    fn execute_uvm_driver_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
-                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                let name = if !args.is_empty() {
+                    logicvec_to_string(&args[0])
+                } else {
+                    String::new()
+                };
                 let parent_obj = args.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
-                self.uvm_object_data.insert(obj_id, UvmObjectData { name: name.clone() });
-                let mut cd = UvmComponentData { parent: None, children: Vec::new(), report_verbosity: 2 };
+                self.uvm_object_data
+                    .insert(obj_id, UvmObjectData { name: name.clone() });
+                let mut cd = UvmComponentData {
+                    parent: None,
+                    children: Vec::new(),
+                    report_verbosity: 2,
+                };
                 if parent_obj != 0 {
                     cd.parent = Some(parent_obj);
                     if let Some(pd) = self.uvm_component_data.get_mut(&parent_obj) {
@@ -6392,7 +8549,13 @@ impl SimulationEngine {
                     }
                 }
                 self.uvm_component_data.insert(obj_id, cd);
-                self.uvm_driver_data.insert(obj_id, UvmDriverData { sequencer_id: None, current_item: None });
+                self.uvm_driver_data.insert(
+                    obj_id,
+                    UvmDriverData {
+                        sequencer_id: None,
+                        current_item: None,
+                    },
+                );
                 Ok(LogicVec::from_u64(1, 1))
             }
             "set_sequencer" => {
@@ -6403,7 +8566,9 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get_next_item" => {
-                let data = self.uvm_driver_data.get(&obj_id)
+                let data = self
+                    .uvm_driver_data
+                    .get(&obj_id)
                     .ok_or_else(|| SimError::runtime("driver not initialized"))?;
                 let seqr_id = data.sequencer_id.unwrap_or(0);
                 if seqr_id != 0 {
@@ -6413,7 +8578,9 @@ impl SimulationEngine {
                 }
             }
             "item_done" => {
-                let data = self.uvm_driver_data.get(&obj_id)
+                let data = self
+                    .uvm_driver_data
+                    .get(&obj_id)
                     .ok_or_else(|| SimError::runtime("driver not initialized"))?;
                 let seqr_id = data.sequencer_id.unwrap_or(0);
                 if seqr_id != 0 {
@@ -6426,13 +8593,27 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_uvm_monitor_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+    fn execute_uvm_monitor_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
-                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                let name = if !args.is_empty() {
+                    logicvec_to_string(&args[0])
+                } else {
+                    String::new()
+                };
                 let parent_obj = args.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
-                self.uvm_object_data.insert(obj_id, UvmObjectData { name: name.clone() });
-                let mut cd = UvmComponentData { parent: None, children: Vec::new(), report_verbosity: 2 };
+                self.uvm_object_data
+                    .insert(obj_id, UvmObjectData { name: name.clone() });
+                let mut cd = UvmComponentData {
+                    parent: None,
+                    children: Vec::new(),
+                    report_verbosity: 2,
+                };
                 if parent_obj != 0 {
                     cd.parent = Some(parent_obj);
                     if let Some(pd) = self.uvm_component_data.get_mut(&parent_obj) {
@@ -6446,12 +8627,29 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_uvm_analysis_port_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+    fn execute_uvm_analysis_port_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
-                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
-                self.uvm_analysis_port_data.insert(obj_id, UvmAnalysisPortData { connections: Vec::new(), name: name.clone() });
-                self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name });
+                let name = if !args.is_empty() {
+                    logicvec_to_string(&args[0])
+                } else {
+                    String::new()
+                };
+                self.uvm_analysis_port_data.insert(
+                    obj_id,
+                    UvmAnalysisPortData {
+                        connections: Vec::new(),
+                        name: name.clone(),
+                    },
+                );
+                self.uvm_object_data
+                    .entry(obj_id)
+                    .or_insert_with(|| UvmObjectData { name });
                 Ok(LogicVec::from_u64(1, 1))
             }
             "connect" => {
@@ -6463,7 +8661,9 @@ impl SimulationEngine {
             }
             "write" => {
                 let item_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
-                let connections = self.uvm_analysis_port_data.get(&obj_id)
+                let connections = self
+                    .uvm_analysis_port_data
+                    .get(&obj_id)
                     .map(|d| d.connections.clone())
                     .unwrap_or_default();
                 for imp_id in &connections {
@@ -6476,26 +8676,49 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_uvm_analysis_imp_method(&mut self, obj_id: ObjId, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+    fn execute_uvm_analysis_imp_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
         match method {
             "new" => {
-                let name = if !args.is_empty() { logicvec_to_string(&args[0]) } else { String::new() };
+                let name = if !args.is_empty() {
+                    logicvec_to_string(&args[0])
+                } else {
+                    String::new()
+                };
                 let parent_obj = args.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
-                self.uvm_analysis_imp_data.insert(obj_id, UvmAnalysisImpData { parent: Some(parent_obj), name: name.clone() });
-                self.uvm_object_data.entry(obj_id).or_insert_with(|| UvmObjectData { name });
+                self.uvm_analysis_imp_data.insert(
+                    obj_id,
+                    UvmAnalysisImpData {
+                        parent: Some(parent_obj),
+                        name: name.clone(),
+                    },
+                );
+                self.uvm_object_data
+                    .entry(obj_id)
+                    .or_insert_with(|| UvmObjectData { name });
                 Ok(LogicVec::from_u64(1, 1))
             }
             "write" => {
                 let item_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
-                let parent = self.uvm_analysis_imp_data.get(&obj_id)
+                let parent = self
+                    .uvm_analysis_imp_data
+                    .get(&obj_id)
                     .and_then(|d| d.parent)
                     .unwrap_or(0);
                 let parent_name = if parent != 0 {
-                    self.state.get_object(parent)
+                    self.state
+                        .get_object(parent)
                         .map(|o| o.class_name.clone())
                         .unwrap_or_default()
-                } else { String::new() };
-                if parent != 0 && !parent_name.is_empty()
+                } else {
+                    String::new()
+                };
+                if parent != 0
+                    && !parent_name.is_empty()
                     && self.find_method_in_hierarchy(&parent_name, "write").is_ok()
                 {
                     let write_args = vec![LogicVec::from_u64(item_id as u64, 64)];
@@ -6507,15 +8730,30 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_super_method(&mut self, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
-        let obj_id = self.current_this
+    fn execute_super_method(
+        &mut self,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
+        let obj_id = self
+            .current_this
             .ok_or_else(|| SimError::runtime("'super' used outside class method"))?;
-        let class_name = self.state.get_object(obj_id)
+        let class_name = self
+            .state
+            .get_object(obj_id)
             .map(|o| o.class_name.clone())
             .unwrap_or_default();
-        let parent = self.design.classes.get(&class_name)
+        let parent = self
+            .design
+            .classes
+            .get(&class_name)
             .and_then(|c| c.extends.clone())
-            .ok_or_else(|| SimError::runtime(format!("class '{}' has no parent for super call", class_name)))?;
+            .ok_or_else(|| {
+                SimError::runtime(format!(
+                    "class '{}' has no parent for super call",
+                    class_name
+                ))
+            })?;
         // Check hierarchy from most specific to least
         if parent == "__uvm_driver" || self.is_uvm_driver_hierarchy(&parent) {
             return self.execute_uvm_driver_method(obj_id, method, args);
@@ -6555,9 +8793,13 @@ impl SimulationEngine {
         self.execute_method_body(Some(obj_id), &method_def, args, method)
     }
 
-    fn execute_method_body(&mut self, obj_id: Option<ObjId>, method_def: &IrClassMethod,
-                           args: &[LogicVec], method: &str) -> Result<LogicVec, SimError>
-    {
+    fn execute_method_body(
+        &mut self,
+        obj_id: Option<ObjId>,
+        method_def: &IrClassMethod,
+        args: &[LogicVec],
+        method: &str,
+    ) -> Result<LogicVec, SimError> {
         let old_this = self.current_this;
         if let Some(oid) = obj_id {
             self.current_this = Some(oid);
@@ -6596,16 +8838,17 @@ impl SimulationEngine {
                     return Ok(LogicVec::new(0));
                 }
             } else {
-                let body = Stmt::Block { stmts: method_def.stmts.clone() };
+                let body = Stmt::Block {
+                    stmts: method_def.stmts.clone(),
+                };
                 self.evaluate_ast_stmt(&body)?;
             }
         }
 
         let return_val = if method_def.is_task {
-            LogicVec::new(0)  // tasks return void
+            LogicVec::new(0) // tasks return void
         } else {
-            self.get_local(method)
-                .unwrap_or_else(|| LogicVec::new(1))
+            self.get_local(method).unwrap_or_else(|| LogicVec::new(1))
         };
 
         self.current_method = old_method;
@@ -6614,62 +8857,64 @@ impl SimulationEngine {
         Ok(return_val)
     }
 
-fn get_foreach_count(&self, array_var: &str) -> usize {
-    if let Some(obj_id) = self.current_this {
-        if let Some(obj) = self.state.get_object(obj_id) {
-            if let Some(cls) = self.design.classes.get(&obj.class_name) {
-                for field in &cls.fields {
-                    if field.name == array_var {
-                        return field.array_depth;
-                    }
-                }
-            }
-        }
-    }
-    1
-}
-
-fn get_field_elem_width(&self, expr: &Expr) -> Option<usize> {
-    match expr {
-        Expr::Ident(name) => {
-            if let Some(obj_id) = self.current_this {
-                if let Some(obj) = self.state.get_object(obj_id) {
-                    if let Some(cls) = self.design.classes.get(&obj.class_name) {
-                        for field in &cls.fields {
-                            if field.name == *name && field.array_depth > 1 {
-                                return Some(field.elem_width);
-                            }
+    fn get_foreach_count(&self, array_var: &str) -> usize {
+        if let Some(obj_id) = self.current_this {
+            if let Some(obj) = self.state.get_object(obj_id) {
+                if let Some(cls) = self.design.classes.get(&obj.class_name) {
+                    for field in &cls.fields {
+                        if field.name == array_var {
+                            return field.array_depth;
                         }
                     }
                 }
             }
-            None
         }
-        Expr::MemberAccess { obj, field } => {
-            if let Expr::Ident(s) = obj.as_ref() {
-                if s == "this" {
-                    if let Some(obj_id) = self.current_this {
-                        if let Some(obj) = self.state.get_object(obj_id) {
-                            if let Some(cls) = self.design.classes.get(&obj.class_name) {
-                                for f in &cls.fields {
-                                    if f.name == *field && f.array_depth > 1 {
-                                        return Some(f.elem_width);
+        1
+    }
+
+    fn get_field_elem_width(&self, expr: &Expr) -> Option<usize> {
+        match expr {
+            Expr::Ident(name) => {
+                if let Some(obj_id) = self.current_this {
+                    if let Some(obj) = self.state.get_object(obj_id) {
+                        if let Some(cls) = self.design.classes.get(&obj.class_name) {
+                            for field in &cls.fields {
+                                if field.name == *name && field.array_depth > 1 {
+                                    return Some(field.elem_width);
+                                }
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            Expr::MemberAccess { obj, field } => {
+                if let Expr::Ident(s) = obj.as_ref() {
+                    if s == "this" {
+                        if let Some(obj_id) = self.current_this {
+                            if let Some(obj) = self.state.get_object(obj_id) {
+                                if let Some(cls) = self.design.classes.get(&obj.class_name) {
+                                    for f in &cls.fields {
+                                        if f.name == *field && f.array_depth > 1 {
+                                            return Some(f.elem_width);
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
+                None
             }
-            None
+            _ => None,
         }
-        _ => None,
     }
-}
 
-    fn find_method_in_hierarchy(&self, class_name: &str, method: &str)
-        -> Result<IrClassMethod, SimError>
-    {
+    fn find_method_in_hierarchy(
+        &self,
+        class_name: &str,
+        method: &str,
+    ) -> Result<IrClassMethod, SimError> {
         let mut current = class_name;
         loop {
             if let Some(cls) = self.design.classes.get(current) {
@@ -6685,57 +8930,55 @@ fn get_field_elem_width(&self, expr: &Expr) -> Option<usize> {
                 break;
             }
         }
-        Err(SimError::runtime(format!("method '{}' not found in class '{}' or its parents", method, class_name)))
+        Err(SimError::runtime(format!(
+            "method '{}' not found in class '{}' or its parents",
+            method, class_name
+        )))
     }
 }
 
-
-
 fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
     match method {
-        "len" => {
-            Ok(LogicVec::from_u64(s.len() as u64, 32))
-        }
+        "len" => Ok(LogicVec::from_u64(s.len() as u64, 32)),
         "substr" => {
-    if args.len() != 2 {
-        return Err(SimError::runtime(format!(
-            "substr expects 2 arguments, got {}",
-            args.len()
-        )));
-    }
+            if args.len() != 2 {
+                return Err(SimError::runtime(format!(
+                    "substr expects 2 arguments, got {}",
+                    args.len()
+                )));
+            }
 
-    let i = args[0].to_u64() as usize;
-    let j = args[1].to_u64() as usize;
+            let i = args[0].to_u64() as usize;
+            let j = args[1].to_u64() as usize;
 
-    if i > j || j >= s.len() {
-        return Err(SimError::runtime(format!(
-            "substr({}, {}) out of range for string of len {}",
-            i,
-            j,
-            s.len()
-        )));
-    }
+            if i > j || j >= s.len() {
+                return Err(SimError::runtime(format!(
+                    "substr({}, {}) out of range for string of len {}",
+                    i,
+                    j,
+                    s.len()
+                )));
+            }
 
-    let sub = &s[i..=j];
+            let sub = &s[i..=j];
 
-    let mut bits = Vec::with_capacity(sub.len() * 8);
+            let mut bits = Vec::with_capacity(sub.len() * 8);
 
-    for c in sub.chars() {
-        let byte = c as u8;
-        for b in 0..8 {
-            bits.push(if (byte >> b) & 1 == 1 {
-                LogicVal::One
-            } else {
-                LogicVal::Zero
-            });
-        }
-    }
+            for c in sub.chars() {
+                let byte = c as u8;
+                for b in 0..8 {
+                    bits.push(if (byte >> b) & 1 == 1 {
+                        LogicVal::One
+                    } else {
+                        LogicVal::Zero
+                    });
+                }
+            }
 
-    Ok(LogicVec {
-        width: bits.len(),
-        bits,
-    })
-
+            Ok(LogicVec {
+                width: bits.len(),
+                bits,
+            })
         }
         "atoi" => {
             let val: i64 = s.trim().parse().unwrap_or(0);
@@ -6762,10 +9005,17 @@ fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<Lo
             for c in lower.chars() {
                 let byte = c as u8;
                 for b in 0..8 {
-                    bits.push(if (byte >> b) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                    bits.push(if (byte >> b) & 1 == 1 {
+                        LogicVal::One
+                    } else {
+                        LogicVal::Zero
+                    });
                 }
             }
-            Ok(LogicVec { width: bits.len(), bits })
+            Ok(LogicVec {
+                width: bits.len(),
+                bits,
+            })
         }
         "toupper" => {
             let upper = s.to_uppercase();
@@ -6773,10 +9023,17 @@ fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<Lo
             for c in upper.chars() {
                 let byte = c as u8;
                 for b in 0..8 {
-                    bits.push(if (byte >> b) & 1 == 1 { LogicVal::One } else { LogicVal::Zero });
+                    bits.push(if (byte >> b) & 1 == 1 {
+                        LogicVal::One
+                    } else {
+                        LogicVal::Zero
+                    });
                 }
             }
-            Ok(LogicVec { width: bits.len(), bits })
+            Ok(LogicVec {
+                width: bits.len(),
+                bits,
+            })
         }
         "compare" | "icompare" => {
             if args.len() < 1 {
@@ -6796,31 +9053,45 @@ fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<Lo
             };
             Ok(LogicVec::from_u64(result as u64, 32))
         }
-        _ => Err(SimError::runtime(format!("unknown string method: {}", method))),
+        _ => Err(SimError::runtime(format!(
+            "unknown string method: {}",
+            method
+        ))),
     }
 }
 
 impl SimulationEngine {
-
-fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -> Result<bool, SimError> {
-    if let Some(wc) = with_clause {
-        let depth = self.method_locals.len();
-        let mut scope = std::collections::HashMap::new();
-        scope.insert("item".to_string(), elem.clone());
-        self.method_locals.push(scope);
-        let result = self.evaluate_expr(wc)?.to_bool().unwrap_or(false);
-        self.method_locals.truncate(depth);
-        Ok(result)
-    } else {
-        Ok(true)
+    fn check_with_clause(
+        &mut self,
+        with_clause: Option<&IrExpr>,
+        elem: &LogicVec,
+    ) -> Result<bool, SimError> {
+        if let Some(wc) = with_clause {
+            let depth = self.method_locals.len();
+            let mut scope = std::collections::HashMap::new();
+            scope.insert("item".to_string(), elem.clone());
+            self.method_locals.push(scope);
+            let result = self.evaluate_expr(wc)?.to_bool().unwrap_or(false);
+            self.method_locals.truncate(depth);
+            Ok(result)
+        } else {
+            Ok(true)
+        }
     }
-}
 
-    fn evaluate_array_method(&mut self, sig_id: SignalId, sig: &SignalInfo, method: &str, args: &[IrExpr], with_clause: Option<&IrExpr>) -> Result<LogicVec, SimError> {
+    fn evaluate_array_method(
+        &mut self,
+        sig_id: SignalId,
+        sig: &SignalInfo,
+        method: &str,
+        args: &[IrExpr],
+        with_clause: Option<&IrExpr>,
+    ) -> Result<LogicVec, SimError> {
         // Check if this is an associative array method
         if sig.is_associative {
             // Evaluate args first to avoid borrow conflicts with assoc_data access
-            let args_eval: Vec<LogicVec> = args.iter()
+            let args_eval: Vec<LogicVec> = args
+                .iter()
                 .map(|a| self.evaluate_expr(a))
                 .collect::<Result<Vec<_>, SimError>>()?;
             let assoc_map = self.assoc_data.entry(sig_id).or_insert_with(HashMap::new);
@@ -6891,7 +9162,11 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
         match method {
             "size" => {
                 let lv = self.state.read_signal(sig_id);
-                let count = if sig.elem_width > 0 { lv.width / sig.elem_width } else { 0 };
+                let count = if sig.elem_width > 0 {
+                    lv.width / sig.elem_width
+                } else {
+                    0
+                };
                 Ok(LogicVec::from_u64(count as u64, 32))
             }
             "delete" => {
@@ -6900,16 +9175,26 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                     let idx = idx_val.to_u64() as usize;
                     let lv = self.state.read_signal(sig_id);
                     let elem_width = sig.elem_width;
-                    let count = if elem_width > 0 { lv.width / elem_width } else { 0 };
+                    let count = if elem_width > 0 {
+                        lv.width / elem_width
+                    } else {
+                        0
+                    };
                     if idx >= count {
-                        return Err(SimError::runtime(format!("delete index {} out of range (size {})", idx, count)));
+                        return Err(SimError::runtime(format!(
+                            "delete index {} out of range (size {})",
+                            idx, count
+                        )));
                     }
                     let before = lv.bits[..idx * elem_width].to_vec();
                     let after = lv.bits[(idx + 1) * elem_width..].to_vec();
                     let mut remaining = Vec::with_capacity(before.len() + after.len());
                     remaining.extend(before);
                     remaining.extend(after);
-                    let new_lv = LogicVec { width: remaining.len(), bits: remaining };
+                    let new_lv = LogicVec {
+                        width: remaining.len(),
+                        bits: remaining,
+                    };
                     self.state.write_signal(sig_id, new_lv);
                     Ok(LogicVec::new(0))
                 } else {
@@ -6927,7 +9212,10 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 for i in 0..elem_width {
                     bits.push(lv.bits.get(i).copied().unwrap_or(LogicVal::X));
                 }
-                let result = LogicVec { width: elem_width, bits };
+                let result = LogicVec {
+                    width: elem_width,
+                    bits,
+                };
                 let remaining = LogicVec {
                     width: lv.width - elem_width,
                     bits: lv.bits[elem_width..].to_vec(),
@@ -6946,7 +9234,10 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 for i in start..lv.width {
                     bits.push(lv.bits.get(i).copied().unwrap_or(LogicVal::X));
                 }
-                let result = LogicVec { width: elem_width, bits };
+                let result = LogicVec {
+                    width: elem_width,
+                    bits,
+                };
                 let remaining = LogicVec {
                     width: lv.width - elem_width,
                     bits: lv.bits[..start].to_vec(),
@@ -6963,11 +9254,17 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 let elem_width = sig.elem_width;
                 let padded = if arg_val.width >= elem_width {
                     let bits = arg_val.bits[..elem_width].to_vec();
-                    LogicVec { width: elem_width, bits }
+                    LogicVec {
+                        width: elem_width,
+                        bits,
+                    }
                 } else {
                     let mut bits = arg_val.bits.clone();
                     bits.resize(elem_width, LogicVal::X);
-                    LogicVec { width: elem_width, bits }
+                    LogicVec {
+                        width: elem_width,
+                        bits,
+                    }
                 };
                 let mut existing = self.state.read_signal(sig_id).clone();
                 let mut new_bits = Vec::with_capacity(existing.width + elem_width);
@@ -6979,12 +9276,18 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 Ok(LogicVec::new(0))
             }
             "exists" => {
-                let index_expr = args.first().ok_or_else(|| SimError::runtime("exists expects 1 argument"))?;
+                let index_expr = args
+                    .first()
+                    .ok_or_else(|| SimError::runtime("exists expects 1 argument"))?;
                 let idx_val = self.evaluate_expr(index_expr)?;
                 let idx = idx_val.to_u64() as usize;
                 let lv = self.state.read_signal(sig_id);
                 let elem_width = sig.elem_width;
-                let count = if elem_width > 0 { lv.width / elem_width } else { 0 };
+                let count = if elem_width > 0 {
+                    lv.width / elem_width
+                } else {
+                    0
+                };
                 Ok(LogicVec::from_u64(if idx < count { 1 } else { 0 }, 1))
             }
             "push_back" => {
@@ -6996,11 +9299,17 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 let elem_width = sig.elem_width;
                 let padded = if arg_val.width >= elem_width {
                     let bits = arg_val.bits[..elem_width].to_vec();
-                    LogicVec { width: elem_width, bits }
+                    LogicVec {
+                        width: elem_width,
+                        bits,
+                    }
                 } else {
                     let mut bits = arg_val.bits.clone();
                     bits.resize(elem_width, LogicVal::X);
-                    LogicVec { width: elem_width, bits }
+                    LogicVec {
+                        width: elem_width,
+                        bits,
+                    }
                 };
                 let mut existing = self.state.read_signal(sig_id).clone();
                 existing.bits.extend(padded.bits.iter().copied());
@@ -7010,7 +9319,9 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
             }
             "insert" => {
                 if args.len() < 2 {
-                    return Err(SimError::runtime("insert expects 2 arguments (index, value)"));
+                    return Err(SimError::runtime(
+                        "insert expects 2 arguments (index, value)",
+                    ));
                 }
                 let idx_val = self.evaluate_expr(&args[0])?;
                 let idx = idx_val.to_u64() as usize;
@@ -7018,14 +9329,24 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 let elem_width = sig.elem_width;
                 let padded = if arg_val.width >= elem_width {
                     let bits = arg_val.bits[..elem_width].to_vec();
-                    LogicVec { width: elem_width, bits }
+                    LogicVec {
+                        width: elem_width,
+                        bits,
+                    }
                 } else {
                     let mut bits = arg_val.bits.clone();
                     bits.resize(elem_width, LogicVal::X);
-                    LogicVec { width: elem_width, bits }
+                    LogicVec {
+                        width: elem_width,
+                        bits,
+                    }
                 };
                 let mut existing = self.state.read_signal(sig_id).clone();
-                let count = if elem_width > 0 { existing.width / elem_width } else { 0 };
+                let count = if elem_width > 0 {
+                    existing.width / elem_width
+                } else {
+                    0
+                };
                 let pos = idx.min(count);
                 let mut new_bits = Vec::with_capacity(existing.width + elem_width);
                 new_bits.extend(existing.bits[..pos * elem_width].iter().copied());
@@ -7057,19 +9378,27 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 let elem_width = sig.elem_width;
                 if elem_width > 0 {
                     let count = lv.width / elem_width;
-                    let mut elems: Vec<LogicVec> = (0..count).map(|i| {
-                        let mut bits = Vec::with_capacity(elem_width);
-                        for j in 0..elem_width {
-                            bits.push(lv.bits[i * elem_width + j]);
-                        }
-                        LogicVec { width: elem_width, bits }
-                    }).collect();
+                    let mut elems: Vec<LogicVec> = (0..count)
+                        .map(|i| {
+                            let mut bits = Vec::with_capacity(elem_width);
+                            for j in 0..elem_width {
+                                bits.push(lv.bits[i * elem_width + j]);
+                            }
+                            LogicVec {
+                                width: elem_width,
+                                bits,
+                            }
+                        })
+                        .collect();
                     elems.sort_by(|a, b| a.to_u64().cmp(&b.to_u64()));
                     let mut new_bits = Vec::with_capacity(lv.width);
                     for e in &elems {
                         new_bits.extend(e.bits.iter().copied());
                     }
-                    let sorted = LogicVec { width: lv.width, bits: new_bits };
+                    let sorted = LogicVec {
+                        width: lv.width,
+                        bits: new_bits,
+                    };
                     self.state.write_signal(sig_id, sorted);
                 }
                 Ok(LogicVec::new(0))
@@ -7079,19 +9408,27 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 let elem_width = sig.elem_width;
                 if elem_width > 0 {
                     let count = lv.width / elem_width;
-                    let mut elems: Vec<LogicVec> = (0..count).map(|i| {
-                        let mut bits = Vec::with_capacity(elem_width);
-                        for j in 0..elem_width {
-                            bits.push(lv.bits[i * elem_width + j]);
-                        }
-                        LogicVec { width: elem_width, bits }
-                    }).collect();
+                    let mut elems: Vec<LogicVec> = (0..count)
+                        .map(|i| {
+                            let mut bits = Vec::with_capacity(elem_width);
+                            for j in 0..elem_width {
+                                bits.push(lv.bits[i * elem_width + j]);
+                            }
+                            LogicVec {
+                                width: elem_width,
+                                bits,
+                            }
+                        })
+                        .collect();
                     elems.sort_by(|a, b| b.to_u64().cmp(&a.to_u64()));
                     let mut new_bits = Vec::with_capacity(lv.width);
                     for e in &elems {
                         new_bits.extend(e.bits.iter().copied());
                     }
-                    let sorted = LogicVec { width: lv.width, bits: new_bits };
+                    let sorted = LogicVec {
+                        width: lv.width,
+                        bits: new_bits,
+                    };
                     self.state.write_signal(sig_id, sorted);
                 }
                 Ok(LogicVec::new(0))
@@ -7101,20 +9438,28 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 let elem_width = sig.elem_width;
                 if elem_width > 0 {
                     let count = lv.width / elem_width;
-                    let mut elems: Vec<LogicVec> = (0..count).map(|i| {
-                        let mut bits = Vec::with_capacity(elem_width);
-                        for j in 0..elem_width {
-                            bits.push(lv.bits[i * elem_width + j]);
-                        }
-                        LogicVec { width: elem_width, bits }
-                    }).collect();
+                    let mut elems: Vec<LogicVec> = (0..count)
+                        .map(|i| {
+                            let mut bits = Vec::with_capacity(elem_width);
+                            for j in 0..elem_width {
+                                bits.push(lv.bits[i * elem_width + j]);
+                            }
+                            LogicVec {
+                                width: elem_width,
+                                bits,
+                            }
+                        })
+                        .collect();
                     use rand::seq::SliceRandom;
                     elems.shuffle(&mut rand::thread_rng());
                     let mut new_bits = Vec::with_capacity(lv.width);
                     for e in &elems {
                         new_bits.extend(e.bits.iter().copied());
                     }
-                    let shuffled = LogicVec { width: lv.width, bits: new_bits };
+                    let shuffled = LogicVec {
+                        width: lv.width,
+                        bits: new_bits,
+                    };
                     self.state.write_signal(sig_id, shuffled);
                 }
                 Ok(LogicVec::new(0))
@@ -7131,8 +9476,13 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                         for j in 0..elem_width {
                             bits.push(lv.bits[i * elem_width + j]);
                         }
-                        let elem = LogicVec { width: elem_width, bits };
-                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        let elem = LogicVec {
+                            width: elem_width,
+                            bits,
+                        };
+                        if !self.check_with_clause(with_clause, &elem)? {
+                            continue;
+                        }
                         result = result.wrapping_add(elem.to_u64());
                     }
                     Ok(LogicVec::from_u64(result, elem_width.max(32)))
@@ -7151,8 +9501,13 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                         for j in 0..elem_width {
                             bits.push(lv.bits[i * elem_width + j]);
                         }
-                        let elem = LogicVec { width: elem_width, bits };
-                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        let elem = LogicVec {
+                            width: elem_width,
+                            bits,
+                        };
+                        if !self.check_with_clause(with_clause, &elem)? {
+                            continue;
+                        }
                         result = result.wrapping_mul(elem.to_u64());
                     }
                     Ok(LogicVec::from_u64(result, elem_width.max(32)))
@@ -7172,8 +9527,13 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                             let idx = i * elem_width + j;
                             bits.push(lv.bits.get(idx).copied().unwrap_or(LogicVal::X));
                         }
-                        let elem = LogicVec { width: elem_width, bits: bits.clone() };
-                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        let elem = LogicVec {
+                            width: elem_width,
+                            bits: bits.clone(),
+                        };
+                        if !self.check_with_clause(with_clause, &elem)? {
+                            continue;
+                        }
                         for j in 0..elem_width {
                             if bits.get(j) == Some(&LogicVal::Zero) {
                                 result.bits[j] = LogicVal::Zero;
@@ -7197,8 +9557,13 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                             let idx = i * elem_width + j;
                             bits.push(lv.bits.get(idx).copied().unwrap_or(LogicVal::X));
                         }
-                        let elem = LogicVec { width: elem_width, bits: bits.clone() };
-                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        let elem = LogicVec {
+                            width: elem_width,
+                            bits: bits.clone(),
+                        };
+                        if !self.check_with_clause(with_clause, &elem)? {
+                            continue;
+                        }
                         for j in 0..elem_width {
                             if bits.get(j) == Some(&LogicVal::One) {
                                 result.bits[j] = LogicVal::One;
@@ -7222,8 +9587,13 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                             let idx = i * elem_width + j;
                             bits.push(lv.bits.get(idx).copied().unwrap_or(LogicVal::X));
                         }
-                        let elem = LogicVec { width: elem_width, bits: bits.clone() };
-                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        let elem = LogicVec {
+                            width: elem_width,
+                            bits: bits.clone(),
+                        };
+                        if !self.check_with_clause(with_clause, &elem)? {
+                            continue;
+                        }
                         for j in 0..elem_width {
                             if bits.get(j) == Some(&LogicVal::One) {
                                 result.bits[j] = match result.bits[j] {
@@ -7251,10 +9621,17 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                         for j in 0..elem_width {
                             bits.push(lv.bits[i * elem_width + j]);
                         }
-                        let elem = LogicVec { width: elem_width, bits };
-                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        let elem = LogicVec {
+                            width: elem_width,
+                            bits,
+                        };
+                        if !self.check_with_clause(with_clause, &elem)? {
+                            continue;
+                        }
                         let v = elem.to_u64();
-                        if v < min_val { min_val = v; }
+                        if v < min_val {
+                            min_val = v;
+                        }
                     }
                     Ok(LogicVec::from_u64(min_val, elem_width))
                 } else {
@@ -7272,10 +9649,17 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                         for j in 0..elem_width {
                             bits.push(lv.bits[i * elem_width + j]);
                         }
-                        let elem = LogicVec { width: elem_width, bits };
-                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        let elem = LogicVec {
+                            width: elem_width,
+                            bits,
+                        };
+                        if !self.check_with_clause(with_clause, &elem)? {
+                            continue;
+                        }
                         let v = elem.to_u64();
-                        if v > max_val { max_val = v; }
+                        if v > max_val {
+                            max_val = v;
+                        }
                     }
                     Ok(LogicVec::from_u64(max_val, elem_width))
                 } else {
@@ -7294,8 +9678,13 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                         for j in 0..elem_width {
                             bits.push(lv.bits[i * elem_width + j]);
                         }
-                        let elem = LogicVec { width: elem_width, bits };
-                        if !self.check_with_clause(with_clause, &elem)? { continue; }
+                        let elem = LogicVec {
+                            width: elem_width,
+                            bits,
+                        };
+                        if !self.check_with_clause(with_clause, &elem)? {
+                            continue;
+                        }
                         if seen.insert(elem.to_u64()) {
                             for j in 0..elem_width {
                                 let idx = i * elem_width + j;
@@ -7303,7 +9692,10 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                             }
                         }
                     }
-                    let result = LogicVec { width: new_bits.len(), bits: new_bits };
+                    let result = LogicVec {
+                        width: new_bits.len(),
+                        bits: new_bits,
+                    };
                     self.state.write_signal(sig_id, result);
                 }
                 Ok(LogicVec::new(0))
@@ -7323,7 +9715,10 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                                 for j in 0..elem_width {
                                     bits.push(lv.bits[i * elem_width + j]);
                                 }
-                                let elem = LogicVec { width: elem_width, bits };
+                                let elem = LogicVec {
+                                    width: elem_width,
+                                    bits,
+                                };
                                 if self.check_with_clause(with_clause, &elem)? {
                                     result_elems.push(elem);
                                 }
@@ -7334,10 +9729,15 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                                 for j in 0..elem_width {
                                     bits.push(lv.bits[i * elem_width + j]);
                                 }
-                                let elem = LogicVec { width: elem_width, bits };
+                                let elem = LogicVec {
+                                    width: elem_width,
+                                    bits,
+                                };
                                 if self.check_with_clause(with_clause, &elem)? {
                                     result_elems.push(elem);
-                                    if method == "find_first" { break; }
+                                    if method == "find_first" {
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -7346,14 +9746,20 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                         for e in &result_elems {
                             all_bits.extend(e.bits.iter());
                         }
-                        return Ok(LogicVec { width: total_width, bits: all_bits });
+                        return Ok(LogicVec {
+                            width: total_width,
+                            bits: all_bits,
+                        });
                     }
                     if method == "find_first" && count > 0 {
                         let mut bits = Vec::with_capacity(elem_width);
                         for j in 0..elem_width {
                             bits.push(lv.bits[j]);
                         }
-                        return Ok(LogicVec { width: elem_width, bits });
+                        return Ok(LogicVec {
+                            width: elem_width,
+                            bits,
+                        });
                     }
                     if method == "find_last" && count > 0 {
                         let start = (count - 1) * elem_width;
@@ -7361,7 +9767,10 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                         for j in 0..elem_width {
                             bits.push(lv.bits[start + j]);
                         }
-                        return Ok(LogicVec { width: elem_width, bits });
+                        return Ok(LogicVec {
+                            width: elem_width,
+                            bits,
+                        });
                     }
                     // "find" returns all elements (same as array)
                     return Ok(lv);
@@ -7381,7 +9790,10 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                                 for j in 0..elem_width {
                                     bits.push(lv.bits[i * elem_width + j]);
                                 }
-                                let elem = LogicVec { width: elem_width, bits };
+                                let elem = LogicVec {
+                                    width: elem_width,
+                                    bits,
+                                };
                                 if self.check_with_clause(with_clause, &elem)? {
                                     indices.push(i as u64);
                                 }
@@ -7392,10 +9804,15 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                                 for j in 0..elem_width {
                                     bits.push(lv.bits[i * elem_width + j]);
                                 }
-                                let elem = LogicVec { width: elem_width, bits };
+                                let elem = LogicVec {
+                                    width: elem_width,
+                                    bits,
+                                };
                                 if self.check_with_clause(with_clause, &elem)? {
                                     indices.push(i as u64);
-                                    if method == "find_first_index" { break; }
+                                    if method == "find_first_index" {
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -7404,7 +9821,10 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                             let idx_vec = LogicVec::from_u64(*idx, 32);
                             bits.extend(idx_vec.bits.iter());
                         }
-                        return Ok(LogicVec { width: bits.len(), bits });
+                        return Ok(LogicVec {
+                            width: bits.len(),
+                            bits,
+                        });
                     }
                     // Return indices as 32-bit values packed into result
                     if method == "find_first_index" && count > 0 {
@@ -7419,11 +9839,17 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                         let idx_vec = LogicVec::from_u64(i as u64, 32);
                         bits.extend(idx_vec.bits.iter());
                     }
-                    return Ok(LogicVec { width: bits.len(), bits });
+                    return Ok(LogicVec {
+                        width: bits.len(),
+                        bits,
+                    });
                 }
                 Ok(LogicVec::new(0))
             }
-            _ => Err(SimError::runtime(format!("unknown array/queue method: {}", method))),
+            _ => Err(SimError::runtime(format!(
+                "unknown array/queue method: {}",
+                method
+            ))),
         }
     }
 
@@ -7455,22 +9881,20 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 }
                 Ok(false)
             }
-            IrSequence::Or(a, b) => {
-                Ok(self.eval_sequence_at_cycle(a, cycles)?
-                    || self.eval_sequence_at_cycle(b, cycles)?)
-            }
-            IrSequence::And(a, b) => {
-                Ok(self.eval_sequence_at_cycle(a, cycles)?
-                    && self.eval_sequence_at_cycle(b, cycles)?)
-            }
+            IrSequence::Or(a, b) => Ok(self.eval_sequence_at_cycle(a, cycles)?
+                || self.eval_sequence_at_cycle(b, cycles)?),
+            IrSequence::And(a, b) => Ok(self.eval_sequence_at_cycle(a, cycles)?
+                && self.eval_sequence_at_cycle(b, cycles)?),
             IrSequence::Repeat(seq, n) => {
-                if *n == 0 { return Ok(true); }
-                if *n == 1 { return self.eval_sequence_at_cycle(seq, cycles); }
+                if *n == 0 {
+                    return Ok(true);
+                }
+                if *n == 1 {
+                    return self.eval_sequence_at_cycle(seq, cycles);
+                }
                 for k in 0..=cycles {
                     if self.eval_sequence_at_cycle(seq, k)? {
-                        let remaining = IrSequence::Repeat(
-                            Box::new((**seq).clone()), n - 1
-                        );
+                        let remaining = IrSequence::Repeat(Box::new((**seq).clone()), n - 1);
                         if self.eval_sequence_at_cycle(&remaining, cycles - k)? {
                             return Ok(true);
                         }
@@ -7485,29 +9909,37 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
     /// Removes completed (matched or expired) attempts and executes pass/fail statements.
     fn evaluate_sequence_attempts(&mut self) -> Result<(), SimError> {
         // Pre-compute firing events (immutable borrow of self)
-        let firing_events: Vec<bool> = self.sequence_attempts.iter()
+        let firing_events: Vec<bool> = self
+            .sequence_attempts
+            .iter()
             .map(|a| self.check_concurrent_clock_event(&a.clock_event))
             .collect();
-        
+
         // Pre-clone sequences to avoid borrow conflicts during iteration
-        let seqs: Vec<(Box<IrSequence>, u64)> = self.sequence_attempts.iter()
+        let seqs: Vec<(Box<IrSequence>, u64)> = self
+            .sequence_attempts
+            .iter()
             .enumerate()
             .filter(|(idx, _)| *idx < firing_events.len() && firing_events[*idx])
             .map(|(_, a)| (a.sequence.clone(), a.cycles))
             .collect();
-        
+
         // Evaluate all sequences (mutable borrow of self)
         let mut results: Vec<bool> = Vec::new();
         for (seq, cycles) in &seqs {
             results.push(self.eval_sequence_at_cycle(seq, *cycles)?);
         }
-        
+
         // Update attempt states and mark completions
         let mut completed = Vec::new();
         let mut result_idx = 0;
         for (idx, attempt) in self.sequence_attempts.iter_mut().enumerate() {
             if idx < firing_events.len() && firing_events[idx] {
-                let matched = if result_idx < results.len() { results[result_idx] } else { false };
+                let matched = if result_idx < results.len() {
+                    results[result_idx]
+                } else {
+                    false
+                };
                 result_idx += 1;
                 let max_cycles = attempt.sequence.max_cycles().unwrap_or(u64::MAX);
                 if matched {
@@ -7518,7 +9950,7 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
                 attempt.cycles += 1;
             }
         }
-        
+
         // Process completed attempts (reverse order to preserve indices)
         for (idx, success) in completed.into_iter().rev() {
             if let Some(attempt) = self.sequence_attempts.get(idx) {
@@ -7550,7 +9982,10 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
         match ce {
             crate::ast::types::ClockEvent::Posedge(_) => {
                 if let Some(ref snap) = self.signal_snapshot {
-                    let old = snap.get(sig_id).cloned().unwrap_or_else(|| LogicVec::new(1));
+                    let old = snap
+                        .get(sig_id)
+                        .cloned()
+                        .unwrap_or_else(|| LogicVec::new(1));
                     old.to_bool() != Some(true) && curr.to_bool() == Some(true)
                 } else {
                     curr.to_bool() == Some(true)
@@ -7558,7 +9993,10 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
             }
             crate::ast::types::ClockEvent::Negedge(_) => {
                 if let Some(ref snap) = self.signal_snapshot {
-                    let old = snap.get(sig_id).cloned().unwrap_or_else(|| LogicVec::new(1));
+                    let old = snap
+                        .get(sig_id)
+                        .cloned()
+                        .unwrap_or_else(|| LogicVec::new(1));
                     old.to_bool() != Some(false) && curr.to_bool() == Some(false)
                 } else {
                     curr.to_bool() == Some(false)
@@ -7566,7 +10004,10 @@ fn check_with_clause(&mut self, with_clause: Option<&IrExpr>, elem: &LogicVec) -
             }
             crate::ast::types::ClockEvent::Edge(_) => {
                 if let Some(ref snap) = self.signal_snapshot {
-                    let old = snap.get(sig_id).cloned().unwrap_or_else(|| LogicVec::new(1));
+                    let old = snap
+                        .get(sig_id)
+                        .cloned()
+                        .unwrap_or_else(|| LogicVec::new(1));
                     old.to_bool() != curr.to_bool()
                 } else {
                     true
@@ -7605,5 +10046,3 @@ fn edge_matches_abbrev(edge: &str, prev: LogicVal, curr: LogicVal) -> bool {
         _ => false,
     }
 }
-
-

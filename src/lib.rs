@@ -1,3 +1,8 @@
+// ── Core Infrastructure (Fase 0) ──
+pub mod arena;
+pub mod intern;
+
+// ── Legacy Modules ──
 pub mod ast;
 pub mod debugger;
 pub mod elaboration;
@@ -7,13 +12,27 @@ pub mod parser;
 pub mod simulator;
 pub mod waveform;
 
-pub use error::{SimError, ErrorContext};
+// ── New Module Structure (under construction) ──
+pub mod backend;
+pub mod cache;
+pub mod diagnostics;
+pub mod frontend;
+pub mod hir;
+pub mod plugin;
+pub mod profiling;
+pub mod scheduler;
 
-use std::fs;
-use std::path::Path;
+pub use arena::{BumpArena, TypedArena};
+pub use error::{ErrorContext, SimError};
+pub use frontend::compile_session::{CompileSession, SessionConfig};
+pub use frontend::discovery::FileDiscovery;
+pub use intern::{init_string_table, Span, Symbol};
+
 use parser::lexer::Lexer;
 use parser::parser::Parser;
 use parser::preprocessor::Preprocessor;
+use std::fs;
+use std::path::Path;
 
 /// Read a .maria project file and return list of .sv file paths
 /// Paths in .maria are resolved relative to the .maria file's directory
@@ -21,7 +40,8 @@ pub fn read_project_file(path: &str) -> Result<Vec<String>, SimError> {
     let content = fs::read_to_string(path)
         .map_err(|e| SimError::new(None, format!("cannot read '{}': {}", path, e)))?;
     let base = Path::new(path).parent().unwrap_or(Path::new("."));
-    let files: Vec<String> = content.lines()
+    let files: Vec<String> = content
+        .lines()
         .map(|l| l.trim())
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .map(|l| {
@@ -30,7 +50,10 @@ pub fn read_project_file(path: &str) -> Result<Vec<String>, SimError> {
         })
         .collect();
     if files.is_empty() {
-        return Err(SimError::new(None, format!("no .sv files listed in '{}'", path)));
+        return Err(SimError::new(
+            None,
+            format!("no .sv files listed in '{}'", path),
+        ));
     }
     Ok(files)
 }
@@ -72,7 +95,8 @@ pub fn simulate_str(source: &str, max_time: u64) -> Result<(), SimError> {
 /// Compile SystemVerilog source string into IR
 pub fn compile_str(source: &str) -> Result<ir::IrDesign, SimError> {
     let mut pp = Preprocessor::new();
-    let preprocessed = pp.preprocess(source, None)
+    let preprocessed = pp
+        .preprocess(source, None)
         .map_err(|e| SimError::new(None, format!("preprocessor: {}", e)))?;
     let timescale = pp.timescale.clone();
     let mut lexer = Lexer::new(&preprocessed);
@@ -122,15 +146,35 @@ pub fn run_simulation(ir_design: ir::IrDesign, max_time: u64) -> Result<(), SimE
 }
 
 /// Run simulation and return final signal values
-pub fn simulate_signals(source: &str, max_time: u64) -> Result<Vec<(String, ir::LogicVec)>, SimError> {
+pub fn simulate_signals(
+    source: &str,
+    max_time: u64,
+) -> Result<Vec<(String, ir::LogicVec)>, SimError> {
     let design = compile_str(source)?;
     let mut engine = simulator::SimulationEngine::new(design, max_time);
     engine.run()?;
-    let sigs: Vec<(String, ir::LogicVec)> = engine.design.top.signals.iter()
-        .map(|s| (s.name.clone(), engine.state.read_signal(
-            engine.design.top.signals.iter()
-                .position(|x| x.name == s.name).unwrap_or(0)
-        ).clone()))
+    let sigs: Vec<(String, ir::LogicVec)> = engine
+        .design
+        .top
+        .signals
+        .iter()
+        .map(|s| {
+            (
+                s.name.clone(),
+                engine
+                    .state
+                    .read_signal(
+                        engine
+                            .design
+                            .top
+                            .signals
+                            .iter()
+                            .position(|x| x.name == s.name)
+                            .unwrap_or(0),
+                    )
+                    .clone(),
+            )
+        })
         .collect();
     Ok(sigs)
 }

@@ -28,16 +28,26 @@ endmodule
         Ok(design) => {
             println!("Design top signals:");
             for s in &design.top.signals {
-                println!("  signal: {} width={} class={:?} array_depth={}", s.name, s.width, s.class_name, s.array_depth);
+                println!(
+                    "  signal: {} width={} class={:?} array_depth={}",
+                    s.name, s.width, s.class_name, s.array_depth
+                );
             }
             if let Some(cls) = design.classes.get("counter") {
-                println!("Class 'counter': {} fields, {} methods", cls.fields.len(), cls.methods.len());
+                println!(
+                    "Class 'counter': {} fields, {} methods",
+                    cls.fields.len(),
+                    cls.methods.len()
+                );
                 for m in &cls.methods {
                     println!("  method: '{}' stmts={:?}", m.name, m.stmts);
                 }
             } else {
                 println!("Class 'counter' NOT FOUND in design.classes!");
-                println!("Available classes: {:?}", design.classes.keys().collect::<Vec<_>>());
+                println!(
+                    "Available classes: {:?}",
+                    design.classes.keys().collect::<Vec<_>>()
+                );
             }
         }
         Err(e) => eprintln!("Error: {}", e),

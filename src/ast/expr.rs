@@ -58,7 +58,7 @@ pub enum Expr {
         range_list: Vec<Expr>,
     },
     StreamingConcat {
-        op: String,     // ">>" or "<<"
+        op: String, // ">>" or "<<"
         slice_size: Option<Box<Expr>>,
         slices: Vec<Expr>,
     },
@@ -84,8 +84,8 @@ pub enum DistItem {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DistWeight {
-    Item(u64),   // := weight (each item in range gets this weight)
-    Range(u64),  // :/ weight (total weight for the range)
+    Item(u64),  // := weight (each item in range gets this weight)
+    Range(u64), // :/ weight (total weight for the range)
 }
 
 #[derive(Debug, Clone, PartialEq)]

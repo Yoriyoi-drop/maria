@@ -22,9 +22,16 @@ endmodule
     match compile_str(source) {
         Ok(design) => {
             if let Some(cls) = design.classes.get("counter") {
-                println!("Class 'counter': {} fields, {} methods", cls.fields.len(), cls.methods.len());
+                println!(
+                    "Class 'counter': {} fields, {} methods",
+                    cls.fields.len(),
+                    cls.methods.len()
+                );
                 for m in &cls.methods {
-                    println!("  method: '{}' (virtual={}) stmts={:?}", m.name, m.virtual_flag, m.stmts);
+                    println!(
+                        "  method: '{}' (virtual={}) stmts={:?}",
+                        m.name, m.virtual_flag, m.stmts
+                    );
                 }
             }
         }

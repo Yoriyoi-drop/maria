@@ -65,7 +65,7 @@ static ERROR_CODES: &[(&str, &str)] = &[
 
 fn get_error_code(msg: &str) -> &'static str {
     let msg_lower = msg.to_lowercase();
-    
+
     // Pattern-based matching
     if msg_lower.contains("expected ']'") || msg_lower.contains("expected rbr") {
         return "E1007";
@@ -94,7 +94,7 @@ fn get_error_code(msg: &str) -> &'static str {
     if msg_lower.contains("runtime") {
         return "E9001";
     }
-    
+
     // Fallback to table-based matching
     for (code, desc) in ERROR_CODES {
         if msg_lower.contains(&desc.to_lowercase()) {
@@ -131,12 +131,24 @@ impl SimError {
         }
     }
 
-    pub fn parse(msg: impl Into<String>) -> Self { SimError::Parse(msg.into()) }
-    pub fn elaborate(msg: impl Into<String>) -> Self { SimError::Elaborate(msg.into()) }
-    pub fn runtime(msg: impl Into<String>) -> Self { SimError::Runtime(msg.into()) }
-    pub fn preprocessor(msg: impl Into<String>) -> Self { SimError::Preprocessor(msg.into()) }
-    pub fn waveform(msg: impl Into<String>) -> Self { SimError::Waveform(msg.into()) }
-    pub fn debugger(msg: impl Into<String>) -> Self { SimError::Debugger(msg.into()) }
+    pub fn parse(msg: impl Into<String>) -> Self {
+        SimError::Parse(msg.into())
+    }
+    pub fn elaborate(msg: impl Into<String>) -> Self {
+        SimError::Elaborate(msg.into())
+    }
+    pub fn runtime(msg: impl Into<String>) -> Self {
+        SimError::Runtime(msg.into())
+    }
+    pub fn preprocessor(msg: impl Into<String>) -> Self {
+        SimError::Preprocessor(msg.into())
+    }
+    pub fn waveform(msg: impl Into<String>) -> Self {
+        SimError::Waveform(msg.into())
+    }
+    pub fn debugger(msg: impl Into<String>) -> Self {
+        SimError::Debugger(msg.into())
+    }
 
     /// Format error dengan konteks lengkap seperti compiler profesional
     pub fn format_with_context(&self, ctx: &ErrorContext) -> String {
@@ -152,13 +164,10 @@ impl SimError {
         };
 
         let code = get_error_code(&msg);
-        
+
         // Extract the actual error message (after "error: CODE: file:line:col: ")
         let error_msg = if let Some(idx) = msg.find(": error: ") {
-            &msg[idx + 9..]
-                .split(": ")
-                .nth(3)
-                .unwrap_or(&msg)
+            &msg[idx + 9..].split(": ").nth(3).unwrap_or(&msg)
         } else if let Some(idx) = msg.find(": ") {
             let remainder = &msg[idx + 2..];
             remainder.split(": ").last().unwrap_or(&remainder)
@@ -205,10 +214,16 @@ impl SimError {
 impl From<String> for SimError {
     fn from(msg: String) -> Self {
         let is_parse = msg.starts_with("line ") && msg[5..].find(':').is_some();
-        if is_parse { SimError::Parse(msg) } else { SimError::Runtime(msg) }
+        if is_parse {
+            SimError::Parse(msg)
+        } else {
+            SimError::Runtime(msg)
+        }
     }
 }
 
 impl From<&str> for SimError {
-    fn from(msg: &str) -> Self { SimError::Runtime(msg.to_string()) }
+    fn from(msg: &str) -> Self {
+        SimError::Runtime(msg.to_string())
+    }
 }
