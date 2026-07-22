@@ -16,6 +16,7 @@ use crate::frontend::discovery::{DiscoveryOptions, FileDiscovery};
 use crate::frontend::io::MmapFile;
 use crate::frontend::module_index::{EntryKind, ModuleIndex, ModuleMeta, ParamMeta};
 use crate::intern::Symbol;
+use crate::frontend::lexer::FastLexer;
 use crate::parser::lexer::{Lexer, Token};
 use crate::parser::parser::Parser;
 use crate::parser::preprocessor::Preprocessor;
@@ -32,6 +33,8 @@ pub struct SessionConfig {
     pub auto_incdirs: bool,
     pub libdirs: Vec<PathBuf>,
     pub libfiles: Vec<PathBuf>,
+    /// Gunakan FastLexer byte-level (default: true)
+    pub use_fast_lexer: bool,
 }
 
 impl Default for SessionConfig {
@@ -44,6 +47,7 @@ impl Default for SessionConfig {
             auto_incdirs: false,
             libdirs: Vec::new(),
             libfiles: Vec::new(),
+            use_fast_lexer: true,
         }
     }
 }
@@ -141,17 +145,31 @@ impl CompileSession {
                     .preprocess(&content, None)
                     .map_err(|e| SimError::new(None, format!("preprocessor {}: {}", path_str, e)))?;
 
-                // Lex
+                // Lex (use FastLexer by default, fallback to legacy)
                 let combined = format!("`line 1 \"{}\"\n{}\n", path_str, preprocessed);
-                let mut lexer = Lexer::new(&combined);
-                let mut tokens = Vec::new();
-                loop {
-                    let (tok, line, col) = lexer.next_token();
-                    if tok == Token::Eof {
-                        break;
+                let tokens = if self.config.use_fast_lexer {
+                    let mut lexer = FastLexer::new(&combined, &path_str);
+                    let mut toks = Vec::new();
+                    loop {
+                        let (tok, line, col) = lexer.next_token();
+                        if tok == Token::Eof {
+                            break;
+                        }
+                        toks.push((tok, line, col));
                     }
-                    tokens.push((tok, line, col));
-                }
+                    toks
+                } else {
+                    let mut lexer = Lexer::new(&combined);
+                    let mut toks = Vec::new();
+                    loop {
+                        let (tok, line, col) = lexer.next_token();
+                        if tok == Token::Eof {
+                            break;
+                        }
+                        toks.push((tok, line, col));
+                    }
+                    toks
+                };
 
                 // Parse
                 let source_name = path_str.to_string();
@@ -178,15 +196,75 @@ impl CompileSession {
             return Err(SimError::new(None, "no parsed files"));
         }
 
-        // Build module index from all designs
+        // Build module index + dependency graph + incremental tracking
+        self.build_index_and_deps(&files, &designs)?;
+
+        // Merge all designs
+        let mut merged: Design = std::mem::take(&mut designs[0]);
+        for d in &mut designs[1..] {
+            extend_design(&mut merged, d);
+        }
+
+        self.timing.index_ms = index_start.elapsed().as_millis() as u64;
+        self.timing.total_ms = total_start.elapsed().as_millis() as u64;
+
+        Ok((merged, &self.module_index))
+    }
+
+    /// Incremental compile — only re-process changed files.
+    pub fn compile_incremental(
+        &mut self,
+        changed_files: &[PathBuf],
+    ) -> Result<(Design, &ModuleIndex), SimError> {
+        // Mark changed files as dirty
+        for path in changed_files {
+            self.incremental.mark_changed(path);
+            self.cache.on_file_changed(path);
+        }
+
+        let dirty = self.incremental.take_dirty();
+        if dirty.is_empty() && changed_files.is_empty() {
+            return Err(SimError::new(None, "no changes detected"));
+        }
+
+        // Full recompile for now (Phase 3: optimize to partial recompile)
+        let next = self.compile()?;
+        Ok(next)
+    }
+
+    fn discover_files(&mut self) -> Result<Vec<PathBuf>, SimError> {
+        if !self.config.sources.is_empty() {
+            return Ok(self.config.sources.clone());
+        }
+        if self.config.auto_incdirs {
+            let result = FileDiscovery::scan_dir(".", &DiscoveryOptions::default());
+            self.timing.discovery_ms = result.scan_time_ms;
+            return Ok(result.files.iter().map(|f| f.path.clone()).collect());
+        }
+        Err(SimError::new(None, "no source files configured"))
+    }
+
+    /// Build module index, dependency graph, and incremental tracking from parsed designs.
+    fn build_index_and_deps(
+        &mut self,
+        files: &[PathBuf],
+        designs: &[Design],
+    ) -> Result<(), SimError> {
+        // Temporary mapping: module_name → NodeId (for edge building)
+        use std::collections::HashMap;
+        let mut module_to_node: HashMap<Symbol, crate::scheduler::dag::NodeId> = HashMap::new();
+
+        // ── Pass 1: Insert into index, create DAG nodes, register files ──
         for (i, design) in designs.iter().enumerate() {
             let path = &files[i];
             let checksum = compute_checksum(
                 &std::fs::read(path).unwrap_or_default()
             );
 
+            let mut module_nodes = Vec::new();
+
             for module in &design.modules {
-                let instances: Vec<Symbol> = module
+                let instance_names: Vec<Symbol> = module
                     .items
                     .iter()
                     .filter_map(|item| {
@@ -223,11 +301,19 @@ impl CompileSession {
                             is_type: p.is_type_param,
                             is_local: false,
                         }).collect(),
-                        instances,
+                        instances: instance_names.clone(),
                         imports,
                     },
                 );
+
+                // Create DAG node for this module
+                let node_id = self.dep_graph.add_node(
+                    crate::scheduler::Task::ParseFile(path.to_string_lossy().to_string())
+                );
+                module_nodes.push(node_id);
+                module_to_node.insert(Symbol::intern(&module.name), node_id);
             }
+
             for pkg in &design.packages {
                 self.module_index.insert(
                     Symbol::intern(&pkg.name),
@@ -243,52 +329,31 @@ impl CompileSession {
                     },
                 );
             }
+
+            // Register file in incremental tracker
+            self.incremental.register_file(path, module_nodes, checksum);
         }
 
-        // Merge all designs
-        let mut merged: Design = std::mem::take(&mut designs[0]);
-        for d in &mut designs[1..] {
-            extend_design(&mut merged, d);
+        // ── Pass 2: Build dependency edges ──
+        // Module A instantiates module B → A depends on B (edge B → A)
+        for design in designs.iter() {
+            for module in &design.modules {
+                let mod_sym = Symbol::intern(&module.name);
+                let Some(&from) = module_to_node.get(&mod_sym) else { continue; };
+
+                for item in &module.items {
+                    if let crate::ast::ModuleItem::Instance(inst) = item {
+                        let inst_sym = Symbol::intern(&inst.module_name);
+                        if let Some(&to_node) = module_to_node.get(&inst_sym) {
+                            // from (instantiator) depends on to (instantiated)
+                            self.dep_graph.add_edge(from, to_node);
+                        }
+                    }
+                }
+            }
         }
 
-        self.timing.index_ms = index_start.elapsed().as_millis() as u64;
-        self.timing.total_ms = total_start.elapsed().as_millis() as u64;
-
-        Ok((merged, &self.module_index))
-    }
-
-    /// Incremental compile — only re-process changed files.
-    pub fn compile_incremental(
-        &mut self,
-        changed_files: &[PathBuf],
-    ) -> Result<(Design, &ModuleIndex), SimError> {
-        // Mark changed files as dirty in incremental tracker
-        for path in changed_files {
-            self.incremental.mark_changed(path);
-            self.cache.on_file_changed(path);
-        }
-
-        // Re-process dirty files only
-        let dirty = self.incremental.take_dirty();
-        if dirty.is_empty() && changed_files.is_empty() {
-            // No changes — return cached result from last compile
-            return Err(SimError::new(None, "no changes detected"));
-        }
-
-        let next = self.compile()?;
-        Ok(next)
-    }
-
-    fn discover_files(&mut self) -> Result<Vec<PathBuf>, SimError> {
-        if !self.config.sources.is_empty() {
-            return Ok(self.config.sources.clone());
-        }
-        if self.config.auto_incdirs {
-            let result = FileDiscovery::scan_dir(".", &DiscoveryOptions::default());
-            self.timing.discovery_ms = result.scan_time_ms;
-            return Ok(result.files.iter().map(|f| f.path.clone()).collect());
-        }
-        Err(SimError::new(None, "no source files configured"))
+        Ok(())
     }
 
     fn create_preprocessor(&self) -> Preprocessor {

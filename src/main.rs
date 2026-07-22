@@ -2,6 +2,8 @@ use clap::Parser as ClapParser;
 use std::path::PathBuf;
 use std::process;
 
+use maria::frontend::CompileSession;
+use maria::SessionConfig;
 use maria::debugger::Debugger;
 use maria::elaboration::Elaborator;
 use maria::error::{ErrorContext, SimError};
@@ -147,6 +149,22 @@ struct Cli {
     /// Compile-only mode: parse + elaborate, skip simulation & VCD
     #[arg(long = "compile-only")]
     compile_only: bool,
+
+    /// Use fast parallel pipeline (CompileSession + FastLexer)
+    #[arg(long = "fast")]
+    fast: bool,
+
+    /// Use legacy lexer (char-based, default with new pipeline)
+    #[arg(long = "legacy-lexer")]
+    legacy_lexer: bool,
+
+    /// Cache stats (show AST/HIR cache hit rates after run)
+    #[arg(long = "cache-stats")]
+    cache_stats: bool,
+
+    /// Save checksums to file for change detection across runs
+    #[arg(long = "checksum-file")]
+    checksum_file: Option<String>,
 }
 
 fn main() {
@@ -244,6 +262,11 @@ fn run(cli: Cli) -> Result<(), SimError> {
         }
     }
 
+    // ── Fast pipeline via CompileSession (skip legacy pipeline entirely) ──
+    if cli.fast {
+        return run_fast(cli, None);
+    }
+
     // Combine all sources (parallel preprocessing for many files)
     let mut combined = String::new();
     let mut design_timescale = None;
@@ -300,10 +323,6 @@ fn run(cli: Cli) -> Result<(), SimError> {
     let mut design = parser.parse_design()?;
     let ts_for_ir = design_timescale.clone();
     design.timescale = design_timescale;
-
-    if cli.print_ast {
-        println!("{:#?}", design);
-    }
 
     // ── Library scanning: always scan library directories/files before elaboration ──
     for libdir in &cli.libdirs {
@@ -607,6 +626,210 @@ fn run(cli: Cli) -> Result<(), SimError> {
             }
             Err(e) => eprintln!("UCIS export failed: {}", e),
         }
+    }
+
+    Ok(())
+}
+
+/// Run compilation + simulation using the new parallel pipeline (CompileSession + FastLexer).
+fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimError> {
+    let sources: Vec<PathBuf> = if cli.start {
+        read_project_file(".maria")?
+            .into_iter()
+            .map(PathBuf::from)
+            .collect()
+    } else {
+        cli.files.iter().map(PathBuf::from).collect()
+    };
+
+    let mut config = SessionConfig {
+        sources,
+        incdirs: cli.incdirs.iter().map(PathBuf::from).collect(),
+        defines: cli
+            .defines
+            .iter()
+            .filter_map(|d| d.split_once('='))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        top_module: cli.top.clone(),
+        auto_incdirs: !cli.sources.is_empty() || !cli.start,! // disable auto-scan if files specified
+        libdirs: cli.libdirs.iter().map(PathBuf::from).collect(),
+        libfiles: cli.libfiles.iter().map(PathBuf::from).collect(),
+        use_fast_lexer: !cli.legacy_lexer,
+    };
+
+    let mut session = CompileSession::new(config);
+    let (design, index_len) = {
+        let (design, module_index) = session.compile()?;
+        let len = module_index.len();
+        (design, len)
+    };
+
+    if !cli.quiet {
+        session.print_timing();
+        println!("Modules indexed: {}", index_len);
+    }
+
+    if cli.print_ast {
+        println!("{:#?}", design);
+    }
+
+    if design.modules.is_empty() {
+        return Err(SimError::new(None, "no modules found in design"));
+    }
+
+    // Continue with elaboration + simulation (same as legacy pipeline)
+    let top_name = cli.top.as_deref();
+    if !cli.quiet {
+        println!("Compiling design (parallel pipeline)...");
+    }
+    let mut elaborator = Elaborator::new(design);
+    let mut ir_design = elaborator.elaborate(top_name)?;
+
+    if !cli.quiet {
+        println!(
+            "Module '{}': {} signals, {} processes",
+            ir_design.top.name,
+            ir_design.top.signals.len(),
+            ir_design.top.processes.len()
+        );
+    }
+
+    if cli.compile_only {
+        if !cli.quiet {
+            println!("Compile-only mode: skipping simulation");
+        }
+        return Ok(());
+    }
+
+    // ── Setup simulation ──
+    let debug_mode = if cli.deep_debug {
+        DebugMode::DeepDebug
+    } else if cli.debug
+        || cli.step
+        || !cli.break_cycle.is_empty()
+        || !cli.break_change.is_empty()
+        || !cli.break_eq.is_empty()
+        || !cli.watch.is_empty()
+    {
+        DebugMode::Debug
+    } else {
+        DebugMode::Normal
+    };
+
+    let mut engine = SimulationEngine::new(ir_design, cli.max_time);
+    engine.debug_mode = debug_mode;
+    engine.snapshot_interval = cli.snap_interval;
+
+    for pa in &cli.plusargs {
+        if let Some((key, val)) = pa.split_once('=') {
+            engine.plusargs.insert(key.to_string(), val.to_string());
+        } else {
+            engine.plusargs.insert(pa.clone(), String::new());
+        }
+    }
+
+    for c in &cli.break_cycle {
+        engine.breakpoints.push(Breakpoint::Cycle(*c));
+        if !cli.quiet {
+            println!("  breakpoint: cycle {}", c);
+        }
+    }
+    for name in &cli.break_change {
+        engine
+            .breakpoints
+            .push(Breakpoint::SignalChange(name.clone()));
+        if !cli.quiet {
+            println!("  breakpoint: change {}", name);
+        }
+    }
+    for eq in &cli.break_eq {
+        if let Some((name, val_hex)) = eq.split_once('=') {
+            if let Ok(val) = u64::from_str_radix(
+                val_hex.trim_start_matches("0x").trim_start_matches("0X"),
+                16,
+            ) {
+                let w = engine
+                    .design
+                    .top
+                    .signals
+                    .iter()
+                    .find(|s| s.name == name)
+                    .map(|s| s.width)
+                    .unwrap_or(32);
+                engine.breakpoints.push(Breakpoint::SignalEq(
+                    name.to_string(),
+                    LogicVec::from_u64(val, w),
+                ));
+                if !cli.quiet {
+                    println!("  breakpoint: {} == 0x{:X}", name, val);
+                }
+            }
+        }
+    }
+    for name in &cli.watch {
+        engine.watchpoints.push(Watchpoint::Signal(name.clone()));
+        if !cli.quiet {
+            println!("  watchpoint: {}", name);
+        }
+    }
+
+    let vcd_path = cli
+        .output
+        .unwrap_or_else(|| format!("{}.vcd", engine.design.top.name));
+    let vcd = VcdWriter::new(&vcd_path, &engine.design)
+        .map_err(|e| SimError::new(None, format!("VCD creation failed: {}", e)))?;
+    engine.set_vcd(vcd);
+
+    let mut debugger = Debugger::new(engine);
+
+    if cli.print_tree {
+        println!("\n{}", debugger.hierarchy_tree());
+    }
+
+    if cli.step && debug_mode != DebugMode::Normal {
+        if !cli.quiet {
+            println!("\nStep mode: running one cycle...");
+        }
+        debugger.step_cycle()?;
+        if !cli.quiet {
+            println!("{}\n", debugger.print_state_summary());
+        }
+        if !debugger.engine.event_log.is_empty() && !cli.quiet {
+            println!("{}", debugger.print_event_log());
+        }
+    } else {
+        if !cli.quiet {
+            println!("\nStarting simulation (max time={}, vcd={})", cli.max_time, vcd_path);
+        }
+        debugger.run()?;
+    }
+
+    if !cli.quiet {
+        println!("\nSimulation completed at time {}", debugger.engine.state.time);
+    }
+
+    if debug_mode != DebugMode::Normal && !cli.quiet {
+        if debugger.engine.paused {
+            println!("(debugger paused)");
+        }
+        if !debugger.engine.event_log.is_empty() {
+            println!("\nDebug events:\n{}", debugger.print_event_log());
+        }
+    }
+
+    if cli.print_state {
+        println!("\n{}", debugger.print_all_signals());
+    }
+    for name in &cli.print_signal {
+        println!("  {}", debugger.print_signal(name));
+    }
+    for name in &cli.timeline {
+        println!("\n{}", debugger.timeline(name, cli.timeline_len));
+    }
+
+    if !cli.quiet {
+        println!("VCD waveform written to '{}'", vcd_path);
     }
 
     Ok(())

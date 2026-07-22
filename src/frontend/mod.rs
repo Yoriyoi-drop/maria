@@ -6,9 +6,13 @@ pub mod discovery;
 pub mod io;
 pub mod module_index;
 pub mod package_resolver;
+pub mod lexer; // byte-level lexer
 
-pub mod lexer {
-    //! Re-export existing lexer
+// Re-export FastLexer at top level
+pub use lexer::FastLexer;
+
+pub mod legacy_lexer {
+    //! Re-export existing legacy lexer
     pub use crate::parser::lexer::*;
 }
 

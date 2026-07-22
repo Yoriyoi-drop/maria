@@ -1860,3 +1860,70 @@ RAYON_NUM_THREADS=64 cargo test --test large_project
 > **Dokumen ini adalah living document — akan diperbarui seiring implementasi dan temuan dari benchmark nyata.**
 >
 > Target akhir: Maria mampu menangani proyek dengan >10.000 RTL modules, >80.000 verification modules, >10 juta LOC, dengan incremental compile <5 detik dan CPU utilization >95%.
+
+---
+
+## ACTION PLAN (Immediate next steps)
+
+Tujuan: capai target akhir via serangkaian tugas terprioritaskan, setiap tugas memiliki acceptance criteria dan ukuran performa.
+
+1) P0 — Memory & String footprint (2 sprints)
+- Tugas: Migrasi semua Token/AST/Parser string ownership ke Symbol (u32 intern), hapus clone String di hot paths.
+- Acceptance: peak memory untuk proyek 1M LOC turun >4x; semua unit tests lulus.
+- Command verifikasi: cargo test && cargo run --release -- bench/full_compile_bench
+
+2) P0 — Incremental correctness & cache (2 sprints)
+- Tugas: Pastikan CacheManager invalidasi deterministik; tambahkan test incremental per-file (single/10 files).
+- Acceptance: incremental compile pada synthetic 10K module <5s (release), hit rate AST cache >90%.
+- Command verifikasi: cargo test -- --ignored stress_tests:: && benchmarks
+
+3) P0 — Parser & Lexer hardening (1 sprint)
+- Tugas: Pastikan SIMD lexer parity 100% vs legacy; migrasi literal StringTok → Symbol; deterministic spans.
+- Acceptance: semua lexer/parser unit tests identik dengan legacy; no regressions.
+
+4) P1 — Lazy elaboration wiring (2 sprints)
+- Tugas: Wire LazyElaborator with CompileSession; prevent double-elab with in_progress set.
+- Acceptance: cold full build acceptable; partial builds re-elaborate only dependents.
+
+5) P1 — Scheduler & batching (1 sprint)
+- Tugas: Implement task batching threshold, reduce steal overhead; add telemetry counters for worker utilization.
+- Acceptance: CPU utilization >90% on 16 core synthetic bench; tasks <100µs are batched.
+
+6) P2 — Profiling & Benchmarks (ongoing)
+- Tugas: Add nightly benchmarks, regression guard rails; baseline vs Verilator for OpenTitan subset.
+- Acceptance: nightly report, alerts on >10% regression.
+
+7) P3 — JIT & Simulation speedups (long term)
+- Tugas: Explore JIT for critical kernels, MIR specialization, SIMD in simulator.
+- Acceptance: 10x sim speedup for hotspot kernels.
+
+---
+
+## Milestones & Timeline (conservative)
+- Sprint 1 (2 weeks): P0 memory + SIMD lexer fixes + unit test sweep
+- Sprint 2 (2 weeks): AST cache correctness + incremental tests
+- Sprint 3 (2 weeks): Lazy elaboration wiring + scheduler batching
+- Sprint 4 (2 weeks): Benchmarking + optimizations
+- Sprint 5+: JIT, simulation, platform tuning
+
+## Verification matrix (automated)
+- Unit tests: cargo test (CI run on push)
+- Integration smoke: feature=opentitan (nightly)
+- Performance: cargo bench + custom full_compile_bench (release)
+- Regression: baseline artifacts stored (benchmarks/) and compared nightly
+
+## Tasks (short actionable list)
+- [ ] migrate lexer/token/parser String→Symbol (hot path) — owner: dev
+- [ ] add thread-local intern cache + batch-flush — owner: dev
+- [ ] add AST cache eviction policy (priority) — owner: dev
+- [ ] implement incremental single-file test harness — owner: dev
+- [ ] add telemetry: per-phase CPU/time counters — owner: dev
+- [ ] nightly bench + baseline commit + alerts — owner: infra
+
+---
+
+Dokumentasi perubahan: setiap PR yang mengubah pipeline wajib memperbarui bagian "Status Implementasi" dan menambahkan entry minimal pada ROADMAP.md.
+
+Jika setuju, lanjutkan ke langkah implementasi pertama: migrasi String→Symbol pada parser/lexer (P0). Otherwise, pilih tugas prioritas lain.
+
+(Perlu konfirmasi sebelum mengubah kode yang luas.)
