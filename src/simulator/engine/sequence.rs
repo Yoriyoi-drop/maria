@@ -112,7 +112,7 @@ impl SimulationEngine {
             crate::ast::types::ClockEvent::Negedge(s) => s,
             crate::ast::types::ClockEvent::Edge(s) => s,
         };
-        let sig_id = match self.find_signal(sig_name) {
+        let sig_id = match self.find_signal(sig_name.as_str()) {
             Some(id) => id,
             None => return true,
         };

@@ -2,7 +2,7 @@
 /// Contains signal history tracking, breakpoint checking, and watchpoint logic.
 use crate::error::SimError;
 use crate::simulator::types::*;
-use std::collections::VecDeque;
+
 
 use super::SimulationEngine;
 
@@ -27,16 +27,16 @@ impl SimulationEngine {
 
         // Update signal history
         for sig in &self.design.top.signals {
-            let id = self.find_signal(&sig.name);
+            let id = self.find_signal(sig.name.as_str());
             if let Some(id) = id {
                 let val = self.state.read_signal(id).clone();
                 self.signal_history
-                    .entry(sig.name.clone())
-                    .or_insert_with(VecDeque::new)
-                    .push_back((time, val));
+                    .entry(sig.name)
+                    .or_insert_with(Vec::new)
+                    .push((time, val));
                 if let Some(hist) = self.signal_history.get(&sig.name) {
                     if hist.len() > 100000 {
-                        self.signal_history.get_mut(&sig.name).unwrap().pop_front();
+                        self.signal_history.get_mut(&sig.name).unwrap().remove(0);
                     }
                 }
             }
@@ -84,7 +84,7 @@ impl SimulationEngine {
                     }
                 }
                 Breakpoint::SignalChange(name) => {
-                    if let Some(history) = self.signal_history.get(name) {
+                    if let Some(history) = self.signal_history.get(name.as_str()) {
                         if history.len() >= 2 {
                             let last = &history[history.len() - 1];
                             let prev = &history[history.len() - 2];
@@ -119,7 +119,7 @@ impl SimulationEngine {
         for wp in &self.watchpoints {
             match wp {
                 Watchpoint::Signal(name) => {
-                    if let Some(history) = self.signal_history.get(name) {
+                    if let Some(history) = self.signal_history.get(name.as_str()) {
                         if history.len() >= 2 {
                             let last = &history[history.len() - 1];
                             let prev = &history[history.len() - 2];

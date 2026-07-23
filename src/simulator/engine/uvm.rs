@@ -29,7 +29,7 @@ impl SimulationEngine {
                 .filter(|pm| cls.methods.iter().any(|m| &m.name == *pm))
                 .count();
             if count > 0 && best.as_ref().map_or(true, |b| count > b.1) {
-                best = Some((name.clone(), count));
+                best = Some((name.to_string(), count));
             }
         }
         // fallback: any class with phase methods
@@ -40,7 +40,7 @@ impl SimulationEngine {
                     .filter(|pm| cls.methods.iter().any(|m| &m.name == *pm))
                     .count();
                 if count > 0 && best.as_ref().map_or(true, |b| count > b.1) {
-                    best = Some((name.clone(), count));
+                    best = Some((name.to_string(), count));
                 }
             }
         }
@@ -63,13 +63,13 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_phases(&mut self) -> Result<(), SimError> {
+    pub(crate) fn execute_phases(&mut self) -> Result<(), SimError> {
         let class_name = match self.find_phase_class_name() {
             Some(c) => c,
             None => return Ok(()),
         };
         // Create root test object once, shared across all phases
-        let obj_id = self.state.alloc_object(&class_name);
+        let obj_id = self.state.alloc_object(Symbol::intern(&class_name));
         self.root_test_obj_id = Some(obj_id);
 
         // build_phase: root then children
@@ -112,7 +112,7 @@ impl SimulationEngine {
                     let child_class = &obj.class_name;
                     if self.find_method_in_hierarchy(child_class, phase).is_ok() {
                         self.current_this = Some(child_id);
-                        self.execute_method(child_id, phase, &[])?;
+                        self.execute_method(child_id, phase.as_str(), &[])?;
                         self.current_this = None;
                     }
                 }
@@ -122,7 +122,7 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn is_uvm_object_hierarchy(&self, class_name: &str) -> bool {
+    pub(crate) fn is_uvm_object_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
             if current == "__uvm_object" {
@@ -138,7 +138,7 @@ impl SimulationEngine {
         }
     }
 
-    fn is_uvm_component_hierarchy(&self, class_name: &str) -> bool {
+    pub(crate) fn is_uvm_component_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
             if current == "__uvm_component" {
@@ -234,7 +234,7 @@ impl SimulationEngine {
         }
     }
 
-    fn is_uvm_analysis_port_hierarchy(&self, class_name: &str) -> bool {
+    pub(crate) fn is_uvm_analysis_port_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
             if current == "__uvm_analysis_port" {
@@ -250,7 +250,7 @@ impl SimulationEngine {
         }
     }
 
-    fn is_uvm_analysis_imp_hierarchy(&self, class_name: &str) -> bool {
+    pub(crate) fn is_uvm_analysis_imp_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
             if current == "__uvm_analysis_imp" {
@@ -282,7 +282,7 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_method(
+    pub(crate) fn execute_method(
         &mut self,
         obj_id: ObjId,
         method: &str,
@@ -310,7 +310,7 @@ impl SimulationEngine {
         }
         // Covergroup support: sample() records coverage data
         if method == "sample" && class_name.starts_with("__covergroup_") {
-            let cg_name = &class_name["__covergroup_".len()..];
+            let cg_name = &class_name.as_str()["__covergroup_".len()..];
             if self.design.covergroups.iter().any(|c| c.name == cg_name) {
                 return self
                     .sample_covergroup(cg_name)
@@ -406,7 +406,7 @@ impl SimulationEngine {
         self.execute_method_body(this_opt, &method_def, args, method)
     }
 
-    fn execute_randomize(&mut self, obj_id: ObjId, class_name: &str) -> Result<LogicVec, SimError> {
+    pub(crate) fn execute_randomize(&mut self, obj_id: ObjId, class_name: &str) -> Result<LogicVec, SimError> {
         // Clone all data we need to avoid borrow conflicts
         let class_def = self
             .design
@@ -442,15 +442,15 @@ impl SimulationEngine {
         // Order rand_fields: fields in solve-before come first
         let mut ordered_fields: Vec<String> = Vec::new();
         let mut remaining: std::collections::HashSet<String> =
-            class_def.rand_fields.iter().cloned().collect();
+            class_def.rand_fields.iter().cloned().collect::<HashSet<Symbol>>();
         for fname in &class_def.rand_fields {
-            if before_map.contains_key(fname) && remaining.contains(fname) {
+            if before_map.contains_key::<str>(fname.as_str()) && remaining.contains::<str>(fname.as_str()) {
                 ordered_fields.push(fname.clone());
-                remaining.remove(fname);
+                remaining.remove::<str>(fname.as_str());
             }
         }
         for fname in &class_def.rand_fields {
-            if remaining.contains(fname) {
+            if remaining.contains::<str>(fname.as_str()) {
                 ordered_fields.push(fname.clone());
             }
         }
@@ -506,7 +506,7 @@ impl SimulationEngine {
         )))
     }
 
-    fn execute_randomize_with(
+    pub(crate) fn execute_randomize_with(
         &mut self,
         obj_id: ObjId,
         class_name: &str,
@@ -548,15 +548,15 @@ impl SimulationEngine {
 
         let mut ordered_fields: Vec<String> = Vec::new();
         let mut remaining: std::collections::HashSet<String> =
-            class_def.rand_fields.iter().cloned().collect();
+            class_def.rand_fields.iter().cloned().collect::<HashSet<Symbol>>();
         for fname in &class_def.rand_fields {
-            if before_map.contains_key(fname) && remaining.contains(fname) {
+            if before_map.contains_key::<str>(fname.as_str()) && remaining.contains::<str>(fname.as_str()) {
                 ordered_fields.push(fname.clone());
-                remaining.remove(fname);
+                remaining.remove::<str>(fname.as_str());
             }
         }
         for fname in &class_def.rand_fields {
-            if remaining.contains(fname) {
+            if remaining.contains::<str>(fname.as_str()) {
                 ordered_fields.push(fname.clone());
             }
         }
@@ -631,7 +631,7 @@ impl SimulationEngine {
                 self.mailbox_queues
                     .entry(obj_id)
                     .or_default()
-                    .push(args[0].clone());
+                    .push_back(args[0].clone());
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get" => {
@@ -662,7 +662,7 @@ impl SimulationEngine {
                 self.mailbox_queues
                     .entry(obj_id)
                     .or_default()
-                    .push(args[0].clone());
+                    .push_back(args[0].clone());
                 Ok(LogicVec::from_u64(1, 1))
             }
             "num" => {
@@ -1148,7 +1148,7 @@ impl SimulationEngine {
                     )
                     .is_ok()
                 {
-                    self.execute_method(obj_id, "body", &[])?;
+                    self.execute_method(obj_id, "body".as_str(), &[])?;
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
@@ -1195,7 +1195,7 @@ impl SimulationEngine {
                     .get_object(obj_id)
                     .map(|o| o.class_name.clone())
                     .unwrap_or_default();
-                let child = self.state.alloc_object(&class_name);
+                let child = self.state.alloc_object(Symbol::intern(&class_name));
                 // Set name on the new object
                 self.uvm_object_data
                     .entry(child)
@@ -1466,7 +1466,7 @@ impl SimulationEngine {
                 let parent_name = if parent != 0 {
                     self.state
                         .get_object(parent)
-                        .map(|o| o.class_name.clone())
+                        .map(|o| o.class_name.to_string())
                         .unwrap_or_default()
                 } else {
                     String::new()
@@ -1484,7 +1484,7 @@ impl SimulationEngine {
         }
     }
 
-    fn execute_super_method(
+    pub(crate) fn execute_super_method(
         &mut self,
         method: &str,
         args: &[LogicVec],
@@ -1581,7 +1581,7 @@ impl SimulationEngine {
         self.method_locals.push(local_signals);
 
         let old_method = self.current_method.clone();
-        self.current_method = Some(method.to_string());
+        self.current_method = Some(Symbol::intern(method));
 
         if !method_def.stmts.is_empty() {
             if method_def.is_task {
@@ -1611,7 +1611,7 @@ impl SimulationEngine {
         Ok(return_val)
     }
 
-    fn get_foreach_count(&self, array_var: &str) -> usize {
+    pub(crate) fn get_foreach_count(&self, array_var: &str) -> usize {
         if let Some(obj_id) = self.current_this {
             if let Some(obj) = self.state.get_object(obj_id) {
                 if let Some(cls) = self.design.classes.get(&obj.class_name) {
@@ -1626,7 +1626,7 @@ impl SimulationEngine {
         1
     }
 
-    fn get_field_elem_width(&self, expr: &Expr) -> Option<usize> {
+    pub(crate) fn get_field_elem_width(&self, expr: &Expr) -> Option<usize> {
         match expr {
             Expr::Ident(name) => {
                 if let Some(obj_id) = self.current_this {
@@ -1664,7 +1664,7 @@ impl SimulationEngine {
         }
     }
 
-    fn find_method_in_hierarchy(
+    pub(crate) fn find_method_in_hierarchy(
         &self,
         class_name: &str,
         method: &str,
@@ -1709,7 +1709,7 @@ impl SimulationEngine {
         }
     }
 
-    fn evaluate_array_method(
+    pub(crate) fn evaluate_array_method(
         &mut self,
         sig_id: SignalId,
         sig: &SignalInfo,
@@ -2483,166 +2483,4 @@ impl SimulationEngine {
         }
     }
 
-    /// Evaluate sequence expressions recursively at a given cycle offset.
-    /// Note: uses CURRENT signal state only — past values are not tracked.
-    /// This gives simplified semantics where all Expr evaluations happen at the current time,
-    /// but the cycle offset controls structural matching (delays, concatenations).
-    fn eval_sequence_at_cycle(&mut self, seq: &IrSequence, cycles: u64) -> Result<bool, SimError> {
-        match seq {
-            IrSequence::Expr(expr) => {
-                if cycles == 0 {
-                    let val = self.evaluate_expr(expr)?;
-                    Ok(val.to_bool() == Some(true))
-                } else {
-                    Ok(false)
-                }
-            }
-            IrSequence::Delay(n) => Ok(cycles == *n),
-            IrSequence::DelayRange(min, max) => Ok(cycles >= *min && cycles <= *max),
-            IrSequence::Concat(a, b) => {
-                // a must match at cycle k, b must match at cycles-k-1
-                // Total: k + 1 + (cycles-k-1) = cycles
-                for k in 0..cycles {
-                    if self.eval_sequence_at_cycle(a, k)?
-                        && self.eval_sequence_at_cycle(b, cycles - k - 1)?
-                    {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-            IrSequence::Or(a, b) => Ok(self.eval_sequence_at_cycle(a, cycles)?
-                || self.eval_sequence_at_cycle(b, cycles)?),
-            IrSequence::And(a, b) => Ok(self.eval_sequence_at_cycle(a, cycles)?
-                && self.eval_sequence_at_cycle(b, cycles)?),
-            IrSequence::Repeat(seq, n) => {
-                if *n == 0 {
-                    return Ok(true);
-                }
-                if *n == 1 {
-                    return self.eval_sequence_at_cycle(seq, cycles);
-                }
-                for k in 0..=cycles {
-                    if self.eval_sequence_at_cycle(seq, k)? {
-                        let remaining = IrSequence::Repeat(Box::new((**seq).clone()), n - 1);
-                        if self.eval_sequence_at_cycle(&remaining, cycles - k)? {
-                            return Ok(true);
-                        }
-                    }
-                }
-                Ok(false)
-            }
-        }
-    }
-
-    /// Advance all active sequence attempts and evaluate them.
-    /// Removes completed (matched or expired) attempts and executes pass/fail statements.
-    fn evaluate_sequence_attempts(&mut self) -> Result<(), SimError> {
-        // Pre-compute firing events (immutable borrow of self)
-        let firing_events: Vec<bool> = self
-            .sequence_attempts
-            .iter()
-            .map(|a| self.check_concurrent_clock_event(&a.clock_event))
-            .collect();
-
-        // Pre-clone sequences to avoid borrow conflicts during iteration
-        let seqs: Vec<(Box<IrSequence>, u64)> = self
-            .sequence_attempts
-            .iter()
-            .enumerate()
-            .filter(|(idx, _)| *idx < firing_events.len() && firing_events[*idx])
-            .map(|(_, a)| (a.sequence.clone(), a.cycles))
-            .collect();
-
-        // Evaluate all sequences (mutable borrow of self)
-        let mut results: Vec<bool> = Vec::new();
-        for (seq, cycles) in &seqs {
-            results.push(self.eval_sequence_at_cycle(seq, *cycles)?);
-        }
-
-        // Update attempt states and mark completions
-        let mut completed = Vec::new();
-        let mut result_idx = 0;
-        for (idx, attempt) in self.sequence_attempts.iter_mut().enumerate() {
-            if idx < firing_events.len() && firing_events[idx] {
-                let matched = if result_idx < results.len() {
-                    results[result_idx]
-                } else {
-                    false
-                };
-                result_idx += 1;
-                let max_cycles = attempt.sequence.max_cycles().unwrap_or(u64::MAX);
-                if matched {
-                    completed.push((idx, true));
-                } else if attempt.cycles >= max_cycles {
-                    completed.push((idx, false));
-                }
-                attempt.cycles += 1;
-            }
-        }
-
-        // Process completed attempts (reverse order to preserve indices)
-        for (idx, success) in completed.into_iter().rev() {
-            if let Some(attempt) = self.sequence_attempts.get(idx) {
-                let stmts = if success {
-                    attempt.pass_stmt.clone()
-                } else {
-                    attempt.fail_stmt.clone()
-                };
-                if !stmts.is_empty() {
-                    self.evaluate_block_with_delay_fork(&stmts, None)?;
-                }
-            }
-            self.sequence_attempts.remove(idx);
-        }
-        Ok(())
-    }
-
-    fn check_concurrent_clock_event(&self, ce: &crate::ast::types::ClockEvent) -> bool {
-        let sig_name = match ce {
-            crate::ast::types::ClockEvent::Posedge(s) => s,
-            crate::ast::types::ClockEvent::Negedge(s) => s,
-            crate::ast::types::ClockEvent::Edge(s) => s,
-        };
-        let sig_id = match self.find_signal(sig_name) {
-            Some(id) => id,
-            None => return true,
-        };
-        let curr = self.state.read_signal(sig_id);
-        match ce {
-            crate::ast::types::ClockEvent::Posedge(_) => {
-                if let Some(ref snap) = self.signal_snapshot {
-                    let old = snap
-                        .get(sig_id)
-                        .cloned()
-                        .unwrap_or_else(|| LogicVec::new(1));
-                    old.to_bool() != Some(true) && curr.to_bool() == Some(true)
-                } else {
-                    curr.to_bool() == Some(true)
-                }
-            }
-            crate::ast::types::ClockEvent::Negedge(_) => {
-                if let Some(ref snap) = self.signal_snapshot {
-                    let old = snap
-                        .get(sig_id)
-                        .cloned()
-                        .unwrap_or_else(|| LogicVec::new(1));
-                    old.to_bool() != Some(false) && curr.to_bool() == Some(false)
-                } else {
-                    curr.to_bool() == Some(false)
-                }
-            }
-            crate::ast::types::ClockEvent::Edge(_) => {
-                if let Some(ref snap) = self.signal_snapshot {
-                    let old = snap
-                        .get(sig_id)
-                        .cloned()
-                        .unwrap_or_else(|| LogicVec::new(1));
-                    old.to_bool() != curr.to_bool()
-                } else {
-                    true
-                }
-            }
-        }
-    }
 }

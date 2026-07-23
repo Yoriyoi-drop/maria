@@ -1,22 +1,21 @@
-use super::SimulationEngine;
+use super::{
+    edge_matches_abbrev, evaluate_string_method, SimulationEngine, sym_char_matches,
+};
 use crate::simulator::util::*;
 use crate::ast::*;
 use crate::error::SimError;
 use crate::ir::*;
 use crate::Symbol;
-use crate::simulator::parallel;
 use crate::simulator::state::SimulationState;
 use crate::simulator::types::*;
 use crate::simulator::value::*;
-use crate::waveform::FstWaveWriter;
-use crate::waveform::VcdWriter;
 use rand::Rng;
 use rand::SeedableRng;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 
 impl SimulationEngine {
-    fn eval_assign_rhs(&mut self, expr: &IrExpr, lhs: &IrLValue) -> Result<LogicVec, SimError> {
+    pub(crate) fn eval_assign_rhs(&mut self, expr: &IrExpr, lhs: &IrLValue) -> Result<LogicVec, SimError> {
         if let IrExpr::FillLit(v) = expr {
             let w = self.get_lvalue_width(lhs);
             Ok(LogicVec::fill(*v, w))
@@ -47,7 +46,7 @@ impl SimulationEngine {
         }
     }
 
-    fn evaluate_expr(&mut self, expr: &IrExpr) -> Result<LogicVec, SimError> {
+    pub(crate) fn evaluate_expr(&mut self, expr: &IrExpr) -> Result<LogicVec, SimError> {
         match expr {
             IrExpr::Const(val) => Ok(val.clone()),
             IrExpr::FillLit(val) => Ok(LogicVec::fill(*val, 1)),
@@ -755,7 +754,7 @@ impl SimulationEngine {
                     "process::self" => {
                         let pid = self.current_process_id.unwrap_or(0);
                         if pid == 0 {
-                            let pid = self.state.alloc_object("__process");
+                            let pid = self.state.alloc_object("__process".into());
                             self.process_map.insert(
                                 pid,
                                 ProcessInfo {
@@ -791,7 +790,7 @@ impl SimulationEngine {
                             LogicVec::new(1)
                         };
                         self.uvm_config_db_data
-                            .insert((inst_name, field_name), value);
+                            .insert((Symbol::intern(&inst_name), Symbol::intern(&field_name)), value);
                         Ok(LogicVec::from_u64(1, 1))
                     }
                     "uvm_config_db::get" => {
@@ -810,7 +809,7 @@ impl SimulationEngine {
                             String::new()
                         };
                         let key = (inst_name, field_name);
-                        let stored = self.uvm_config_db_data.get(&key).cloned();
+                        let stored = self.uvm_config_db_data.get::<(Symbol, Symbol)>(&(Symbol::intern(&key.0), Symbol::intern(&key.1))).cloned();
                         if let Some(val) = stored {
                             if let Some(last_arg) = args.get(3) {
                                 if let IrExpr::Signal(sig_id, _) = last_arg {
@@ -842,7 +841,7 @@ impl SimulationEngine {
                         } else {
                             LogicVec::new(1)
                         };
-                        self.uvm_resource_db_data.insert((scope, name), value);
+                        self.uvm_resource_db_data.insert((Symbol::intern(&scope), Symbol::intern(&name)), value);
                         Ok(LogicVec::from_u64(1, 1))
                     }
                     "uvm_resource_db::get" => {
@@ -861,7 +860,7 @@ impl SimulationEngine {
                             String::new()
                         };
                         let key = (scope, rname);
-                        let stored = self.uvm_resource_db_data.get(&key).cloned();
+                        let stored = self.uvm_resource_db_data.get::<(Symbol, Symbol)>(&(Symbol::intern(&key.0), Symbol::intern(&key.1))).cloned();
                         if let Some(val) = stored {
                             if let Some(last_arg) = args.get(2) {
                                 if let IrExpr::Signal(sig_id, _) = last_arg {
@@ -888,7 +887,7 @@ impl SimulationEngine {
                         } else {
                             String::new()
                         };
-                        self.factory_type_overrides.insert(orig, override_type);
+                        self.factory_type_overrides.insert(Symbol::intern(&orig), Symbol::intern(&override_type));
                         Ok(LogicVec::from_u64(1, 1))
                     }
                     "$test$plusargs" => {
@@ -1015,8 +1014,8 @@ impl SimulationEngine {
                             let hist = self
                                 .sysfunc_history
                                 .entry(key)
-                                .or_insert_with(|| VecDeque::new());
-                            hist.push_back(val);
+                                .or_insert_with(Vec::new);
+                            hist.push(val);
                             if hist.len() > n {
                                 let past = hist[hist.len() - 1 - n].clone();
                                 Ok(past)
@@ -1046,14 +1045,14 @@ impl SimulationEngine {
                     .any(|c| c.name == *class_name);
                 let effective_name = if is_cg {
                     format!("__covergroup_{}", class_name)
-                } else if let Some(override_type) = self.factory_type_overrides.get(class_name) {
-                    override_type.clone()
+                } else if let Some(override_type) = self.factory_type_overrides.get::<str>(class_name.as_str()) {
+                    override_type.to_string()
                 } else {
-                    class_name.clone()
+                    class_name.to_string()
                 };
-                let obj_id = self.state.alloc_object(&effective_name);
+                let obj_id = self.state.alloc_object(Symbol::intern(&effective_name));
                 if class_name == "__mailbox" {
-                    self.mailbox_queues.insert(obj_id, Vec::new());
+                    self.mailbox_queues.insert(obj_id, VecDeque::new());
                 } else if class_name == "__semaphore" {
                     let init = if !arg_vals.is_empty() {
                         arg_vals[0].to_u64() as u32
@@ -1063,7 +1062,7 @@ impl SimulationEngine {
                     self.semaphore_counts.insert(obj_id, init);
                 } else if is_cg {
                     // Auto-sample covergroup immediately on new()
-                    self.sample_covergroup(&class_name)?;
+                    self.sample_covergroup(class_name.as_str())?;
                 } else if !class_name.is_empty() {
                     if let Some(cls) = self.design.classes.get(class_name.as_str()) {
                         if let Some(obj) = self.state.get_object_mut(obj_id) {
@@ -1074,14 +1073,14 @@ impl SimulationEngine {
                             }
                         }
                     }
-                    if self.is_uvm_object_hierarchy(&class_name) {
+                    if self.is_uvm_object_hierarchy(class_name.as_str()) {
                         self.uvm_object_data
                             .entry(obj_id)
                             .or_insert_with(|| UvmObjectData {
                                 name: String::new(),
                             });
                     }
-                    if self.is_uvm_analysis_port_hierarchy(&class_name) {
+                    if self.is_uvm_analysis_port_hierarchy(class_name.as_str()) {
                         let pname = if !arg_vals.is_empty() {
                             logicvec_to_string(&arg_vals[0])
                         } else {
@@ -1097,7 +1096,7 @@ impl SimulationEngine {
                             .entry(obj_id)
                             .or_insert_with(|| UvmObjectData { name: pname });
                     }
-                    if self.is_uvm_analysis_imp_hierarchy(&class_name) {
+                    if self.is_uvm_analysis_imp_hierarchy(class_name.as_str()) {
                         let pname = if !arg_vals.is_empty() {
                             logicvec_to_string(&arg_vals[0])
                         } else {
@@ -1118,7 +1117,7 @@ impl SimulationEngine {
                             .entry(obj_id)
                             .or_insert_with(|| UvmObjectData { name: pname });
                     }
-                    if self.is_uvm_component_hierarchy(&class_name) {
+                    if self.is_uvm_component_hierarchy(class_name.as_str()) {
                         let name = logicvec_to_string(&arg_vals[0]);
                         let parent_obj = arg_vals.get(1).map(|a| a.to_u64() as ObjId).unwrap_or(0);
                         self.uvm_object_data
@@ -1136,7 +1135,7 @@ impl SimulationEngine {
                         }
                         self.uvm_component_data.insert(obj_id, cd);
                     }
-                    if self.find_method_in_hierarchy(&class_name, "new").is_ok() {
+                    if self.find_method_in_hierarchy(class_name.as_str(), "new").is_ok() {
                         self.execute_method(obj_id, "new", &arg_vals)?;
                     }
                 }
@@ -1160,7 +1159,7 @@ impl SimulationEngine {
                         .iter()
                         .map(|a| self.evaluate_expr(a))
                         .collect::<Result<_, _>>()?;
-                    let result = evaluate_string_method(s, method, &arg_vals)?;
+                    let result = evaluate_string_method(s.as_str(), method.as_str(), &arg_vals)?;
                     return Ok(result);
                 }
                 if let IrExpr::Signal(id, _) = obj.as_ref() {
@@ -1172,7 +1171,7 @@ impl SimulationEngine {
                                 .iter()
                                 .map(|a| self.evaluate_expr(a))
                                 .collect::<Result<_, _>>()?;
-                            let result = evaluate_string_method(&s, method, &arg_vals)?;
+                            let result = evaluate_string_method(&s, method.as_str(), &arg_vals)?;
                             return Ok(result);
                         }
                     }
@@ -1192,9 +1191,9 @@ impl SimulationEngine {
                                         let class_for_obj = if is_cg {
                                             format!("__covergroup_{}", cn)
                                         } else {
-                                            cn.clone()
+                                            cn.to_string()
                                         };
-                                        let new_id = self.state.alloc_object(&class_for_obj);
+                                        let new_id = self.state.alloc_object(Symbol::intern(&class_for_obj));
                                         self.state.write_signal(
                                             *id,
                                             LogicVec::from_u64(new_id as u64, 64),
@@ -1203,7 +1202,7 @@ impl SimulationEngine {
                                             .iter()
                                             .map(|a| self.evaluate_expr(a))
                                             .collect::<Result<_, _>>()?;
-                                        return self.execute_method(new_id, method, &arg_vals);
+                                        return self.execute_method(new_id, method.as_str(), &arg_vals);
                                     }
                                 }
                             }
@@ -1293,7 +1292,7 @@ impl SimulationEngine {
             }
             IrExpr::Dist { expr: _expr, items } => {
                 // Dist expression in randomize context: use weighted random selection
-                if self.current_method.as_deref() == Some("randomize") {
+                if self.current_method == Some(Symbol::intern("randomize")) {
                     let total_weight: i64 = items
                         .iter()
                         .map(|item| {
@@ -1553,7 +1552,7 @@ impl SimulationEngine {
                 // Initialize internal variables with X
                 for decl in &func.decls {
                     for var in &decl.names {
-                        if !locals.contains_key(&var.name) {
+                        if !locals.contains_key(var.name.as_str()) {
                             let width = if let Some(r) = &var.range {
                                 r.width()
                             } else {
@@ -1568,7 +1567,7 @@ impl SimulationEngine {
 
                 // Save and set current_method so Stmt::Return stores into method_locals
                 let saved_method = self.current_method.take();
-                self.current_method = Some("__func_ret".to_string());
+                self.current_method = Some(Symbol::intern("__func_ret"));
 
                 self.evaluate_ast_block_with_delay_fork(&func.stmts, None)?;
 
@@ -1630,12 +1629,12 @@ impl SimulationEngine {
                         let handle = binding_val.to_u64() as usize;
                         if handle > 0 && handle < self.design.top.signals.len() {
                             // Bound — extract instance path from the bound signal's name
-                            let bound_sig_name = &self.design.top.signals[handle].name;
+                            let bound_sig_name = self.design.top.signals[handle].name.as_str();
                             // Strip the signal name to get instance path: top.inst.sig -> top.inst
                             if let Some(dot_pos) = bound_sig_name.rfind('.') {
                                 let inst_path = &bound_sig_name[..dot_pos];
                                 let sig_key = format!("{}.{}", inst_path, field);
-                                if let Some(&field_sid) = self.design.hier_signal_map.get(&sig_key)
+                                if let Some(&field_sid) = self.design.hier_signal_map.get::<str>(sig_key.as_str())
                                 {
                                     result = self.state.read_signal(field_sid).clone();
                                 }
@@ -1649,7 +1648,7 @@ impl SimulationEngine {
         }
     }
 
-    fn write_lvalue(&mut self, lvalue: &IrLValue, mut val: LogicVec) -> Result<(), SimError> {
+    pub(crate) fn write_lvalue(&mut self, lvalue: &IrLValue, mut val: LogicVec) -> Result<(), SimError> {
         // Check for const violation
         if let Some(id) = self.signal_id_from_lvalue(lvalue) {
             if let Some(sig) = self.design.top.signals.get(id) {
@@ -1821,7 +1820,7 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn check_timing_constraints(&mut self) -> Result<(), SimError> {
+    pub(crate) fn check_timing_constraints(&mut self) -> Result<(), SimError> {
         let current_time = self.state.time;
         let signal_names: Vec<(String, SignalId)> = self
             .design
@@ -1829,7 +1828,7 @@ impl SimulationEngine {
             .signals
             .iter()
             .enumerate()
-            .map(|(i, s)| (s.name.clone(), i))
+            .map(|(i, s)| (s.name.to_string(), i))
             .collect();
         let items = self.design.specify_items.clone();
         for item in &items {
@@ -1842,7 +1841,7 @@ impl SimulationEngine {
                     // _ref_event is parsed but runtime edge detection is simplified
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta <= limit_val && delta > 0 {
@@ -1860,7 +1859,7 @@ impl SimulationEngine {
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta <= limit_val {
@@ -1880,7 +1879,7 @@ impl SimulationEngine {
                     let setup_val = const_eval_simple(setup_limit).unwrap_or(0) as u64;
                     let hold_val = const_eval_simple(hold_limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta <= setup_val {
@@ -1902,7 +1901,7 @@ impl SimulationEngine {
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta <= limit_val {
@@ -1919,7 +1918,7 @@ impl SimulationEngine {
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta <= limit_val {
@@ -1938,7 +1937,7 @@ impl SimulationEngine {
                     let recov_val = const_eval_simple(recovery_limit).unwrap_or(0) as u64;
                     let remov_val = const_eval_simple(removal_limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta <= recov_val {
@@ -1954,7 +1953,7 @@ impl SimulationEngine {
                 SpecifyItem::PeriodCheck { ref_event, limit } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident(ref_sig) = ref_event {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == ref_sig) {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta < limit_val {
@@ -1971,7 +1970,7 @@ impl SimulationEngine {
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident(ref_sig) = ref_event {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == ref_sig) {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta < limit_val {
@@ -1988,11 +1987,11 @@ impl SimulationEngine {
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&data_change) = self.signal_last_change.get(sid) {
                                 if let Expr::Ident(ref_sig) = &ref_event {
                                     if let Some((_, rsid)) =
-                                        signal_names.iter().find(|(n, _)| n == ref_sig)
+                                        signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str())
                                     {
                                         if let Some(&ref_change) = self.signal_last_change.get(rsid)
                                         {
@@ -2019,11 +2018,11 @@ impl SimulationEngine {
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&data_change) = self.signal_last_change.get(sid) {
                                 if let Expr::Ident(ref_sig) = &ref_event {
                                     if let Some((_, rsid)) =
-                                        signal_names.iter().find(|(n, _)| n == ref_sig)
+                                        signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str())
                                     {
                                         if let Some(&ref_change) = self.signal_last_change.get(rsid)
                                         {
@@ -2051,7 +2050,7 @@ impl SimulationEngine {
                     let start_val = const_eval_simple(start_limit).unwrap_or(0) as u64;
                     let end_val = const_eval_simple(end_limit).unwrap_or(0) as u64;
                     if let Expr::Ident(data_sig) = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta >= start_val && delta <= end_val {
@@ -2159,7 +2158,7 @@ impl SimulationEngine {
         }
     }
 
-    fn get_local(&self, name: &str) -> Option<LogicVec> {
+    pub(crate) fn get_local(&self, name: &str) -> Option<LogicVec> {
         for scope in self.method_locals.iter().rev() {
             if let Some(v) = scope.get(name) {
                 return Some(v.clone());
@@ -2174,7 +2173,7 @@ impl SimulationEngine {
         }
     }
 
-    fn write_ast_lvalue(&mut self, lhs: &crate::ast::Expr, val: LogicVec) -> Result<(), SimError> {
+    pub(crate) fn write_ast_lvalue(&mut self, lhs: &crate::ast::Expr, val: LogicVec) -> Result<(), SimError> {
         match lhs {
             crate::ast::Expr::Ident(name) => self.write_local_or_field(name, val),
             crate::ast::Expr::MemberAccess { obj, field } => {
@@ -2197,7 +2196,7 @@ impl SimulationEngine {
         }
     }
 
-    fn ast_lvalue_to_ir(&self, lhs: &crate::ast::Expr) -> Option<IrLValue> {
+    pub(crate) fn ast_lvalue_to_ir(&self, lhs: &crate::ast::Expr) -> Option<IrLValue> {
         match lhs {
             crate::ast::Expr::Ident(name) => {
                 let sig_id = self.find_signal(name)?;
@@ -2207,14 +2206,14 @@ impl SimulationEngine {
         }
     }
 
-    fn find_ast_signal_id(&self, expr: &crate::ast::Expr) -> Option<SignalId> {
+    pub(crate) fn find_ast_signal_id(&self, expr: &crate::ast::Expr) -> Option<SignalId> {
         match expr {
             crate::ast::Expr::Ident(name) => self.find_signal(name),
             _ => None,
         }
     }
 
-    fn handle_ast_syscall(
+    pub(crate) fn handle_ast_syscall(
         &mut self,
         name: &str,
         args: &[crate::ast::Expr],
@@ -2255,7 +2254,7 @@ impl SimulationEngine {
         )))
     }
 
-    fn evaluate_ast_expr(&mut self, expr: &Expr) -> Result<LogicVec, SimError> {
+    pub(crate) fn evaluate_ast_expr(&mut self, expr: &Expr) -> Result<LogicVec, SimError> {
         match expr {
             Expr::Value(v) => match v {
                 Value::Decimal(i) => Ok(LogicVec::from_u64(*i as u64, 32)),
@@ -2375,7 +2374,7 @@ impl SimulationEngine {
                 };
                 let effective = self
                     .factory_type_overrides
-                    .get(&effective)
+                    .get::<str>(effective.as_str())
                     .unwrap_or(&effective)
                     .clone();
                 let obj_id = self.state.alloc_object(&effective);
@@ -2469,7 +2468,7 @@ impl SimulationEngine {
                     String::new()
                 };
                 let key = (inst_name, field_name);
-                let stored = self.uvm_config_db_data.get(&key).cloned();
+                let stored = self.uvm_config_db_data.get::<(Symbol, Symbol)>(&(Symbol::intern(&key.0), Symbol::intern(&key.1))).cloned();
                 if let Some(val) = stored {
                     if let Some(last_arg) = args.get(3) {
                         match last_arg {
@@ -2530,7 +2529,7 @@ impl SimulationEngine {
                     String::new()
                 };
                 let key = (scope, rname);
-                let stored = self.uvm_resource_db_data.get(&key).cloned();
+                let stored = self.uvm_resource_db_data.get::<(Symbol, Symbol)>(&(Symbol::intern(&key.0), Symbol::intern(&key.1))).cloned();
                 if let Some(val) = stored {
                     if let Some(last_arg) = args.get(2) {
                         match last_arg {
@@ -2567,7 +2566,7 @@ impl SimulationEngine {
                 } else {
                     String::new()
                 };
-                self.factory_type_overrides.insert(orig, override_type);
+                self.factory_type_overrides.insert(Symbol::intern(&orig), Symbol::intern(&override_type));
                 Ok(LogicVec::from_u64(1, 1))
             }
             Expr::FuncCall { name, args } => {
@@ -2848,7 +2847,7 @@ impl SimulationEngine {
         }
     }
 
-    fn find_signal(&self, name: &str) -> Option<usize> {
+    pub(crate) fn find_signal(&self, name: &str) -> Option<usize> {
         self.design
             .top
             .signals
@@ -2870,7 +2869,7 @@ impl SimulationEngine {
         }
     }
 
-    fn evaluate_ast_stmt(&mut self, stmt: &Stmt) -> Result<(), SimError> {
+    pub(crate) fn evaluate_ast_stmt(&mut self, stmt: &Stmt) -> Result<(), SimError> {
         match stmt {
             Stmt::Block { stmts } => {
                 for s in stmts {

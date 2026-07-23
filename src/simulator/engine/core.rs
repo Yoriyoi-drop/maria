@@ -1,19 +1,16 @@
 use super::SimulationEngine;
-use crate::simulator::util::*;
-use crate::ast::*;
 use crate::error::SimError;
 use crate::ir::*;
-use crate::Symbol;
-use crate::simulator::parallel;
+use crate::simulator::parallel::ParallelConfig;
+use crate::simulator::sdf::SdfData;
 use crate::simulator::state::SimulationState;
 use crate::simulator::types::*;
-use crate::simulator::value::*;
+use crate::Symbol;
 use crate::waveform::FstWaveWriter;
 use crate::waveform::VcdWriter;
 use rand::Rng;
 use rand::SeedableRng;
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::Write;
+use std::collections::{HashMap, HashSet};
 
 impl SimulationEngine {
     pub fn new(design: IrDesign, max_time: u64) -> Self {
@@ -31,6 +28,7 @@ impl SimulationEngine {
             current_this: None,
             method_locals: Vec::new(),
             current_method: None,
+            disable_pending: None,
             rng: rand::rngs::StdRng::seed_from_u64(42),
             file_handles: HashMap::new(),
             file_ungetc_buf: HashMap::new(),
@@ -38,7 +36,6 @@ impl SimulationEngine {
             next_file_handle: 1,
             monitor_args: None,
             monitor_last_values: None,
-            disable_pending: None,
             control_flow: None,
             forced_signals: HashSet::new(),
             signal_snapshot: None,
@@ -412,15 +409,15 @@ impl SimulationEngine {
         for cg in &self.design.covergroups {
             for cp in &cg.coverpoints {
                 let key = format!("{}.{}", cg.name, cp.name);
-                self.cover_total.insert(key.clone(), 0);
-                self.cover_hits.insert(key.clone(), 0);
-                self.cover_bins.insert(key, HashMap::new());
+                self.cover_total.insert(Symbol::intern(&key), 0);
+                self.cover_hits.insert(Symbol::intern(&key), 0);
+                self.cover_bins.insert(Symbol::intern(&key), HashMap::new());
             }
             for cross in &cg.crosses {
                 let key = format!("{}.{}", cg.name, cross.name);
-                self.cover_total.insert(key.clone(), 0);
-                self.cover_hits.insert(key.clone(), 0);
-                self.cover_bins.insert(key, HashMap::new());
+                self.cover_total.insert(Symbol::intern(&key), 0);
+                self.cover_hits.insert(Symbol::intern(&key), 0);
+                self.cover_bins.insert(Symbol::intern(&key), HashMap::new());
             }
         }
         Ok(())

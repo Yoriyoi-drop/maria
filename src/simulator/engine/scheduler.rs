@@ -1,23 +1,22 @@
-use super::SimulationEngine;
+use super::{SequenceAttempt, SimulationEngine, MAX_LOOP_ITER};
+use crate::waveform::VcdWriter;
+use crate::simulator::parallel;
 use crate::simulator::util::*;
 use crate::ast::*;
 use crate::error::SimError;
 use crate::ir::*;
 use crate::Symbol;
-use crate::simulator::parallel;
 use crate::simulator::state::SimulationState;
 use crate::simulator::types::*;
 use crate::simulator::value::*;
-use crate::waveform::FstWaveWriter;
-use crate::waveform::VcdWriter;
 use rand::Rng;
 use rand::SeedableRng;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write;
 
 impl SimulationEngine {
-    fn process_event(&mut self, event: EventKind, t: usize) -> Result<(), SimError> {
-        self.current_time = t;
+    pub(crate) fn process_event(&mut self, event: EventKind, t: usize) -> Result<(), SimError> {
+        self.current_time = t as u64;
         match event {
             EventKind::EvalProcess(pid) => {
                 if pid >= self.design.top.processes.len() {
@@ -112,11 +111,11 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn evaluate_block_with_delay(&mut self, stmts: &[IrStmt]) -> Result<bool, SimError> {
+    pub(crate) fn evaluate_block_with_delay(&mut self, stmts: &[IrStmt]) -> Result<bool, SimError> {
         self.evaluate_block_with_delay_fork(stmts, None)
     }
 
-    fn evaluate_block_with_delay_fork(
+    pub(crate) fn evaluate_block_with_delay_fork(
         &mut self,
         stmts: &[IrStmt],
         fork_id: Option<usize>,
@@ -135,14 +134,14 @@ impl SimulationEngine {
                 IrStmt::NamedBlock {
                     name, stmts: inner, ..
                 } => {
-                    if self.disable_pending.as_deref() == Some(name) {
+                    if self.disable_pending == Some(*name) {
                         self.disable_pending = None;
                         return Ok(true);
                     }
                     let old = self.disable_pending.take();
                     self.evaluate_block_with_delay_fork(inner, fork_id)?;
                     if let Some(ref n) = self.disable_pending {
-                        if n == name {
+                        if *n == *name {
                             self.disable_pending = None;
                         }
                     }
@@ -285,7 +284,7 @@ impl SimulationEngine {
                     self.state.write_signal(*sig_id, toggled);
                 }
                 IrStmt::Disable { name } => {
-                    self.disable_pending = Some(name.clone());
+                    self.disable_pending = Some(*name);
                     return Ok(true);
                 }
                 IrStmt::Release { lvalue } => {
@@ -913,7 +912,7 @@ impl SimulationEngine {
                         if let Some(scope_arg) = ir_args.first() {
                             if let Ok(scope_val) = self.evaluate_expr(scope_arg) {
                                 let scope_name = logicvec_to_string(&scope_val);
-                                self.assert_modules_off.insert(scope_name);
+                                self.assert_modules_off.insert(Symbol::intern(&scope_name));
                             }
                         }
                     } else if name == "assertkill" {
@@ -923,7 +922,7 @@ impl SimulationEngine {
                         if let Some(scope_arg) = ir_args.first() {
                             if let Ok(scope_val) = self.evaluate_expr(scope_arg) {
                                 let scope_name = logicvec_to_string(&scope_val);
-                                self.assert_modules_off.insert(scope_name);
+                                self.assert_modules_off.insert(Symbol::intern(&scope_name));
                             }
                         }
                     } else if name == "assertpasson" {
@@ -946,7 +945,7 @@ impl SimulationEngine {
                                 let bitmask = val.to_u64();
                                 // Bit 0: coverage on/off
                                 self.coverage_enabled = (bitmask & 1) == 0;
-                                self.coverage_options.insert("control".to_string(), bitmask);
+                                self.coverage_options.insert("control".to_string(), bitmask.to_string());
                             }
                         }
                     } else if name == "coverage_get" {
@@ -956,10 +955,11 @@ impl SimulationEngine {
                         for cg in &self.design.covergroups {
                             for cp in &cg.coverpoints {
                                 let key = format!("{}.{}", cg.name, cp.name);
-                                if let Some(t) = self.cover_total.get(&key) {
+                                let key_sym = Symbol::intern(&key);
+                                if let Some(t) = self.cover_total.get(&key_sym) {
                                     total += t;
                                 }
-                                if let Some(h) = self.cover_hits.get(&key) {
+                                if let Some(h) = self.cover_hits.get(&key_sym) {
                                     hit += h;
                                 }
                             }
@@ -1014,7 +1014,7 @@ impl SimulationEngine {
                                 } else {
                                     let h = self.next_coverage_model_handle;
                                     self.next_coverage_model_handle += 1;
-                                    self.coverage_model_handles.insert(h, name.clone());
+                                    self.coverage_model_handles.insert(h, Symbol::intern(&name));
                                     h
                                 }
                             } else {
@@ -1030,12 +1030,12 @@ impl SimulationEngine {
                                 .iter()
                                 .find(|(_, n)| n.as_str() == first_cg.name.as_str())
                             {
-                                h
+                                h as u32
                             } else {
                                 let h = self.next_coverage_model_handle;
                                 self.next_coverage_model_handle += 1;
-                                self.coverage_model_handles.insert(h, first_cg.name.clone());
-                                h
+                                self.coverage_model_handles.insert(h, first_cg.name);
+                                h as u32
                             }
                         } else {
                             0
@@ -1191,6 +1191,7 @@ impl SimulationEngine {
                         {
                             pi.status = ProcessStatus::Finished;
                         }
+                        pi.await_continuations.clear();
                     }
                     self.running = false;
                     return Ok(true);
@@ -1513,11 +1514,11 @@ impl SimulationEngine {
                         let sig_info = self.design.top.signals.get(*id).cloned();
                         if let Some(ref sig) = sig_info {
                             if sig.is_dynamic || sig.is_queue || sig.is_associative {
-                                let _ = self.evaluate_array_method(
-                                    *id,
-                                    sig,
-                                    method,
-                                    args,
+                                let _ =                                    self.evaluate_array_method(
+                                        *id,
+                                        sig,
+                                        method.as_str(),
+                                        args,
                                     with_clause.as_deref(),
                                 )?;
                                 continue;
@@ -1535,9 +1536,9 @@ impl SimulationEngine {
                                         let class_for_obj = if is_cg {
                                             format!("__covergroup_{}", cn)
                                         } else {
-                                            cn.clone()
+                                            cn.to_string()
                                         };
-                                        let new_id = self.state.alloc_object(&class_for_obj);
+                                        let new_id = self.state.alloc_object(Symbol::intern(&class_for_obj));
                                         self.state.write_signal(
                                             *id,
                                             LogicVec::from_u64(new_id as u64, 64),
@@ -1546,7 +1547,7 @@ impl SimulationEngine {
                                             .iter()
                                             .map(|a| self.evaluate_expr(a))
                                             .collect::<Result<_, _>>()?;
-                                        self.execute_method(new_id, method, &arg_vals)?;
+                                        self.execute_method(new_id, method.as_str(), &arg_vals)?;
                                         continue;
                                     }
                                 }
@@ -1559,7 +1560,7 @@ impl SimulationEngine {
                         .iter()
                         .map(|a| self.evaluate_expr(a))
                         .collect::<Result<_, _>>()?;
-                    self.execute_method(obj_id, method, &arg_vals)?;
+                    self.execute_method(obj_id, method.as_str(), &arg_vals)?;
                 }
                 IrStmt::Fork {
                     processes,
@@ -1645,7 +1646,7 @@ impl SimulationEngine {
         Ok(true)
     }
 
-    fn evaluate_ast_block_with_delay_fork(
+    pub(crate) fn evaluate_ast_block_with_delay_fork(
         &mut self,
         stmts: &[crate::ast::Stmt],
         fork_id: Option<usize>,
@@ -1666,14 +1667,14 @@ impl SimulationEngine {
                     stmts: inner,
                     decls: _,
                 } => {
-                    if self.disable_pending.as_deref() == Some(name) {
+                    if self.disable_pending == Some(*name) {
                         self.disable_pending = None;
                         return Ok(true);
                     }
                     let old = self.disable_pending.take();
                     self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
                     if let Some(ref n) = self.disable_pending {
-                        if n == name {
+                        if *n == *name {
                             self.disable_pending = None;
                         }
                     }
@@ -2000,7 +2001,7 @@ impl SimulationEngine {
                 }
                 crate::ast::Stmt::SysCall { name, args } => {
                     // For task context, delegate to SysCall handler
-                    self.handle_ast_syscall(name, args)?;
+                    self.handle_ast_syscall(name.as_str(), args)?;
                 }
                 crate::ast::Stmt::SysFinish => {
                     self.running = false;
@@ -2030,7 +2031,7 @@ impl SimulationEngine {
                 }
                 crate::ast::Stmt::EventTrigger { name } => {
                     // Find signal by name and toggle it
-                    if let Some(id) = self.find_signal(name) {
+                    if let Some(id) = self.find_signal(name.as_str()) {
                         let val = self.state.read_signal(id);
                         let toggled = if val.to_bool().unwrap_or(false) {
                             LogicVec::from_u64(0, val.width.max(1))
@@ -2125,7 +2126,7 @@ impl SimulationEngine {
         Ok(true)
     }
 
-    fn evaluate_stmt_block(&mut self, stmts: &[IrStmt]) -> Result<(), SimError> {
+    pub(crate) fn evaluate_stmt_block(&mut self, stmts: &[IrStmt]) -> Result<(), SimError> {
         for (i, stmt) in stmts.iter().enumerate() {
             if self.disable_pending.is_some() {
                 return Ok(());
@@ -2171,14 +2172,14 @@ impl SimulationEngine {
                 IrStmt::NamedBlock {
                     name, stmts: inner, ..
                 } => {
-                    if self.disable_pending.as_deref() == Some(name) {
+                    if self.disable_pending == Some(*name) {
                         self.disable_pending = None;
                         return Ok(());
                     }
                     let old = self.disable_pending.take();
                     self.evaluate_stmt_block(inner)?;
                     if let Some(ref n) = self.disable_pending {
-                        if n == name {
+                        if *n == *name {
                             self.disable_pending = None;
                         }
                     }
@@ -2952,11 +2953,11 @@ impl SimulationEngine {
                         let sig_info = self.design.top.signals.get(*id).cloned();
                         if let Some(ref sig) = sig_info {
                             if sig.is_dynamic || sig.is_queue || sig.is_associative {
-                                let _ = self.evaluate_array_method(
-                                    *id,
-                                    sig,
-                                    method,
-                                    args,
+                                let _ =                                    self.evaluate_array_method(
+                                        *id,
+                                        sig,
+                                        method.as_str(),
+                                        args,
                                     with_clause.as_deref(),
                                 )?;
                                 continue;
@@ -2973,9 +2974,9 @@ impl SimulationEngine {
                                         let class_for_obj = if is_cg {
                                             format!("__covergroup_{}", cn)
                                         } else {
-                                            cn.clone()
+                                            cn.to_string()
                                         };
-                                        let new_id = self.state.alloc_object(&class_for_obj);
+                                        let new_id = self.state.alloc_object(Symbol::intern(&class_for_obj));
                                         self.state.write_signal(
                                             *id,
                                             LogicVec::from_u64(new_id as u64, 64),
@@ -2984,7 +2985,7 @@ impl SimulationEngine {
                                             .iter()
                                             .map(|a| self.evaluate_expr(a))
                                             .collect::<Result<_, _>>()?;
-                                        self.execute_method(new_id, method, &arg_vals)?;
+                                        self.execute_method(new_id, method.as_str(), &arg_vals)?;
                                         continue;
                                     }
                                 }
@@ -2997,7 +2998,7 @@ impl SimulationEngine {
                         .iter()
                         .map(|a| self.evaluate_expr(a))
                         .collect::<Result<_, _>>()?;
-                    self.execute_method(obj_id, method, &arg_vals)?;
+                    self.execute_method(obj_id, method.as_str(), &arg_vals)?;
                 }
                 IrStmt::Delay { delay, body } => {
                     let delay_val = *delay as usize;
@@ -3150,7 +3151,7 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn process_pending_waits(&mut self, deltas: &[SignalId]) -> Result<bool, SimError> {
+    pub(crate) fn process_pending_waits(&mut self, deltas: &[SignalId]) -> Result<bool, SimError> {
         let mut matched = false;
         let mut remaining = Vec::new();
         let waits = std::mem::take(&mut self.pending_waits);
@@ -3168,7 +3169,7 @@ impl SimulationEngine {
         Ok(matched)
     }
 
-    fn process_pending_wait_orders(&mut self, deltas: &[SignalId]) -> Result<bool, SimError> {
+    pub(crate) fn process_pending_wait_orders(&mut self, deltas: &[SignalId]) -> Result<bool, SimError> {
         let mut any_done = false;
         let mut remaining = Vec::new();
         let orders = std::mem::take(&mut self.pending_wait_orders);
@@ -3206,7 +3207,7 @@ impl SimulationEngine {
         Ok(any_done)
     }
 
-    fn trigger_sensitive_processes(
+    pub(crate) fn trigger_sensitive_processes(
         &mut self,
         changed: &[(usize, LogicVec, LogicVec)],
         _t: usize,
@@ -3312,7 +3313,7 @@ impl SimulationEngine {
         Ok(())
     }
 
-    fn commit_nba(&mut self) {
+    pub(crate) fn commit_nba(&mut self) {
         let pending = std::mem::take(&mut self.nba_pending);
         for (lvalue, val) in pending {
             if !self.is_forced(&lvalue) {
@@ -3321,7 +3322,7 @@ impl SimulationEngine {
         }
     }
 
-    fn signal_id_from_lvalue(&self, lvalue: &IrLValue) -> Option<SignalId> {
+    pub(crate) fn signal_id_from_lvalue(&self, lvalue: &IrLValue) -> Option<SignalId> {
         match lvalue {
             IrLValue::Signal(id, _) => Some(*id),
             IrLValue::RangeSelect(id, _, _) => Some(*id),
