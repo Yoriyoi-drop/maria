@@ -4,6 +4,7 @@ use crate::ast::types::const_eval_simple;
 use crate::ast::types::const_eval_with_params;
 use crate::ast::types::string_to_i64;
 use crate::ast::*;
+use crate::intern::Symbol;
 use crate::ir::*;
 
 pub fn is_2state_type(dtype: &DataType) -> bool {
@@ -46,13 +47,13 @@ pub fn collect_body_params(module: &Module) -> Vec<ParamDecl> {
 
 pub fn resolve_param_values_fn(
     module: &Module,
-    instance_overrides: &HashMap<String, i64>,
-) -> Result<HashMap<String, i64>, String> {
+    instance_overrides: &HashMap<Symbol, i64>,
+) -> Result<HashMap<Symbol, i64>, String> {
     let mut vals = HashMap::new();
     let mut positional_overrides: Vec<i64> = Vec::new();
     for (name, val) in instance_overrides {
         if name.starts_with("__param") {
-            let idx: usize = name.trim_start_matches("__param").parse().unwrap_or(0);
+            let idx: usize = name.as_str().trim_start_matches("__param").parse().unwrap_or(0);
             if idx >= positional_overrides.len() {
                 positional_overrides.resize(idx + 1, 0);
             }
@@ -60,7 +61,7 @@ pub fn resolve_param_values_fn(
         }
     }
 
-    let eval_param_default = |e: &Expr, existing_vals: &HashMap<String, i64>| -> i64 {
+    let eval_param_default = |e: &Expr, existing_vals: &HashMap<Symbol, i64>| -> i64 {
         match e {
             Expr::String(s) => string_to_i64(s),
             _ => const_eval_with_params(e, existing_vals).unwrap_or(0),
@@ -84,9 +85,9 @@ pub fn resolve_param_values_fn(
     for (i, param) in module.params.iter().enumerate() {
         if param.is_localparam {
             if let Some(e) = &param.default {
-                vals.insert(param.name.clone(), eval_param_default(e, &vals));
+                vals.insert(param.name, eval_param_default(e, &vals));
             } else {
-                vals.insert(param.name.clone(), 0);
+                vals.insert(param.name, 0);
             }
             continue;
         }
@@ -100,7 +101,7 @@ pub fn resolve_param_values_fn(
                 None => 0,
             }
         };
-        vals.insert(param.name.clone(), val);
+        vals.insert(param.name, val);
     }
     Ok(vals)
 }
@@ -123,7 +124,7 @@ pub fn detect_sync_reset(body: &[IrStmt]) -> Option<ResetInfo> {
 
 pub fn expand_all_generates(
     module: &mut Module,
-    param_vals: &HashMap<String, i64>,
+    param_vals: &HashMap<Symbol, i64>,
 ) -> Result<(), String> {
     let mut i = 0;
     while i < module.items.len() {
@@ -142,7 +143,7 @@ pub fn expand_all_generates(
     Ok(())
 }
 
-pub fn extract_generate_step(step: &Option<Stmt>, param_vals: &HashMap<String, i64>) -> i64 {
+pub fn extract_generate_step(step: &Option<Stmt>, param_vals: &HashMap<Symbol, i64>) -> i64 {
     let Some(Stmt::BlockingAssign { rhs, .. }) = step else {
         return 1;
     };
@@ -163,7 +164,7 @@ pub fn extract_generate_step(step: &Option<Stmt>, param_vals: &HashMap<String, i
 
 pub fn expand_generate_block(
     gen: &GenerateBlock,
-    param_vals: &HashMap<String, i64>,
+    param_vals: &HashMap<Symbol, i64>,
 ) -> Result<Vec<ModuleItem>, String> {
     let mut result = Vec::new();
     for item in &gen.items {
@@ -228,7 +229,7 @@ pub fn expand_generate_block(
                     let mut cur = start_val;
                     while cur < limit {
                         for mut item in body_items.clone() {
-                            substitute_genvar_in_module_item(&mut item, var, cur);
+                            substitute_genvar_in_module_item(&mut item, var.as_str(), cur);
                             result.push(item);
                         }
                         cur += step_val;
@@ -237,7 +238,7 @@ pub fn expand_generate_block(
                     let mut cur = start_val;
                     while cur > limit {
                         for mut item in body_items.clone() {
-                            substitute_genvar_in_module_item(&mut item, var, cur);
+                            substitute_genvar_in_module_item(&mut item, var.as_str(), cur);
                             result.push(item);
                         }
                         cur += step_val;
@@ -491,7 +492,7 @@ pub fn try_unroll_for_loop<'a, F>(
     step: Option<&'a Stmt>,
     stmts: &[Stmt],
     elaborate_body: &F,
-    params: &HashMap<String, i64>,
+    params: &HashMap<Symbol, i64>,
 ) -> Result<Option<Vec<IrStmt>>, String>
 where
     F: Fn(&[Stmt], &str, i64) -> Result<Vec<IrStmt>, String>,
@@ -501,7 +502,7 @@ where
             lhs: Expr::Ident(name),
             rhs,
             ..
-        }) => (name.clone(), const_eval_with_params(rhs, params)?),
+        }) => (*name, const_eval_with_params(rhs, params)?),
         _ => return Ok(None),
     };
 
@@ -554,7 +555,7 @@ where
     let mut all_stmts = Vec::new();
     let mut ivar = init_val;
     while ivar < limit {
-        let body = elaborate_body(stmts, &var_name, ivar)?;
+        let body = elaborate_body(stmts, var_name.as_str(), ivar)?;
         all_stmts.extend(body);
         ivar = step_fn(ivar)?;
     }
@@ -1144,7 +1145,7 @@ pub fn collect_read_signals_expr(expr: &IrExpr, out: &mut Vec<SignalId>) {
 
 pub fn resolve_expr_signal(
     expr: &Expr,
-    signal_map: &HashMap<String, SignalId>,
+    signal_map: &HashMap<Symbol, SignalId>,
 ) -> Option<SignalId> {
     match expr {
         Expr::Ident(name) => signal_map.get(name).copied(),
@@ -1156,10 +1157,10 @@ pub fn resolve_expr_signal(
 
 pub fn compute_expr_width(
     expr: &Expr,
-    signal_map: &HashMap<String, SignalId>,
+    signal_map: &HashMap<Symbol, SignalId>,
     signals: &[SignalInfo],
-    param_vals: &HashMap<String, i64>,
-    package_symbols: &HashMap<String, HashMap<String, PackageItem>>,
+    param_vals: &HashMap<Symbol, i64>,
+    package_symbols: &HashMap<Symbol, HashMap<Symbol, PackageItem>>,
 ) -> Result<usize, String> {
     match expr {
         Expr::Ident(name) => {
@@ -1201,8 +1202,10 @@ pub fn compute_expr_width(
                 }
                 .max(1))
             } else if let Some((pkg_name, func_name)) = name.split_once("::") {
-                if let Some(pkg) = package_symbols.get(pkg_name) {
-                    if let Some(PackageItem::Function(f)) = pkg.get(func_name) {
+                let pkg_sym = Symbol::intern(pkg_name);
+                let func_sym = Symbol::intern(func_name);
+                if let Some(pkg) = package_symbols.get(&pkg_sym) {
+                    if let Some(PackageItem::Function(f)) = pkg.get(&func_sym) {
                         let ret_width = if let Some(r) = &f.range {
                             if let (Ok(msb), Ok(lsb)) = (
                                 const_eval_with_params(&r.msb, param_vals),
@@ -1298,7 +1301,7 @@ pub fn compute_expr_width(
             }
             compute_expr_width(obj, signal_map, signals, param_vals, package_symbols)
         }
-        Expr::Cast { dtype, .. } => match super::parse_type_spec_str(dtype) {
+        Expr::Cast { dtype, .. } => match super::parse_type_spec_str(dtype.as_str()) {
             Some(dt) => match dt {
                 DataType::UserDefined(name) => param_vals
                     .get(&name)
@@ -1319,7 +1322,7 @@ pub fn compute_expr_width(
     }
 }
 
-pub fn collect_sensitivity(expr: &Expr, signal_map: &HashMap<String, SignalId>) -> Vec<SignalId> {
+pub fn collect_sensitivity(expr: &Expr, signal_map: &HashMap<Symbol, SignalId>) -> Vec<SignalId> {
     match expr {
         Expr::Ident(name) => signal_map.get(name).map(|&id| vec![id]).unwrap_or_default(),
         Expr::BinaryOp { lhs, rhs, .. } => {
@@ -1374,13 +1377,13 @@ pub fn collect_sensitivity(expr: &Expr, signal_map: &HashMap<String, SignalId>) 
     }
 }
 
-pub fn const_eval_params(expr: &Expr, params: &HashMap<String, i64>) -> Result<i64, String> {
+pub fn const_eval_params(expr: &Expr, params: &HashMap<Symbol, i64>) -> Result<i64, String> {
     const_eval_with_params(expr, params)
 }
 
 pub fn try_fold_const(
     expr: &Expr,
-    params: &HashMap<String, i64>,
+    params: &HashMap<Symbol, i64>,
 ) -> Result<Option<IrExpr>, String> {
     match const_eval_with_params(expr, params) {
         Ok(val) => {

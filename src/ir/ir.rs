@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use crate::intern::Symbol;
 
 pub type SignalId = usize;
 pub type ClassId = usize;
@@ -7,21 +8,21 @@ pub type ObjId = usize;
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrDesign {
     pub top: IrModule,
-    pub modules: HashMap<String, IrModule>,
-    pub classes: HashMap<String, IrClassDef>,
+    pub modules: HashMap<Symbol, IrModule>,
+    pub classes: HashMap<Symbol, IrClassDef>,
     pub covergroups: Vec<IrCovergroup>,
     pub dpi_imports: Vec<IrDpiImport>,
-    pub hier_signal_map: HashMap<String, SignalId>,
+    pub hier_signal_map: HashMap<Symbol, SignalId>,
     pub udp_defs: Vec<crate::ast::types::UdpDef>,
     pub specify_items: Vec<crate::ast::types::SpecifyItem>,
     pub timescale: Option<(String, String)>,
     /// Module-level recursive function declarations — kept for runtime evaluation (not inlined)
-    pub module_functions: HashMap<String, crate::ast::types::FunctionDecl>,
+    pub module_functions: HashMap<Symbol, crate::ast::types::FunctionDecl>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrDpiImport {
-    pub name: String,
+    pub name: Symbol,
     pub return_width: usize,
     pub arg_widths: Vec<usize>,
     pub is_task: bool,
@@ -29,49 +30,49 @@ pub struct IrDpiImport {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrCovergroup {
-    pub name: String,
+    pub name: Symbol,
     pub coverpoints: Vec<IrCoverpoint>,
     pub crosses: Vec<IrCross>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrCoverpoint {
-    pub name: String,
+    pub name: Symbol,
     pub expr: IrExpr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrCross {
-    pub name: String,
-    pub coverpoints: Vec<String>,
+    pub name: Symbol,
+    pub coverpoints: Vec<Symbol>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrTypeParam {
-    pub name: String,
+    pub name: Symbol,
     pub default_type: Option<crate::ast::types::DataType>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrClassDef {
-    pub name: String,
-    pub extends: Option<String>,
+    pub name: Symbol,
+    pub extends: Option<Symbol>,
     pub type_params: Vec<IrTypeParam>,
     pub fields: Vec<IrClassField>,
     pub methods: Vec<IrClassMethod>,
-    pub constraints: Vec<(String, Vec<crate::ast::types::ConstraintItem>)>,
-    pub rand_fields: Vec<String>,
+    pub constraints: Vec<(Symbol, Vec<crate::ast::types::ConstraintItem>)>,
+    pub rand_fields: Vec<Symbol>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ObjectData {
-    pub class_name: String,
-    pub fields: HashMap<String, LogicVec>,
+    pub class_name: Symbol,
+    pub fields: HashMap<Symbol, LogicVec>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrClassField {
-    pub name: String,
+    pub name: Symbol,
     pub width: usize,
     pub array_depth: usize,
     pub elem_width: usize,
@@ -79,7 +80,7 @@ pub struct IrClassField {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrClassMethod {
-    pub name: String,
+    pub name: Symbol,
     pub is_task: bool,
     pub virtual_flag: bool,
     pub is_static: bool,
@@ -90,7 +91,7 @@ pub struct IrClassMethod {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrModule {
-    pub name: String,
+    pub name: Symbol,
     pub signals: Vec<SignalInfo>,
     pub inputs: Vec<SignalId>,
     pub outputs: Vec<SignalId>,
@@ -154,14 +155,14 @@ impl NetType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructFieldInfo {
-    pub name: String,
+    pub name: Symbol,
     pub offset: usize,
     pub width: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SignalInfo {
-    pub name: String,
+    pub name: Symbol,
     pub width: usize,
     pub kind: SignalKind,
     pub net_type: NetType,
@@ -170,7 +171,7 @@ pub struct SignalInfo {
     pub array_depth: usize,
     pub elem_width: usize,
     pub array_dims: Vec<usize>,
-    pub class_name: Option<String>,
+    pub class_name: Option<Symbol>,
     pub is_string: bool,
     pub is_real: bool,
     pub is_mailbox: bool,
@@ -187,8 +188,8 @@ pub struct SignalInfo {
     pub packed_dims: Vec<usize>,
     pub delay_rise: Option<u64>,
     pub delay_fall: Option<u64>,
-    pub iface_type: Option<String>,
-    pub iface_modport: Option<String>,
+    pub iface_type: Option<Symbol>,
+    pub iface_modport: Option<Symbol>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -203,41 +204,41 @@ pub enum SignalKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrInstance {
-    pub module_name: String,
-    pub instance_name: String,
-    pub port_map: HashMap<String, SignalId>,
-    pub param_map: HashMap<String, i64>,
-    pub type_param_map: HashMap<String, usize>,
+    pub module_name: Symbol,
+    pub instance_name: Symbol,
+    pub port_map: HashMap<Symbol, SignalId>,
+    pub param_map: HashMap<Symbol, i64>,
+    pub type_param_map: HashMap<Symbol, usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Process {
     Combinational {
-        name: String,
+        name: Symbol,
         sensitivity: Vec<SignalId>,
         body: Vec<IrStmt>,
     },
     CombReactive {
-        name: String,
+        name: Symbol,
         sensitivity: Vec<SignalId>,
         body: Vec<IrStmt>,
     },
     Sequential {
-        name: String,
+        name: Symbol,
         clock: ClockEdge,
         reset: Option<ResetInfo>,
         body: Vec<IrStmt>,
     },
     Initial {
-        name: String,
+        name: Symbol,
         body: Vec<IrStmt>,
     },
     Final {
-        name: String,
+        name: Symbol,
         body: Vec<IrStmt>,
     },
     AlwaysWithDelay {
-        name: String,
+        name: Symbol,
         delay: u64,
         body: Vec<IrStmt>,
     },
@@ -270,7 +271,7 @@ pub enum IrStmt {
         stmts: Vec<IrStmt>,
     },
     NamedBlock {
-        name: String,
+        name: Symbol,
         stmts: Vec<IrStmt>,
         decls: Vec<crate::ast::Decl>,
     },
@@ -315,7 +316,7 @@ pub enum IrStmt {
     },
     Foreach {
         array_var: IrExpr,
-        index_var: String,
+        index_var: Symbol,
         body: Vec<IrStmt>,
     },
     Delay {
@@ -331,7 +332,7 @@ pub enum IrStmt {
         body: Vec<IrStmt>,
     },
     SysCall {
-        name: String,
+        name: Symbol,
         args: Vec<IrExpr>,
     },
     SysFinish,
@@ -346,14 +347,14 @@ pub enum IrStmt {
     },
     MethodCallStmt {
         obj: IrExpr,
-        method: String,
+        method: Symbol,
         args: Vec<IrExpr>,
         with_clause: Option<Box<IrExpr>>,
     },
     Break,
     Continue,
     Disable {
-        name: String,
+        name: Symbol,
     },
     Release {
         lvalue: IrLValue,
@@ -396,7 +397,7 @@ pub enum IrStmt {
         items: Vec<(IrExpr, Vec<IrStmt>)>,
     },
     RandSequence {
-        productions: Vec<(String, Vec<(IrExpr, Vec<IrStmt>)>)>,
+        productions: Vec<(Symbol, Vec<(IrExpr, Vec<IrStmt>)>)>,
     },
 }
 
@@ -462,30 +463,30 @@ pub enum IrExpr {
     Signed(Box<IrExpr>),
     String(String),
     SysFunc {
-        name: String,
+        name: Symbol,
         args: Vec<IrExpr>,
     },
     NewCall {
-        class_name: String,
+        class_name: Symbol,
         args: Vec<IrExpr>,
     },
     This,
     MethodCall {
         obj: Box<IrExpr>,
-        method: String,
+        method: Symbol,
         args: Vec<IrExpr>,
         with_clause: Option<Box<IrExpr>>,
     },
     MemberAccess {
         obj: Box<IrExpr>,
-        field: String,
+        field: Symbol,
     },
     DpiCall {
-        name: String,
+        name: Symbol,
         args: Vec<IrExpr>,
         return_width: usize,
     },
-    HierRef(String),
+    HierRef(Symbol),
     Inside {
         expr: Box<IrExpr>,
         list: Vec<IrExpr>,
@@ -504,22 +505,22 @@ pub enum IrExpr {
         items: Vec<IrDistItem>,
     },
     UdpLookup {
-        udp_name: String,
+        udp_name: Symbol,
         args: Vec<IrExpr>,
     },
     /// Runtime function call (used for recursive functions that can't be inlined)
     FuncCall {
-        func_name: String,
+        func_name: Symbol,
         args: Vec<IrExpr>,
     },
     /// Virtual interface binding handle (instance name → binding value)
     VifBinding {
-        instance_name: String,
+        instance_name: Symbol,
     },
     /// Virtual interface member access (resolved at runtime via bound instance)
     VirtualIfaceAccess {
-        vif_name: String,
-        field: String,
+        vif_name: Symbol,
+        field: Symbol,
         field_width: usize,
     },
 }

@@ -1,0 +1,2758 @@
+    Blocking waiting for file lock on build directory
+    Checking maria v0.3.0 (/home/whale-d/maria)
+error[E0433]: cannot find type `Symbol` in this scope
+    --> src/simulator/engine/mod.rs:4657:63
+     |
+4657 | ...                   let pid = self.state.alloc_object(Symbol::intern("__process"));
+     |                                                         ^^^^^^ use of undeclared type `Symbol`
+     |
+help: consider importing this struct through its public re-export
+     |
+   5 + use crate::Symbol;
+     |
+
+error[E0433]: cannot find type `Symbol` in this scope
+    --> src/simulator/engine/mod.rs:4953:54
+     |
+4953 |                 let obj_id = self.state.alloc_object(Symbol::intern(&effective_name));
+     |                                                      ^^^^^^ use of undeclared type `Symbol`
+     |
+help: consider importing this struct through its public re-export
+     |
+   5 + use crate::Symbol;
+     |
+
+error[E0433]: cannot find type `Symbol` in this scope
+    --> src/simulator/engine/mod.rs:5537:92
+     |
+5537 | ...                   if let Some(&field_sid) = self.design.hier_signal_map.get(&Symbol::intern(&sig_key))
+     |                                                                                  ^^^^^^ use of undeclared type `Symbol`
+     |
+help: consider importing this struct through its public re-export
+     |
+   5 + use crate::Symbol;
+     |
+
+error[E0277]: the trait bound `string_intern::Symbol: Borrow<&string_intern::Symbol>` is not satisfied
+    --> src/ast/const_eval.rs:59:48
+     |
+  59 |             if let Some(&val) = param_vals.get(&name) {
+     |                                            --- ^^^^^ unsatisfied trait bound
+     |                                            |
+     |                                            required by a bound introduced by this call
+     |
+help: the trait `Borrow<&string_intern::Symbol>` is not implemented for `string_intern::Symbol`
+      but trait `Borrow<str>` is implemented for it
+    --> src/intern/string_intern.rs:154:1
+     |
+ 154 | impl std::borrow::Borrow<str> for Symbol {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for that trait implementation, expected `str`, found `&string_intern::Symbol`
+note: required by a bound in `HashMap::<K, V, S, A>::get`
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1032:12
+     |
+1030 |     pub fn get<Q: ?Sized>(&self, k: &Q) -> Option<&V>
+     |            --- required by a bound in this associated function
+1031 |     where
+1032 |         K: Borrow<Q>,
+     |            ^^^^^^^^^ required by this bound in `HashMap::<K, V, S, A>::get`
+
+error[E0277]: a value of type `Vec<(String, Vec<(ir::ir::IrExpr, Vec<ir::ir::IrStmt>)>)>` cannot be built from an iterator over elements of type `(string_intern::Symbol, Vec<(ir::ir::IrExpr, Vec<ir::ir::IrStmt>)>)`
+    --> src/elaboration/elaborator.rs:2746:26
+     |
+2746 |                         .collect();
+     |                          ^^^^^^^ value of type `Vec<(String, Vec<(ir::ir::IrExpr, Vec<ir::ir::IrStmt>)>)>` cannot be built from `std::iter::Iterator<Item=(string_intern::Symbol, Vec<(ir::ir::IrExpr, Vec<ir::ir::IrStmt>)>)>`
+     |
+help: the trait `FromIterator<(string_intern::Symbol, Vec<_>)>` is not implemented for `Vec<(String, Vec<(ir::ir::IrExpr, Vec<ir::ir::IrStmt>)>)>`
+      but trait `FromIterator<(String, Vec<_>)>` is implemented for it
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:3892:1
+     |
+3892 | impl<T> FromIterator<T> for Vec<T> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for that trait implementation, expected `String`, found `string_intern::Symbol`
+     = note: required for `Result<Vec<(String, Vec<(ir::ir::IrExpr, Vec<ir::ir::IrStmt>)>)>, SimError>` to implement `FromIterator<Result<(Symbol, Vec<(IrExpr, Vec<IrStmt>)>), SimError>>`
+note: required by a bound in `std::iter::Iterator::collect`
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/traits/iterator.rs:2079:19
+     |
+2079 |     fn collect<B: FromIterator<Self::Item>>(self) -> B
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Iterator::collect`
+     = note: the full name for the type has been written to '/home/whale-d/maria/target/debug/deps/maria-48a518fbecce9d3b.long-type-8751717047278253528.txt'
+     = note: consider using `--verbose` to print the full type name to the console
+
+error[E0308]: `?` operator has incompatible types
+    --> src/elaboration/elaborator.rs:2748:34
+     |
+2748 |                     productions: new_prods?,
+     |                                  ^^^^^^^^^^ expected `Vec<(Symbol, Vec<(IrExpr, Vec<...>)>)>`, found `Vec<(String, Vec<(IrExpr, Vec<...>)>)>`
+     |
+     = note: `?` operator cannot convert from `Vec<(String, Vec<_>)>` to `Vec<(string_intern::Symbol, Vec<_>)>`
+     = note: expected struct `Vec<(string_intern::Symbol, Vec<_>)>`
+                found struct `Vec<(String, Vec<_>)>`
+
+error[E0308]: mismatched types
+    --> src/elaboration/elaborator.rs:4981:21
+     |
+4981 |                     class_name,
+     |                     ^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/elaboration/elaborator.rs:5154:65
+     |
+5154 |                 result = Self::substitute_ident_in_expr(result, &param.name, arg.clone());
+     |                          ------------------------------         ^^^^^^^^^^^ expected `&str`, found `&Symbol`
+     |                          |
+     |                          arguments to this function are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: associated function defined here
+    --> src/elaboration/elaborator.rs:5161:8
+     |
+5161 |     fn substitute_ident_in_expr(expr: Expr, target: &str, replacement: Expr) -> Expr {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^             ------------
+
+error[E0277]: the trait bound `string_intern::Symbol: Default` is not satisfied
+  --> src/ir/ir.rs:69:5
+   |
+67 | #[derive(Debug, Clone, PartialEq, Default)]
+   |                                   ------- in this derive macro expansion
+68 | pub struct ObjectData {
+69 |     pub class_name: Symbol,
+   |     ^^^^^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `string_intern::Symbol`
+   |
+help: consider annotating `string_intern::Symbol` with `#[derive(Default)]`
+  --> src/intern/string_intern.rs:20:1
+   |
+20 + #[derive(Default)]
+21 | pub struct Symbol(u32);
+   |
+
+error[E0614]: type `string_intern::Symbol` cannot be dereferenced
+    --> src/parser/parser.rs:1334:43
+     |
+1334 | ...                   name: *pname,
+     |                             ^^^^^^ can't be dereferenced
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:2440:49
+     |
+2440 | ...                   dtype_name: dtype_name.clone(),
+     |                                   ^^^^^^^^^^^^^^^^^^ expected `Option<Symbol>`, found `Option<String>`
+     |
+     = note: expected enum `Option<string_intern::Symbol>`
+                found enum `Option<String>`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:2620:39
+     |
+2620 | ...                   name: vname,
+     |                             ^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: `if` and `else` have incompatible types
+    --> src/parser/parser.rs:2895:21
+     |
+2891 |                   let item = if self.peek() == &Token::Star {
+     |  ____________________________-
+2892 | |                     self.advance();
+2893 | |                     "*".to_string()
+     | |                     --------------- expected because of this
+2894 | |                 } else {
+2895 | |                     self.expect_ident()?
+     | |                     ^^^^^^^^^^^^^^^^^^^^ expected `String`, found `Symbol`
+2896 | |                 };
+     | |_________________- `if` and `else` have incompatible types
+     |
+help: try using a conversion method
+     |
+2895 |                     self.expect_ident()?.to_string()
+     |                                         ++++++++++++
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:3050:44
+     |
+3050 |                 Some(DataType::UserDefined(s))
+     |                      --------------------- ^ expected `Symbol`, found `String`
+     |                      |
+     |                      arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/types.rs:347:5
+     |
+ 347 |     UserDefined(Symbol),
+     |     ^^^^^^^^^^^
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:3139:68
+     |
+3139 |                 return Ok(Decl { dtype: DataType::EnumType { base, members }, kind: DeclKind::Logic, names });
+     |                                                                    ^^^^^^^ expected `Vec<(Symbol, Option<Expr>)>`, found `Vec<(String, Option<Expr>)>`
+     |
+     = note: expected struct `Vec<(string_intern::Symbol, Option<_>)>`
+                found struct `Vec<(String, Option<_>)>`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:3179:63
+     |
+3179 |                 return Ok(Decl { dtype: DataType::UserDefined("__mailbox".to_string()), kind: DeclKind::Reg, names });
+     |                                         --------------------- ^^^^^^^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                                         |
+     |                                         arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/types.rs:347:5
+     |
+ 347 |     UserDefined(Symbol),
+     |     ^^^^^^^^^^^
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:3185:63
+     |
+3185 |                 return Ok(Decl { dtype: DataType::UserDefined("__semaphore".to_string()), kind: DeclKind::Reg, names });
+     |                                         --------------------- ^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                                         |
+     |                                         arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/types.rs:347:5
+     |
+ 347 |     UserDefined(Symbol),
+     |     ^^^^^^^^^^^
+
+error[E0308]: `match` arms have incompatible types
+    --> src/parser/parser.rs:3194:120
+     |
+3194 | ...mat!("{}::{}", match &dtype { DataType::UserDefined(s) => s, _ => "", }, type_name));
+     |                   ------------                               -       ^^ expected `&Symbol`, found `&str`
+     |                   |                                          |
+     |                   |                                          this is found to be of type `&string_intern::Symbol`
+     |                   `match` arms have incompatible types
+     |
+     = note: expected reference `&string_intern::Symbol`
+                found reference `&'static str`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:3194:51
+     |
+3194 | ...ed(format!("{}::{}", match &dtype { DataType::UserDefined(s) => s, _ => "", }, type_name));
+     |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:3512:12
+     |
+3496 |                     members.push((Symbol::intern(&name), val));
+     |                     -------      ---------------------------- this argument has type `(string_intern::Symbol, Option<expr::Expr>)`...
+     |                     |
+     |                     ... which causes `members` to have type `Vec<(string_intern::Symbol, Option<expr::Expr>)>`
+...
+3512 |         Ok(members)
+     |         -- ^^^^^^^ expected `Vec<(String, Option<Expr>)>`, found `Vec<(Symbol, Option<Expr>)>`
+     |         |
+     |         arguments to this enum variant are incorrect
+     |
+     = note: expected struct `Vec<(String, Option<_>)>`
+                found struct `Vec<(string_intern::Symbol, Option<_>)>`
+help: the type constructed contains `Vec<(string_intern::Symbol, Option<expr::Expr>)>` due to the type of the argument passed
+    --> src/parser/parser.rs:3512:9
+     |
+3512 |         Ok(members)
+     |         ^^^-------^
+     |            |
+     |            this argument influences the type of `Ok`
+note: tuple variant defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/result.rs:561:5
+     |
+ 561 |     Ok(#[stable(feature = "rust1", since = "1.0.0")] T),
+     |     ^^
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:3617:47
+     |
+3617 |                         DataType::UserDefined(name)
+     |                         --------------------- ^^^^ expected `Symbol`, found `String`
+     |                         |
+     |                         arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/types.rs:347:5
+     |
+ 347 |     UserDefined(Symbol),
+     |     ^^^^^^^^^^^
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:3697:55
+     |
+3697 |                     (name, DataType::EnumType { base, members }, None)
+     |                                                       ^^^^^^^ expected `Vec<(Symbol, Option<Expr>)>`, found `Vec<(String, Option<Expr>)>`
+     |
+     = note: expected struct `Vec<(string_intern::Symbol, Option<_>)>`
+                found struct `Vec<(String, Option<_>)>`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:4035:42
+     |
+4035 |                         lhs: Expr::Ident(var.clone()),
+     |                              ----------- ^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                              |
+     |                              arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/expr.rs:7:5
+     |
+   7 |     Ident(Symbol),
+     |     ^^^^^
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:4061:21
+     |
+4061 |                     var,
+     |                     ^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:4233:53
+     |
+4233 |                 Some(Box::new(DataType::UserDefined(tp_name)))
+     |                               --------------------- ^^^^^^^ expected `Symbol`, found `String`
+     |                               |
+     |                               arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/types.rs:347:5
+     |
+ 347 |     UserDefined(Symbol),
+     |     ^^^^^^^^^^^
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:4327:39
+     |
+4327 | ...                   name: pn,
+     |                             ^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:4392:43
+     |
+4392 | ...                   name: pn,
+     |                             ^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:4435:25
+     |
+4435 |                         name,
+     |                         ^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:4454:25
+     |
+4454 |                         name,
+     |                         ^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:4493:13
+     |
+4493 |             name,
+     |             ^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:4579:39
+     |
+4579 | ...                   name: pn,
+     |                             ^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:4645:43
+     |
+4645 | ...                   name: pn,
+     |                             ^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:5001:39
+     |
+5001 | ...                   port: port_name,
+     |                             ^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:5006:39
+     |
+5006 | ...                   port: port_name.clone(),
+     |                             ^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:5007:51
+     |
+5007 | ...                   expr: Expr::Ident(port_name),
+     |                             ----------- ^^^^^^^^^ expected `Symbol`, found `String`
+     |                             |
+     |                             arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/expr.rs:7:5
+     |
+   7 |     Ident(Symbol),
+     |     ^^^^^
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:5033:13
+     |
+5033 |             module_name,
+     |             ^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:5034:13
+     |
+5034 |             instance_name,
+     |             ^^^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:5036:13
+     |
+4927 |                             param_assigns.insert(pname, val);
+     |                             -------------        ----- this argument has type `String`...
+     |                             |
+     |                             ... which causes `param_assigns` to have type `HashMap<String, expr::Expr>`
+...
+5036 |             param_assigns,
+     |             ^^^^^^^^^^^^^ expected `HashMap<Symbol, Expr>`, found `HashMap<String, Expr>`
+     |
+     = note: expected struct `HashMap<string_intern::Symbol, _>`
+                found struct `HashMap<String, _>`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:5037:13
+     |
+4923 |                             type_param_assigns.insert(pname, dt);
+     |                             ------------------        ----- this argument has type `String`...
+     |                             |
+     |                             ... which causes `type_param_assigns` to have type `HashMap<String, ast::types::DataType>`
+...
+5037 |             type_param_assigns,
+     |             ^^^^^^^^^^^^^^^^^^ expected `HashMap<Symbol, DataType>`, found `HashMap<String, DataType>`
+     |
+     = note: expected struct `HashMap<string_intern::Symbol, _>`
+                found struct `HashMap<String, _>`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:5267:13
+     |
+5267 |             instance_name,
+     |             ^^^^^^^^^^^^^ expected `Option<Symbol>`, found `Option<String>`
+     |
+     = note: expected enum `Option<string_intern::Symbol>`
+                found enum `Option<String>`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:5927:31
+     |
+5927 |                         name: block_name,
+     |                               ^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:5978:36
+     |
+5978 |                 Ok(Stmt::Disable { name })
+     |                                    ^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:6071:41
+     |
+6071 |                 Ok(Stmt::EventTrigger { name })
+     |                                         ^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:6706:36
+     |
+6706 |                 Ok(Stmt::SysCall { name, args: vec![] })
+     |                                    ^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:6730:36
+     |
+6730 |                 Ok(Stmt::SysCall { name, args })
+     |                                    ^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7049:31
+     |
+7049 |                         name: full_name,
+     |                               ^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7053:36
+     |
+7053 |                     Ok(Expr::Ident(full_name))
+     |                        ----------- ^^^^^^^^^ expected `Symbol`, found `String`
+     |                        |
+     |                        arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/expr.rs:7:5
+     |
+   7 |     Ident(Symbol),
+     |     ^^^^^
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7077:35
+     |
+7077 | ...                   name: format!("{}::{}", name, item),
+     |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7082:34
+     |
+7082 |                         package: name.clone(),
+     |                                  ^^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7124:44
+     |
+7124 | ...                   dtype: format!("{}::{}", class_prefix, item),
+     |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7143:39
+     |
+7143 | ...                   name: format!("{}::{}", class_prefix, item),
+     |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7148:38
+     |
+7148 | ...                   package: class_prefix,
+     |                                ^^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7152:43
+     |
+7152 |                     return Ok(Expr::Ident(class_prefix));
+     |                               ----------- ^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                               |
+     |                               arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/expr.rs:7:5
+     |
+   7 |     Ident(Symbol),
+     |     ^^^^^
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7161:32
+     |
+7161 |                         dtype: name.clone(),
+     |                                ^^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7180:31
+     |
+7180 |                         name: name.clone(),
+     |                               ^^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7184:36
+     |
+7184 |                     Ok(Expr::Ident(name.clone()))
+     |                        ----------- ^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                        |
+     |                        arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/expr.rs:7:5
+     |
+   7 |     Ident(Symbol),
+     |     ^^^^^
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7202:32
+     |
+7202 |                         dtype: format!("{}", n),
+     |                                ^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7233:37
+     |
+7233 |                         Expr::Ident(value.clone())
+     |                         ----------- ^^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                         |
+     |                         arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/expr.rs:7:5
+     |
+   7 |     Ident(Symbol),
+     |     ^^^^^
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7262:31
+     |
+7262 |                         name: "new".to_string(),
+     |                               ^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7280:31
+     |
+7280 |                         name: "new".to_string(),
+     |                               ^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7287:32
+     |
+7287 |                 Ok(Expr::Ident("this".to_string()))
+     |                    ----------- ^^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                    |
+     |                    arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/expr.rs:7:5
+     |
+   7 |     Ident(Symbol),
+     |     ^^^^^
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7412:32
+     |
+7412 |                 Ok(Expr::Ident("automatic".to_string()))
+     |                    ----------- ^^^^^^^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                    |
+     |                    arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/expr.rs:7:5
+     |
+   7 |     Ident(Symbol),
+     |     ^^^^^
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7416:32
+     |
+7416 |                 Ok(Expr::Ident("string".to_string()))
+     |                    ----------- ^^^^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                    |
+     |                    arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/expr.rs:7:5
+     |
+   7 |     Ident(Symbol),
+     |     ^^^^^
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7420:32
+     |
+7420 |                 Ok(Expr::Ident("class".to_string()))
+     |                    ----------- ^^^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                    |
+     |                    arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/expr.rs:7:5
+     |
+   7 |     Ident(Symbol),
+     |     ^^^^^
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7505:32
+     |
+7505 |                         dtype: type_name.to_string(),
+     |                                ^^^^^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/parser/parser.rs:7510:36
+     |
+7510 |                     Ok(Expr::Ident(type_name.to_string()))
+     |                        ----------- ^^^^^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                        |
+     |                        arguments to this enum variant are incorrect
+     |
+note: tuple variant defined here
+    --> src/ast/expr.rs:7:5
+     |
+   7 |     Ident(Symbol),
+     |     ^^^^^
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/coverage.rs:62:34
+     |
+  62 |                 cp_values.insert(cp.name.clone(), val.to_u64());
+     |                           ------ ^^^^^^^^^^^^^^^ expected `String`, found `Symbol`
+     |                           |
+     |                           arguments to this method are incorrect
+     |
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1328:12
+     |
+1328 |     pub fn insert(&mut self, k: K, v: V) -> Option<V> {
+     |            ^^^^^^
+help: try using a conversion method
+     |
+  62 -                 cp_values.insert(cp.name.clone(), val.to_u64());
+  62 +                 cp_values.insert(cp.name.to_string(), val.to_u64());
+     |
+
+error[E0277]: the trait bound `String: Borrow<string_intern::Symbol>` is not satisfied
+    --> src/simulator/engine/coverage.rs:82:45
+     |
+  82 |                     let val = cp_values.get(cp_name).copied().unwrap_or(0);
+     |                                         --- ^^^^^^^ the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+     |                                         |
+     |                                         required by a bound introduced by this call
+     |
+help: the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+      but trait `Borrow<str>` is implemented for it
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/str.rs:212:1
+     |
+ 212 | impl Borrow<str> for String {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for that trait implementation, expected `str`, found `string_intern::Symbol`
+note: required by a bound in `HashMap::<K, V, S, A>::get`
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1032:12
+     |
+1030 |     pub fn get<Q: ?Sized>(&self, k: &Q) -> Option<&V>
+     |            --- required by a bound in this associated function
+1031 |     where
+1032 |         K: Borrow<Q>,
+     |            ^^^^^^^^^ required by this bound in `HashMap::<K, V, S, A>::get`
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/debug.rs:30:39
+     |
+  30 |             let id = self.find_signal(&sig.name);
+     |                           ----------- ^^^^^^^^^ expected `&str`, found `&Symbol`
+     |                           |
+     |                           arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6750:8
+     |
+6750 |     fn find_signal(&self, name: &str) -> Option<usize> {
+     |        ^^^^^^^^^^^        ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:2096:37
+     |
+2093 | ...                   let _ = self.evaluate_array_method(
+     |                                    --------------------- arguments to this method are incorrect
+...
+2096 | ...                       method,
+     |                           ^^^^^^ expected `&str`, found `&Symbol`
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:9082:8
+     |
+9082 |     fn evaluate_array_method(
+     |        ^^^^^^^^^^^^^^^^^^^^^
+...
+9086 |         method: &str,
+     |         ------------
+
+error[E0308]: `if` and `else` have incompatible types
+    --> src/simulator/engine/mod.rs:2115:45
+     |
+2112 |   ...                   let class_for_obj = if is_cg {
+     |  ___________________________________________-
+2113 | | ...                       format!("__covergroup_{}", cn)
+     | |                           ------------------------------ expected because of this
+2114 | | ...                   } else {
+2115 | | ...                       cn.clone()
+     | |                           ^^^^^^^^^^ expected `String`, found `Symbol`
+2116 | | ...                   };
+     | |_______________________- `if` and `else` have incompatible types
+     |
+help: try using a conversion method
+     |
+2115 -                                             cn.clone()
+2115 +                                             cn.to_string()
+     |
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:2126:69
+     |
+2126 | ...                   self.execute_method(new_id, method, &arg_vals)?;
+     |                            --------------         ^^^^^^ expected `&str`, found `&Symbol`
+     |                            |
+     |                            arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7531:8
+     |
+7531 |     fn execute_method(
+     |        ^^^^^^^^^^^^^^
+...
+7534 |         method: &str,
+     |         ------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:2139:49
+     |
+2139 |                     self.execute_method(obj_id, method, &arg_vals)?;
+     |                          --------------         ^^^^^^ expected `&str`, found `&Symbol`
+     |                          |
+     |                          arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7531:8
+     |
+7531 |     fn execute_method(
+     |        ^^^^^^^^^^^^^^
+...
+7534 |         method: &str,
+     |         ------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:2610:56
+     |
+2610 |                     if let Some(id) = self.find_signal(name) {
+     |                                            ----------- ^^^^ expected `&str`, found `&Symbol`
+     |                                            |
+     |                                            arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6750:8
+     |
+6750 |     fn find_signal(&self, name: &str) -> Option<usize> {
+     |        ^^^^^^^^^^^        ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:3535:37
+     |
+3532 | ...                   let _ = self.evaluate_array_method(
+     |                                    --------------------- arguments to this method are incorrect
+...
+3535 | ...                       method,
+     |                           ^^^^^^ expected `&str`, found `&Symbol`
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:9082:8
+     |
+9082 |     fn evaluate_array_method(
+     |        ^^^^^^^^^^^^^^^^^^^^^
+...
+9086 |         method: &str,
+     |         ------------
+
+error[E0308]: `if` and `else` have incompatible types
+    --> src/simulator/engine/mod.rs:3553:45
+     |
+3550 |   ...                   let class_for_obj = if is_cg {
+     |  ___________________________________________-
+3551 | | ...                       format!("__covergroup_{}", cn)
+     | |                           ------------------------------ expected because of this
+3552 | | ...                   } else {
+3553 | | ...                       cn.clone()
+     | |                           ^^^^^^^^^^ expected `String`, found `Symbol`
+3554 | | ...                   };
+     | |_______________________- `if` and `else` have incompatible types
+     |
+help: try using a conversion method
+     |
+3553 -                                             cn.clone()
+3553 +                                             cn.to_string()
+     |
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:3564:69
+     |
+3564 | ...                   self.execute_method(new_id, method, &arg_vals)?;
+     |                            --------------         ^^^^^^ expected `&str`, found `&Symbol`
+     |                            |
+     |                            arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7531:8
+     |
+7531 |     fn execute_method(
+     |        ^^^^^^^^^^^^^^
+...
+7534 |         method: &str,
+     |         ------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:3577:49
+     |
+3577 |                     self.execute_method(obj_id, method, &arg_vals)?;
+     |                          --------------         ^^^^^^ expected `&str`, found `&Symbol`
+     |                          |
+     |                          arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7531:8
+     |
+7531 |     fn execute_method(
+     |        ^^^^^^^^^^^^^^
+...
+7534 |         method: &str,
+     |         ------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:4971:44
+     |
+4971 | ...                   .entry(field.name.as_str().to_string())
+     |                        ----- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                        |
+     |                        arguments to this method are incorrect
+     |
+help: the return type of this call is `String` due to the type of the argument passed
+    --> src/simulator/engine/mod.rs:4970:33
+     |
+4970 | / ...                   obj.fields
+4971 | | ...                       .entry(field.name.as_str().to_string())
+     | |__________________________________-------------------------------^
+     |                                    |
+     |                                    this argument influences the return type of `entry`
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1008:12
+     |
+1008 |     pub fn entry(&mut self, key: K) -> Entry<'_, K, V, A> {
+     |            ^^^^^
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:4976:53
+     |
+4976 |                     if self.is_uvm_object_hierarchy(&class_name) {
+     |                             ----------------------- ^^^^^^^^^^^ expected `&str`, found `&&Symbol`
+     |                             |
+     |                             arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7371:8
+     |
+7371 |     fn is_uvm_object_hierarchy(&self, class_name: &str) -> bool {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^        ----------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:4983:60
+     |
+4983 |                     if self.is_uvm_analysis_port_hierarchy(&class_name) {
+     |                             ------------------------------ ^^^^^^^^^^^ expected `&str`, found `&&Symbol`
+     |                             |
+     |                             arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7483:8
+     |
+7483 |     fn is_uvm_analysis_port_hierarchy(&self, class_name: &str) -> bool {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^        ----------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:5038:54
+     |
+5038 |                     if self.find_method_in_hierarchy(&class_name, "new").is_ok() {
+     |                             ------------------------ ^^^^^^^^^^^ expected `&str`, found `&&Symbol`
+     |                             |
+     |                             arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:8913:8
+     |
+8913 |     fn find_method_in_hierarchy(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+8914 |         &self,
+8915 |         class_name: &str,
+     |         ----------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:5062:60
+     |
+5062 |                     let result = evaluate_string_method(s, method, &arg_vals)?;
+     |                                  ----------------------    ^^^^^^ expected `&str`, found `&Symbol`
+     |                                  |
+     |                                  arguments to this function are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: function defined here
+    --> src/simulator/engine/mod.rs:8940:4
+     |
+8940 | fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^          ------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:5074:69
+     |
+5074 | ...                   let result = evaluate_string_method(&s, method, &arg_vals)?;
+     |                                    ----------------------     ^^^^^^ expected `&str`, found `&Symbol`
+     |                                    |
+     |                                    arguments to this function are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: function defined here
+    --> src/simulator/engine/mod.rs:8940:4
+     |
+8940 | fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^          ------------
+
+error[E0308]: `if` and `else` have incompatible types
+    --> src/simulator/engine/mod.rs:5094:45
+     |
+5091 |   ...                   let class_for_obj = if is_cg {
+     |  ___________________________________________-
+5092 | | ...                       format!("__covergroup_{}", cn)
+     | |                           ------------------------------ expected because of this
+5093 | | ...                   } else {
+5094 | | ...                       cn.clone()
+     | |                           ^^^^^^^^^^ expected `String`, found `Symbol`
+5095 | | ...                   };
+     | |_______________________- `if` and `else` have incompatible types
+     |
+help: try using a conversion method
+     |
+5094 -                                             cn.clone()
+5094 +                                             cn.to_string()
+     |
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:5105:76
+     |
+5105 | ...                   return self.execute_method(new_id, method, &arg_vals);
+     |                                   --------------         ^^^^^^ expected `&str`, found `&Symbol`
+     |                                   |
+     |                                   arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7531:8
+     |
+7531 |     fn execute_method(
+     |        ^^^^^^^^^^^^^^
+...
+7534 |         method: &str,
+     |         ------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:5123:29
+     |
+5120 |                         return self.evaluate_array_method(
+     |                                     --------------------- arguments to this method are incorrect
+...
+5123 |                             method,
+     |                             ^^^^^^ expected `&str`, found `&Symbol`
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:9082:8
+     |
+9082 |     fn evaluate_array_method(
+     |        ^^^^^^^^^^^^^^^^^^^^^
+...
+9086 |         method: &str,
+     |         ------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:5148:58
+     |
+5148 |                 let result = self.execute_method(obj_id, method, &arg_vals)?;
+     |                                   --------------         ^^^^^^ expected `&str`, found `&Symbol`
+     |                                   |
+     |                                   arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7531:8
+     |
+7531 |     fn execute_method(
+     |        ^^^^^^^^^^^^^^
+...
+7534 |         method: &str,
+     |         ------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:5169:41
+     |
+5169 |             } => self.evaluate_dpi_call(name, args, *return_width),
+     |                       ----------------- ^^^^ expected `&str`, found `&Symbol`
+     |                       |
+     |                       arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:5969:8
+     |
+5969 |     fn evaluate_dpi_call(
+     |        ^^^^^^^^^^^^^^^^^
+5970 |         &mut self,
+5971 |         name: &str,
+     |         ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:5171:56
+     |
+5171 |                 if let Some(sig_id) = self.find_signal(name) {
+     |                                            ----------- ^^^^ expected `&str`, found `&Symbol`
+     |                                            |
+     |                                            arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6750:8
+     |
+6750 |     fn find_signal(&self, name: &str) -> Option<usize> {
+     |        ^^^^^^^^^^^        ----------
+
+error[E0308]: mismatched types
+     --> src/simulator/engine/mod.rs:5317:61
+      |
+ 5317 | ...                   edge_matches_abbrev(edge_str, prev_bit, bit)
+      |                       ------------------- ^^^^^^^^ expected `&str`, found `&Symbol`
+      |                       |
+      |                       arguments to this function are incorrect
+      |
+      = note: expected reference `&str`
+                 found reference `&string_intern::Symbol`
+note: function defined here
+     --> src/simulator/engine/mod.rs:10031:4
+      |
+10031 | fn edge_matches_abbrev(edge: &str, prev: LogicVal, curr: LogicVal) -> bool {
+      |    ^^^^^^^^^^^^^^^^^^^ ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:5358:33
+     |
+5358 |                         .insert(udp_name.clone(), arg_vals.clone());
+     |                          ------ ^^^^^^^^^^^^^^^^ expected `String`, found `Symbol`
+     |                          |
+     |                          arguments to this method are incorrect
+     |
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1328:12
+     |
+1328 |     pub fn insert(&mut self, k: K, v: V) -> Option<V> {
+     |            ^^^^^^
+help: try using a conversion method
+     |
+5358 -                         .insert(udp_name.clone(), arg_vals.clone());
+5358 +                         .insert(udp_name.to_string(), arg_vals.clone());
+     |
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:5371:29
+     |
+5371 |                     .insert(udp_name.clone(), arg_vals.clone());
+     |                      ------ ^^^^^^^^^^^^^^^^ expected `String`, found `Symbol`
+     |                      |
+     |                      arguments to this method are incorrect
+     |
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1328:12
+     |
+1328 |     pub fn insert(&mut self, k: K, v: V) -> Option<V> {
+     |            ^^^^^^
+help: try using a conversion method
+     |
+5371 -                     .insert(udp_name.clone(), arg_vals.clone());
+5371 +                     .insert(udp_name.to_string(), arg_vals.clone());
+     |
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:5388:45
+     |
+5388 |                 self.recursion_depth.insert(name.clone(), depth + 1);
+     |                                      ------ ^^^^^^^^^^^^ expected `String`, found `Symbol`
+     |                                      |
+     |                                      arguments to this method are incorrect
+     |
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1328:12
+     |
+1328 |     pub fn insert(&mut self, k: K, v: V) -> Option<V> {
+     |            ^^^^^^
+help: try using a conversion method
+     |
+5388 -                 self.recursion_depth.insert(name.clone(), depth + 1);
+5388 +                 self.recursion_depth.insert(name.to_string(), depth + 1);
+     |
+
+error[E0277]: can't compare `String` with `string_intern::Symbol`
+    --> src/simulator/engine/mod.rs:5744:85
+     |
+5744 |                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+     |                                                                                     ^^ no implementation for `String == string_intern::Symbol`
+     |
+     = help: the trait `PartialEq<string_intern::Symbol>` is not implemented for `String`
+     = help: `String` implements trait `PartialEq<Rhs>`:
+               PartialEq<&str>
+               PartialEq<ByteStr>
+               PartialEq<ByteString>
+               PartialEq<Cow<'_, str>>
+               PartialEq<Path>
+               PartialEq<PathBuf>
+               PartialEq<clap::Id>
+               PartialEq<clap::builder::OsStr>
+             and 3 others
+     = note: required for `&String` to implement `PartialEq<&string_intern::Symbol>`
+
+error[E0277]: can't compare `String` with `string_intern::Symbol`
+    --> src/simulator/engine/mod.rs:5762:85
+     |
+5762 |                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+     |                                                                                     ^^ no implementation for `String == string_intern::Symbol`
+     |
+     = help: the trait `PartialEq<string_intern::Symbol>` is not implemented for `String`
+     = help: `String` implements trait `PartialEq<Rhs>`:
+               PartialEq<&str>
+               PartialEq<ByteStr>
+               PartialEq<ByteString>
+               PartialEq<Cow<'_, str>>
+               PartialEq<Path>
+               PartialEq<PathBuf>
+               PartialEq<clap::Id>
+               PartialEq<clap::builder::OsStr>
+             and 3 others
+     = note: required for `&String` to implement `PartialEq<&string_intern::Symbol>`
+
+error[E0277]: can't compare `String` with `string_intern::Symbol`
+    --> src/simulator/engine/mod.rs:5782:85
+     |
+5782 |                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+     |                                                                                     ^^ no implementation for `String == string_intern::Symbol`
+     |
+     = help: the trait `PartialEq<string_intern::Symbol>` is not implemented for `String`
+     = help: `String` implements trait `PartialEq<Rhs>`:
+               PartialEq<&str>
+               PartialEq<ByteStr>
+               PartialEq<ByteString>
+               PartialEq<Cow<'_, str>>
+               PartialEq<Path>
+               PartialEq<PathBuf>
+               PartialEq<clap::Id>
+               PartialEq<clap::builder::OsStr>
+             and 3 others
+     = note: required for `&String` to implement `PartialEq<&string_intern::Symbol>`
+
+error[E0277]: can't compare `String` with `string_intern::Symbol`
+    --> src/simulator/engine/mod.rs:5804:85
+     |
+5804 |                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+     |                                                                                     ^^ no implementation for `String == string_intern::Symbol`
+     |
+     = help: the trait `PartialEq<string_intern::Symbol>` is not implemented for `String`
+     = help: `String` implements trait `PartialEq<Rhs>`:
+               PartialEq<&str>
+               PartialEq<ByteStr>
+               PartialEq<ByteString>
+               PartialEq<Cow<'_, str>>
+               PartialEq<Path>
+               PartialEq<PathBuf>
+               PartialEq<clap::Id>
+               PartialEq<clap::builder::OsStr>
+             and 3 others
+     = note: required for `&String` to implement `PartialEq<&string_intern::Symbol>`
+
+error[E0277]: can't compare `String` with `string_intern::Symbol`
+    --> src/simulator/engine/mod.rs:5821:85
+     |
+5821 |                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+     |                                                                                     ^^ no implementation for `String == string_intern::Symbol`
+     |
+     = help: the trait `PartialEq<string_intern::Symbol>` is not implemented for `String`
+     = help: `String` implements trait `PartialEq<Rhs>`:
+               PartialEq<&str>
+               PartialEq<ByteStr>
+               PartialEq<ByteString>
+               PartialEq<Cow<'_, str>>
+               PartialEq<Path>
+               PartialEq<PathBuf>
+               PartialEq<clap::Id>
+               PartialEq<clap::builder::OsStr>
+             and 3 others
+     = note: required for `&String` to implement `PartialEq<&string_intern::Symbol>`
+
+error[E0277]: can't compare `String` with `string_intern::Symbol`
+    --> src/simulator/engine/mod.rs:5840:85
+     |
+5840 |                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+     |                                                                                     ^^ no implementation for `String == string_intern::Symbol`
+     |
+     = help: the trait `PartialEq<string_intern::Symbol>` is not implemented for `String`
+     = help: `String` implements trait `PartialEq<Rhs>`:
+               PartialEq<&str>
+               PartialEq<ByteStr>
+               PartialEq<ByteString>
+               PartialEq<Cow<'_, str>>
+               PartialEq<Path>
+               PartialEq<PathBuf>
+               PartialEq<clap::Id>
+               PartialEq<clap::builder::OsStr>
+             and 3 others
+     = note: required for `&String` to implement `PartialEq<&string_intern::Symbol>`
+
+error[E0277]: can't compare `String` with `string_intern::Symbol`
+    --> src/simulator/engine/mod.rs:5856:85
+     |
+5856 |                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == ref_sig) {
+     |                                                                                     ^^ no implementation for `String == string_intern::Symbol`
+     |
+     = help: the trait `PartialEq<string_intern::Symbol>` is not implemented for `String`
+     = help: `String` implements trait `PartialEq<Rhs>`:
+               PartialEq<&str>
+               PartialEq<ByteStr>
+               PartialEq<ByteString>
+               PartialEq<Cow<'_, str>>
+               PartialEq<Path>
+               PartialEq<PathBuf>
+               PartialEq<clap::Id>
+               PartialEq<clap::builder::OsStr>
+             and 3 others
+     = note: required for `&String` to implement `PartialEq<&string_intern::Symbol>`
+
+error[E0277]: can't compare `String` with `string_intern::Symbol`
+    --> src/simulator/engine/mod.rs:5873:85
+     |
+5873 |                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == ref_sig) {
+     |                                                                                     ^^ no implementation for `String == string_intern::Symbol`
+     |
+     = help: the trait `PartialEq<string_intern::Symbol>` is not implemented for `String`
+     = help: `String` implements trait `PartialEq<Rhs>`:
+               PartialEq<&str>
+               PartialEq<ByteStr>
+               PartialEq<ByteString>
+               PartialEq<Cow<'_, str>>
+               PartialEq<Path>
+               PartialEq<PathBuf>
+               PartialEq<clap::Id>
+               PartialEq<clap::builder::OsStr>
+             and 3 others
+     = note: required for `&String` to implement `PartialEq<&string_intern::Symbol>`
+
+error[E0277]: can't compare `String` with `string_intern::Symbol`
+    --> src/simulator/engine/mod.rs:5890:85
+     |
+5890 |                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+     |                                                                                     ^^ no implementation for `String == string_intern::Symbol`
+     |
+     = help: the trait `PartialEq<string_intern::Symbol>` is not implemented for `String`
+     = help: `String` implements trait `PartialEq<Rhs>`:
+               PartialEq<&str>
+               PartialEq<ByteStr>
+               PartialEq<ByteString>
+               PartialEq<Cow<'_, str>>
+               PartialEq<Path>
+               PartialEq<PathBuf>
+               PartialEq<clap::Id>
+               PartialEq<clap::builder::OsStr>
+             and 3 others
+     = note: required for `&String` to implement `PartialEq<&string_intern::Symbol>`
+
+error[E0277]: can't compare `String` with `string_intern::Symbol`
+    --> src/simulator/engine/mod.rs:5894:77
+     |
+5894 | ...                   signal_names.iter().find(|(n, _)| n == ref_sig)
+     |                                                           ^^ no implementation for `String == string_intern::Symbol`
+     |
+     = help: the trait `PartialEq<string_intern::Symbol>` is not implemented for `String`
+     = help: `String` implements trait `PartialEq<Rhs>`:
+               PartialEq<&str>
+               PartialEq<ByteStr>
+               PartialEq<ByteString>
+               PartialEq<Cow<'_, str>>
+               PartialEq<Path>
+               PartialEq<PathBuf>
+               PartialEq<clap::Id>
+               PartialEq<clap::builder::OsStr>
+             and 3 others
+     = note: required for `&String` to implement `PartialEq<&string_intern::Symbol>`
+
+error[E0277]: can't compare `String` with `string_intern::Symbol`
+    --> src/simulator/engine/mod.rs:5921:85
+     |
+5921 |                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+     |                                                                                     ^^ no implementation for `String == string_intern::Symbol`
+     |
+     = help: the trait `PartialEq<string_intern::Symbol>` is not implemented for `String`
+     = help: `String` implements trait `PartialEq<Rhs>`:
+               PartialEq<&str>
+               PartialEq<ByteStr>
+               PartialEq<ByteString>
+               PartialEq<Cow<'_, str>>
+               PartialEq<Path>
+               PartialEq<PathBuf>
+               PartialEq<clap::Id>
+               PartialEq<clap::builder::OsStr>
+             and 3 others
+     = note: required for `&String` to implement `PartialEq<&string_intern::Symbol>`
+
+error[E0277]: can't compare `String` with `string_intern::Symbol`
+    --> src/simulator/engine/mod.rs:5925:77
+     |
+5925 | ...                   signal_names.iter().find(|(n, _)| n == ref_sig)
+     |                                                           ^^ no implementation for `String == string_intern::Symbol`
+     |
+     = help: the trait `PartialEq<string_intern::Symbol>` is not implemented for `String`
+     = help: `String` implements trait `PartialEq<Rhs>`:
+               PartialEq<&str>
+               PartialEq<ByteStr>
+               PartialEq<ByteString>
+               PartialEq<Cow<'_, str>>
+               PartialEq<Path>
+               PartialEq<PathBuf>
+               PartialEq<clap::Id>
+               PartialEq<clap::builder::OsStr>
+             and 3 others
+     = note: required for `&String` to implement `PartialEq<&string_intern::Symbol>`
+
+error[E0277]: can't compare `String` with `string_intern::Symbol`
+    --> src/simulator/engine/mod.rs:5953:85
+     |
+5953 |                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n == data_sig) {
+     |                                                                                     ^^ no implementation for `String == string_intern::Symbol`
+     |
+     = help: the trait `PartialEq<string_intern::Symbol>` is not implemented for `String`
+     = help: `String` implements trait `PartialEq<Rhs>`:
+               PartialEq<&str>
+               PartialEq<ByteStr>
+               PartialEq<ByteString>
+               PartialEq<Cow<'_, str>>
+               PartialEq<Path>
+               PartialEq<PathBuf>
+               PartialEq<clap::Id>
+               PartialEq<clap::builder::OsStr>
+             and 3 others
+     = note: required for `&String` to implement `PartialEq<&string_intern::Symbol>`
+
+error[E0658]: use of unstable library feature `str_as_str`
+    --> src/simulator/engine/mod.rs:6063:45
+     |
+6063 |             if let Some(v) = scope.get(name.as_str()) {
+     |                                             ^^^^^^
+     |
+     = note: see issue #130366 <https://github.com/rust-lang/rust/issues/130366> for more information
+     = help: add `#![feature(str_as_str)]` to the crate attributes to enable
+     = note: this compiler was built on 2026-05-01; consider upgrading it if it is out of date
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6078:72
+     |
+6078 |             crate::ast::Expr::Ident(name) => self.write_local_or_field(name, val),
+     |                                                   -------------------- ^^^^ expected `&str`, found `&Symbol`
+     |                                                   |
+     |                                                   arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6140:8
+     |
+6140 |     fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), SimError> {
+     |        ^^^^^^^^^^^^^^^^^^^^            ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6102:47
+     |
+6102 |                 let sig_id = self.find_signal(name)?;
+     |                                   ----------- ^^^^ expected `&str`, found `&Symbol`
+     |                                   |
+     |                                   arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6750:8
+     |
+6750 |     fn find_signal(&self, name: &str) -> Option<usize> {
+     |        ^^^^^^^^^^^        ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6111:63
+     |
+6111 |             crate::ast::Expr::Ident(name) => self.find_signal(name),
+     |                                                   ----------- ^^^^ expected `&str`, found `&Symbol`
+     |                                                   |
+     |                                                   arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6750:8
+     |
+6750 |     fn find_signal(&self, name: &str) -> Option<usize> {
+     |        ^^^^^^^^^^^        ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6147:35
+     |
+6147 |                 obj.fields.insert(name.to_string(), val);
+     |                            ------ ^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                            |
+     |                            arguments to this method are incorrect
+     |
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1328:12
+     |
+1328 |     pub fn insert(&mut self, k: K, v: V) -> Option<V> {
+     |            ^^^^^^
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6180:53
+     |
+6180 |                 if let Some(local) = self.get_local(name) {
+     |                                           --------- ^^^^ expected `&str`, found `&Symbol`
+     |                                           |
+     |                                           arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6061:8
+     |
+6061 |     fn get_local(&self, name: &str) -> Option<LogicVec> {
+     |        ^^^^^^^^^        ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6190:56
+     |
+6190 |                 if let Some(sig_id) = self.find_signal(name) {
+     |                                            ----------- ^^^^ expected `&str`, found `&Symbol`
+     |                                            |
+     |                                            arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6750:8
+     |
+6750 |     fn find_signal(&self, name: &str) -> Option<usize> {
+     |        ^^^^^^^^^^^        ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6248:54
+     |
+6248 |                 let obj_id = self.state.alloc_object("");
+     |                                         ------------ ^^ expected `Symbol`, found `&str`
+     |                                         |
+     |                                         arguments to this method are incorrect
+     |
+note: method defined here
+    --> src/simulator/state.rs:41:12
+     |
+  41 |     pub fn alloc_object(&mut self, class_name: crate::intern::Symbol) -> ObjId {
+     |            ^^^^^^^^^^^^            ---------------------------------
+help: call `Into::into` on this expression to convert `&'static str` into `string_intern::Symbol`
+     |
+6248 |                 let obj_id = self.state.alloc_object("".into());
+     |                                                        +++++++
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6280:54
+     |
+6280 |                 let obj_id = self.state.alloc_object(&effective);
+     |                                         ------------ ^^^^^^^^^^ expected `Symbol`, found `&String`
+     |                                         |
+     |                                         arguments to this method are incorrect
+     |
+note: method defined here
+    --> src/simulator/state.rs:41:12
+     |
+  41 |     pub fn alloc_object(&mut self, class_name: crate::intern::Symbol) -> ObjId {
+     |            ^^^^^^^^^^^^            ---------------------------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6376:59
+     |
+6376 | ...                   self.write_local_or_field(var, val.clone())?;
+     |                            -------------------- ^^^ expected `&str`, found `&Symbol`
+     |                            |
+     |                            arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6140:8
+     |
+6140 |     fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), SimError> {
+     |        ^^^^^^^^^^^^^^^^^^^^            ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6437:59
+     |
+6437 | ...                   self.write_local_or_field(var, val.clone())?;
+     |                            -------------------- ^^^ expected `&str`, found `&Symbol`
+     |                            |
+     |                            arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6140:8
+     |
+6140 |     fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), SimError> {
+     |        ^^^^^^^^^^^^^^^^^^^^            ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6506:58
+     |
+6506 |                         return self.execute_super_method(method, &arg_vals);
+     |                                     -------------------- ^^^^^^ expected `&str`, found `&Symbol`
+     |                                     |
+     |                                     arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:8733:8
+     |
+8733 |     fn execute_super_method(
+     |        ^^^^^^^^^^^^^^^^^^^^
+8734 |         &mut self,
+8735 |         method: &str,
+     |         ------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6515:45
+     |
+6515 |                 self.execute_method(obj_id, method, &arg_vals)
+     |                      --------------         ^^^^^^ expected `&str`, found `&Symbol`
+     |                      |
+     |                      arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7531:8
+     |
+7531 |     fn execute_method(
+     |        ^^^^^^^^^^^^^^
+...
+7534 |         method: &str,
+     |         ------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6519:60
+     |
+6519 |                 let hier_name = Self::build_hier_name(obj, field);
+     |                                 ---------------------      ^^^^^ expected `&str`, found `&Symbol`
+     |                                 |
+     |                                 arguments to this function are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: associated function defined here
+    --> src/simulator/engine/mod.rs:6759:8
+     |
+6759 |     fn build_hier_name(obj: &Expr, field: &str) -> String {
+     |        ^^^^^^^^^^^^^^^             -----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6726:92
+     |
+6726 |                 let cast_width = match crate::elaboration::elaborator::parse_type_spec_str(dtype) {
+     |                                        --------------------------------------------------- ^^^^^ expected `&str`, found `&Symbol`
+     |                                        |
+     |                                        arguments to this function are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: function defined here
+    --> src/elaboration/elaborator.rs:5549:15
+     |
+5549 | pub(crate) fn parse_type_spec_str(s: &str) -> Option<DataType> {
+     |               ^^^^^^^^^^^^^^^^^^^ -------
+
+error[E0658]: use of unstable library feature `str_as_str`
+    --> src/simulator/engine/mod.rs:6756:62
+     |
+6756 |             .or_else(|| self.design.hier_signal_map.get(name.as_str()).copied())
+     |                                                              ^^^^^^
+     |
+     = note: see issue #130366 <https://github.com/rust-lang/rust/issues/130366> for more information
+     = help: add `#![feature(str_as_str)]` to the crate attributes to enable
+     = note: this compiler was built on 2026-05-01; consider upgrading it if it is out of date
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6766:63
+     |
+6766 |                 format!("{}.{}", Self::build_hier_name(inner, inner_field), field)
+     |                                  ---------------------        ^^^^^^^^^^^ expected `&str`, found `&Symbol`
+     |                                  |
+     |                                  arguments to this function are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: associated function defined here
+    --> src/simulator/engine/mod.rs:6759:8
+     |
+6759 |     fn build_hier_name(obj: &Expr, field: &str) -> String {
+     |        ^^^^^^^^^^^^^^^             -----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6783:68
+     |
+6783 |                     Expr::Ident(name) => self.write_local_or_field(name, val),
+     |                                               -------------------- ^^^^ expected `&str`, found `&Symbol`
+     |                                               |
+     |                                               arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6140:8
+     |
+6140 |     fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), SimError> {
+     |        ^^^^^^^^^^^^^^^^^^^^            ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6815:63
+     |
+6815 | ...                   self.write_local_or_field(name, new_val)?;
+     |                            -------------------- ^^^^ expected `&str`, found `&Symbol`
+     |                            |
+     |                            arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6140:8
+     |
+6140 |     fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), SimError> {
+     |        ^^^^^^^^^^^^^^^^^^^^            ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6838:63
+     |
+6838 | ...                   self.write_local_or_field(name, new_val)?;
+     |                            -------------------- ^^^^ expected `&str`, found `&Symbol`
+     |                            |
+     |                            arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6140:8
+     |
+6140 |     fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), SimError> {
+     |        ^^^^^^^^^^^^^^^^^^^^            ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6876:59
+     |
+6876 | ...                   self.write_local_or_field(name, new_val)?;
+     |                            -------------------- ^^^^ expected `&str`, found `&Symbol`
+     |                            |
+     |                            arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6140:8
+     |
+6140 |     fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), SimError> {
+     |        ^^^^^^^^^^^^^^^^^^^^            ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6898:68
+     |
+6898 |                     Expr::Ident(name) => self.write_local_or_field(name, val),
+     |                                               -------------------- ^^^^ expected `&str`, found `&Symbol`
+     |                                               |
+     |                                               arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6140:8
+     |
+6140 |     fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), SimError> {
+     |        ^^^^^^^^^^^^^^^^^^^^            ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6930:63
+     |
+6930 | ...                   self.write_local_or_field(name, new_val)?;
+     |                            -------------------- ^^^^ expected `&str`, found `&Symbol`
+     |                            |
+     |                            arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6140:8
+     |
+6140 |     fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), SimError> {
+     |        ^^^^^^^^^^^^^^^^^^^^            ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6953:63
+     |
+6953 | ...                   self.write_local_or_field(name, new_val)?;
+     |                            -------------------- ^^^^ expected `&str`, found `&Symbol`
+     |                            |
+     |                            arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6140:8
+     |
+6140 |     fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), SimError> {
+     |        ^^^^^^^^^^^^^^^^^^^^            ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:6991:59
+     |
+6991 | ...                   self.write_local_or_field(name, new_val)?;
+     |                            -------------------- ^^^^ expected `&str`, found `&Symbol`
+     |                            |
+     |                            arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6140:8
+     |
+6140 |     fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), SimError> {
+     |        ^^^^^^^^^^^^^^^^^^^^            ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7210:52
+     |
+7210 |                 let count = self.get_foreach_count(array_var);
+     |                                  ----------------- ^^^^^^^^^ expected `&str`, found `&Symbol`
+     |                                  |
+     |                                  arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:8860:8
+     |
+8860 |     fn get_foreach_count(&self, array_var: &str) -> usize {
+     |        ^^^^^^^^^^^^^^^^^        ---------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7214:40
+     |
+7214 |                     .unwrap_or_else(|| "i".to_string());
+     |                                        ^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7220:45
+     |
+7218 |                     scope.insert(iv.clone(), idx_val);
+     |                     -----        ---------- this argument has type `string_intern::Symbol`...
+     |                     |
+     |                     ... which causes `scope` to have type `HashMap<string_intern::Symbol, ir::ir::LogicVec>`
+7219 |                     let depth = self.method_locals.len();
+7220 |                     self.method_locals.push(scope);
+     |                                        ---- ^^^^^ expected `HashMap<String, LogicVec>`, found `HashMap<Symbol, LogicVec>`
+     |                                        |
+     |                                        arguments to this method are incorrect
+     |
+     = note: expected struct `HashMap<String, _>`
+                found struct `HashMap<string_intern::Symbol, _>`
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1003:12
+     |
+1003 |     pub fn push(&mut self, value: T) {
+     |            ^^^^
+help: try using a conversion method
+     |
+7218 -                     scope.insert(iv.clone(), idx_val);
+7218 +                     scope.insert(iv.to_string(), idx_val);
+     |
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7239:68
+     |
+7239 |                     Expr::Ident(name) => self.write_local_or_field(name, val),
+     |                                               -------------------- ^^^^ expected `&str`, found `&Symbol`
+     |                                               |
+     |                                               arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6140:8
+     |
+6140 |     fn write_local_or_field(&mut self, name: &str, val: LogicVec) -> Result<(), SimError> {
+     |        ^^^^^^^^^^^^^^^^^^^^            ----------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7270:44
+     |
+7270 |             if !self.is_uvm_test_hierarchy(name) {
+     |                      --------------------- ^^^^ expected `&str`, found `&Symbol`
+     |                      |
+     |                      arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7296:8
+     |
+7296 |     fn is_uvm_test_hierarchy(&self, class_name: &str) -> bool {
+     |        ^^^^^^^^^^^^^^^^^^^^^        ----------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7278:30
+     |
+7278 |                 best = Some((name.clone(), count));
+     |                              ^^^^^^^^^^^^ expected `String`, found `Symbol`
+     |
+help: try using a conversion method
+     |
+7278 -                 best = Some((name.clone(), count));
+7278 +                 best = Some((name.to_string(), count));
+     |
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7289:34
+     |
+7289 |                     best = Some((name.clone(), count));
+     |                                  ^^^^^^^^^^^^ expected `String`, found `Symbol`
+     |
+help: try using a conversion method
+     |
+7289 -                     best = Some((name.clone(), count));
+7289 +                     best = Some((name.to_string(), count));
+     |
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7318:46
+     |
+7318 |         let obj_id = self.state.alloc_object(&class_name);
+     |                                 ------------ ^^^^^^^^^^^ expected `Symbol`, found `&String`
+     |                                 |
+     |                                 arguments to this method are incorrect
+     |
+note: method defined here
+    --> src/simulator/state.rs:41:12
+     |
+  41 |     pub fn alloc_object(&mut self, class_name: crate::intern::Symbol) -> ObjId {
+     |            ^^^^^^^^^^^^            ---------------------------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7359:54
+     |
+7359 |                     if self.find_method_in_hierarchy(child_class, phase).is_ok() {
+     |                             ------------------------ ^^^^^^^^^^^ expected `&str`, found `&Symbol`
+     |                             |
+     |                             arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:8913:8
+     |
+8913 |     fn find_method_in_hierarchy(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+8914 |         &self,
+8915 |         class_name: &str,
+     |         ----------------
+
+error[E0658]: use of unstable library feature `str_as_str`
+    --> src/simulator/engine/mod.rs:7660:29
+     |
+7660 |             .get(class_name.as_str())
+     |                             ^^^^^^
+     |
+     = note: see issue #130366 <https://github.com/rust-lang/rust/issues/130366> for more information
+     = help: add `#![feature(str_as_str)]` to the crate attributes to enable
+     = note: this compiler was built on 2026-05-01; consider upgrading it if it is out of date
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7679:40
+     |
+7679 | ...                   .entry(first.clone())
+     |                        ----- ^^^^^^^^^^^^^ expected `String`, found `Symbol`
+     |                        |
+     |                        arguments to this method are incorrect
+     |
+help: the return type of this call is `string_intern::Symbol` due to the type of the argument passed
+    --> src/simulator/engine/mod.rs:7678:29
+     |
+7678 | / ...                   before_map
+7679 | | ...                       .entry(first.clone())
+     | |__________________________________-------------^
+     |                                    |
+     |                                    this argument influences the return type of `entry`
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1008:12
+     |
+1008 |     pub fn entry(&mut self, key: K) -> Entry<'_, K, V, A> {
+     |            ^^^^^
+help: try using a conversion method
+     |
+7679 -                                 .entry(first.clone())
+7679 +                                 .entry(first.to_string())
+     |
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7681:41
+     |
+7681 | ...                   .insert(later.clone());
+     |                        ------ ^^^^^^^^^^^^^ expected `String`, found `Symbol`
+     |                        |
+     |                        arguments to this method are incorrect
+     |
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/set.rs:1034:12
+     |
+1034 |     pub fn insert(&mut self, value: T) -> bool {
+     |            ^^^^^^
+help: try using a conversion method
+     |
+7681 -                                 .insert(later.clone());
+7681 +                                 .insert(later.to_string());
+     |
+
+error[E0277]: a value of type `HashSet<String>` cannot be built from an iterator over elements of type `string_intern::Symbol`
+    --> src/simulator/engine/mod.rs:7691:51
+     |
+7691 |             class_def.rand_fields.iter().cloned().collect();
+     |                                                   ^^^^^^^ value of type `HashSet<String>` cannot be built from `std::iter::Iterator<Item=string_intern::Symbol>`
+     |
+help: the trait `FromIterator<string_intern::Symbol>` is not implemented for `HashSet<String>`
+      but trait `FromIterator<String>` is implemented for it
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/set.rs:1182:1
+     |
+1182 | / impl<T, S> FromIterator<T> for HashSet<T, S>
+1183 | | where
+1184 | |     T: Eq + Hash,
+1185 | |     S: BuildHasher + Default,
+     | |_____________________________^
+     = help: for that trait implementation, expected `String`, found `string_intern::Symbol`
+note: the method call chain might not have had the expected associated types
+    --> src/simulator/engine/mod.rs:7691:42
+     |
+7691 |             class_def.rand_fields.iter().cloned().collect();
+     |             --------------------- ------ ^^^^^^^^ `Iterator::Item` changed to `Symbol` here
+     |             |                     |
+     |             |                     `Iterator::Item` is `&Symbol` here
+     |             this expression has type `Vec<Symbol>`
+note: required by a bound in `std::iter::Iterator::collect`
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/traits/iterator.rs:2079:19
+     |
+2079 |     fn collect<B: FromIterator<Self::Item>>(self) -> B
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Iterator::collect`
+
+error[E0277]: the trait bound `String: Borrow<string_intern::Symbol>` is not satisfied
+    --> src/simulator/engine/mod.rs:7693:40
+     |
+7693 |             if before_map.contains_key(fname) && remaining.contains(fname) {
+     |                           ------------ ^^^^^ the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+     |                           |
+     |                           required by a bound introduced by this call
+     |
+help: the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+      but trait `Borrow<str>` is implemented for it
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/str.rs:212:1
+     |
+ 212 | impl Borrow<str> for String {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for that trait implementation, expected `str`, found `string_intern::Symbol`
+note: required by a bound in `HashMap::<K, V, S, A>::contains_key`
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1266:12
+     |
+1264 |     pub fn contains_key<Q: ?Sized>(&self, k: &Q) -> bool
+     |            ------------ required by a bound in this associated function
+1265 |     where
+1266 |         K: Borrow<Q>,
+     |            ^^^^^^^^^ required by this bound in `HashMap::<K, V, S, A>::contains_key`
+
+error[E0277]: the trait bound `String: Borrow<string_intern::Symbol>` is not satisfied
+    --> src/simulator/engine/mod.rs:7693:69
+     |
+7693 |             if before_map.contains_key(fname) && remaining.contains(fname) {
+     |                                                            -------- ^^^^^ the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+     |                                                            |
+     |                                                            required by a bound introduced by this call
+     |
+help: the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+      but trait `Borrow<str>` is implemented for it
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/str.rs:212:1
+     |
+ 212 | impl Borrow<str> for String {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for that trait implementation, expected `str`, found `string_intern::Symbol`
+note: required by a bound in `HashSet::<T, S, A>::contains`
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/set.rs:808:12
+     |
+ 806 |     pub fn contains<Q: ?Sized>(&self, value: &Q) -> bool
+     |            -------- required by a bound in this associated function
+ 807 |     where
+ 808 |         T: Borrow<Q>,
+     |            ^^^^^^^^^ required by this bound in `HashSet::<T, S, A>::contains`
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7694:37
+     |
+7694 |                 ordered_fields.push(fname.clone());
+     |                                ---- ^^^^^^^^^^^^^ expected `String`, found `Symbol`
+     |                                |
+     |                                arguments to this method are incorrect
+     |
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1003:12
+     |
+1003 |     pub fn push(&mut self, value: T) {
+     |            ^^^^
+help: try using a conversion method
+     |
+7694 -                 ordered_fields.push(fname.clone());
+7694 +                 ordered_fields.push(fname.to_string());
+     |
+
+error[E0277]: the trait bound `String: Borrow<string_intern::Symbol>` is not satisfied
+    --> src/simulator/engine/mod.rs:7695:34
+     |
+7695 |                 remaining.remove(fname);
+     |                           ------ ^^^^^ the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+     |                           |
+     |                           required by a bound introduced by this call
+     |
+help: the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+      but trait `Borrow<str>` is implemented for it
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/str.rs:212:1
+     |
+ 212 | impl Borrow<str> for String {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for that trait implementation, expected `str`, found `string_intern::Symbol`
+note: required by a bound in `HashSet::<T, S, A>::remove`
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/set.rs:1083:12
+     |
+1081 |     pub fn remove<Q: ?Sized>(&mut self, value: &Q) -> bool
+     |            ------ required by a bound in this associated function
+1082 |     where
+1083 |         T: Borrow<Q>,
+     |            ^^^^^^^^^ required by this bound in `HashSet::<T, S, A>::remove`
+
+error[E0277]: the trait bound `String: Borrow<string_intern::Symbol>` is not satisfied
+    --> src/simulator/engine/mod.rs:7699:35
+     |
+7699 |             if remaining.contains(fname) {
+     |                          -------- ^^^^^ the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+     |                          |
+     |                          required by a bound introduced by this call
+     |
+help: the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+      but trait `Borrow<str>` is implemented for it
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/str.rs:212:1
+     |
+ 212 | impl Borrow<str> for String {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for that trait implementation, expected `str`, found `string_intern::Symbol`
+note: required by a bound in `HashSet::<T, S, A>::contains`
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/set.rs:808:12
+     |
+ 806 |     pub fn contains<Q: ?Sized>(&self, value: &Q) -> bool
+     |            -------- required by a bound in this associated function
+ 807 |     where
+ 808 |         T: Borrow<Q>,
+     |            ^^^^^^^^^ required by this bound in `HashSet::<T, S, A>::contains`
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7700:37
+     |
+7700 |                 ordered_fields.push(fname.clone());
+     |                                ---- ^^^^^^^^^^^^^ expected `String`, found `Symbol`
+     |                                |
+     |                                arguments to this method are incorrect
+     |
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1003:12
+     |
+1003 |     pub fn push(&mut self, value: T) {
+     |            ^^^^
+help: try using a conversion method
+     |
+7700 -                 ordered_fields.push(fname.clone());
+7700 +                 ordered_fields.push(fname.to_string());
+     |
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7716:39
+     |
+7716 |                     obj.fields.insert(fname.clone(), rv);
+     |                                ------ ^^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                                |
+     |                                arguments to this method are incorrect
+     |
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1328:12
+     |
+1328 |     pub fn insert(&mut self, k: K, v: V) -> Option<V> {
+     |            ^^^^^^
+
+error[E0658]: use of unstable library feature `str_as_str`
+    --> src/simulator/engine/mod.rs:7764:29
+     |
+7764 |             .get(class_name.as_str())
+     |                             ^^^^^^
+     |
+     = note: see issue #130366 <https://github.com/rust-lang/rust/issues/130366> for more information
+     = help: add `#![feature(str_as_str)]` to the crate attributes to enable
+     = note: this compiler was built on 2026-05-01; consider upgrading it if it is out of date
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7786:40
+     |
+7786 | ...                   .entry(first.clone())
+     |                        ----- ^^^^^^^^^^^^^ expected `String`, found `Symbol`
+     |                        |
+     |                        arguments to this method are incorrect
+     |
+help: the return type of this call is `string_intern::Symbol` due to the type of the argument passed
+    --> src/simulator/engine/mod.rs:7785:29
+     |
+7785 | / ...                   before_map
+7786 | | ...                       .entry(first.clone())
+     | |__________________________________-------------^
+     |                                    |
+     |                                    this argument influences the return type of `entry`
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1008:12
+     |
+1008 |     pub fn entry(&mut self, key: K) -> Entry<'_, K, V, A> {
+     |            ^^^^^
+help: try using a conversion method
+     |
+7786 -                                 .entry(first.clone())
+7786 +                                 .entry(first.to_string())
+     |
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7788:41
+     |
+7788 | ...                   .insert(later.clone());
+     |                        ------ ^^^^^^^^^^^^^ expected `String`, found `Symbol`
+     |                        |
+     |                        arguments to this method are incorrect
+     |
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/set.rs:1034:12
+     |
+1034 |     pub fn insert(&mut self, value: T) -> bool {
+     |            ^^^^^^
+help: try using a conversion method
+     |
+7788 -                                 .insert(later.clone());
+7788 +                                 .insert(later.to_string());
+     |
+
+error[E0277]: a value of type `HashSet<String>` cannot be built from an iterator over elements of type `string_intern::Symbol`
+    --> src/simulator/engine/mod.rs:7797:51
+     |
+7797 |             class_def.rand_fields.iter().cloned().collect();
+     |                                                   ^^^^^^^ value of type `HashSet<String>` cannot be built from `std::iter::Iterator<Item=string_intern::Symbol>`
+     |
+help: the trait `FromIterator<string_intern::Symbol>` is not implemented for `HashSet<String>`
+      but trait `FromIterator<String>` is implemented for it
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/set.rs:1182:1
+     |
+1182 | / impl<T, S> FromIterator<T> for HashSet<T, S>
+1183 | | where
+1184 | |     T: Eq + Hash,
+1185 | |     S: BuildHasher + Default,
+     | |_____________________________^
+     = help: for that trait implementation, expected `String`, found `string_intern::Symbol`
+note: the method call chain might not have had the expected associated types
+    --> src/simulator/engine/mod.rs:7797:42
+     |
+7797 |             class_def.rand_fields.iter().cloned().collect();
+     |             --------------------- ------ ^^^^^^^^ `Iterator::Item` changed to `Symbol` here
+     |             |                     |
+     |             |                     `Iterator::Item` is `&Symbol` here
+     |             this expression has type `Vec<Symbol>`
+note: required by a bound in `std::iter::Iterator::collect`
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/traits/iterator.rs:2079:19
+     |
+2079 |     fn collect<B: FromIterator<Self::Item>>(self) -> B
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Iterator::collect`
+
+error[E0277]: the trait bound `String: Borrow<string_intern::Symbol>` is not satisfied
+    --> src/simulator/engine/mod.rs:7799:40
+     |
+7799 |             if before_map.contains_key(fname) && remaining.contains(fname) {
+     |                           ------------ ^^^^^ the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+     |                           |
+     |                           required by a bound introduced by this call
+     |
+help: the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+      but trait `Borrow<str>` is implemented for it
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/str.rs:212:1
+     |
+ 212 | impl Borrow<str> for String {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for that trait implementation, expected `str`, found `string_intern::Symbol`
+note: required by a bound in `HashMap::<K, V, S, A>::contains_key`
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1266:12
+     |
+1264 |     pub fn contains_key<Q: ?Sized>(&self, k: &Q) -> bool
+     |            ------------ required by a bound in this associated function
+1265 |     where
+1266 |         K: Borrow<Q>,
+     |            ^^^^^^^^^ required by this bound in `HashMap::<K, V, S, A>::contains_key`
+
+error[E0277]: the trait bound `String: Borrow<string_intern::Symbol>` is not satisfied
+    --> src/simulator/engine/mod.rs:7799:69
+     |
+7799 |             if before_map.contains_key(fname) && remaining.contains(fname) {
+     |                                                            -------- ^^^^^ the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+     |                                                            |
+     |                                                            required by a bound introduced by this call
+     |
+help: the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+      but trait `Borrow<str>` is implemented for it
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/str.rs:212:1
+     |
+ 212 | impl Borrow<str> for String {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for that trait implementation, expected `str`, found `string_intern::Symbol`
+note: required by a bound in `HashSet::<T, S, A>::contains`
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/set.rs:808:12
+     |
+ 806 |     pub fn contains<Q: ?Sized>(&self, value: &Q) -> bool
+     |            -------- required by a bound in this associated function
+ 807 |     where
+ 808 |         T: Borrow<Q>,
+     |            ^^^^^^^^^ required by this bound in `HashSet::<T, S, A>::contains`
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7800:37
+     |
+7800 |                 ordered_fields.push(fname.clone());
+     |                                ---- ^^^^^^^^^^^^^ expected `String`, found `Symbol`
+     |                                |
+     |                                arguments to this method are incorrect
+     |
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1003:12
+     |
+1003 |     pub fn push(&mut self, value: T) {
+     |            ^^^^
+help: try using a conversion method
+     |
+7800 -                 ordered_fields.push(fname.clone());
+7800 +                 ordered_fields.push(fname.to_string());
+     |
+
+error[E0277]: the trait bound `String: Borrow<string_intern::Symbol>` is not satisfied
+    --> src/simulator/engine/mod.rs:7801:34
+     |
+7801 |                 remaining.remove(fname);
+     |                           ------ ^^^^^ the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+     |                           |
+     |                           required by a bound introduced by this call
+     |
+help: the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+      but trait `Borrow<str>` is implemented for it
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/str.rs:212:1
+     |
+ 212 | impl Borrow<str> for String {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for that trait implementation, expected `str`, found `string_intern::Symbol`
+note: required by a bound in `HashSet::<T, S, A>::remove`
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/set.rs:1083:12
+     |
+1081 |     pub fn remove<Q: ?Sized>(&mut self, value: &Q) -> bool
+     |            ------ required by a bound in this associated function
+1082 |     where
+1083 |         T: Borrow<Q>,
+     |            ^^^^^^^^^ required by this bound in `HashSet::<T, S, A>::remove`
+
+error[E0277]: the trait bound `String: Borrow<string_intern::Symbol>` is not satisfied
+    --> src/simulator/engine/mod.rs:7805:35
+     |
+7805 |             if remaining.contains(fname) {
+     |                          -------- ^^^^^ the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+     |                          |
+     |                          required by a bound introduced by this call
+     |
+help: the trait `Borrow<string_intern::Symbol>` is not implemented for `String`
+      but trait `Borrow<str>` is implemented for it
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/str.rs:212:1
+     |
+ 212 | impl Borrow<str> for String {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for that trait implementation, expected `str`, found `string_intern::Symbol`
+note: required by a bound in `HashSet::<T, S, A>::contains`
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/set.rs:808:12
+     |
+ 806 |     pub fn contains<Q: ?Sized>(&self, value: &Q) -> bool
+     |            -------- required by a bound in this associated function
+ 807 |     where
+ 808 |         T: Borrow<Q>,
+     |            ^^^^^^^^^ required by this bound in `HashSet::<T, S, A>::contains`
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7806:37
+     |
+7806 |                 ordered_fields.push(fname.clone());
+     |                                ---- ^^^^^^^^^^^^^ expected `String`, found `Symbol`
+     |                                |
+     |                                arguments to this method are incorrect
+     |
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/mod.rs:1003:12
+     |
+1003 |     pub fn push(&mut self, value: T) {
+     |            ^^^^
+help: try using a conversion method
+     |
+7806 -                 ordered_fields.push(fname.clone());
+7806 +                 ordered_fields.push(fname.to_string());
+     |
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:7821:39
+     |
+7821 |                     obj.fields.insert(fname.clone(), rv);
+     |                                ------ ^^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                                |
+     |                                arguments to this method are incorrect
+     |
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1328:12
+     |
+1328 |     pub fn insert(&mut self, k: K, v: V) -> Option<V> {
+     |            ^^^^^^
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:8380:25
+     |
+8379 |                     obj.fields.insert(
+     |                                ------ arguments to this method are incorrect
+8380 |                         "__sequencer".to_string(),
+     |                         ^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1328:12
+     |
+1328 |     pub fn insert(&mut self, k: K, v: V) -> Option<V> {
+     |            ^^^^^^
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:8444:53
+     |
+8444 |                 let child = self.state.alloc_object(&class_name);
+     |                                        ------------ ^^^^^^^^^^^ expected `Symbol`, found `&String`
+     |                                        |
+     |                                        arguments to this method are incorrect
+     |
+note: method defined here
+    --> src/simulator/state.rs:41:12
+     |
+  41 |     pub fn alloc_object(&mut self, class_name: crate::intern::Symbol) -> ObjId {
+     |            ^^^^^^^^^^^^            ---------------------------------
+
+error[E0277]: the trait bound `string_intern::Symbol: Borrow<String>` is not satisfied
+    --> src/simulator/engine/mod.rs:8450:60
+     |
+8450 |                 if let Some(cls) = self.design.classes.get(&class_name) {
+     |                                                        --- ^^^^^^^^^^^ unsatisfied trait bound
+     |                                                        |
+     |                                                        required by a bound introduced by this call
+     |
+help: the trait `Borrow<String>` is not implemented for `string_intern::Symbol`
+      but trait `Borrow<str>` is implemented for it
+    --> src/intern/string_intern.rs:154:1
+     |
+ 154 | impl std::borrow::Borrow<str> for Symbol {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for that trait implementation, expected `str`, found `String`
+note: required by a bound in `HashMap::<K, V, S, A>::get`
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1032:12
+     |
+1030 |     pub fn get<Q: ?Sized>(&self, k: &Q) -> Option<&V>
+     |            --- required by a bound in this associated function
+1031 |     where
+1032 |         K: Borrow<Q>,
+     |            ^^^^^^^^^ required by this bound in `HashMap::<K, V, S, A>::get`
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:8454:40
+     |
+8454 | ...                   .entry(field.name.as_str().to_string())
+     |                        ----- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Symbol`, found `String`
+     |                        |
+     |                        arguments to this method are incorrect
+     |
+help: the return type of this call is `String` due to the type of the argument passed
+    --> src/simulator/engine/mod.rs:8453:29
+     |
+8453 | / ...                   obj.fields
+8454 | | ...                       .entry(field.name.as_str().to_string())
+     | |__________________________________-------------------------------^
+     |                                    |
+     |                                    this argument influences the return type of `entry`
+note: method defined here
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1008:12
+     |
+1008 |     pub fn entry(&mut self, key: K) -> Entry<'_, K, V, A> {
+     |            ^^^^^
+
+error[E0277]: the trait bound `string_intern::Symbol: Borrow<String>` is not satisfied
+    --> src/simulator/engine/mod.rs:8749:18
+     |
+8749 |             .get(&class_name)
+     |              --- ^^^^^^^^^^^ unsatisfied trait bound
+     |              |
+     |              required by a bound introduced by this call
+     |
+help: the trait `Borrow<String>` is not implemented for `string_intern::Symbol`
+      but trait `Borrow<str>` is implemented for it
+    --> src/intern/string_intern.rs:154:1
+     |
+ 154 | impl std::borrow::Borrow<str> for Symbol {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: for that trait implementation, expected `str`, found `String`
+note: required by a bound in `HashMap::<K, V, S, A>::get`
+    --> /home/whale-d/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/collections/hash/map.rs:1032:12
+     |
+1030 |     pub fn get<Q: ?Sized>(&self, k: &Q) -> Option<&V>
+     |            --- required by a bound in this associated function
+1031 |     where
+1032 |         K: Borrow<Q>,
+     |            ^^^^^^^^^ required by this bound in `HashMap::<K, V, S, A>::get`
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:8758:69
+     |
+8758 |         if parent == "__uvm_driver" || self.is_uvm_driver_hierarchy(&parent) {
+     |                                             ----------------------- ^^^^^^^ expected `&str`, found `&Symbol`
+     |                                             |
+     |                                             arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7515:8
+     |
+7515 |     fn is_uvm_driver_hierarchy(&self, class_name: &str) -> bool {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^        ----------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:8761:71
+     |
+8761 |         if parent == "__uvm_monitor" || self.is_uvm_monitor_hierarchy(&parent) {
+     |                                              ------------------------ ^^^^^^^ expected `&str`, found `&Symbol`
+     |                                              |
+     |                                              arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7467:8
+     |
+7467 |     fn is_uvm_monitor_hierarchy(&self, class_name: &str) -> bool {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^        ----------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:8764:75
+     |
+8764 |         if parent == "__uvm_sequencer" || self.is_uvm_sequencer_hierarchy(&parent) {
+     |                                                -------------------------- ^^^^^^^ expected `&str`, found `&Symbol`
+     |                                                |
+     |                                                arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7451:8
+     |
+7451 |     fn is_uvm_sequencer_hierarchy(&self, class_name: &str) -> bool {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^        ----------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:8767:73
+     |
+8767 |         if parent == "__uvm_sequence" || self.is_uvm_sequence_hierarchy(&parent) {
+     |                                               ------------------------- ^^^^^^^ expected `&str`, found `&Symbol`
+     |                                               |
+     |                                               arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7435:8
+     |
+7435 |     fn is_uvm_sequence_hierarchy(&self, class_name: &str) -> bool {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^        ----------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:8770:83
+     |
+8770 |         if parent == "__uvm_sequence_item" || self.is_uvm_sequence_item_hierarchy(&parent) {
+     |                                                    ------------------------------ ^^^^^^^ expected `&str`, found `&Symbol`
+     |                                                    |
+     |                                                    arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7419:8
+     |
+7419 |     fn is_uvm_sequence_item_hierarchy(&self, class_name: &str) -> bool {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^        ----------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:8773:83
+     |
+8773 |         if parent == "__uvm_analysis_port" || self.is_uvm_analysis_port_hierarchy(&parent) {
+     |                                                    ------------------------------ ^^^^^^^ expected `&str`, found `&Symbol`
+     |                                                    |
+     |                                                    arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7483:8
+     |
+7483 |     fn is_uvm_analysis_port_hierarchy(&self, class_name: &str) -> bool {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^        ----------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:8776:81
+     |
+8776 |         if parent == "__uvm_analysis_imp" || self.is_uvm_analysis_imp_hierarchy(&parent) {
+     |                                                   ----------------------------- ^^^^^^^ expected `&str`, found `&Symbol`
+     |                                                   |
+     |                                                   arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7499:8
+     |
+7499 |     fn is_uvm_analysis_imp_hierarchy(&self, class_name: &str) -> bool {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^        ----------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:8780:75
+     |
+8780 |         if parent == "__uvm_component" || self.is_uvm_component_hierarchy(&parent) {
+     |                                                -------------------------- ^^^^^^^ expected `&str`, found `&Symbol`
+     |                                                |
+     |                                                arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7387:8
+     |
+7387 |     fn is_uvm_component_hierarchy(&self, class_name: &str) -> bool {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^        ----------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:8784:83
+     |
+8784 |         if parent == "__uvm_report_object" || self.is_uvm_report_object_hierarchy(&parent) {
+     |                                                    ------------------------------ ^^^^^^^ expected `&str`, found `&Symbol`
+     |                                                    |
+     |                                                    arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7403:8
+     |
+7403 |     fn is_uvm_report_object_hierarchy(&self, class_name: &str) -> bool {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^        ----------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:8788:69
+     |
+8788 |         if parent == "__uvm_object" || self.is_uvm_object_hierarchy(&parent) {
+     |                                             ----------------------- ^^^^^^^ expected `&str`, found `&Symbol`
+     |                                             |
+     |                                             arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:7371:8
+     |
+7371 |     fn is_uvm_object_hierarchy(&self, class_name: &str) -> bool {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^        ----------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:8792:56
+     |
+8792 |         let method_def = self.find_method_in_hierarchy(&parent, method)?.clone();
+     |                               ------------------------ ^^^^^^^ expected `&str`, found `&Symbol`
+     |                               |
+     |                               arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:8913:8
+     |
+8913 |     fn find_method_in_hierarchy(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^
+8914 |         &self,
+8915 |         class_name: &str,
+     |         ----------------
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:8925:31
+     |
+8918 |         let mut current = class_name;
+     |                           ---------- expected due to this value
+...
+8925 |                     current = parent;
+     |                               ^^^^^^ expected `&str`, found `&Symbol`
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+
+error[E0308]: mismatched types
+    --> src/simulator/engine/mod.rs:9977:45
+     |
+9977 |         let sig_id = match self.find_signal(sig_name) {
+     |                                 ----------- ^^^^^^^^ expected `&str`, found `&Symbol`
+     |                                 |
+     |                                 arguments to this method are incorrect
+     |
+     = note: expected reference `&str`
+                found reference `&string_intern::Symbol`
+note: method defined here
+    --> src/simulator/engine/mod.rs:6750:8
+     |
+6750 |     fn find_signal(&self, name: &str) -> Option<usize> {
+     |        ^^^^^^^^^^^        ----------
+
+warning: variable does not need to be mutable
+   --> src/frontend/compile_session.rs:233:13
+    |
+233 |         let mut designs: Vec<Design> = file_designs.into_iter().map(|(_, d)| d).collect();
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `chunk`
+   --> src/frontend/lexer.rs:164:17
+    |
+164 |             let chunk = u64::from_le_bytes(
+    |                 ^^^^^ help: if this is intentional, prefix it with an underscore: `_chunk`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+Some errors have detailed explanations: E0277, E0308, E0433, E0614, E0658.
+For more information about an error, try `rustc --explain E0277`.
+warning: `maria` (lib) generated 2 warnings
+error: could not compile `maria` (lib) due to 181 previous errors; 2 warnings emitted

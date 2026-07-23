@@ -255,7 +255,7 @@ pub struct DeclVar {
 }
 
 impl DeclVar {
-    pub fn resolved_width(&self, param_vals: &HashMap<String, i64>) -> Result<usize, String> {
+    pub fn resolved_width(&self, param_vals: &HashMap<Symbol, i64>) -> Result<usize, String> {
         let base_width = if let Some(r) = &self.range {
             r.width()
         } else if let Some(er) = &self.expr_range {
@@ -276,7 +276,7 @@ impl DeclVar {
     /// Returns all packed dimension widths from outermost to innermost.
     pub fn packed_dim_widths(
         &self,
-        param_vals: &HashMap<String, i64>,
+        param_vals: &HashMap<Symbol, i64>,
     ) -> Result<Vec<usize>, String> {
         let first_width = if let Some(er) = &self.expr_range {
             let r = resolve_expr_range(er, param_vals)?;
@@ -295,7 +295,7 @@ impl DeclVar {
     }
 
     /// Returns the width of the innermost element (last packed dim).
-    pub fn innermost_width(&self, param_vals: &HashMap<String, i64>) -> Result<usize, String> {
+    pub fn innermost_width(&self, param_vals: &HashMap<Symbol, i64>) -> Result<usize, String> {
         if let Some((er, _)) = self.extra_packed_dims.last() {
             let r = resolve_expr_range(er, param_vals)?;
             Ok(r.width())
@@ -310,7 +310,7 @@ impl DeclVar {
     }
 
     /// Returns the number of elements at the outermost packed dimension.
-    pub fn outer_depth(&self, param_vals: &HashMap<String, i64>) -> Result<usize, String> {
+    pub fn outer_depth(&self, param_vals: &HashMap<Symbol, i64>) -> Result<usize, String> {
         if let Some(er) = &self.expr_range {
             let r = resolve_expr_range(er, param_vals)?;
             Ok(r.width())
@@ -601,7 +601,7 @@ pub struct FunctionPort {
 }
 
 impl FunctionPort {
-    pub fn resolved_width(&self, param_vals: &HashMap<String, i64>) -> Result<usize, String> {
+    pub fn resolved_width(&self, param_vals: &HashMap<Symbol, i64>) -> Result<usize, String> {
         if let Some(r) = &self.range {
             Ok(r.width())
         } else if let Some(er) = &self.expr_range {

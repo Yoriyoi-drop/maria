@@ -160,7 +160,7 @@ pub fn simulate_signals(
         .iter()
         .map(|s| {
             (
-                s.name.clone(),
+                s.name.to_string(),
                 engine
                     .state
                     .read_signal(

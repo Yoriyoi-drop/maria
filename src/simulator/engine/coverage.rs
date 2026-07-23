@@ -59,7 +59,7 @@ impl SimulationEngine {
                 let val = self
                     .evaluate_expr(&cp.expr)
                     .unwrap_or(LogicVec::from_u64(0, 32));
-                cp_values.insert(cp.name.clone(), val.to_u64());
+                cp_values.insert(cp.name.as_str().to_string(), val.to_u64());
 
                 // Default bin: just record the actual value
                 let bin_key = format!("{}={}", cp.name, val.to_u64());
@@ -79,7 +79,7 @@ impl SimulationEngine {
                 *total += 1;
                 let mut parts: Vec<String> = Vec::new();
                 for cp_name in &cross.coverpoints {
-                    let val = cp_values.get(cp_name).copied().unwrap_or(0);
+                    let val = cp_values.get(cp_name.as_str()).copied().unwrap_or(0);
                     parts.push(format!("{}={}", cp_name, val));
                 }
                 let bin_key = parts.join(" x ");

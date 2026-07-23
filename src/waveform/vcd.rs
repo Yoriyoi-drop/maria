@@ -232,7 +232,7 @@ impl VcdWriter {
 
         let mut scope_map: HashMap<Vec<String>, Vec<(String, usize, usize)>> = HashMap::new();
         for sig in &design.top.signals {
-            let (scope_parts, bare_name) = Self::parse_scope(&sig.name);
+            let (scope_parts, bare_name) = Self::parse_scope(sig.name.as_str());
             scope_map
                 .entry(scope_parts)
                 .or_default()
@@ -261,7 +261,7 @@ impl VcdWriter {
         self.write_raw(b"$dumpvars\n")?;
 
         for sig in &design.top.signals {
-            let (sig_scope, sig_bare) = Self::parse_scope(&sig.name);
+            let (sig_scope, sig_bare) = Self::parse_scope(sig.name.as_str());
             if sig.array_depth > 1 {
                 for elem in 0..sig.array_depth {
                     if let Some(code) = self.code_for_signal(&sig_scope, &sig_bare, Some(elem)) {
@@ -295,7 +295,7 @@ impl VcdWriter {
             return Ok(());
         }
         for (sig_val, sig) in state.iter().zip(design.top.signals.iter()) {
-            let (sig_scope, sig_bare) = Self::parse_scope(&sig.name);
+            let (sig_scope, sig_bare) = Self::parse_scope(sig.name.as_str());
             if sig.array_depth > 1 {
                 for elem in 0..sig.array_depth {
                     if let Some(code) = self.code_for_signal(&sig_scope, &sig_bare, Some(elem)) {
@@ -321,7 +321,7 @@ impl VcdWriter {
             return Ok(());
         }
         for (sig_val, sig) in state.iter().zip(design.top.signals.iter()) {
-            let (sig_scope, sig_bare) = Self::parse_scope(&sig.name);
+            let (sig_scope, sig_bare) = Self::parse_scope(sig.name.as_str());
             if sig.array_depth > 1 {
                 for elem in 0..sig.array_depth {
                     if let Some(code) = self.code_for_signal(&sig_scope, &sig_bare, Some(elem)) {

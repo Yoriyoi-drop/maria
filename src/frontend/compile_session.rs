@@ -10,8 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use crate::ast::Design;
-use crate::cache::{CacheManager, compute_checksum, AstCache};
+use crate::ast::Design;    use crate::cache::{CacheManager, compute_checksum};
 use crate::error::SimError;
 use crate::frontend::discovery::{DiscoveryOptions, FileDiscovery};
 use crate::frontend::io::MmapFile;
@@ -344,7 +343,7 @@ impl CompileSession {
                     .iter()
                     .filter_map(|item| {
                         if let crate::ast::ModuleItem::Instance(inst) = item {
-                            Some(Symbol::intern(&inst.module_name))
+                            Some(inst.module_name)
                         } else {
                             None
                         }
@@ -355,7 +354,7 @@ impl CompileSession {
                     .iter()
                     .filter_map(|item| {
                         if let crate::ast::ModuleItem::Import { package, item: import_item } = item {
-                            Some((Symbol::intern(package), Symbol::intern(import_item)))
+                            Some((*package, *import_item))
                         } else {
                             None
                         }
@@ -363,15 +362,15 @@ impl CompileSession {
                     .collect();
 
                 self.module_index.insert(
-                    Symbol::intern(&module.name),
+                    module.name,
                     EntryKind::Module,
                     ModuleMeta {
-                        name: Symbol::intern(&module.name),
+                        name: module.name,
                         file: path.clone(),
                         file_checksum: checksum,
-                        ports: module.ports.iter().map(|p| Symbol::intern(&p.name)).collect(),
+                        ports: module.ports.iter().map(|p| p.name).collect(),
                         params: module.params.iter().map(|p| ParamMeta {
-                            name: Symbol::intern(&p.name),
+                            name: p.name,
                             has_default: p.default.is_some(),
                             is_type: p.is_type_param,
                             is_local: false,
@@ -385,16 +384,15 @@ impl CompileSession {
                 let node_id = self.dep_graph.add_node(
                     crate::scheduler::Task::ParseFile(path.to_string_lossy().to_string())
                 );
-                module_nodes.push(node_id);
-                module_to_node.insert(Symbol::intern(&module.name), node_id);
+                module_nodes.push(node_id);                    module_to_node.insert(module.name, node_id);
             }
 
             for pkg in &design.packages {
                 self.module_index.insert(
-                    Symbol::intern(&pkg.name),
+                    pkg.name,
                     EntryKind::Package,
                     ModuleMeta {
-                        name: Symbol::intern(&pkg.name),
+                        name: pkg.name,
                         file: path.clone(),
                         file_checksum: checksum,
                         ports: vec![],
@@ -413,12 +411,12 @@ impl CompileSession {
         // Module A instantiates module B → A depends on B (edge B → A)
         for design in designs.iter() {
             for module in &design.modules {
-                let mod_sym = Symbol::intern(&module.name);
+                let mod_sym = module.name;
                 let Some(&from) = module_to_node.get(&mod_sym) else { continue; };
 
                 for item in &module.items {
                     if let crate::ast::ModuleItem::Instance(inst) = item {
-                        let inst_sym = Symbol::intern(&inst.module_name);
+                        let inst_sym = inst.module_name;
                         if let Some(&to_node) = module_to_node.get(&inst_sym) {
                             // from (instantiator) depends on to (instantiated)
                             self.dep_graph.add_edge(from, to_node);

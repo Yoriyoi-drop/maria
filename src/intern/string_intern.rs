@@ -16,7 +16,7 @@ use dashmap::{DashMap, Entry};
 /// let sym = Symbol::intern("hello");
 /// assert_eq!(sym.as_str(), "hello");
 /// ```
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub struct Symbol(u32);
 
 impl Symbol {
@@ -48,6 +48,68 @@ impl Symbol {
     pub unsafe fn from_index(idx: u32) -> Self {
         Symbol(idx)
     }
+
+    // ─── Convenience methods (delegate to as_str()) ───
+
+    /// Check if the symbol's string starts with the given pattern.
+    pub fn starts_with(&self, pat: &str) -> bool {
+        self.as_str().starts_with(pat)
+    }
+
+    /// Check if the symbol's string ends with the given pattern.
+    pub fn ends_with(&self, pat: &str) -> bool {
+        self.as_str().ends_with(pat)
+    }
+
+    /// Check if the symbol's string contains the given pattern.
+    pub fn contains(&self, pat: &str) -> bool {
+        self.as_str().contains(pat)
+    }
+
+    /// Split the symbol's string by the given delimiter.
+    pub fn split<'a>(&'a self, pat: &'a str) -> std::str::Split<'a, &'a str> {
+        self.as_str().split(pat)
+    }
+
+    /// Split the symbol's string once by the given delimiter.
+    pub fn split_once(&self, pat: &str) -> Option<(&str, &str)> {
+        self.as_str().split_once(pat)
+    }
+
+    /// Strip the given suffix from the symbol's string.
+    pub fn strip_suffix(&self, pat: &str) -> Option<&'static str> {
+        self.as_str().strip_suffix(pat)
+    }
+
+    /// Convert to lowercase (returns owned String).
+    pub fn to_lowercase(&self) -> String {
+        self.as_str().to_lowercase()
+    }
+
+    /// Get the length of the symbol's string.
+    pub fn len(&self) -> usize {
+        self.as_str().len()
+    }
+
+    /// Check if the symbol's string is empty.
+    pub fn is_empty(&self) -> bool {
+        self.as_str().is_empty()
+    }
+
+    /// Convert to a `&str` slice (alias for `as_str()`).
+    pub fn as_deref(&self) -> &'static str {
+        self.as_str()
+    }
+
+    /// Iterate over the characters of the symbol's string.
+    pub fn chars(&self) -> std::str::Chars<'_> {
+        self.as_str().chars()
+    }
+
+    /// Search for a character from the right.
+    pub fn rfind(&self, pat: char) -> Option<usize> {
+        self.as_str().rfind(pat)
+    }
 }
 
 impl fmt::Display for Symbol {
@@ -58,7 +120,9 @@ impl fmt::Display for Symbol {
 
 impl Hash for Symbol {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.hash(state);
+        // Hash by string content, not u32 index, to be consistent with Borrow<str>.
+        // This enables HashMap<Symbol, V>::get("literal_str") to work correctly.
+        self.as_str().hash(state);
     }
 }
 
@@ -86,6 +150,19 @@ impl AsRef<str> for Symbol {
     }
 }
 
+/// Allows `HashMap<Symbol, V>::get("string_literal")` or `HashMap<Symbol, V>::get(name_str)`
+impl std::borrow::Borrow<str> for Symbol {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl PartialEq<String> for Symbol {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
 // ─── Global String Table ───
 
 /// Thread-safe string table with O(1) DashMap lookup and O(1) intern.
@@ -101,7 +178,8 @@ struct StringTable {
     /// O(1) hash-based lookup — string → u32 index
     lookup: DashMap<String, u32, fxhash::FxBuildHasher>,
     /// Indexed storage — `Box::leak`'d strings for stable `&'static str` pointers.
-    /// Append-only: once pushed, a string lives forever.
+    /// Append-only: once pushed, a string lives forever.freebuff --continue 2026-07-21T15-24-41.556Z
+
     strings: parking_lot::Mutex<Vec<&'static str>>,
     // ID is derived from strings.len() under the lock — no separate counter needed.
 }

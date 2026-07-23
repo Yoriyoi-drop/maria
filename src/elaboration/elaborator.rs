@@ -5,6 +5,7 @@ use crate::ast::types::const_eval_simple;
 use crate::ast::types::const_eval_with_params;
 use crate::ast::*;
 use crate::error::SimError;
+use crate::intern::Symbol;
 use crate::ir::*;
 
 const BUILTIN_UVM_CLASSES: &[&str] = &[
@@ -27,38 +28,38 @@ const BUILTIN_UVM_CLASSES: &[&str] = &[
 
 pub struct Elaborator {
     pub design: Design,
-    pub modules: HashMap<String, IrModule>,
-    pub param_vals: HashMap<String, i64>,
-    pub typedef_map: HashMap<String, usize>,
-    pub typedef_field_map: HashMap<String, Vec<StructFieldInfo>>,
-    pub package_symbols: HashMap<String, HashMap<String, PackageItem>>,
+    pub modules: HashMap<Symbol, IrModule>,
+    pub param_vals: HashMap<Symbol, i64>,
+    pub typedef_map: HashMap<Symbol, usize>,
+    pub typedef_field_map: HashMap<Symbol, Vec<StructFieldInfo>>,
+    pub package_symbols: HashMap<Symbol, HashMap<Symbol, PackageItem>>,
     pub specialized_classes: std::cell::RefCell<Vec<ClassDecl>>,
 }
 
 impl Elaborator {
     pub fn new(design: Design) -> Self {
-        let mut package_symbols: HashMap<String, HashMap<String, PackageItem>> = HashMap::new();
+        let mut package_symbols: HashMap<Symbol, HashMap<Symbol, PackageItem>> = HashMap::new();
         // First pass: collect directly declared items
         for pkg in &design.packages {
             let mut items = HashMap::new();
             for item in &pkg.items {
                 let name = match item {
-                    PackageItem::Param(p) => p.name.clone(),
-                    PackageItem::Typedef(t) => t.name.clone(),
-                    PackageItem::Function(f) => f.name.clone(),
-                    PackageItem::Task(t) => t.name.clone(),
+                    PackageItem::Param(p) => p.name,
+                    PackageItem::Typedef(t) => t.name,
+                    PackageItem::Function(f) => f.name,
+                    PackageItem::Task(t) => t.name,
                     PackageItem::Decl(d) => {
-                        d.names.first().map(|v| v.name.clone()).unwrap_or_default()
+                        d.names.first().map(|v| v.name).unwrap_or(Symbol::EMPTY)
                     }
                     PackageItem::Import { .. } => continue,
                     PackageItem::Export { .. } => continue,
                 };
                 items.insert(name, item.clone());
             }
-            package_symbols.insert(pkg.name.clone(), items);
+            package_symbols.insert(pkg.name, items);
         }
         // Second pass: resolve imports within packages
-        let imports: Vec<(String, String, String)> = design
+        let imports: Vec<(Symbol, Symbol, Symbol)> = design
             .packages
             .iter()
             .flat_map(|pkg| {
@@ -68,21 +69,21 @@ impl Elaborator {
                         item: import_item,
                     } = item
                     {
-                        Some((pkg.name.clone(), package.clone(), import_item.clone()))
+                        Some((pkg.name, *package, *import_item))
                     } else {
                         None
                     }
                 })
             })
             .collect();
-        for (pkg_name, source_pkg_name, import_item) in imports {
-            let source_items = package_symbols.get(&source_pkg_name).cloned();
+        for (pkg_name, source_pkg_name, import_item) in &imports {
+            let source_items = package_symbols.get(source_pkg_name).cloned();
             if let Some(source_items) = source_items {
-                if let Some(pkg_items) = package_symbols.get_mut(&pkg_name) {
-                    let names: Vec<String> = if import_item == "*" {
-                        source_items.keys().cloned().collect()
+                if let Some(pkg_items) = package_symbols.get_mut(pkg_name) {
+                    let names: Vec<Symbol> = if import_item == &Symbol::intern("*") {
+                        source_items.keys().copied().collect()
                     } else {
-                        vec![import_item]
+                        vec![*import_item]
                     };
                     for name in names {
                         if let Some(source_item) = source_items.get(&name) {
@@ -95,7 +96,7 @@ impl Elaborator {
             }
         }
         // Third pass: resolve exports within packages (re-export items from other packages)
-        let exports: Vec<(String, String, String)> = design
+        let exports: Vec<(Symbol, Symbol, Symbol)> = design
             .packages
             .iter()
             .flat_map(|pkg| {
@@ -105,21 +106,21 @@ impl Elaborator {
                         item: export_item,
                     } = item
                     {
-                        Some((pkg.name.clone(), package.clone(), export_item.clone()))
+                        Some((pkg.name, *package, *export_item))
                     } else {
                         None
                     }
                 })
             })
             .collect();
-        for (pkg_name, source_pkg_name, export_item) in exports {
-            let source_items = package_symbols.get(&source_pkg_name).cloned();
+        for (pkg_name, source_pkg_name, export_item) in &exports {
+            let source_items = package_symbols.get(source_pkg_name).cloned();
             if let Some(source_items) = source_items {
-                if let Some(pkg_items) = package_symbols.get_mut(&pkg_name) {
-                    let names: Vec<String> = if export_item == "*" {
-                        source_items.keys().cloned().collect()
+                if let Some(pkg_items) = package_symbols.get_mut(pkg_name) {
+                    let names: Vec<Symbol> = if export_item == &Symbol::intern("*") {
+                        source_items.keys().copied().collect()
                     } else {
-                        vec![export_item]
+                        vec![*export_item]
                     };
                     for name in names {
                         if let Some(source_item) = source_items.get(&name) {
@@ -164,7 +165,7 @@ impl Elaborator {
         // Pre-pass: import package functions/tasks into modules before inlining
         let pkg_symbols = &self.package_symbols;
         for module in &mut self.design.modules {
-            let imports: Vec<(String, String)> = module
+            let imports: Vec<(Symbol, Symbol)> = module
                 .items
                 .iter()
                 .filter_map(|item| {
@@ -173,25 +174,25 @@ impl Elaborator {
                         item: import_item,
                     } = item
                     {
-                        Some((package.clone(), import_item.clone()))
+                        Some((*package, *import_item))
                     } else {
                         None
                     }
                 })
                 .collect();
             // Also include $unit-level imports
-            let all_imports: Vec<(String, String)> = {
+            let all_imports: Vec<(Symbol, Symbol)> = {
                 let mut imps = imports;
                 for (pkg, item) in &self.design.unit_imports {
                     if !imps.iter().any(|(p, i)| p == pkg && i == item) {
-                        imps.push((pkg.clone(), item.clone()));
+                        imps.push((*pkg, *item));
                     }
                 }
                 imps
             };
             for (package, import_item) in &all_imports {
                 if let Some(pkg_items) = pkg_symbols.get(package) {
-                    let names: Vec<&str> = if import_item == "*" {
+                    let names: Vec<&str> = if *import_item == Symbol::intern("*") {
                         pkg_items.keys().map(|s| s.as_str()).collect()
                     } else {
                         vec![import_item.as_str()]
@@ -260,7 +261,8 @@ impl Elaborator {
         // Inline function calls in all modules
         for module in &mut self.design.modules {
             let temps = crate::ast::inline::inline_func_calls_in_module(module)?;
-            for (name, width) in temps {
+            for (name_str, width) in temps {
+                let name = Symbol::intern(&name_str);
                 module.decls.push(Decl {
                     dtype: DataType::Logic,
                     kind: DeclKind::Reg,
@@ -302,8 +304,8 @@ impl Elaborator {
         }
 
         // First pass: elaborate all modules
-        let module_names: Vec<String> =
-            self.design.modules.iter().map(|m| m.name.clone()).collect();
+        let module_names: Vec<Symbol> =
+            self.design.modules.iter().map(|m| m.name).collect();
 
         let modules_snapshot: Vec<Module> = self.design.modules.clone();
         for module in &modules_snapshot {
@@ -314,7 +316,7 @@ impl Elaborator {
         // Elaborate interfaces as signal-only modules
         for iface in &self.design.interfaces {
             let mut signals = Vec::new();
-            let mut signal_map: HashMap<String, SignalId> = HashMap::new();
+            let mut signal_map: HashMap<Symbol, SignalId> = HashMap::new();
             let mut next_id = 0usize;
             for decl in &iface.decls {
                 let decl_is_2state = is_2state_type(&decl.dtype);
@@ -415,12 +417,12 @@ impl Elaborator {
 
         // Find top module
         let top_name = match top_module {
-            Some(name) => name.to_string(),
+            Some(name) => Symbol::intern(name),
             None => self
                 .design
                 .modules
                 .first()
-                .map(|m| m.name.clone())
+                .map(|m| m.name)
                 .ok_or_else(|| SimError::elaborate("no modules in design"))?,
         };
 
@@ -445,39 +447,40 @@ impl Elaborator {
         let mut classes = self.elaborate_classes()?;
 
         // Inject built-in __uvm_object and __uvm_component classes
-        if !classes.contains_key("__uvm_object") {
+        if !classes.contains_key(&Symbol::intern("__uvm_object")) {
             for (_, cls) in classes.iter_mut() {
-                match cls.extends.as_deref() {
-                    Some("uvm_object") => cls.extends = Some("__uvm_object".to_string()),
-                    Some("uvm_component") => cls.extends = Some("__uvm_component".to_string()),
+                let extends_str = cls.extends.map(|s| s.as_str());
+                match extends_str {
+                    Some("uvm_object") => cls.extends = Some(Symbol::intern("__uvm_object")),
+                    Some("uvm_component") => cls.extends = Some(Symbol::intern("__uvm_component")),
                     Some("uvm_sequence_item") => {
-                        cls.extends = Some("__uvm_sequence_item".to_string())
+                        cls.extends = Some(Symbol::intern("__uvm_sequence_item"))
                     }
-                    Some("uvm_sequence") => cls.extends = Some("__uvm_sequence".to_string()),
-                    Some("uvm_sequencer") => cls.extends = Some("__uvm_sequencer".to_string()),
-                    Some("uvm_driver") => cls.extends = Some("__uvm_driver".to_string()),
-                    Some("uvm_monitor") => cls.extends = Some("__uvm_monitor".to_string()),
-                    Some("uvm_scoreboard") => cls.extends = Some("__uvm_scoreboard".to_string()),
+                    Some("uvm_sequence") => cls.extends = Some(Symbol::intern("__uvm_sequence")),
+                    Some("uvm_sequencer") => cls.extends = Some(Symbol::intern("__uvm_sequencer")),
+                    Some("uvm_driver") => cls.extends = Some(Symbol::intern("__uvm_driver")),
+                    Some("uvm_monitor") => cls.extends = Some(Symbol::intern("__uvm_monitor")),
+                    Some("uvm_scoreboard") => cls.extends = Some(Symbol::intern("__uvm_scoreboard")),
                     Some("uvm_analysis_port") => {
-                        cls.extends = Some("__uvm_analysis_port".to_string())
+                        cls.extends = Some(Symbol::intern("__uvm_analysis_port"))
                     }
                     Some("uvm_analysis_imp") => {
-                        cls.extends = Some("__uvm_analysis_imp".to_string())
+                        cls.extends = Some(Symbol::intern("__uvm_analysis_imp"))
                     }
-                    Some("uvm_test") => cls.extends = Some("__uvm_test".to_string()),
-                    Some("uvm_config_db") => cls.extends = Some("__uvm_config_db".to_string()),
+                    Some("uvm_test") => cls.extends = Some(Symbol::intern("__uvm_test")),
+                    Some("uvm_config_db") => cls.extends = Some(Symbol::intern("__uvm_config_db")),
                     Some("uvm_report_object") => {
-                        cls.extends = Some("__uvm_report_object".to_string())
+                        cls.extends = Some(Symbol::intern("__uvm_report_object"))
                     }
-                    Some("uvm_factory") => cls.extends = Some("__uvm_factory".to_string()),
-                    Some("uvm_resource_db") => cls.extends = Some("__uvm_resource_db".to_string()),
+                    Some("uvm_factory") => cls.extends = Some(Symbol::intern("__uvm_factory")),
+                    Some("uvm_resource_db") => cls.extends = Some(Symbol::intern("__uvm_resource_db")),
                     _ => {}
                 }
             }
             classes.insert(
-                "__uvm_object".to_string(),
+                Symbol::intern("__uvm_object"),
                 IrClassDef {
-                    name: "__uvm_object".to_string(),
+                    name: Symbol::intern("__uvm_object"),
                     extends: None,
                     type_params: vec![],
                     fields: vec![],
@@ -487,10 +490,10 @@ impl Elaborator {
                 },
             );
             classes.insert(
-                "__uvm_report_object".to_string(),
+                Symbol::intern("__uvm_report_object"),
                 IrClassDef {
-                    name: "__uvm_report_object".to_string(),
-                    extends: Some("__uvm_object".to_string()),
+                    name: Symbol::intern("__uvm_report_object"),
+                    extends: Some(Symbol::intern("__uvm_object")),
                     type_params: vec![],
                     fields: vec![],
                     methods: vec![],
@@ -499,10 +502,10 @@ impl Elaborator {
                 },
             );
             classes.insert(
-                "__uvm_component".to_string(),
+                Symbol::intern("__uvm_component"),
                 IrClassDef {
-                    name: "__uvm_component".to_string(),
-                    extends: Some("__uvm_report_object".to_string()),
+                    name: Symbol::intern("__uvm_component"),
+                    extends: Some(Symbol::intern("__uvm_report_object")),
                     type_params: vec![],
                     fields: vec![],
                     methods: vec![],
@@ -511,10 +514,10 @@ impl Elaborator {
                 },
             );
             classes.insert(
-                "__uvm_sequence_item".to_string(),
+                Symbol::intern("__uvm_sequence_item"),
                 IrClassDef {
-                    name: "__uvm_sequence_item".to_string(),
-                    extends: Some("__uvm_object".to_string()),
+                    name: Symbol::intern("__uvm_sequence_item"),
+                    extends: Some(Symbol::intern("__uvm_object")),
                     type_params: vec![],
                     fields: vec![],
                     methods: vec![],
@@ -523,10 +526,10 @@ impl Elaborator {
                 },
             );
             classes.insert(
-                "__uvm_sequence".to_string(),
+                Symbol::intern("__uvm_sequence"),
                 IrClassDef {
-                    name: "__uvm_sequence".to_string(),
-                    extends: Some("__uvm_sequence_item".to_string()),
+                    name: Symbol::intern("__uvm_sequence"),
+                    extends: Some(Symbol::intern("__uvm_sequence_item")),
                     type_params: vec![],
                     fields: vec![],
                     methods: vec![],
@@ -535,10 +538,10 @@ impl Elaborator {
                 },
             );
             classes.insert(
-                "__uvm_sequencer".to_string(),
+                Symbol::intern("__uvm_sequencer"),
                 IrClassDef {
-                    name: "__uvm_sequencer".to_string(),
-                    extends: Some("__uvm_component".to_string()),
+                    name: Symbol::intern("__uvm_sequencer"),
+                    extends: Some(Symbol::intern("__uvm_component")),
                     type_params: vec![],
                     fields: vec![],
                     methods: vec![],
@@ -547,10 +550,10 @@ impl Elaborator {
                 },
             );
             classes.insert(
-                "__uvm_driver".to_string(),
+                Symbol::intern("__uvm_driver"),
                 IrClassDef {
-                    name: "__uvm_driver".to_string(),
-                    extends: Some("__uvm_component".to_string()),
+                    name: Symbol::intern("__uvm_driver"),
+                    extends: Some(Symbol::intern("__uvm_component")),
                     type_params: vec![],
                     fields: vec![],
                     methods: vec![],
@@ -559,10 +562,10 @@ impl Elaborator {
                 },
             );
             classes.insert(
-                "__uvm_monitor".to_string(),
+                Symbol::intern("__uvm_monitor"),
                 IrClassDef {
-                    name: "__uvm_monitor".to_string(),
-                    extends: Some("__uvm_component".to_string()),
+                    name: Symbol::intern("__uvm_monitor"),
+                    extends: Some(Symbol::intern("__uvm_component")),
                     type_params: vec![],
                     fields: vec![],
                     methods: vec![],
@@ -571,10 +574,10 @@ impl Elaborator {
                 },
             );
             classes.insert(
-                "__uvm_scoreboard".to_string(),
+                Symbol::intern("__uvm_scoreboard"),
                 IrClassDef {
-                    name: "__uvm_scoreboard".to_string(),
-                    extends: Some("__uvm_component".to_string()),
+                    name: Symbol::intern("__uvm_scoreboard"),
+                    extends: Some(Symbol::intern("__uvm_component")),
                     type_params: vec![],
                     fields: vec![],
                     methods: vec![],
@@ -583,10 +586,10 @@ impl Elaborator {
                 },
             );
             classes.insert(
-                "__uvm_analysis_port".to_string(),
+                Symbol::intern("__uvm_analysis_port"),
                 IrClassDef {
-                    name: "__uvm_analysis_port".to_string(),
-                    extends: Some("__uvm_object".to_string()),
+                    name: Symbol::intern("__uvm_analysis_port"),
+                    extends: Some(Symbol::intern("__uvm_object")),
                     type_params: vec![],
                     fields: vec![],
                     methods: vec![],
@@ -595,10 +598,10 @@ impl Elaborator {
                 },
             );
             classes.insert(
-                "__uvm_analysis_imp".to_string(),
+                Symbol::intern("__uvm_analysis_imp"),
                 IrClassDef {
-                    name: "__uvm_analysis_imp".to_string(),
-                    extends: Some("__uvm_object".to_string()),
+                    name: Symbol::intern("__uvm_analysis_imp"),
+                    extends: Some(Symbol::intern("__uvm_object")),
                     type_params: vec![],
                     fields: vec![],
                     methods: vec![],
@@ -607,10 +610,10 @@ impl Elaborator {
                 },
             );
             classes.insert(
-                "__uvm_test".to_string(),
+                Symbol::intern("__uvm_test"),
                 IrClassDef {
-                    name: "__uvm_test".to_string(),
-                    extends: Some("__uvm_component".to_string()),
+                    name: Symbol::intern("__uvm_test"),
+                    extends: Some(Symbol::intern("__uvm_component")),
                     type_params: vec![],
                     fields: vec![],
                     methods: vec![],
@@ -619,10 +622,10 @@ impl Elaborator {
                 },
             );
             classes.insert(
-                "__uvm_config_db".to_string(),
+                Symbol::intern("__uvm_config_db"),
                 IrClassDef {
-                    name: "__uvm_config_db".to_string(),
-                    extends: Some("__uvm_object".to_string()),
+                    name: Symbol::intern("__uvm_config_db"),
+                    extends: Some(Symbol::intern("__uvm_object")),
                     type_params: vec![],
                     fields: vec![],
                     methods: vec![],
@@ -631,10 +634,10 @@ impl Elaborator {
                 },
             );
             classes.insert(
-                "__uvm_resource_db".to_string(),
+                Symbol::intern("__uvm_resource_db"),
                 IrClassDef {
-                    name: "__uvm_resource_db".to_string(),
-                    extends: Some("__uvm_object".to_string()),
+                    name: Symbol::intern("__uvm_resource_db"),
+                    extends: Some(Symbol::intern("__uvm_object")),
                     type_params: vec![],
                     fields: vec![],
                     methods: vec![],
@@ -643,10 +646,10 @@ impl Elaborator {
                 },
             );
             classes.insert(
-                "__uvm_factory".to_string(),
+                Symbol::intern("__uvm_factory"),
                 IrClassDef {
-                    name: "__uvm_factory".to_string(),
-                    extends: Some("__uvm_object".to_string()),
+                    name: Symbol::intern("__uvm_factory"),
+                    extends: Some(Symbol::intern("__uvm_object")),
                     type_params: vec![],
                     fields: vec![],
                     methods: vec![],
@@ -658,13 +661,13 @@ impl Elaborator {
 
         self.detect_multi_driver_signals(&mut top)?;
 
-        let top_signal_map: HashMap<String, SignalId> = top
+        let top_signal_map: HashMap<Symbol, SignalId> = top
             .signals
             .iter()
             .enumerate()
-            .map(|(i, s)| (s.name.clone(), i))
+            .map(|(i, s)| (s.name, i))
             .collect();
-        let covergroups = self.elaborate_covergroups(&top_name, &top_signal_map, &top.signals)?;
+        let covergroups = self.elaborate_covergroups(top_name.as_str(), &top_signal_map, &top.signals)?;
         let dpi_imports = self.elaborate_dpi_imports()?;
 
         let mut specify_items = Vec::new();
@@ -677,7 +680,7 @@ impl Elaborator {
         }
 
         // Collect recursive function declarations from module items for runtime evaluation
-        let mut module_functions: HashMap<String, crate::ast::types::FunctionDecl> = HashMap::new();
+        let mut module_functions: HashMap<Symbol, crate::ast::types::FunctionDecl> = HashMap::new();
         for module in &self.design.modules {
             for item in &module.items {
                 if let ModuleItem::Func(f) = item {
@@ -703,15 +706,15 @@ impl Elaborator {
     fn resolve_param_values(
         &self,
         module: &Module,
-        instance_overrides: &HashMap<String, i64>,
-    ) -> Result<HashMap<String, i64>, SimError> {
+        instance_overrides: &HashMap<Symbol, i64>,
+    ) -> Result<HashMap<Symbol, i64>, SimError> {
         resolve_param_values_fn(module, instance_overrides).map_err(|e| SimError::elaborate(e))
     }
 
-    fn store_typedef_fields(&mut self, name: &str, dtype: &DataType) {
+    fn store_typedef_fields(&mut self, name: Symbol, dtype: &DataType) {
         let fields = Self::compute_struct_fields(dtype);
         if !fields.is_empty() {
-            self.typedef_field_map.insert(name.to_string(), fields);
+            self.typedef_field_map.insert(name, fields);
         }
     }
 
@@ -802,7 +805,7 @@ impl Elaborator {
     fn elaborate_module(
         &mut self,
         module: &Module,
-        known_modules: &[String],
+        known_modules: &[Symbol],
     ) -> Result<IrModule, SimError> {
         let param_vals = self.resolve_param_values(module, &HashMap::new())?;
         self.elaborate_module_with_params(module, known_modules, &param_vals)
@@ -811,8 +814,8 @@ impl Elaborator {
     fn elaborate_module_with_params(
         &mut self,
         module: &Module,
-        known_modules: &[String],
-        param_vals: &HashMap<String, i64>,
+        known_modules: &[Symbol],
+        param_vals: &HashMap<Symbol, i64>,
     ) -> Result<IrModule, SimError> {
         self.elaborate_module_with_params_and_type(
             module,
@@ -825,9 +828,9 @@ impl Elaborator {
     fn elaborate_module_with_params_and_type(
         &mut self,
         module: &Module,
-        known_modules: &[String],
-        param_vals: &HashMap<String, i64>,
-        type_param_overrides: &HashMap<String, usize>,
+        known_modules: &[Symbol],
+        param_vals: &HashMap<Symbol, i64>,
+        type_param_overrides: &HashMap<Symbol, usize>,
     ) -> Result<IrModule, SimError> {
         let mut effective_params = param_vals.clone();
 
@@ -845,7 +848,7 @@ impl Elaborator {
         // Process $unit imports
         for (package, import_item) in &self.design.unit_imports {
             if let Some(pkg_items) = self.package_symbols.get(package) {
-                let names: Vec<&str> = if import_item == "*" {
+                let names: Vec<&str> = if import_item.as_str() == "*" {
                     pkg_items.keys().map(|s| s.as_str()).collect()
                 } else {
                     vec![import_item.as_str()]
@@ -875,7 +878,7 @@ impl Elaborator {
             } = item
             {
                 if let Some(pkg_items) = self.package_symbols.get(package) {
-                    let names: Vec<&str> = if import_item == "*" {
+                    let names: Vec<&str> = if import_item.as_str() == "*" {
                         pkg_items.keys().map(|s| s.as_str()).collect()
                     } else {
                         vec![import_item.as_str()]
@@ -898,37 +901,37 @@ impl Elaborator {
                 }
                 // Process module-level imports for typedefs
                 if let Some(pkg_items) = self.package_symbols.get(package) {
-                    let names: Vec<&str> = if import_item == "*" {
+                    let names: Vec<&str> = if import_item.as_str() == "*" {
                         pkg_items.keys().map(|s| s.as_str()).collect()
                     } else {
                         vec![import_item.as_str()]
                     };
-                    let mut struct_imports: Vec<(String, DataType)> = Vec::new();
+                    let mut struct_imports: Vec<(Symbol, DataType)> = Vec::new();
                     for name in names {
                         if let Some(pkg_item) = pkg_items.get(name) {
                             if let PackageItem::Typedef(td) = pkg_item {
                                 if !self.typedef_map.contains_key(&td.name) {
                                     let width =
                                         self.resolve_typedef_width(&td.dtype, td.range.as_ref());
-                                    self.typedef_map.insert(td.name.clone(), width);
+                                    self.typedef_map.insert(td.name, width);
                                 }
                                 if matches!(
                                     &td.dtype,
                                     DataType::StructType { .. } | DataType::UnionType { .. }
                                 ) {
-                                    struct_imports.push((td.name.clone(), td.dtype.clone()));
+                                    struct_imports.push((td.name, td.dtype.clone()));
                                 }
                             }
                         }
                     }
                     for (name, dtype) in struct_imports {
-                        self.store_typedef_fields(&name, &dtype);
+                        self.store_typedef_fields(name, &dtype);
                     }
                 }
             }
         }
         // Resolve type parameter widths from module's param declarations and overrides
-        let mut type_param_widths: HashMap<String, usize> = HashMap::new();
+        let mut type_param_widths: HashMap<Symbol, usize> = HashMap::new();
         for param in &module.params {
             if param.is_type_param {
                 let width = if let Some(w) = type_param_overrides.get(&param.name) {
@@ -953,7 +956,7 @@ impl Elaborator {
                     &td.dtype,
                     DataType::StructType { .. } | DataType::UnionType { .. }
                 ) {
-                    self.store_typedef_fields(&td.name, &td.dtype);
+                    self.store_typedef_fields(td.name, &td.dtype);
                 }
             }
         }
@@ -966,13 +969,13 @@ impl Elaborator {
                 &td.dtype,
                 DataType::StructType { .. } | DataType::UnionType { .. }
             ) {
-                self.store_typedef_fields(&td.name, &td.dtype);
+                self.store_typedef_fields(td.name, &td.dtype);
             }
         }
         // Pre-pass: process $unit imports for typedefs
         for (package, import_item) in &self.design.unit_imports {
             if let Some(pkg_items) = self.package_symbols.get(package) {
-                let names: Vec<&str> = if import_item == "*" {
+                let names: Vec<&str> = if import_item.as_str() == "*" {
                     pkg_items.keys().map(|s| s.as_str()).collect()
                 } else {
                     vec![import_item.as_str()]
@@ -989,17 +992,16 @@ impl Elaborator {
         }
         // Pre-pass: store struct/union fields for $unit import typedefs
         let unit_imports = self.design.unit_imports.clone();
-        let typedef_imports: Vec<(String, DataType)> = unit_imports
+        let typedef_imports: Vec<(Symbol, DataType)> = unit_imports
             .iter()
             .filter_map(|(package, import_item)| {
-                self.package_symbols.get(package).and_then(|pkg_items| {
-                    let names: Vec<String> = if import_item == "*" {
-                        pkg_items.keys().cloned().collect()
-                    } else {
-                        vec![import_item.clone()]
-                    };
-                    names.iter().find_map(|name| {
-                        if let Some(PackageItem::Typedef(td)) = pkg_items.get(name.as_str()) {
+                self.package_symbols.get(package).and_then(|pkg_items| {                    let names: Vec<Symbol> = if import_item.as_str() == "*" {
+                            pkg_items.keys().copied().collect()
+                        } else {
+                            vec![*import_item]
+                        };
+                        names.iter().find_map(|name| {
+                            if let Some(PackageItem::Typedef(td)) = pkg_items.get(name) {
                             if matches!(
                                 &td.dtype,
                                 DataType::StructType { .. } | DataType::UnionType { .. }
@@ -1016,11 +1018,11 @@ impl Elaborator {
             })
             .collect();
         for (name, dtype) in &typedef_imports {
-            self.store_typedef_fields(name, dtype);
+            self.store_typedef_fields(*name, dtype);
         }
         // Pre-pass: process package imports for typedefs before declaration processing
         // Pre-pass: process package imports for struct/union typedef fields
-        let import_typedefs: Vec<(String, DataType)> = module
+        let import_typedefs: Vec<(Symbol, DataType)> = module
             .items
             .iter()
             .filter_map(|item| {
@@ -1030,13 +1032,15 @@ impl Elaborator {
                 } = item
                 {
                     self.package_symbols.get(package).and_then(|pkg_items| {
-                        let names: Vec<String> = if import_item == "*" {
-                            pkg_items.keys().cloned().collect()
+                        let names: Vec<Symbol> = if import_item.as_str() == "*" {
+                            pkg_items.keys().copied().collect()
                         } else {
-                            vec![import_item.clone()]
+                            vec![*import_item]
                         };
                         names.iter().find_map(|name| {
-                            if let Some(PackageItem::Typedef(td)) = pkg_items.get(name.as_str()) {
+                            let name_sym = *name;
+
+                            if let Some(PackageItem::Typedef(td)) = pkg_items.get(&name_sym) {
                                 if matches!(
                                     &td.dtype,
                                     DataType::StructType { .. } | DataType::UnionType { .. }
@@ -1063,7 +1067,7 @@ impl Elaborator {
         }
 
         let mut signals = Vec::new();
-        let mut signal_map: HashMap<String, SignalId> = HashMap::new();
+        let mut signal_map: HashMap<Symbol, SignalId> = HashMap::new();
         let mut inputs = Vec::new();
         let mut outputs = Vec::new();
         let mut inouts = Vec::new();
@@ -1072,12 +1076,12 @@ impl Elaborator {
         let mut next_id = 0usize;
 
         // Helper to get or create signal
-        let get_or_create_signal = |name: &str,
+        let get_or_create_signal = |name: Symbol,
                                     width: usize,
                                     kind: SignalKind,
                                     net_type: NetType,
                                     signals: &mut Vec<SignalInfo>,
-                                    signal_map: &mut HashMap<String, SignalId>,
+                                    signal_map: &mut HashMap<Symbol, SignalId>,
                                     id: &mut SignalId,
                                     array_depth: usize,
                                     elem_width: usize,
@@ -1086,18 +1090,18 @@ impl Elaborator {
                                     is_2state: bool,
                                     is_signed: bool|
          -> SignalId {
-            if let Some(&sid) = signal_map.get(name) {
+            if let Some(&sid) = signal_map.get(&name) {
                 sid
             } else {
                 let sid = *id;
                 *id += 1;
-                signal_map.insert(name.to_string(), sid);
+                signal_map.insert(name, sid);
                 let init_val = match kind {
                     SignalKind::Wire | SignalKind::Inout => LogicVec::fill(LogicVal::Z, width),
                     _ => LogicVec::new(width),
                 };
                 signals.push(SignalInfo {
-                    name: name.to_string(),
+                    name,
                     width,
                     kind,
                     net_type,
@@ -1167,7 +1171,7 @@ impl Elaborator {
                 _ => NetType::Wire,
             };
             let sid = get_or_create_signal(
-                &port.name,
+                port.name,
                 width,
                 kind.clone(),
                 net_type,
@@ -1192,8 +1196,8 @@ impl Elaborator {
         // Process declarations with parameter-aware width resolution
         for decl in &module.decls {
             let class_name = match &decl.dtype {
-                DataType::UserDefined(cn) if cn == "process" => Some("__process".to_string()),
-                DataType::UserDefined(cn) => Some(cn.clone()),
+                DataType::UserDefined(cn) if cn.as_str() == "process" => Some("__process".to_string()),
+                DataType::UserDefined(cn) => Some(cn.as_str().to_string()),
                 _ => None,
             };
             let decl_is_2state = is_2state_type(&decl.dtype);
@@ -1312,7 +1316,7 @@ impl Elaborator {
                     };
                     let total_width = elem_width * depth;
                     let _sid = get_or_create_signal(
-                        &var.name,
+                        var.name,
                         total_width,
                         kind.clone(),
                         net_type,
@@ -1345,7 +1349,7 @@ impl Elaborator {
                         }
                         sig.init_val = full_init;
                         if let Some(ref class) = class_name {
-                            sig.class_name = Some(class.clone());
+                            sig.class_name = Some(Symbol::intern(class));
                             if class == "__mailbox" {
                                 sig.is_mailbox = true;
                             }
@@ -1376,7 +1380,7 @@ impl Elaborator {
                     }
                 } else {
                     let _sid = get_or_create_signal(
-                        &var.name,
+                        var.name,
                         elem_width,
                         kind,
                         net_type,
@@ -1392,7 +1396,7 @@ impl Elaborator {
                     );
                     if let Some(class) = &class_name {
                         if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
-                            sig.class_name = Some(class.clone());
+                            sig.class_name = Some(Symbol::intern(class));
                             if class == "__mailbox" {
                                 sig.is_mailbox = true;
                             }
@@ -1528,7 +1532,7 @@ impl Elaborator {
                         &signals,
                     )?;
                     processes.push(Process::Initial {
-                        name: format!("initial_{}", processes.len()),
+                        name: Symbol::intern(&format!("initial_{}", processes.len())),
                         body,
                     });
                 }
@@ -1540,7 +1544,7 @@ impl Elaborator {
                         &signals,
                     )?;
                     processes.push(Process::Final {
-                        name: format!("final_{}", processes.len()),
+                        name: Symbol::intern(&format!("final_{}", processes.len())),
                         body,
                     });
                 }
@@ -1555,7 +1559,7 @@ impl Elaborator {
                     }];
                     let sensitivity = collect_sensitivity(&assign.rhs, &signal_map);
                     processes.push(Process::Combinational {
-                        name: format!("assign_{}", processes.len()),
+                        name: Symbol::intern(&format!("assign_{}", processes.len())),
                         sensitivity,
                         body: stmts,
                     });
@@ -1647,7 +1651,7 @@ impl Elaborator {
                             sensitivity.push(out_id);
                         }
                         let process = Process::Combinational {
-                            name: format!("udp_{}_{}", udp.name, inst.instance_name),
+                            name: Symbol::intern(&format!("udp_{}_{}", udp.name, inst.instance_name)),
                             sensitivity: sensitivity.clone(),
                             body: vec![IrStmt::BlockingAssign {
                                 lhs: IrLValue::Signal(out_id, 0),
@@ -1667,7 +1671,7 @@ impl Elaborator {
                                 _ => LogicVec::fill(LogicVal::X, 1),
                             };
                             processes.push(Process::Initial {
-                                name: format!("udp_init_{}_{}", udp.name, inst.instance_name),
+                                name: Symbol::intern(&format!("udp_init_{}_{}", udp.name, inst.instance_name)),
                                 body: vec![IrStmt::BlockingAssign {
                                     lhs: IrLValue::Signal(out_id, 0),
                                     rhs: IrExpr::Const(init_val),
@@ -1720,7 +1724,7 @@ impl Elaborator {
                             let val = const_eval_with_params(pexpr, &effective_params).unwrap_or(0);
                             param_map.insert(pname.clone(), val);
                         }
-                        let mut type_param_map: HashMap<String, usize> = HashMap::new();
+                        let mut type_param_map: HashMap<Symbol, usize> = HashMap::new();
                         for (pname, dt) in &inst.type_param_assigns {
                             type_param_map.insert(pname.clone(), dt.width());
                         }
@@ -1733,7 +1737,7 @@ impl Elaborator {
                                 let inst_name = format!("{}[{}]", inst.instance_name, idx);
                                 sub_instances.push(IrInstance {
                                     module_name: inst.module_name.clone(),
-                                    instance_name: inst_name,
+                                    instance_name: Symbol::intern(&inst_name),
                                     port_map: port_map.clone(),
                                     param_map: param_map.clone(),
                                     type_param_map: type_param_map.clone(),
@@ -1836,7 +1840,7 @@ impl Elaborator {
                     let gate_expr = build_gate_expr(&gate.gate_type, &in_exprs);
                     for &out_id in &out_ids {
                         let process = Process::Combinational {
-                            name: format!("gate_{}", out_id),
+                            name: Symbol::intern(&format!("gate_{}", out_id)),
                             sensitivity: in_ids.clone(),
                             body: vec![IrStmt::BlockingAssign {
                                 lhs: IrLValue::Signal(out_id, 0),
@@ -1864,7 +1868,7 @@ impl Elaborator {
                     if decl.kind.is_net() {
                         let sensitivity = collect_sensitivity(init_expr, &signal_map);
                         processes.push(Process::Combinational {
-                            name: format!("decl_assign_{}", processes.len()),
+                            name: Symbol::intern(&format!("decl_assign_{}", processes.len())),
                             sensitivity,
                             body: vec![IrStmt::BlockingAssign {
                                 lhs,
@@ -1874,7 +1878,7 @@ impl Elaborator {
                         });
                     } else {
                         processes.push(Process::Initial {
-                            name: format!("decl_init_{}", processes.len()),
+                            name: Symbol::intern(&format!("decl_init_{}", processes.len())),
                             body: vec![IrStmt::BlockingAssign {
                                 lhs,
                                 rhs,
@@ -1897,7 +1901,7 @@ impl Elaborator {
         })
     }
 
-    fn elaborate_classes(&self) -> Result<HashMap<String, IrClassDef>, SimError> {
+    fn elaborate_classes(&self) -> Result<HashMap<Symbol, IrClassDef>, SimError> {
         let mut classes = HashMap::new();
         for cd in &self.design.classes {
             let mut fields = Vec::new();
@@ -1953,18 +1957,18 @@ impl Elaborator {
                     _ => None,
                 })
                 .collect();
-            let constraints: Vec<(String, Vec<crate::ast::types::ConstraintItem>)> = cd
+            let constraints: Vec<(Symbol, Vec<crate::ast::types::ConstraintItem>)> = cd
                 .members
                 .iter()
                 .filter_map(|m| {
                     if let ClassMember::Constraint { name, body } = m {
-                        Some((name.clone(), body.clone()))
+                        Some((*name, body.clone()))
                     } else {
                         None
                     }
                 })
                 .collect();
-            let rand_fields: Vec<String> = cd
+            let rand_fields: Vec<Symbol> = cd
                 .members
                 .iter()
                 .flat_map(|m| {
@@ -1972,7 +1976,7 @@ impl Elaborator {
                         decl.names
                             .iter()
                             .filter(|dv| dv.is_rand)
-                            .map(|dv| dv.name.clone())
+                            .map(|dv| dv.name)
                             .collect::<Vec<_>>()
                     } else {
                         vec![]
@@ -1981,20 +1985,18 @@ impl Elaborator {
                 .collect();
             // Merge parent class fields (recursively) — parent fields come before child fields
             let all_fields = if let Some(ref parent_name) = cd.extends {
-                let parent_key = parent_name
-                    .split("::")
-                    .last()
-                    .unwrap_or(parent_name)
-                    .to_string();
-                let mut merged = Vec::new();
-                let mut seen = std::collections::HashSet::new();
-                if let Some(parent_cd) = classes.get(&parent_key) {
+        let parent_key = parent_name
+            .split("::")
+            .last()
+            .unwrap_or_else(|| parent_name.as_str());
+        let mut merged = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        if let Some(parent_cd) = classes.get(parent_key) {
                     let mut ancestors: Vec<&IrClassDef> = vec![parent_cd];
                     loop {
                         let current = ancestors.last().unwrap();
-                        if let Some(ref gp) = current.extends {
-                            let gp_key = gp.split("::").last().unwrap_or(gp);
-                            if let Some(gp_cd) = classes.get(gp_key) {
+                        if let Some(ref gp) = current.extends {            let gp_key = gp.split("::").last().unwrap_or_else(|| gp.as_str());
+            if let Some(gp_cd) = classes.get(gp_key) {
                                 ancestors.push(gp_cd);
                             } else {
                                 break;
@@ -2049,7 +2051,7 @@ impl Elaborator {
     fn elaborate_covergroups(
         &self,
         top_name: &str,
-        signal_map: &HashMap<String, SignalId>,
+        signal_map: &HashMap<Symbol, SignalId>,
         signals: &[SignalInfo],
     ) -> Result<Vec<IrCovergroup>, SimError> {
         let mut covergroups = Vec::new();
@@ -2185,8 +2187,8 @@ impl Elaborator {
     fn flatten_instances(
         &mut self,
         top: &mut IrModule,
-    ) -> Result<HashMap<String, SignalId>, SimError> {
-        let mut hier_signal_map: HashMap<String, SignalId> = HashMap::new();
+    ) -> Result<HashMap<Symbol, SignalId>, SimError> {
+        let mut hier_signal_map: HashMap<Symbol, SignalId> = HashMap::new();
         let instances = std::mem::take(&mut top.sub_instances);
         for inst in &instances {
             let ast_module_clone: Module = if let Some(m) = self
@@ -2220,8 +2222,8 @@ impl Elaborator {
                 !ast_module_clone.params.is_empty() && !inst.param_map.is_empty();
             let needs_type_params = !inst.type_param_map.is_empty();
             let mut child = if needs_custom_params || needs_type_params {
-                let known_mods: Vec<String> =
-                    self.design.modules.iter().map(|m| m.name.clone()).collect();
+                let known_mods: Vec<Symbol> =
+                    self.design.modules.iter().map(|m| m.name).collect();
                 let param_vals = self.resolve_param_values(&ast_module_clone, &inst.param_map)?;
                 self.elaborate_module_with_params_and_type(
                     &ast_module_clone,
@@ -2273,7 +2275,7 @@ impl Elaborator {
                     sig_remap[child_sig] = Some(parent_sig);
                     // Add hierarchical alias: inst_name.port_name -> parent signal ID
                     hier_signal_map
-                        .insert(format!("{}.{}", inst.instance_name, port_name), parent_sig);
+                            .insert(Symbol::intern(&format!("{}.{}", inst.instance_name, port_name)), parent_sig);
                 }
             }
 
@@ -2284,7 +2286,7 @@ impl Elaborator {
                     next_parent_id += 1;
                     sig_remap[i] = Some(new_id);
                     top.signals.push(SignalInfo {
-                        name: format!("{}.{}", inst.instance_name, sig.name),
+                        name: Symbol::intern(&format!("{}.{}", inst.instance_name, sig.name)),
                         width: sig.width,
                         kind: sig.kind.clone(),
                         net_type: sig.net_type,
@@ -2314,7 +2316,7 @@ impl Elaborator {
                         iface_modport: None,
                     });
                     // Also add to hier_signal_map: internal signals already have the right name in flat list
-                    hier_signal_map.insert(format!("{}.{}", inst.instance_name, sig.name), new_id);
+                    hier_signal_map.insert(Symbol::intern(&format!("{}.{}", inst.instance_name, sig.name)), new_id);
                 }
             }
 
@@ -2726,7 +2728,7 @@ impl Elaborator {
                 Ok(IrStmt::RandCase { items: new_items? })
             }
             IrStmt::RandSequence { productions } => {
-                let new_prods: Result<Vec<(String, Vec<(IrExpr, Vec<IrStmt>)>)>, SimError> =
+                let new_prods: Result<Vec<(Symbol, Vec<(IrExpr, Vec<IrStmt>)>)>, SimError> =
                     productions
                         .iter()
                         .map(|(name, items)| {
@@ -2739,7 +2741,7 @@ impl Elaborator {
                                     (new_weight, new_body)
                                 })
                                 .collect();
-                            Ok((name.clone(), new_items))
+                            Ok((*name, new_items))
                         })
                         .collect();
                 Ok(IrStmt::RandSequence {
@@ -2954,10 +2956,9 @@ impl Elaborator {
     fn elaborate_always(
         &self,
         always: &AlwaysBlock,
-        signal_map: &HashMap<String, SignalId>,
+        signal_map: &HashMap<Symbol, SignalId>,
         signals: &[SignalInfo],
-    ) -> Result<Process, SimError> {
-        let name = format!("always_{}", 0);
+    ) -> Result<Process, SimError> {                    let name = Symbol::intern(&format!("always_{}", 0));
 
         match always.kind {
             AlwaysKind::AlwaysComb | AlwaysKind::AlwaysLatch => {
@@ -3062,7 +3063,7 @@ impl Elaborator {
     fn extract_clock_reset(
         &self,
         sensitivity: &Option<SensitivityList>,
-        signal_map: &HashMap<String, SignalId>,
+        signal_map: &HashMap<Symbol, SignalId>,
     ) -> Result<(ClockEdge, Option<ResetInfo>), SimError> {
         let events = match sensitivity {
             Some(sl) => &sl.events,
@@ -3106,8 +3107,8 @@ impl Elaborator {
     fn elaborate_stmt_block(
         &self,
         stmts: &[Stmt],
-        signal_map: &HashMap<String, SignalId>,
-        _known_modules: &[String],
+        signal_map: &HashMap<Symbol, SignalId>,
+        _known_modules: &[Symbol],
         signals: &[SignalInfo],
     ) -> Result<Vec<IrStmt>, SimError> {
         let mut ir_stmts = Vec::new();
@@ -3120,8 +3121,8 @@ impl Elaborator {
     fn elaborate_stmt(
         &self,
         stmt: &Stmt,
-        signal_map: &HashMap<String, SignalId>,
-        known_modules: &[String],
+        signal_map: &HashMap<Symbol, SignalId>,
+        known_modules: &[Symbol],
         signals: &[SignalInfo],
     ) -> Result<IrStmt, SimError> {
         match stmt {
@@ -3381,17 +3382,17 @@ impl Elaborator {
                             with_clause: ir_with,
                         })
                     }
-                    Expr::FuncCall { name, .. } if name.starts_with('$') => {
+                    Expr::FuncCall { name, .. } if name.starts_with("$") => {
                         let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
                         Ok(IrStmt::SysCall {
-                            name: String::new(),
+                            name: Symbol::intern(""),
                             args: vec![ir_expr],
                         })
                     }
                     Expr::FuncCall { name, .. } if name.ends_with("::new") => {
                         let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
                         Ok(IrStmt::SysCall {
-                            name: String::new(),
+                            name: Symbol::intern(""),
                             args: vec![ir_expr],
                         })
                     }
@@ -3403,7 +3404,7 @@ impl Elaborator {
                         if is_dpi {
                             let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
                             Ok(IrStmt::SysCall {
-                                name: "__dpi_stmt".to_string(),
+                                name: Symbol::intern("__dpi_stmt"),
                                 args: vec![ir_expr],
                             })
                         } else {
@@ -3695,7 +3696,7 @@ impl Elaborator {
                     let iv = index_vars
                         .first()
                         .cloned()
-                        .unwrap_or_else(|| "i".to_string());
+                        .unwrap_or_else(|| Symbol::intern("i"));
                     Ok(IrStmt::Foreach {
                         array_var: IrExpr::Signal(*sig_id, sig_info.width),
                         index_var: iv,
@@ -3713,9 +3714,9 @@ impl Elaborator {
                     let iv = index_vars
                         .first()
                         .cloned()
-                        .unwrap_or_else(|| "i".to_string());
+                        .unwrap_or_else(|| Symbol::intern("i"));
                     for i in 0..n {
-                        let subst_stmts = substitute_loop_var_in_stmts(stmts, &iv, i as i64);
+                        let subst_stmts = substitute_loop_var_in_stmts(stmts, iv.as_str(), i as i64);
                         all_stmts.extend(self.elaborate_stmt_block(
                             &subst_stmts,
                             signal_map,
@@ -4019,7 +4020,7 @@ impl Elaborator {
     fn elaborate_lvalue(
         &self,
         expr: &Expr,
-        signal_map: &HashMap<String, SignalId>,
+        signal_map: &HashMap<Symbol, SignalId>,
         signals: &[SignalInfo],
     ) -> Result<IrLValue, SimError> {
         match expr {
@@ -4218,8 +4219,8 @@ impl Elaborator {
             )),
             Expr::MemberAccess { obj, field } => {
                 // Try struct/union field write
-                let hier_name = Self::build_hier_name(obj, field);
-                if let Some(&sig_id) = signal_map.get(&hier_name) {
+                let hier_name = Self::build_hier_name(obj, field.as_str());
+                if let Some(&sig_id) = signal_map.get(hier_name.as_str()) {
                     return Ok(IrLValue::Signal(sig_id, 0));
                 }
                 match self.elaborate_expr(obj, signal_map, signals) {
@@ -4259,7 +4260,7 @@ impl Elaborator {
                 obj: inner,
                 field: inner_field,
             } => {
-                format!("{}.{}", Self::build_hier_name(inner, inner_field), field)
+                format!("{}.{}", Self::build_hier_name(inner, inner_field.as_str()), field)
             }
             _ => String::new(),
         }
@@ -4268,7 +4269,7 @@ impl Elaborator {
     fn elaborate_expr(
         &self,
         expr: &Expr,
-        signal_map: &HashMap<String, SignalId>,
+        signal_map: &HashMap<Symbol, SignalId>,
         signals: &[SignalInfo],
     ) -> Result<IrExpr, SimError> {
         match expr {
@@ -4639,7 +4640,7 @@ impl Elaborator {
                             Ok(IrExpr::Const(LogicVec::from_u64(count, 32)))
                         } else {
                             Ok(IrExpr::SysFunc {
-                                name: "$countones".to_string(),
+                                name: Symbol::intern("$countones"),
                                 args: vec![ir_arg],
                             })
                         }
@@ -4658,7 +4659,7 @@ impl Elaborator {
                             )))
                         } else {
                             Ok(IrExpr::SysFunc {
-                                name: "$onehot".to_string(),
+                                name: Symbol::intern("$onehot"),
                                 args: vec![ir_arg],
                             })
                         }
@@ -4677,7 +4678,7 @@ impl Elaborator {
                             )))
                         } else {
                             Ok(IrExpr::SysFunc {
-                                name: "$isunknown".to_string(),
+                                name: Symbol::intern("$isunknown"),
                                 args: vec![ir_arg],
                             })
                         }
@@ -4691,7 +4692,7 @@ impl Elaborator {
                         .map(|a| self.elaborate_expr(a, signal_map, signals))
                         .collect();
                     Ok(IrExpr::SysFunc {
-                        name: name.to_string(),
+                        name: *name,
                         args: ir_args?,
                     })
                 }
@@ -4702,7 +4703,7 @@ impl Elaborator {
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
                     .collect();
                 Ok(IrExpr::NewCall {
-                    class_name: String::new(),
+                    class_name: Symbol::intern(""),
                     args: ir_args?,
                 })
             }
@@ -4731,9 +4732,9 @@ impl Elaborator {
             }
             Expr::MemberAccess { obj, field } => {
                 // Try to resolve as hierarchical signal reference first
-                let hier_name = Self::build_hier_name(obj, field);
+                let hier_name = Self::build_hier_name(obj, field.as_str());
                 if !hier_name.is_empty() {
-                    if let Some(&sig_id) = signal_map.get(&hier_name) {
+                    if let Some(&sig_id) = signal_map.get(hier_name.as_str()) {
                         return Ok(IrExpr::Signal(sig_id, 0));
                     }
                 }
@@ -4792,9 +4793,9 @@ impl Elaborator {
                         field: field.clone(),
                     }),
                     Err(_) => {
-                        // If obj can't be elaborated (e.g., instance name), emit a HierRef
-                        // that the engine can resolve at runtime using the flattened signal list
-                        Ok(IrExpr::HierRef(hier_name))
+            // If obj can't be elaborated (e.g., instance name), emit a HierRef
+            // that the engine can resolve at runtime using the flattened signal list
+            Ok(IrExpr::HierRef(Symbol::intern(&hier_name)))
                     }
                 }
             }
@@ -4909,7 +4910,7 @@ impl Elaborator {
             }
             Expr::Cast { dtype, expr: inner } => {
                 let inner_ir = self.elaborate_expr(inner, signal_map, signals)?;
-                let cast_width = match parse_type_spec_str(dtype) {
+                let cast_width = match                        parse_type_spec_str(dtype.as_str()) {
                     Some(dt) => self.resolve_type_width(&dt).unwrap_or(1),
                     None => 1,
                 };
@@ -4938,7 +4939,7 @@ impl Elaborator {
                         || BUILTIN_UVM_CLASSES
                             .iter()
                             .any(|c| *name == format!("{}::new", c))
-                        || name.contains('#')) =>
+                        || name.contains("#")) =>
             {
                 let raw_name = name.strip_suffix("::new").unwrap().to_string();
                 let class_name = if let Some(hash_pos) = raw_name.find('#') {
@@ -4956,21 +4957,21 @@ impl Elaborator {
                         let orig = self.design.classes.iter().find(|c| c.name == base).cloned();
                         if let Some(mut spec) = orig {
                             let tp_name = spec.type_params.first().map(|tp| tp.name.clone());
-                            spec.name = specialized.clone();
+                            spec.name = Symbol::intern(&specialized);
                             if let Some(ref param_name) = tp_name {
                                 let type_dt = parse_type_spec_str(type_spec);
                                 if let Some(ref dt) = type_dt {
-                                    spec = substitute_class_types(spec, param_name, dt);
+                                    spec = substitute_class_types(spec, param_name.as_str(), dt);
                                 }
                             }
                             self.specialized_classes.borrow_mut().push(spec);
                         }
                     }
-                    specialized
+                    Symbol::intern(&specialized)
                 } else if BUILTIN_UVM_CLASSES.contains(&raw_name.as_str()) {
-                    format!("__{}", raw_name)
+                    Symbol::intern(&format!("__{}", raw_name))
                 } else {
-                    raw_name.clone()
+                    Symbol::intern(&raw_name)
                 };
                 let ir_args: Result<Vec<IrExpr>, SimError> = args
                     .iter()
@@ -5006,9 +5007,8 @@ impl Elaborator {
                     name: name.clone(),
                     args: ir_args?,
                 })
-            }
-            Expr::FuncCall { name, args } if name != "new" && name.contains("::") => {
-                self.elaborate_package_func_call(name, args, signal_map, signals)
+            }                    Expr::FuncCall { name, args } if name != "new" && name.contains("::") => {
+                        self.elaborate_package_func_call(name.as_str(), args, signal_map, signals)
             }
             Expr::FuncCall { name, args } if name != "new" => {
                 let is_dpi = self
@@ -5076,7 +5076,7 @@ impl Elaborator {
         &self,
         name: &str,
         args: &[Expr],
-        signal_map: &HashMap<String, SignalId>,
+        signal_map: &HashMap<Symbol, SignalId>,
         signals: &[SignalInfo],
     ) -> Result<IrExpr, SimError> {
         let (pkg_name, func_name) = name
@@ -5123,7 +5123,7 @@ impl Elaborator {
         let pkg_symbols = self.package_symbols.get(pkg_name);
         if let Some(items) = pkg_symbols {
             // Collect all enum member names and their values from typedefs
-            let mut enum_member_values: HashMap<String, Expr> = HashMap::new();
+            let mut enum_member_values: HashMap<Symbol, Expr> = HashMap::new();
             for item in items.values() {
                 if let PackageItem::Typedef(td) = item {
                     if let DataType::EnumType { members, .. } = &td.dtype {
@@ -5138,20 +5138,20 @@ impl Elaborator {
             for (item_name, item) in items {
                 if let PackageItem::Param(p) = item {
                     if let Some(expr) = &p.default {
-                        result = Self::substitute_ident_in_expr(result, item_name, expr.clone());
+                        result = Self::substitute_ident_in_expr(result, item_name.as_str(), expr.clone());
                     }
                 }
             }
             // Substitute enum member names with their constant values
             for (member_name, member_value) in &enum_member_values {
-                result = Self::substitute_ident_in_expr(result, member_name, member_value.clone());
+                result = Self::substitute_ident_in_expr(result, member_name.as_str(), member_value.clone());
             }
         }
 
         // Then: substitute formal parameters with actual arguments
         for (i, param) in func.ports.iter().enumerate() {
             if let Some(arg) = args.get(i) {
-                result = Self::substitute_ident_in_expr(result, &param.name, arg.clone());
+                result = Self::substitute_ident_in_expr(result, param.name.as_str(), arg.clone());
             }
         }
 
@@ -5382,7 +5382,7 @@ impl Elaborator {
     fn elaborate_expr_to_signal(
         &self,
         expr: &Expr,
-        signal_map: &HashMap<String, SignalId>,
+        signal_map: &HashMap<Symbol, SignalId>,
     ) -> Result<SignalId, SimError> {
         match expr {
             Expr::Ident(name) => signal_map
@@ -5405,7 +5405,7 @@ impl Elaborator {
     fn instance_port_expr_to_signal(
         &self,
         expr: &Expr,
-        signal_map: &HashMap<String, SignalId>,
+        signal_map: &HashMap<Symbol, SignalId>,
         signals: &mut Vec<SignalInfo>,
         next_id: &mut SignalId,
         processes: &mut Vec<Process>,
@@ -5430,7 +5430,7 @@ impl Elaborator {
         let sid = *next_id;
         *next_id += 1;
         signals.push(SignalInfo {
-            name: sig_name.clone(),
+            name: Symbol::intern(&sig_name),
             width,
             kind: SignalKind::Wire,
             net_type: NetType::Wire,
@@ -5462,7 +5462,7 @@ impl Elaborator {
         // Add a continuous assignment process
         let sensitivity = collect_sensitivity(expr, signal_map);
         processes.push(Process::Combinational {
-            name: format!("port_assign_{}", hint_name.replace('.', "_")),
+            name: Symbol::intern(&format!("port_assign_{}", hint_name.replace('.', "_"))),
             sensitivity,
             body: vec![IrStmt::BlockingAssign {
                 lhs: IrLValue::Signal(sid, 0),

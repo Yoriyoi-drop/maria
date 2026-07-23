@@ -62,7 +62,7 @@ impl FstWaveWriter {
         // Step 1: Group signals by scope
         let mut scope_map: HashMap<Vec<String>, Vec<(String, usize, usize)>> = HashMap::new();
         for sig in &design.top.signals {
-            let (scope_parts, bare_name) = Self::parse_scope(&sig.name);
+            let (scope_parts, bare_name) = Self::parse_scope(sig.name.as_str());
             scope_map
                 .entry(scope_parts)
                 .or_default()
@@ -75,7 +75,7 @@ impl FstWaveWriter {
 
         // Step 3: Open top-level module scope
         writer
-            .begin_scope(ScopeType::VcdModule, &design.top.name, None)
+            .begin_scope(ScopeType::VcdModule, design.top.name.to_string(), None)
             .map_err(|e| format!("FST scope begin failed: {}", e))?;
 
         let mut var_handles = HashMap::new();
@@ -208,7 +208,7 @@ impl FstWaveWriter {
         let mut changes: Vec<(u32, String)> = Vec::new();
 
         for (sig_val, sig) in state.iter().zip(design.top.signals.iter()) {
-            let (scope, sig_bare) = Self::parse_scope(&sig.name);
+            let (scope, sig_bare) = Self::parse_scope(sig.name.as_str());
             let key = Self::signal_key(&scope, &sig_bare);
 
             if sig.array_depth > 1 {
@@ -257,7 +257,7 @@ impl FstWaveWriter {
         let mut changes: Vec<(u32, String)> = Vec::new();
 
         for (sig_val, sig) in state.iter().zip(design.top.signals.iter()) {
-            let (scope, sig_bare) = Self::parse_scope(&sig.name);
+            let (scope, sig_bare) = Self::parse_scope(sig.name.as_str());
             let key = Self::signal_key(&scope, &sig_bare);
 
             if sig.array_depth > 1 {

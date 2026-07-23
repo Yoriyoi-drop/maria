@@ -4,21 +4,22 @@ use super::expr::Expr;
 use super::expr::Value;
 use super::stmt::Stmt;
 use super::types::{DataType, Decl, FunctionDecl, Module, ModuleItem};
+use crate::intern::Symbol;
 
 /// Detect direct recursive functions (functions that call themselves directly).
-fn detect_recursive_functions(funcs: &HashMap<String, FunctionDecl>) -> HashSet<String> {
+fn detect_recursive_functions(funcs: &HashMap<Symbol, FunctionDecl>) -> HashSet<Symbol> {
     let mut recursive = HashSet::new();
     // First pass: detect direct recursion
     for (name, func) in funcs {
         if stmt_has_func_call(name, &func.stmts) {
-            recursive.insert(name.clone());
+            recursive.insert(*name);
         }
     }
     recursive
 }
 
 /// Check if a function body contains calls to a specific function.
-fn stmt_has_func_call(func_name: &str, stmts: &[Stmt]) -> bool {
+fn stmt_has_func_call(func_name: &Symbol, stmts: &[Stmt]) -> bool {
     for stmt in stmts {
         match stmt {
             Stmt::Block { stmts: inner }
@@ -161,7 +162,7 @@ fn stmt_has_func_call(func_name: &str, stmts: &[Stmt]) -> bool {
 }
 
 /// Check if an expression contains a call to a specific function.
-fn expr_has_func_call(func_name: &str, expr: &Expr) -> bool {
+fn expr_has_func_call(func_name: &Symbol, expr: &Expr) -> bool {
     match expr {
         Expr::FuncCall { name, args } => {
             if name == func_name {
@@ -210,7 +211,7 @@ fn expr_has_func_call(func_name: &str, expr: &Expr) -> bool {
     }
 }
 
-fn func_port_width(func: &FunctionDecl, port_name: &str) -> usize {
+fn func_port_width(func: &FunctionDecl, port_name: Symbol) -> usize {
     if let Some(port) = func.ports.iter().find(|p| p.name == port_name) {
         if let Some(r) = &port.range {
             return r.width();
@@ -279,12 +280,12 @@ fn func_return_width(func: &FunctionDecl) -> usize {
 }
 
 pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(String, usize)>, String> {
-    let funcs: HashMap<String, FunctionDecl> = module
+    let funcs: HashMap<Symbol, FunctionDecl> = module
         .items
         .iter()
         .filter_map(|item| {
             if let ModuleItem::Func(f) = item {
-                Some((f.name.clone(), f.clone()))
+                Some((f.name, f.clone()))
             } else {
                 None
             }
@@ -299,7 +300,7 @@ pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(String, u
     let recursive_funcs = detect_recursive_functions(&funcs);
 
     let mut counter = 0usize;
-    let prefix = &module.name;
+    let prefix = module.name;
     let mut temp_signals: Vec<(String, usize)> = Vec::new();
 
     let old_items = std::mem::replace(&mut module.items, Vec::new());
@@ -419,11 +420,11 @@ pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(String, u
 
 fn inline_funcs_in_stmt(
     stmt: Stmt,
-    funcs: &HashMap<String, FunctionDecl>,
-    prefix: &str,
+    funcs: &HashMap<Symbol, FunctionDecl>,
+    prefix: Symbol,
     counter: &mut usize,
     temp_signals: &mut Vec<(String, usize)>,
-    recursive_funcs: &HashSet<String>,
+    recursive_funcs: &HashSet<Symbol>,
 ) -> Stmt {
     match stmt {
         Stmt::Block { stmts } => {
@@ -884,12 +885,12 @@ fn inline_funcs_in_stmt(
                         })
                         .collect();
 
-                    let mut rename_map: HashMap<String, String> = HashMap::new();
+                    let mut rename_map: HashMap<Symbol, Symbol> = HashMap::new();
 
                     for (i, arg) in new_args.into_iter().enumerate() {
                         let port = func.ports.get(i).cloned().unwrap_or_else(|| {
                             super::types::FunctionPort {
-                                name: format!("_arg{}", i),
+                                name: Symbol::intern(&format!("_arg{}", i)),
                                 range: None,
                                 expr_range: None,
                                 direction: None,
@@ -897,11 +898,11 @@ fn inline_funcs_in_stmt(
                         });
                         let temp_arg_name =
                             format!("__func_{}_{}_{}_{}", prefix, name, c, port.name);
-                        let port_width = func_port_width(func, &port.name);
+                        let port_width = func_port_width(func, port.name);
                         temp_signals.push((temp_arg_name.clone(), port_width));
-                        rename_map.insert(port.name.clone(), temp_arg_name.clone());
+                        rename_map.insert(port.name, Symbol::intern(&temp_arg_name));
                         preamble.push(Stmt::BlockingAssign {
-                            lhs: Expr::Ident(temp_arg_name),
+                            lhs: Expr::Ident(Symbol::intern(&temp_arg_name)),
                             rhs: arg,
                             delay: None,
                         });
@@ -912,45 +913,44 @@ fn inline_funcs_in_stmt(
                         for var in &decl.names {
                             if rename_map.contains_key(&var.name) {
                                 continue;
-                            }
-                            let new_name = format!("__func_{}_{}_{}_{}", prefix, name, c, var.name);
-                            let dtype_width = match &decl.dtype {
-                                super::types::DataType::Bit | super::types::DataType::Logic => 1,
+                            }                        let new_name = format!("__func_{}_{}_{}_{}", prefix, name, c, var.name);
+                        let dtype_width = match &decl.dtype {
+                            super::types::DataType::Bit | super::types::DataType::Logic => 1,
+                            super::types::DataType::Byte => 8,
+                            super::types::DataType::Shortint => 16,
+                            super::types::DataType::Int | super::types::DataType::Integer => 32,
+                            super::types::DataType::Longint => 64,
+                            super::types::DataType::Time => 64,
+                            super::types::DataType::Signed(inner) => match inner.as_ref() {
+                                super::types::DataType::Bit | super::types::DataType::Logic => {
+                                    1
+                                }
                                 super::types::DataType::Byte => 8,
                                 super::types::DataType::Shortint => 16,
-                                super::types::DataType::Int | super::types::DataType::Integer => 32,
+                                super::types::DataType::Int
+                                | super::types::DataType::Integer => 32,
                                 super::types::DataType::Longint => 64,
                                 super::types::DataType::Time => 64,
-                                super::types::DataType::Signed(inner) => match inner.as_ref() {
-                                    super::types::DataType::Bit | super::types::DataType::Logic => {
-                                        1
-                                    }
-                                    super::types::DataType::Byte => 8,
-                                    super::types::DataType::Shortint => 16,
-                                    super::types::DataType::Int
-                                    | super::types::DataType::Integer => 32,
-                                    super::types::DataType::Longint => 64,
-                                    super::types::DataType::Time => 64,
-                                    _ => 32,
-                                },
-                                _ => 1,
-                            };
-                            let decl_width = match &decl.kind {
-                                super::types::DeclKind::Wire
-                                | super::types::DeclKind::Reg
-                                | super::types::DeclKind::Logic => 1,
-                                super::types::DeclKind::Int | super::types::DeclKind::Integer => 32,
-                                _ => 1,
-                            };
-                            let width = if let Some(r) = &var.range {
-                                r.width()
-                            } else {
-                                dtype_width.max(decl_width)
-                            };
-                            temp_signals.push((new_name.clone(), width));
-                            rename_map.insert(var.name.clone(), new_name);
-                        }
+                                _ => 32,
+                            },
+                            _ => 1,
+                        };
+                        let decl_width = match &decl.kind {
+                            super::types::DeclKind::Wire
+                            | super::types::DeclKind::Reg
+                            | super::types::DeclKind::Logic => 1,
+                            super::types::DeclKind::Int | super::types::DeclKind::Integer => 32,
+                            _ => 1,
+                        };
+                        let width = if let Some(r) = &var.range {
+                            r.width()
+                        } else {
+                            dtype_width.max(decl_width)
+                        };
+                        temp_signals.push((new_name.clone(), width));
+                        rename_map.insert(var.name, Symbol::intern(&new_name));
                     }
+                }
 
                     // Insert renamed body statements
                     for func_stmt in &func.stmts {
@@ -1759,12 +1759,12 @@ fn inline_funcs_in_stmt(
 
 fn replace_func_calls_in_expr(
     expr: Expr,
-    funcs: &HashMap<String, FunctionDecl>,
-    prefix: &str,
+    funcs: &HashMap<Symbol, FunctionDecl>,
+    prefix: Symbol,
     counter: &mut usize,
     preamble: &mut Vec<Stmt>,
     temp_signals: &mut Vec<(String, usize)>,
-    recursive_funcs: &HashSet<String>,
+    recursive_funcs: &HashSet<Symbol>,
 ) -> Expr {
     match expr {
         Expr::FuncCall { name, args } => {
@@ -1818,9 +1818,9 @@ fn replace_func_calls_in_expr(
                     })
                     .collect();
 
-                let mut rename_map: HashMap<String, String> = HashMap::new();
+                let mut rename_map: HashMap<Symbol, Symbol> = HashMap::new();
                 if let Some(ref rn) = ret_name {
-                    rename_map.insert(name.clone(), rn.clone());
+                    rename_map.insert(name, Symbol::intern(rn));
                 }
 
                 let orig_args: Vec<Expr> = new_args.clone();
@@ -1830,18 +1830,18 @@ fn replace_func_calls_in_expr(
                         func.ports
                             .get(i)
                             .cloned()
-                            .unwrap_or_else(|| super::types::FunctionPort {
-                                name: format!("_arg{}", i),
+                            .unwrap_or_else(||                            super::types::FunctionPort {
+                                name: Symbol::intern(&format!("_arg{}", i)),
                                 range: None,
                                 expr_range: None,
                                 direction: None,
                             });
                     let temp_arg_name = format!("__func_{}_{}_{}_{}", prefix, name, c, port.name);
-                    let port_width = func_port_width(func, &port.name);
+                    let port_width = func_port_width(func, port.name);
                     temp_signals.push((temp_arg_name.clone(), port_width));
-                    rename_map.insert(port.name.clone(), temp_arg_name.clone());
+                    rename_map.insert(port.name, Symbol::intern(&temp_arg_name));
                     preamble.push(Stmt::BlockingAssign {
-                        lhs: Expr::Ident(temp_arg_name),
+                        lhs: Expr::Ident(Symbol::intern(&temp_arg_name)),
                         rhs: arg,
                         delay: None,
                     });
@@ -1885,7 +1885,7 @@ fn replace_func_calls_in_expr(
                             dtype_width.max(decl_width)
                         };
                         temp_signals.push((new_name.clone(), width));
-                        rename_map.insert(var.name.clone(), new_name);
+                        rename_map.insert(var.name.clone(), Symbol::intern(&new_name));
                     }
                 }
 
@@ -1895,7 +1895,7 @@ fn replace_func_calls_in_expr(
                     if let Some(ref rn) = ret_name {
                         if let Stmt::Return(Some(expr)) = &renamed {
                             renamed = Stmt::BlockingAssign {
-                                lhs: Expr::Ident(rn.clone()),
+                                lhs: Expr::Ident(Symbol::intern(&rn)),
                                 rhs: *expr.clone(),
                                 delay: None,
                             };
@@ -1911,8 +1911,8 @@ fn replace_func_calls_in_expr(
                         func.ports
                             .get(i)
                             .cloned()
-                            .unwrap_or_else(|| super::types::FunctionPort {
-                                name: format!("_arg{}", i),
+                            .unwrap_or_else(||                            super::types::FunctionPort {
+                                name: Symbol::intern(&format!("_arg{}", i)),
                                 range: None,
                                 expr_range: None,
                                 direction: None,
@@ -1921,14 +1921,14 @@ fn replace_func_calls_in_expr(
                     if let Expr::Ident(_) = &orig_arg {
                         preamble.push(Stmt::BlockingAssign {
                             lhs: orig_arg,
-                            rhs: Expr::Ident(temp_arg_name),
+                            rhs: Expr::Ident(Symbol::intern(&temp_arg_name)),
                             delay: None,
                         });
                     }
                 }
 
                 if let Some(rn) = ret_name {
-                    Expr::Ident(rn)
+                    Expr::Ident(Symbol::intern(&rn))
                 } else {
                     Expr::Value(Value::Decimal(0))
                 }
@@ -2129,7 +2129,7 @@ fn replace_func_calls_in_expr(
     }
 }
 
-fn rename_in_stmt(stmt: &Stmt, rename_map: &HashMap<String, String>) -> Stmt {
+fn rename_in_stmt(stmt: &Stmt, rename_map: &HashMap<Symbol, Symbol>) -> Stmt {
     match stmt.clone() {
         Stmt::Block { stmts } => Stmt::Block {
             stmts: stmts
@@ -2497,7 +2497,7 @@ fn rename_in_stmt(stmt: &Stmt, rename_map: &HashMap<String, String>) -> Stmt {
     }
 }
 
-fn rename_func_decls_in_stmt(stmt: Stmt, rename_map: &HashMap<String, String>) -> Stmt {
+fn rename_func_decls_in_stmt(stmt: Stmt, rename_map: &HashMap<Symbol, Symbol>) -> Stmt {
     match stmt {
         Stmt::NamedBlock { name, stmts, decls } => {
             let new_decls: Vec<Decl> = decls
@@ -2531,7 +2531,7 @@ fn rename_func_decls_in_stmt(stmt: Stmt, rename_map: &HashMap<String, String>) -
     }
 }
 
-fn rename_in_expr(expr: Expr, rename_map: &HashMap<String, String>) -> Expr {
+fn rename_in_expr(expr: Expr, rename_map: &HashMap<Symbol, Symbol>) -> Expr {
     match expr {
         Expr::Ident(name) => rename_map
             .get(&name)

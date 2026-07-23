@@ -24,7 +24,7 @@ impl SimulationState {
 
         // Index 0 is reserved for null handle
         let objects = vec![ObjectData {
-            class_name: String::new(),
+            class_name: crate::intern::Symbol::EMPTY,
             fields: HashMap::new(),
         }];
 
@@ -38,11 +38,11 @@ impl SimulationState {
         }
     }
 
-    pub fn alloc_object(&mut self, class_name: &str) -> ObjId {
+    pub fn alloc_object(&mut self, class_name: crate::intern::Symbol) -> ObjId {
         let id = self.next_obj_id;
         self.next_obj_id += 1;
         self.objects.push(ObjectData {
-            class_name: class_name.to_string(),
+            class_name,
             fields: HashMap::new(),
         });
         id
@@ -53,7 +53,7 @@ impl SimulationState {
         self.objects.clear();
         // Index 0 is reserved for null
         self.objects.push(ObjectData {
-            class_name: String::new(),
+            class_name: crate::intern::Symbol::EMPTY,
             fields: HashMap::new(),
         });
     }
@@ -112,19 +112,19 @@ impl SimulationState {
         module
             .signals
             .get(id)
-            .map(|s| s.name.clone())
+            .map(|s| s.name.to_string())
             .unwrap_or_else(|| format!("sig_{}", id))
     }
 
     pub fn dump_all_signals(&self, module: &IrModule) {
         println!("--- Time {} ---", self.time);
         for sig in &module.signals {
-            let val = self.read_signal(self.find_signal_id(&sig.name, module).unwrap_or(0));
+            let val = self.read_signal(self.find_signal_id(sig.name.as_str(), module).unwrap_or(0));
             println!("  {} = {} ({}b)", sig.name, val, sig.width);
         }
     }
 
     fn find_signal_id(&self, name: &str, module: &IrModule) -> Option<SignalId> {
-        module.signals.iter().position(|s| s.name == name)
+        module.signals.iter().position(|s| s.name.as_str() == name)
     }
 }

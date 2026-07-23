@@ -1,4 +1,5 @@
 use super::*;
+use crate::intern::Symbol;
 use crate::simulator::logicvec_to_string;
 
 mod stress_tests;
@@ -1290,7 +1291,7 @@ endmodule
     let design = compile_str(source).unwrap();
     assert!(design.classes.contains_key("my_base"));
     assert!(design.classes.contains_key("driver"));
-    assert_eq!(design.classes["driver"].extends.as_deref(), Some("my_base"));
+    assert_eq!(design.classes["driver"].extends, Some(Symbol::intern("my_base")));
 }
 
 #[test]
@@ -1331,7 +1332,7 @@ endclass
         "should have parsed at least one class"
     );
     let mod_names: Vec<_> = design.modules.iter().map(|m| m.name.clone()).collect();
-    assert!(mod_names.contains(&"tb".to_string()));
+    assert!(mod_names.contains(&Symbol::intern("tb")));
 }
 
 #[test]
@@ -1397,7 +1398,7 @@ endmodule
     let design = compile_str(source).unwrap();
     assert!(design.classes.contains_key("base"));
     assert!(design.classes.contains_key("extended"));
-    assert_eq!(design.classes["extended"].extends.as_deref(), Some("base"));
+    assert_eq!(design.classes["extended"].extends, Some(Symbol::intern("base")));
     let base_show = design.classes["base"]
         .methods
         .iter()

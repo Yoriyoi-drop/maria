@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ast::expr::{BinaryOp, Expr, UnaryOp, Value};
+use crate::intern::Symbol;
 
 /// Encode a short string as i64 for parameter comparison purposes.
 /// Strings up to 8 characters are encoded as little-endian bytes.
@@ -37,7 +38,7 @@ pub fn const_eval_simple(expr: &Expr) -> Result<i64, String> {
 
 pub fn const_eval_with_params(
     expr: &Expr,
-    param_vals: &HashMap<String, i64>,
+    param_vals: &HashMap<Symbol, i64>,
 ) -> Result<i64, String> {
     match expr {
         Expr::Value(Value::Decimal(n)) => Ok(*n),
@@ -55,11 +56,11 @@ pub fn const_eval_with_params(
         }
         Expr::String(s) => Ok(string_to_i64(s)),
         Expr::Ident(name) => {
-            if let Some(&val) = param_vals.get(name) {
+            if let Some(&val) = param_vals.get(name.as_str()) {
                 Ok(val)
             } else if name == "1" {
                 Ok(1)
-            } else if name.starts_with('$') {
+            } else if name.starts_with("$") {
                 Err(format!(
                     "cannot evaluate system function '{}' in constant context",
                     name
@@ -358,7 +359,7 @@ pub fn const_eval_with_params(
         }
         Expr::Paren(inner) => const_eval_with_params(inner, param_vals),
         Expr::ScopedIdent { package, item } => {
-            let qualified = format!("{}::{}", package, item);
+            let qualified = Symbol::intern(&format!("{}::{}", package, item));
             if let Some(&val) = param_vals.get(&qualified) {
                 Ok(val)
             } else {
@@ -425,7 +426,7 @@ pub fn const_eval_with_params(
                 Ok(0)
             }
         }
-        Expr::FuncCall { name, .. } if name.starts_with('$') => Err(format!(
+        Expr::FuncCall { name, .. } if name.starts_with("$") => Err(format!(
             "cannot evaluate system function '{}' in constant context",
             name
         )),

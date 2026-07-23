@@ -1,5 +1,6 @@
 use crate::ast::*;
 use crate::error::SimError;
+use crate::intern::Symbol;
 use crate::ir::*;
 use crate::simulator::state::SimulationState;
 use std::collections::HashMap;
@@ -205,7 +206,7 @@ pub fn logicvec_to_string(lv: &LogicVec) -> String {
 pub fn eval_display_arg(
     state: &SimulationState,
     signals: &[SignalInfo],
-    hier_map: &HashMap<String, SignalId>,
+    hier_map: &HashMap<Symbol, SignalId>,
     assoc_data: &HashMap<SignalId, HashMap<LogicVec, LogicVec>>,
     arg: &IrExpr,
 ) -> Result<LogicVec, SimError> {
@@ -308,7 +309,7 @@ pub fn eval_display_arg(
 pub fn format_display(
     state: &SimulationState,
     signals: &[SignalInfo],
-    hier_map: &HashMap<String, SignalId>,
+    hier_map: &HashMap<Symbol, SignalId>,
     assoc_data: &HashMap<SignalId, HashMap<LogicVec, LogicVec>>,
     ir_args: &[IrExpr],
 ) -> String {

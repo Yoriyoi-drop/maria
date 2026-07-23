@@ -1,4 +1,5 @@
 use crate::error::SimError;
+use crate::intern::Symbol;
 use crate::ir::*;
 use crate::simulator::*;
 
@@ -75,7 +76,10 @@ impl Debugger {
             .signals
             .iter()
             .position(|s| s.name == name)
-            .or_else(|| self.engine.design.hier_signal_map.get(name).copied())
+            .or_else(|| {
+                let sym = Symbol::intern(name);
+                self.engine.design.hier_signal_map.get(&sym).copied()
+            })
     }
 
     pub fn read_signal_by_name(&self, name: &str) -> Option<LogicVec> {
@@ -90,7 +94,7 @@ impl Debugger {
         };
         let val = self.engine.state.read_signal(id);
         let sig = &self.engine.design.top.signals[id];
-        format!("{} = {} ({}b)", sig.name, val, sig.width)
+        format!("{} = {} ({}b)", sig.name.as_str(), val, sig.width)
     }
 
     pub fn print_signals_filtered(&self, filter: &str) -> String {
@@ -98,7 +102,7 @@ impl Debugger {
         let filt_lower = filter.to_lowercase();
         for sig in &self.engine.design.top.signals {
             if sig.name.to_lowercase().contains(&filt_lower) {
-                let id = self.find_signal_id(&sig.name).unwrap_or(0);
+                let id = self.find_signal_id(sig.name.as_str()).unwrap_or(0);
                 let val = self.engine.state.read_signal(id);
                 out.push_str(&format!("  {} = {} ({}b)\n", sig.name, val, sig.width));
             }
@@ -113,7 +117,7 @@ impl Debugger {
         let mut out = String::new();
         out.push_str(&format!("--- Cycle {} ---\n", self.engine.state.time));
         for sig in &self.engine.design.top.signals {
-            let id = self.find_signal_id(&sig.name).unwrap_or(0);
+            let id = self.find_signal_id(sig.name.as_str()).unwrap_or(0);
             let val = self.engine.state.read_signal(id);
             out.push_str(&format!("  {} = {} ({}b)\n", sig.name, val, sig.width));
         }
@@ -306,9 +310,9 @@ impl Debugger {
     }
 
     pub fn get_module_names(&self) -> Vec<String> {
-        let mut names = vec![self.engine.design.top.name.clone()];
+        let mut names = vec![self.engine.design.top.name.to_string()];
         for inst in &self.engine.design.top.sub_instances {
-            names.push(inst.instance_name.clone());
+            names.push(inst.instance_name.to_string());
         }
         names
     }
