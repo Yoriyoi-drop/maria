@@ -7107,7 +7107,7 @@ impl Parser {
                         type_specs.iter().map(|dt| dt.to_string()).collect();
                     let suffix = type_str.join(",");
                     let class_prefix = if suffix.is_empty() {
-                        **name
+                        *name
                     } else {
                         Symbol::intern(&format!("{}#{}", name, suffix))
                     };

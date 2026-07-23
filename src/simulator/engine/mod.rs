@@ -115,6 +115,8 @@ pub struct SimulationEngine {
     pub max_recursion_depth: usize,
     pub objection_count: usize,
     pub objection_triggered: bool,
+    /// JIT evaluator (native code compilation for fast expression eval)
+    pub jit_evaluator: Option<crate::simulator::JITEvaluator>,
 }
 
 // ─── Standalone helper functions ───

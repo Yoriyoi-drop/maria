@@ -12,7 +12,7 @@
 | cache/ | Phase 2 | ✅ **Done** | cache_manager.rs, ast_cache.rs, hir_cache.rs, dep_cache.rs, checksum.rs | 10+ |
 | diagnostics/ | Phase 4 | ✅ **Done + Wired** | diagnostic.rs, emitter.rs, recovery.rs, codes.rs (wired into CompileSession) | 10+ |
 | scheduler/ | Phase 1 | ✅ **Done** | work_stealing.rs, priority.rs, dag.rs, incremental.rs | 10+ |
-| hir/ | Phase 3 | ✅ **Done + Wired** | hir.rs, builder.rs, lazy_elab.rs | 7+ (2 new JIT tests) |
+| hir/ | Phase 3 | ✅ **Done + Enhanced** | hir.rs, builder.rs, lazy_elab.rs, **types.rs** (TypeSystem lazy resolution) | 17+ (10 new TypeSystem tests) |
 | mir/ | Phase 3 | ✅ **Done** | mir.rs, lower.rs, opt.rs | 5+ |
 | profiling/ | Phase 5 | ✅ **Done** | profiler.rs, counters.rs, trace.rs | 10+ |
 | incremental_test/ | Phase 6 | ✅ **Done + Wired** | 8 incremental tests | Inline in compile_session.rs |
@@ -21,7 +21,7 @@
 | jit/ | Phase 7 | ✅ **Enhanced** | `CompiledExpr`, `JITCache`, intrinsics, 7 unit tests | jit.rs |
 | backend/ | Phase 7 | ✅ **Updated** | Re-export module align dengan DESIGN.md | mod.rs |
 | plugin/ | Phase 6+ | ✅ **Done** | plugin.rs | 5+ |
-| parser/ (legacy) | — | ✅ Stable | lexer.rs, parser.rs, preprocessor.rs | Legacy tests |
+| parser/ (legacy) | — | ✅ **Done + Optimized** | lexer.rs, parser.rs, preprocessor.rs (String → Symbol migration, 755 tests) | Legacy + 755 |
 | simulator/ (legacy) | — | ✅ Stable | engine.rs, state.rs, value.rs, etc. | Legacy tests |
 
 ## Performance vs Target (release mode, 2026-07-22)
@@ -38,7 +38,7 @@
 | Files scanned | <2s (10K files) | Walkdir + rayon | ✅ |
 | >10K RTL modules | Horisontal scaling | DashMap + O(1) intern | ✅ Arsitektur siap |
 | >80K verification modules | Class/UVM support | ✅ | ✅ |
-| >10M LOC | Memory efficiency | Parser String → Symbol needed | ⚠️ Gap |
+| >10M LOC | Memory efficiency | Parser String → Symbol migration done | ✅ **Done** |
 
 ## Key enhancements (July 2026)
 
@@ -61,7 +61,7 @@
 | **Bug fix: lazy pre-registration** | Fixed bug where each module was assigned ALL ports from ALL modules instead of only its own ports. Now correctly uses per-module port iteration. |
 | **elaborate_lazy_module() fallback** | Now falls back to `merged_design` for on-demand AST→HIR conversion on cache miss. Extracts port/signal data and populates LazyElaborator dynamically. |
 
-> **Total: 750+ unit tests pass (713 original + 32 new + 7 JIT tests). 5 stress tests pass (--ignored). Release benchmarks: counter.sv ~82µs, 1000 modules ~54ms, 100K symbols 53.6ms.**
+> **Total: 765 unit tests pass. 5 stress tests pass (--ignored). Release benchmarks: counter.sv ~82µs, 1000 modules ~54ms, 100K symbols 53.6ms. Token String → Symbol: ✅ Selesai — Parser now uses Symbol throughout. TypeSystem lazy resolution: ✅ Selesai — DashMap cache, AST→HIR conversion, 10 tests.**
 
 ---
 
@@ -1515,7 +1515,7 @@ struct CacheReport {
 
 | Priority | Bottleneck | Impact | Status |
 |----------|-----------|--------|--------|
-| P0 | Parser uses `String` not `Symbol` | High memory for 10M LOC | ❌ Todo (String interning itself ✅ optimized: 53.6ms for 100K) |
+| P0 | Parser uses `String` not `Symbol` | High memory for 10M LOC | ✅ **Done** — Token::Ident, StringLit, Number.value, RealNum → Symbol |
 | P0 | Preprocessor sequential bottleneck | Medium | ✅ Macro cache done |
 | P0 | Incremental correctness tests | Must verify cache behavior | ✅ **Done (8 tests)** |
 | P0 | `std::mem::take` bug — cache corruption on merge | Design[0] destroyed before cache update | ✅ **Fixed (clone instead of take)** |
@@ -1531,12 +1531,12 @@ struct CacheReport {
 ### Immediate (Next Sprint)
 | Item | Priority | Effort |
 |------|----------|--------|
-| **Parser String → Symbol** | P0 | Large |
-| Token::Ident(String) → Token::Ident(Symbol) | P0 | X-Large |
-| Token::StringLit → Symbol, Token::Number.value → Symbol | P0 | Large |
+| **Parser String → Symbol** | P0 | Large | ✅ **Done** — Ident, StringLit, Number.value, RealNum → Symbol. 755 tests pass |
+| Token::Ident(String) → Token::Ident(Symbol) | P0 | X-Large | ✅ **Done** |
+| Token::StringLit → Symbol, Token::Number.value → Symbol | P0 | Large | ✅ **Done** |
 | **SIMD intrinsics** (AVX2 `_mm256_loadu_si256`) | P3 | Medium |
 | **Cranelift JIT** integration | P2 | Large |
-| **Lazy type resolution** (TypeSystem) | P1 | Medium |
+| **Lazy type resolution** (TypeSystem) | P1 | Medium | ✅ **Done** — TypeSystem with DashMap cache, AST→HIR conversion, 10 unit tests |
 | **OpenTitan benchmark** | P0 | Medium |
 | **HIR → MIR lowering** (full pipeline) | P1 | Large |
 

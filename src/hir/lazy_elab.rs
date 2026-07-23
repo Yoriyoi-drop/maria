@@ -9,6 +9,7 @@ use dashmap::DashMap;
 
 use super::builder::HirBuilder;
 use super::hir::HirModule;
+use super::types::TypeSystem;
 use crate::intern::Symbol;
 
 /// Lazy elaboration engine — on-demand module elaboration.
@@ -19,6 +20,8 @@ pub struct LazyElaborator {
     in_progress: DashSet<Symbol>,
     /// Builder for AST → HIR conversion
     builder: parking_lot::Mutex<HirBuilder>,
+    /// Shared type system (lazy type resolution)
+    type_system: Arc<TypeSystem>,
 }
 
 // Re-export DashSet since it's not in scope
@@ -26,11 +29,24 @@ use dashmap::DashSet;
 
 impl LazyElaborator {
     pub fn new() -> Self {
+        let type_system = Arc::new(TypeSystem::new());
+        let builder = HirBuilder::with_type_system(type_system.clone());
         LazyElaborator {
             elaborated: DashMap::new(),
             in_progress: DashSet::new(),
-            builder: parking_lot::Mutex::new(HirBuilder::new()),
+            builder: parking_lot::Mutex::new(builder),
+            type_system,
         }
+    }
+
+    /// Get the shared type system.
+    pub fn type_system(&self) -> &TypeSystem {
+        &self.type_system
+    }
+
+    /// Get an Arc reference to the shared type system.
+    pub fn shared_type_system(&self) -> Arc<TypeSystem> {
+        self.type_system.clone()
     }
 
     /// Elaborate a module on-demand. Returns cached version if available.

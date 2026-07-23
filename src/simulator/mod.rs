@@ -6,6 +6,8 @@ pub mod state;
 pub mod types;
 pub mod util;
 pub mod value;
+pub mod jit_cranelift;
+pub mod jit_eval;
 
 pub use engine::*;
 pub use jit::*;
@@ -14,3 +16,5 @@ pub use state::*;
 pub use types::*;
 pub use util::*;
 pub use value::*;
+pub use jit_cranelift::*;
+pub use jit_eval::*;

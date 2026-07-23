@@ -10,8 +10,8 @@ use crate::intern::Symbol;
 
 /// Builder: AST → HIR.
 pub struct HirBuilder {
-    /// Resolved type cache (module, name) → HirType
-    type_cache: HashMap<(Symbol, Symbol), HirType>,
+    /// Lazy TypeSystem for type resolution
+    type_system: std::sync::Arc<super::types::TypeSystem>,
     /// Parameter values for current module
     param_values: HashMap<Symbol, u64>,
 }
@@ -19,9 +19,22 @@ pub struct HirBuilder {
 impl HirBuilder {
     pub fn new() -> Self {
         HirBuilder {
-            type_cache: HashMap::new(),
+            type_system: std::sync::Arc::new(super::types::TypeSystem::new()),
             param_values: HashMap::new(),
         }
+    }
+
+    /// Create builder with a shared type system.
+    pub fn with_type_system(type_system: std::sync::Arc<super::types::TypeSystem>) -> Self {
+        HirBuilder {
+            type_system,
+            param_values: HashMap::new(),
+        }
+    }
+
+    /// Get reference to the type system.
+    pub fn type_system(&self) -> &super::types::TypeSystem {
+        &self.type_system
     }
 
     /// Build HIR for a module from AST data.
@@ -60,16 +73,24 @@ impl HirBuilder {
         }
     }
 
-    /// Resolve a type name to HirType.
-    pub fn resolve_type(&mut self, module: Symbol, name: Symbol) -> HirType {
-        if let Some(t) = self.type_cache.get(&(module, name)) {
-            return t.clone();
-        }
+    /// Resolve a type name to HirType (lazy, via TypeSystem).
+    pub fn resolve_type(&self, module: Symbol, name: Symbol) -> HirType {
+        self.type_system.resolve_type(module, name)
+    }
 
-        // Default: 1-bit
-        let t = HirType::BitVec { width: 1 };
-        self.type_cache.insert((module, name), t.clone());
-        t
+    /// Convert an AST DataType to HirType.
+    pub fn ast_dtype_to_hir(&self, dtype: &crate::ast::types::DataType, scope: Symbol) -> HirType {
+        self.type_system.ast_dtype_to_hir(dtype, scope)
+    }
+
+    /// Register typedefs with the type system.
+    pub fn register_typedefs(&self, scope: Symbol, typedefs: &[crate::ast::types::TypedefDecl]) {
+        self.type_system.register_typedefs(scope, typedefs);
+    }
+
+    /// Get reference to the underlying type system for sharing.
+    pub fn shared_type_system(&self) -> std::sync::Arc<super::types::TypeSystem> {
+        self.type_system.clone()
     }
 
     /// Set a parameter value.

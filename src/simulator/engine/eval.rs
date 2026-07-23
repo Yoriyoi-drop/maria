@@ -183,6 +183,12 @@ impl SimulationEngine {
                     };
                     return Ok(LogicVec::from_u64(result.to_bits(), 64));
                 }
+                // Try JIT first for non-real unary operations
+                if let Some(ref mut jit) = self.jit_evaluator {
+                    if let Some(result) = jit.eval_unary(op, &val) {
+                        return Ok(result);
+                    }
+                }
                 Ok(eval_unary(op.clone(), &val))
             }
             IrExpr::BinaryOp(op, lhs, rhs) => {
@@ -229,6 +235,12 @@ impl SimulationEngine {
                 {
                     Ok(eval_binary_signed(op.clone(), &lval, &rval))
                 } else {
+                    // Try JIT first for non-real binary operations
+                    if let Some(ref mut jit) = self.jit_evaluator {
+                        if let Some(result) = jit.eval_binary(op, &lval, &rval) {
+                            return Ok(result);
+                        }
+                    }
                     Ok(eval_binary(op.clone(), &lval, &rval))
                 }
             }

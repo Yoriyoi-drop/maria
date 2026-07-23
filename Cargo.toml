@@ -11,6 +11,12 @@ rayon = "1"
 thiserror = "2"
 wavefst = { version = "0.1", default-features = false, features = ["gzip"] }
 
+# ── JIT Compilation ──
+cranelift = "0.110"
+cranelift-jit = "0.110"
+cranelift-frontend = "0.110"
+cranelift-module = "0.110"
+
 # ── Fase 0: Foundation ──
 dashmap = "6"
 crossbeam = "0.8"

@@ -96,6 +96,7 @@ impl SimulationEngine {
             max_recursion_depth: 256,
             objection_count: 0,
             objection_triggered: false,
+            jit_evaluator: Some(crate::simulator::JITEvaluator::new()),
         }
     }
 

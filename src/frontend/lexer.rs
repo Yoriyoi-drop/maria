@@ -156,59 +156,29 @@ impl<'a> FastLexer<'a> {
         }
     }
 
-    /// Skip whitespace using word-at-a-time comparison for the hot path.
-    /// Proses 8 bytes sekaligus dengan XOR-based detection yang benar
-    /// (tidak menggunakan `has_zero_byte` karena borrow propagation bug).
+    /// Skip whitespace using SIMD-accelerated detection.
+    ///
+    /// Menggunakan AVX2/SSE4.2 intrinsics jika CPU mendukung,
+    /// fallback ke scalar byte-by-byte.
     fn skip_whitespace_fast(&mut self) {
-        // Word-at-a-time: process 8 bytes at a time
-        while self.pos + 8 <= self.input.len() {
-            let chunk = u64::from_le_bytes(
-                self.input[self.pos..self.pos + 8].try_into().unwrap(),
-            );
-
-            // Check if any byte is NOT whitespace
-            // Whitespace: 0x20 (space), 0x09 (tab), 0x0A (LF), 0x0D (CR)
-            // For each byte: we want (b == 0x20) | (b == 0x09) | (b == 0x0A) | (b == 0x0D)
-            // Use byte-level arithmetic: subtract the smallest whitespace and compare range
-            
-            // Parallel check: is any byte NOT in {0x09,0x0A,0x0D,0x20}?
-            // Technique: W = chunk
-            // 1. Compute missing = W ^ 0x2020202020202020 (bytes that are NOT space)
-            // 2. For each byte, check if it's definitely not a tab/LF/CR
-            // Simpler: just scan byte-by-byte but unrolled
-
-            // Unrolled 8-byte scan — each byte check in parallel using XOR + OR
-            let mut all_ws = true;
-            for i in 0..8 {
-                let b = self.input[self.pos + i];
-                if !(b == b' ' || b == b'\t' || b == b'\n' || b == b'\r') {
-                    all_ws = false;
-                    break;
-                }
-            }
-
-            if !all_ws {
-                break; // This word has a non-whitespace byte
-            }
-
-            // All 8 bytes are whitespace — advance past them
-            for _ in 0..8 {
-                self.skip_byte();
-            }
+        if self.pos >= self.input.len() {
+            return;
         }
 
-        // Scalar fallback for remaining bytes
-        self.skip_whitespace_scalar();
+        let remaining = &self.input[self.pos..];
+        let ws_count = crate::frontend::simd::count_whitespace(remaining);
+
+        // Advance past whitespace bytes
+        for _ in 0..ws_count {
+            self.skip_byte();
+        }
     }
 
     fn skip_whitespace_scalar(&mut self) {
-        while self.pos < self.input.len() {
-            let c = self.input[self.pos];
-            if c == b' ' || c == b'\t' || c == b'\n' || c == b'\r' {
-                let _ = self.advance();
-            } else {
-                break;
-            }
+        let remaining = &self.input[self.pos..];
+        let ws_count = crate::frontend::simd::count_whitespace_scalar(remaining);
+        for _ in 0..ws_count {
+            self.skip_byte();
         }
     }
 
