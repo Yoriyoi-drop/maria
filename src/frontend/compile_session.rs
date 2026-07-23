@@ -4,13 +4,15 @@
 //! parallel parsing → merge designs → build module index.
 //!
 //! Now with CacheManager + IncrementalTracker integration for incremental builds.
+//! LazilyElaborator integration for on-demand HIR elaboration.
 
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use crate::ast::Design;    use crate::cache::{CacheManager, compute_checksum};
+use crate::ast::Design;
+use crate::cache::{CacheManager, compute_checksum};
 use crate::error::SimError;
 use crate::frontend::discovery::{DiscoveryOptions, FileDiscovery};
 use crate::frontend::io::MmapFile;
@@ -36,6 +38,8 @@ pub struct SessionConfig {
     pub libfiles: Vec<PathBuf>,
     /// Gunakan FastLexer byte-level (default: true)
     pub use_fast_lexer: bool,
+    /// Gunakan lazy elaboration (HIR-based, on-demand)
+    pub use_lazy_elab: bool,
 }
 
 impl Default for SessionConfig {
@@ -49,6 +53,7 @@ impl Default for SessionConfig {
             libdirs: Vec::new(),
             libfiles: Vec::new(),
             use_fast_lexer: true,
+            use_lazy_elab: false,
         }
     }
 }
@@ -67,10 +72,16 @@ pub struct CompileSession {
     pub dep_graph: DependencyGraph,
     /// Profiler for performance measurement
     pub profiler: Option<Profiler>,
+    /// Lazy elaborator (on-demand HIR elaboration)
+    pub lazy_elab: crate::hir::LazyElaborator,
     /// Cached designs from previous compile (incremental)
     prev_designs: HashMap<PathBuf, Design>,
     /// Cached checksums from previous compile
     prev_checksums: HashMap<PathBuf, u64>,
+    /// Merged design from last compile (for lazy elaboration)
+    merged_design: Option<Design>,
+    /// Cached elaborated IR design (lifetime: until next compile)
+    cached_ir_design: Option<crate::ir::IrDesign>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -114,8 +125,11 @@ impl CompileSession {
             incremental: IncrementalTracker::new(),
             dep_graph: DependencyGraph::new(),
             profiler: None,
+            lazy_elab: crate::hir::LazyElaborator::new(),
             prev_designs: HashMap::new(),
             prev_checksums: HashMap::new(),
+            merged_design: None,
+            cached_ir_design: None,
         }
     }
 
@@ -245,6 +259,51 @@ impl CompileSession {
         let mut merged: Design = designs[0].clone();
         for d in &designs[1..] {
             extend_design(&mut merged, d);
+        }
+
+        // If lazy elaboration is enabled, store design for on-demand elaboration
+        // and pre-register all module names/ports in the LazyElaborator
+        if self.config.use_lazy_elab {
+            self.merged_design = Some(merged.clone());
+            for module in &merged.modules {
+                let signals: Vec<crate::hir::HirSignal> = module
+                    .ports
+                    .iter().map(|p| {
+                        let width = p
+                            .range
+                            .as_ref()
+                            .map(|r| {
+                                let lo = r.lsb as usize;
+                                let hi = r.msb as usize;
+                                hi.abs_diff(lo) + 1
+                            })
+                            .unwrap_or(1);
+                        crate::hir::HirSignal {
+                            name: p.name,
+                            dtype: crate::hir::HirType::BitVec { width },
+                            width,
+                            is_input: matches!(
+                                p.direction,
+                                crate::ast::types::PortDirection::Input
+                                    | crate::ast::types::PortDirection::Inout
+                            ),
+                            is_output: matches!(
+                                p.direction,
+                                crate::ast::types::PortDirection::Output
+                                    | crate::ast::types::PortDirection::Inout
+                            ),
+                        }
+                    })
+                    .collect();
+                self.lazy_elab.elaborate_with_data(
+                    module.name,
+                    vec![], // params resolved on-demand
+                    signals,
+                    vec![], // stmts expanded on-demand
+                );
+            }
+        } else {
+            self.merged_design = None;
         }
 
         // Update cache for next incremental compile
@@ -489,6 +548,140 @@ impl CompileSession {
     /// Get cache statistics.
     pub fn cache_stats(&self) -> crate::cache::CacheStats {
         self.cache.stats()
+    }
+
+    /// Elaborate a module lazily (on-demand via HIR pipeline).
+    /// Returns the elaborated HIR module if it exists and lazy mode is enabled.
+    /// Falls back to `merged_design` for on-demand AST→HIR conversion on cache miss.
+    pub fn elaborate_lazy_module(&self, name: Symbol) -> Option<std::sync::Arc<crate::hir::HirModule>> {
+        if !self.config.use_lazy_elab {
+            return None;
+        }
+
+        // 1. Check cache first
+        if let Some(module) = self.lazy_elab.elaborate(name) {
+            return Some(module);
+        }
+
+        // 2. Cache miss — try fallback to merged_design for AST→HIR conversion
+        if let Some(ref design) = self.merged_design {
+            if let Some(ast_module) = design.modules.iter().find(|m| m.name == name) {
+                let signals: Vec<crate::hir::HirSignal> = ast_module
+                    .ports
+                    .iter().map(|p| {
+                        let width = p
+                            .range
+                            .as_ref()
+                            .map(|r| {
+                                let lo = r.lsb as usize;
+                                let hi = r.msb as usize;
+                                hi.abs_diff(lo) + 1
+                            })
+                            .unwrap_or(1);
+                        crate::hir::HirSignal {
+                            name: p.name,
+                            dtype: crate::hir::HirType::BitVec { width },
+                            width,
+                            is_input: matches!(
+                                p.direction,
+                                crate::ast::types::PortDirection::Input
+                                    | crate::ast::types::PortDirection::Inout
+                            ),
+                            is_output: matches!(
+                                p.direction,
+                                crate::ast::types::PortDirection::Output
+                                    | crate::ast::types::PortDirection::Inout
+                            ),
+                        }
+                    })
+                    .collect();
+
+                // Extract params
+                let params: Vec<crate::hir::HirParam> = ast_module
+                    .params
+                    .iter()
+                    .map(|p| crate::hir::HirParam {
+                        name: p.name,
+                        dtype: crate::hir::HirType::BitVec { width: 1 },
+                        default: None,
+                        is_local: false,
+                    })
+                    .collect();
+
+                return Some(self.lazy_elab.elaborate_with_data(
+                    name,
+                    params,
+                    signals,
+                    vec![], // stmts expanded on-demand
+                ));
+            }
+        }
+
+        None
+    }
+
+    /// Number of lazily-elaborated modules.
+    pub fn lazy_elaborated_count(&self) -> usize {
+        self.lazy_elab.len()
+    }
+
+    /// Check if a module has been lazily elaborated.
+    pub fn is_lazy_elaborated(&self, name: Symbol) -> bool {
+        self.lazy_elab.is_elaborated(name)
+    }
+
+    /// Invalidate all lazily-elaborated modules (e.g., on recompile).
+    pub fn invalidate_lazy_elab(&mut self) {
+        self.lazy_elab.invalidate_all();
+    }
+
+    /// Compile AND elaborate in one call.
+    ///
+    /// Combines `compile()` + `Elaborator::elaborate()` into a single pipeline step.
+    /// When `use_lazy_elab` is set, pre-populates the LazyElaborator and stores
+    /// the merged Design for on-demand module lookup via `elaborate_lazy_module()`.
+    ///
+    /// Returns (compiled Design, elaborated IrDesign, module index length).
+    pub fn compile_and_elaborate(
+        &mut self,
+        top_name: Option<&str>,
+    ) -> Result<(Design, crate::ir::IrDesign, usize), SimError> {
+        let (design, module_index) = self.compile()?;
+        let index_len = module_index.len();
+
+        let mut elaborator = crate::elaboration::Elaborator::new(design.clone());
+        let ir_design = elaborator.elaborate(top_name)?;
+
+        // Cache IR design for access after compile
+        self.cached_ir_design = Some(ir_design.clone());
+
+        Ok((design, ir_design, index_len))
+    }
+
+    /// Compile-only mode with lazy elaboration.
+    ///
+    /// Compiles the design and pre-populates the LazyElaborator, but
+    /// skips full IR elaboration. Useful for IDE features, analysis,
+    /// and quick syntax/port checks.
+    ///
+    /// Returns (compiled Design, elaborated HIR count, module index length).
+    pub fn compile_lazy_only(
+        &mut self,
+    ) -> Result<(Design, usize, usize), SimError> {
+        if !self.config.use_lazy_elab {
+            return Err(SimError::new(None, "lazy mode not enabled (use --lazy)"));
+        }
+
+        let (design, module_index) = self.compile()?;
+        let index_len = module_index.len();
+        let hir_count = self.lazy_elaborated_count();
+
+        Ok((design, hir_count, index_len))
+    }
+
+    /// Get cached IR design (if previously elaborated).
+    pub fn get_cached_ir(&self) -> Option<&crate::ir::IrDesign> {
+        self.cached_ir_design.as_ref()
     }
 }
 

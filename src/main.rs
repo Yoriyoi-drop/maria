@@ -173,6 +173,10 @@ struct Cli {
     /// Force full recompile (ignore cache)
     #[arg(long = "recompile")]
     recompile: bool,
+
+    /// Use lazy elaboration (HIR-based, on-demand)
+    #[arg(long = "lazy")]
+    lazy: bool,
 }
 
 fn main() {
@@ -664,6 +668,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         libdirs: cli.libdirs.iter().map(PathBuf::from).collect(),
         libfiles: cli.libfiles.iter().map(PathBuf::from).collect(),
         use_fast_lexer: !cli.legacy_lexer,
+        use_lazy_elab: cli.lazy,
     };
 
     let mut session = CompileSession::new(config);
@@ -671,20 +676,50 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     if cli.profile {
         session.enable_profiling();
     }
-    let (design, index_len) = if cli.recompile {
+
+    // ── Lazy mode: compile-only, skip full elaboration ──
+    if cli.lazy && cli.compile_only {
+        let (design, hir_count, index_len) = session.compile_lazy_only()?;
+        if !cli.quiet {
+            session.print_timing();
+            println!("Modules indexed: {}", index_len);
+            println!("Lazy-elaborated modules (HIR): {}", hir_count);
+            if let Some(top) = &session.config.top_module {
+                println!("HIR query ready: session.elaborate_lazy_module(...)");
+            }
+        }
+        if cli.print_ast {
+            println!("{:#?}", design);
+        }
+        return Ok(());
+    }
+
+    // ── Full pipeline: compile + elaborate (use compile_and_elaborate when --lazy) ──
+    let top_name = cli.top.as_deref();
+
+    let (design, ir_design, index_len) = if cli.lazy {
+        // Use integrated compile + elaborate with lazy pre-population
+        let (design, ir_design, index_len) = session.compile_and_elaborate(top_name)?;
+        if !cli.quiet {
+            session.print_timing();
+            println!("Modules indexed: {}, lazy HIR modules: {}", index_len, session.lazy_elaborated_count());
+        }
+        (design, ir_design, index_len)
+    } else if cli.recompile {
         if !cli.quiet { eprintln!("Forcing full recompile..."); }
         let all_sources: Vec<PathBuf> = session.config.sources.clone();
         let (design, module_index) = session.compile_incremental(&all_sources)?;
-        let len = module_index.len();
-        (design, len)
+        let index_len = module_index.len();
+        if !cli.quiet { session.print_timing(); }
+        (design.clone(), Elaborator::new(design).elaborate(top_name)?, index_len)
     } else {
         let (design, module_index) = session.compile()?;
-        let len = module_index.len();
-        (design, len)
+        let index_len = module_index.len();
+        if !cli.quiet { session.print_timing(); }
+        (design.clone(), Elaborator::new(design).elaborate(top_name)?, index_len)
     };
 
     if !cli.quiet {
-        session.print_timing();
         println!("Modules indexed: {}", index_len);
     }
 
@@ -709,15 +744,19 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         return Err(SimError::new(None, "no modules found in design"));
     }
 
-    // Continue with elaboration + simulation (same as legacy pipeline)
-    let top_name = cli.top.as_deref();
-    if !cli.quiet {
-        println!("Compiling design (parallel pipeline)...");
-    }
-    let mut elaborator = Elaborator::new(design);
-    let mut ir_design = elaborator.elaborate(top_name)?;
-
-    if !cli.quiet {
+    // ── Lazy mode info (when not compile-only) ──
+    if cli.lazy && !cli.quiet {
+        let lazy_count = session.lazy_elaborated_count();
+        if let Some(ir) = session.get_cached_ir() {
+            println!(
+                "Module '{}': {} signals, {} processes | Lazy HIR: {} modules elapsed",
+                ir.top.name,
+                ir.top.signals.len(),
+                ir.top.processes.len(),
+                lazy_count
+            );
+        }
+    } else if !cli.quiet {
         println!(
             "Module '{}': {} signals, {} processes",
             ir_design.top.name,
@@ -807,7 +846,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
 
     let vcd_path = cli
         .output
-        .unwrap_or_else(|| format!("{}.vcd", engine.design.top.name));
+        .unwrap_or_else(|| format!("{}.vcd", &engine.design.top.name.to_string()));
     let vcd = VcdWriter::new(&vcd_path, &engine.design)
         .map_err(|e| SimError::new(None, format!("VCD creation failed: {}", e)))?;
     engine.set_vcd(vcd);
@@ -865,3 +904,4 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
 
     Ok(())
 }
+

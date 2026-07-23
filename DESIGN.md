@@ -2,21 +2,24 @@
 
 > **Dokumen ini berisi redesign total compiler/interpreter Maria agar mampu menangani proyek SystemVerilog dengan >10.000 RTL modules, >80.000 verification modules, dan jutaan LOC dengan performa mendekati/melampaui Verilator.**
 
-## Status Implementasi (2026-07-22)
+## Status Implementasi (2026-07-23)
 
 | Modul | Fase | Status | Files | Tests Lulus |
 |-------|------|--------|-------|-------------|
 | arena/ | Phase 0 | ✅ **Done** | bump.rs, typed.rs, slab.rs, pool.rs | 18 |
 | intern/ | Phase 0 | ✅ **Done + Optimized** | string_intern.rs (DashMap O(1)), span.rs, table.rs | 14 |
-| frontend/ | Phase 1 | ✅ **Done + Integrated** | discovery.rs, io.rs (MmapFile), module_index.rs, compile_session.rs (CacheManager wired), package_resolver.rs | 15+ |
+| frontend/ | Phase 1 | ✅ **Done + Integrated** | discovery.rs, io.rs (MmapFile), module_index.rs, compile_session.rs (CacheManager wired, LazyElaborator integrated), package_resolver.rs | 15+ |
 | cache/ | Phase 2 | ✅ **Done** | cache_manager.rs, ast_cache.rs, hir_cache.rs, dep_cache.rs, checksum.rs | 10+ |
 | diagnostics/ | Phase 4 | ✅ **Done + Wired** | diagnostic.rs, emitter.rs, recovery.rs, codes.rs (wired into CompileSession) | 10+ |
 | scheduler/ | Phase 1 | ✅ **Done** | work_stealing.rs, priority.rs, dag.rs, incremental.rs | 10+ |
-| hir/ | Phase 3 | ✅ **Done** | hir.rs, builder.rs, lazy_elab.rs | 5+ |
+| hir/ | Phase 3 | ✅ **Done + Wired** | hir.rs, builder.rs, lazy_elab.rs | 7+ (2 new JIT tests) |
 | mir/ | Phase 3 | ✅ **Done** | mir.rs, lower.rs, opt.rs | 5+ |
 | profiling/ | Phase 5 | ✅ **Done** | profiler.rs, counters.rs, trace.rs | 10+ |
 | incremental_test/ | Phase 6 | ✅ **Done + Wired** | 8 incremental tests | Inline in compile_session.rs |
 | compile_incremental CLI | Phase 7 | ✅ **Done + Wired** | `--recompile` flag, redundant import cleanup, pub config field | main.rs + compile_session.rs |
+| lazy_elab CLI | Phase 7 | ✅ **Done + Wired** | `--lazy` flag, LazyElaborator di CompileSession | main.rs + compile_session.rs |
+| jit/ | Phase 7 | ✅ **Enhanced** | `CompiledExpr`, `JITCache`, intrinsics, 7 unit tests | jit.rs |
+| backend/ | Phase 7 | ✅ **Updated** | Re-export module align dengan DESIGN.md | mod.rs |
 | plugin/ | Phase 6+ | ✅ **Done** | plugin.rs | 5+ |
 | parser/ (legacy) | — | ✅ Stable | lexer.rs, parser.rs, preprocessor.rs | Legacy tests |
 | simulator/ (legacy) | — | ✅ Stable | engine.rs, state.rs, value.rs, etc. | Legacy tests |
@@ -51,8 +54,14 @@
 | **Symbol pipeline extension** | `ModuleIndex::file_modules()`, `module_names()`, `count_by_kind()`, `get_module_by_sym()`, `interned_top_module()`, `source_count()`. Utility helpers: `strings_to_symbols()`, `symbols_to_strings()`, `sym_to_string()`. |
 | **Stress tests fixed** | Assertions corrected (top module stored in `IrDesign.top`, not in `IrDesign.modules`). All 5/5 stress tests pass. Timing (release): 100 modules ~9.6ms, 1000 modules ~91ms. |
 | **String interning O(n²) → O(1)** | `StringTable::intern()` rewritten with DashMap `entry()` API — eliminated the O(n²) linear scan. Added fast path (no allocation on cache hit). **100K symbols: 35.7s → 53.6ms (667x speedup)**. Removed `AtomicU32` race condition — use `strings.len()` under lock. Simplified `get()` — removed unsafe `transmute`. |
+| **LazyElaborator → CompileSession** | `LazyElaborator` now wired into `CompileSession`. New `--lazy` CLI flag. `elaborate_lazy_module()`, `elaborated_count()`, `is_lazy_elaborated()` methods. Pre-registers module ports on compile. |
+| **JIT Compiler enhanced** | `CompiledExpr`, `JITCache` with hit-rate tracking, `compile_binary/unary/const` methods, 7 intrinsics (add/sub/and/or/xor/eq/lt). 7 unit tests verify compilation and caching. |
+| **`--lazy` CLI wired** | `--lazy` flag now has observable behavior: `--lazy --compile-only` skips full elaboration (compile-only HIR mode). `--lazy` without compile-only pre-populates LazyElaborator + does full elaboration for simulation. `compile_and_elaborate()` and `compile_lazy_only()` methods added to `CompileSession`. |
+| **backend/ module align** | `src/backend/mod.rs` updated with proper re-exports: `backend::simulator`, `backend::waveform`, `backend::CoverageEngine`, `backend::Debugger` — sesuai DESIGN.md. |
+| **Bug fix: lazy pre-registration** | Fixed bug where each module was assigned ALL ports from ALL modules instead of only its own ports. Now correctly uses per-module port iteration. |
+| **elaborate_lazy_module() fallback** | Now falls back to `merged_design` for on-demand AST→HIR conversion on cache miss. Extracts port/signal data and populates LazyElaborator dynamically. |
 
-> **Total: 745+ unit tests pass (713 original + 32 new). 5 stress tests pass (--ignored). Release benchmarks: counter.sv ~82µs, 1000 modules ~54ms, 100K symbols 53.6ms.**
+> **Total: 750+ unit tests pass (713 original + 32 new + 7 JIT tests). 5 stress tests pass (--ignored). Release benchmarks: counter.sv ~82µs, 1000 modules ~54ms, 100K symbols 53.6ms.**
 
 ---
 
@@ -1511,9 +1520,25 @@ struct CacheReport {
 | P0 | Incremental correctness tests | Must verify cache behavior | ✅ **Done (8 tests)** |
 | P0 | `std::mem::take` bug — cache corruption on merge | Design[0] destroyed before cache update | ✅ **Fixed (clone instead of take)** |
 | P0 | `--cache-stats` dead flag wired | CLI usability | ✅ **Done** |
-| P1 | No lazy elaboration wired | Full build always | ❌ Todo |
-| P2 | JIT simulation stubs only | High sim speedup potential | ❌ Todo |
+| P1 | No lazy elaboration wired | Full build always | ✅ **Done — `--lazy` flag + CompileSession integration** |
+| P2 | JIT simulation stubs only | High sim speedup potential | ✅ **Enhanced — CompiledExpr, JITCache, 7 intrinsics, 7 tests** |
 | P3 | SIMD only in debug tested | Release may differ | ⏳ Later |
+
+---
+
+## 21. Lombok — What's Next
+
+### Immediate (Next Sprint)
+| Item | Priority | Effort |
+|------|----------|--------|
+| **Parser String → Symbol** | P0 | Large |
+| Token::Ident(String) → Token::Ident(Symbol) | P0 | X-Large |
+| Token::StringLit → Symbol, Token::Number.value → Symbol | P0 | Large |
+| **SIMD intrinsics** (AVX2 `_mm256_loadu_si256`) | P3 | Medium |
+| **Cranelift JIT** integration | P2 | Large |
+| **Lazy type resolution** (TypeSystem) | P1 | Medium |
+| **OpenTitan benchmark** | P0 | Medium |
+| **HIR → MIR lowering** (full pipeline) | P1 | Large |
 
 ---
 

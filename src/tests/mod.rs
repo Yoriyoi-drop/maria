@@ -9010,23 +9010,20 @@ endmodule
 }
 
 #[test]
-fn test_jit_basic() {
-    let mut jit = crate::simulator::jit::JITCompiler::new().unwrap();
-    assert_eq!(crate::simulator::jit::JITCompiler::compile_add(10, 5), 15);
-    assert_eq!(crate::simulator::jit::JITCompiler::compile_sub(10, 5), 5);
-    assert_eq!(
-        crate::simulator::jit::JITCompiler::compile_and(0xFF, 0x0F),
-        0x0F
-    );
-    assert_eq!(
-        crate::simulator::jit::JITCompiler::compile_or(0xF0, 0x0F),
-        0xFF
-    );
-    assert_eq!(
-        crate::simulator::jit::JITCompiler::compile_xor(0xFF, 0x0F),
-        0xF0
-    );
-    assert_eq!(crate::simulator::jit::JITCompiler::compile_mul(6, 7), 42);
+fn test_jit_intrinsics() {
+    use crate::simulator::jit::intrinsics;
+    assert_eq!(intrinsics::add(10, 5), 15);
+    assert_eq!(intrinsics::sub(10, 5), 5);
+    assert_eq!(intrinsics::bit_and(0xFF, 0x0F), 0x0F);
+    assert_eq!(intrinsics::bit_or(0xF0, 0x0F), 0xFF);
+    assert_eq!(intrinsics::bit_xor(0xFF, 0x0F), 0xF0);
+    assert_eq!(intrinsics::mul(6, 7), 42);
+}
+
+#[test]
+fn test_jit_compiler_new() {
+    let mut compiler = crate::simulator::jit::JITCompiler::new().unwrap();
+    assert_eq!(compiler.compiled_count(), 0);
 }
 
 #[test]
