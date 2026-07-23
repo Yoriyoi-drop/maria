@@ -9,6 +9,9 @@ pub mod sequence;
 
 use crate::error::SimError;
 use crate::ir::*;
+use crate::scheduler::clock_domain::{ClockDomain, ClockDomainAnalysis};
+use crate::scheduler::SimulationDag;
+use crate::simulator::arena::SimulationArena;
 use crate::simulator::parallel::ParallelConfig;
 
 use crate::simulator::sdf::TimingCheck;
@@ -117,6 +120,18 @@ pub struct SimulationEngine {
     pub objection_triggered: bool,
     /// JIT evaluator (native code compilation for fast expression eval)
     pub jit_evaluator: Option<crate::simulator::JITEvaluator>,
+    /// Use packed 4-state bitmask eval (SIMD-ready) for bitwise operations
+    pub use_packed_eval: bool,
+    /// Zero-deallocation arena for temporary allocations during simulation
+    pub sim_arena: SimulationArena,
+    /// DAG-parallel process evaluator (built lazily)
+    pub sim_dag: Option<SimulationDag>,
+    /// Enable DAG-parallel process evaluation
+    pub use_dag_parallel: bool,
+    /// Clock domain analysis + fused domains for cycle-based simulation
+    pub clock_analysis: Option<ClockDomainAnalysis>,
+    /// Enable cycle-based simulation fusion
+    pub use_cycle_fusion: bool,
 }
 
 // ─── Standalone helper functions ───

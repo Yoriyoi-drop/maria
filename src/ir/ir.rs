@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use crate::intern::Symbol;
 
@@ -641,6 +642,30 @@ pub struct LogicVec {
     pub width: usize,
 }
 
+// ─── Thread-Local Arena Constructor ───
+//
+// Function pointer yang di-set oleh SimulationArena agar LogicVec::new(),
+// LogicVec::fill(), dan LogicVec::from_u64() bisa allocate dari arena
+// (zero-deallocation) tanpa circular dependency.
+
+/// Signature for a custom LogicVec allocator.
+pub type LogicVecCtor = fn(usize, LogicVal) -> Option<LogicVec>;
+
+thread_local! {
+    /// Custom constructor registered by SimulationArena (or None for default heap alloc).
+    static LOGICVEC_CTOR: RefCell<Option<LogicVecCtor>> = const { RefCell::new(None) };
+}
+
+/// Register a custom LogicVec constructor (e.g., arena-backed allocation).
+/// Pass `None` to restore default heap allocation.
+pub fn set_logicvec_ctor(ctor: Option<LogicVecCtor>) {
+    LOGICVEC_CTOR.with(|cell| *cell.borrow_mut() = ctor);
+}
+
+fn get_logicvec_ctor() -> Option<LogicVecCtor> {
+    LOGICVEC_CTOR.with(|cell| *cell.borrow())
+}
+
 impl Default for LogicVec {
     fn default() -> Self {
         LogicVec::new(1)
@@ -650,6 +675,13 @@ impl Default for LogicVec {
 impl LogicVec {
     pub fn new(width: usize) -> Self {
         let w = if width > 1_000_000 { 1 } else { width };
+        // Try arena-backed allocation first (zero-deallocation path)
+        if let Some(ctor) = get_logicvec_ctor() {
+            if let Some(lv) = ctor(w, LogicVal::X) {
+                return lv;
+            }
+        }
+        // Fallback: standard heap allocation
         LogicVec {
             bits: vec![LogicVal::X; w],
             width: w,
@@ -657,6 +689,13 @@ impl LogicVec {
     }
 
     pub fn fill(val: LogicVal, width: usize) -> Self {
+        // Try arena-backed allocation first (zero-deallocation path)
+        if let Some(ctor) = get_logicvec_ctor() {
+            if let Some(lv) = ctor(width, val) {
+                return lv;
+            }
+        }
+        // Fallback: standard heap allocation
         LogicVec {
             bits: vec![val; width],
             width,
@@ -664,6 +703,18 @@ impl LogicVec {
     }
 
     pub fn from_u64(val: u64, width: usize) -> Self {
+        // Try arena-backed allocation first (zero-deallocation path)
+        if let Some(ctor) = get_logicvec_ctor() {
+            if let Some(mut lv) = ctor(width, LogicVal::Zero) {
+                for i in 0..lv.width.min(64) {
+                    if (val >> i) & 1 == 1 {
+                        lv.bits[i] = LogicVal::One;
+                    }
+                }
+                return lv;
+            }
+        }
+        // Fallback: standard heap allocation
         let mut bits = Vec::with_capacity(width);
         for i in 0..width {
             if i < 64 && (val >> i) & 1 == 1 {
@@ -718,12 +769,26 @@ impl LogicVec {
 
     pub fn resize(&self, new_width: usize) -> Self {
         if new_width <= self.width {
+            // Try arena-backed allocation
+            if let Some(ctor) = get_logicvec_ctor() {
+                if let Some(mut lv) = ctor(new_width, LogicVal::Zero) {
+                    lv.bits[..new_width].copy_from_slice(&self.bits[..new_width]);
+                    return lv;
+                }
+            }
             let mut bits = self.bits.clone();
             bits.truncate(new_width);
             return LogicVec {
                 bits,
                 width: new_width,
             };
+        }
+        // Try arena-backed allocation
+        if let Some(ctor) = get_logicvec_ctor() {
+            if let Some(mut lv) = ctor(new_width, LogicVal::Zero) {
+                lv.bits[..self.width].copy_from_slice(&self.bits);
+                return lv;
+            }
         }
         let mut bits = self.bits.clone();
         bits.resize(new_width, LogicVal::Zero);
@@ -734,11 +799,20 @@ impl LogicVec {
     }
 
     pub fn extend(&self, other: &LogicVec) -> Self {
+        let new_width = self.width + other.width;
+        // Try arena-backed allocation
+        if let Some(ctor) = get_logicvec_ctor() {
+            if let Some(mut lv) = ctor(new_width, LogicVal::Zero) {
+                lv.bits[..self.width].copy_from_slice(&self.bits);
+                lv.bits[self.width..].copy_from_slice(&other.bits);
+                return lv;
+            }
+        }
         let mut bits = self.bits.clone();
         bits.extend_from_slice(&other.bits);
         LogicVec {
             bits,
-            width: self.width + other.width,
+            width: new_width,
         }
     }
 

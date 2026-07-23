@@ -1,5 +1,7 @@
+pub mod arena;
 pub mod engine;
 pub mod jit;
+pub mod packed;
 pub mod parallel;
 pub mod sdf;
 pub mod state;
@@ -11,6 +13,7 @@ pub mod jit_eval;
 
 pub use engine::*;
 pub use jit::*;
+pub use packed::*;
 pub use sdf::*;
 pub use state::*;
 pub use types::*;

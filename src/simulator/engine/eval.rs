@@ -1,6 +1,7 @@
 use super::{
     edge_matches_abbrev, evaluate_string_method, SimulationEngine, sym_char_matches,
 };
+use crate::simulator::packed::{eval_binary_packed, eval_unary_packed, is_packable_binary_op, PackedLogicVec};
 use crate::simulator::util::*;
 use crate::ast::*;
 use crate::error::SimError;
@@ -183,7 +184,15 @@ impl SimulationEngine {
                     };
                     return Ok(LogicVec::from_u64(result.to_bits(), 64));
                 }
-                // Try JIT first for non-real unary operations
+                // Try packed eval first (SIMD-ready bitmask ops)
+                if self.use_packed_eval {
+                    let packed = PackedLogicVec::from_logicvec(&val);
+                    if let Some(packed_result) = eval_unary_packed(op, &packed) {
+                        let result = packed_result.to_logicvec();
+                        return Ok(result);
+                    }
+                }
+                // Try JIT for non-real unary operations
                 if let Some(ref mut jit) = self.jit_evaluator {
                     if let Some(result) = jit.eval_unary(op, &val) {
                         return Ok(result);
@@ -235,7 +244,16 @@ impl SimulationEngine {
                 {
                     Ok(eval_binary_signed(op.clone(), &lval, &rval))
                 } else {
-                    // Try JIT first for non-real binary operations
+                    // Try packed eval first (SIMD-ready bitmask ops for bitwise ops only)
+                    if self.use_packed_eval && is_packable_binary_op(op) {
+                        let packed_lhs = PackedLogicVec::from_logicvec(&lval);
+                        let packed_rhs = PackedLogicVec::from_logicvec(&rval);
+                        if let Some(packed_result) = eval_binary_packed(op, &packed_lhs, &packed_rhs) {
+                            let result = packed_result.to_logicvec();
+                            return Ok(result);
+                        }
+                    }
+                    // Try JIT for non-real binary operations
                     if let Some(ref mut jit) = self.jit_evaluator {
                         if let Some(result) = jit.eval_binary(op, &lval, &rval) {
                             return Ok(result);

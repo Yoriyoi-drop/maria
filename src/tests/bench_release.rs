@@ -73,3 +73,105 @@ fn bench_release_session_100_files() {
     eprintln!("100 files: {:?}", elapsed);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+#[ignore]
+fn bench_release_opentitan_compile() {
+    // Compile all OpenTitan RTL files listed in opentitan_rtl.f
+    let file_list_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("opentitan_rtl.f");
+    let content = std::fs::read_to_string(&file_list_path)
+        .expect("opentitan_rtl.f not found");
+
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let sources: Vec<std::path::PathBuf> = content
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| {
+            let p = std::path::Path::new(manifest).join(l);
+            assert!(p.exists(), "file not found: {:?}", p);
+            p
+        })
+        .collect();
+
+    eprintln!("OpenTitan RTL files: {}", sources.len());
+
+    // Cold compile via compile_files (tolerates partial failures)
+    use crate::compile_files;
+    let string_sources: Vec<String> = sources
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+
+    let start = Instant::now();
+    match compile_files(&string_sources) {
+        Ok(design) => {
+            let elapsed = start.elapsed();
+            eprintln!(
+                "OpenTitan cold compile: {:?} ({} modules, {} classes, top={})",
+                elapsed,
+                design.modules.len(),
+                design.classes.len(),
+                design.top.name
+            );
+        }
+        Err(e) => {
+            let elapsed = start.elapsed();
+            eprintln!("OpenTitan compile partially failed after {:?}: {:?}", elapsed, e);
+            eprintln!("Note: OpenTitan uses advanced SV features (reggen output, interfaces, etc.)");
+            eprintln!("that Maria's parser doesn't fully support yet.");
+            // Don't panic — this is a benchmark, not a correctness test
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn bench_release_opentitan_warm_compile() {
+    // Measure warm (cached) compile after a cold compile
+    let file_list_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("opentitan_rtl.f");
+    let content = std::fs::read_to_string(&file_list_path)
+        .expect("opentitan_rtl.f not found");
+
+    let manifest = env!("CARGO_MANIFEST_DIR");
+    let sources: Vec<std::path::PathBuf> = content
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| std::path::Path::new(manifest).join(l))
+        .collect();
+
+    // First compile to warm cache
+    {
+        let config = SessionConfig {
+            sources: sources.clone(),
+            ..Default::default()
+        };
+        let mut session = CompileSession::new(config);
+        let _ = session.compile().expect("warm-up compile failed");
+    }
+
+    // Second compile — should hit cache
+    {
+        let config = SessionConfig {
+            sources: sources.clone(),
+            ..Default::default()
+        };
+        let mut session = CompileSession::new(config);
+        let start = Instant::now();
+        match session.compile() {
+            Ok((design, _idx)) => {
+                let elapsed = start.elapsed();
+                session.print_timing();
+                eprintln!(
+                    "OpenTitan warm (cached) compile: {:?} ({} modules)",
+                    elapsed,
+                    design.modules.len()
+                );
+            }
+            Err(e) => {
+                eprintln!("OpenTitan warm compile failed: {:?}", e);
+            }
+        }
+    }
+}

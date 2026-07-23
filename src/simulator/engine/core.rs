@@ -1,6 +1,7 @@
 use super::SimulationEngine;
 use crate::error::SimError;
 use crate::ir::*;
+use crate::scheduler::clock_domain::ClockDomain;
 use crate::simulator::parallel::ParallelConfig;
 use crate::simulator::sdf::SdfData;
 use crate::simulator::state::SimulationState;
@@ -97,6 +98,12 @@ impl SimulationEngine {
             objection_count: 0,
             objection_triggered: false,
             jit_evaluator: Some(crate::simulator::JITEvaluator::new()),
+            use_packed_eval: false,
+            sim_arena: crate::simulator::arena::SimulationArena::with_bump_size(4 * 1024 * 1024), // 4MB initial
+            sim_dag: None,
+            use_dag_parallel: false,
+            clock_analysis: None,
+            use_cycle_fusion: false,
         }
     }
 
@@ -112,12 +119,64 @@ impl SimulationEngine {
         self.parallel_config = config;
     }
 
+    pub fn set_use_packed_eval(&mut self, enabled: bool) {
+        self.use_packed_eval = enabled;
+    }
+
+    pub fn set_use_dag_parallel(&mut self, enabled: bool) {
+        self.use_dag_parallel = enabled;
+    }
+
+    pub fn set_use_cycle_fusion(&mut self, enabled: bool) {
+        self.use_cycle_fusion = enabled;
+    }
+
     pub fn run(&mut self) -> Result<(), SimError> {
         self.initialize_time_zero()?;
         self.execute_phases()?;
 
+        // ── Register thread-local arena untuk zero-deallocation ──
+        // Semua LogicVec::new(), fill(), from_u64() otomatis alokasi dari arena
+        // selama event loop berjalan. Tidak perlu ubah evaluate_expr() call sites.
+        crate::simulator::arena::set_thread_arena(Some(&mut self.sim_arena));
+
+        // ── Build DAG untuk parallel process evaluation ──
+        // Hanya untuk Combinational/CombReactive processes yang aman di-paralelkan.
+        if self.use_dag_parallel && self.sim_dag.is_none() {
+            let dag = crate::scheduler::SimulationDag::build(&self.design);
+            if dag.num_processes() > 0 {
+                let n_layers = dag.num_layers();
+                let avg_par = dag.avg_parallelism();
+                eprintln!(
+                    "DAG: {} processes, {} layers, avg {:.1} parallelism",
+                    dag.num_processes(),
+                    n_layers,
+                    avg_par
+                );
+                self.sim_dag = Some(dag);
+            }
+        }
+
+        // ── Build clock domains untuk cycle-based simulation fusion ──
+        if self.use_cycle_fusion && self.clock_analysis.is_none() {
+            let analysis = crate::scheduler::ClockDomainAnalysis::analyze(&self.design);
+            if analysis.num_domains() > 0 {
+                eprintln!(
+                    "Cycle fusion: {} clock domains, {} processes fused",
+                    analysis.num_domains(),
+                    analysis.num_fused_processes(),
+                );
+                self.clock_analysis = Some(analysis);
+            }
+        }
+
         while self.running && self.state.time <= self.max_time {
             let t = self.state.time as usize;
+
+            // ── Zero-deallocation: reset cycle arena (O(1) — bump pointer reset) ──
+            // Pool Vec<LogicVal> tetap hidup (backing storage tidak di-free),
+            // sehingga alokasi siklus berikutnya langsung reuse backing storage.
+            self.sim_arena.reset_cycle();
 
             // ── Preponed region: snapshot all signals (once per time slot) ──
             let num_sigs = self.state.signals.len();
@@ -208,9 +267,48 @@ impl SimulationEngine {
                                         break;
                                     }
                                     activity = true;
-                                    for re in events {
-                                        self.process_event(re.event, t)?;
+
+                                    // ── DAG-Parallel: batch EvalProcess events ──
+                                    // Hanya Combinational/CombReactive/Initial yang aman
+                                    // di-paralelkan. Sequential, AlwaysWithDelay, dan Final
+                                    // butuh event loop semantics (clock edges, delay).
+                                    if self.use_dag_parallel && self.sim_dag.is_some() {
+                                        let mut eval_pids: Vec<usize> = Vec::new();
+                                        let mut other_events: Vec<RegionEvent> = Vec::new();
+                                        for re in events {
+                                            if let EventKind::EvalProcess(pid) = re.event {
+                                                if pid < self.design.top.processes.len()
+                                                    && crate::scheduler::is_process_parallelizable(
+                                                        &self.design.top.processes[pid],
+                                                    )
+                                                {
+                                                    eval_pids.push(pid);
+                                                } else {
+                                                    other_events.push(re);
+                                                }
+                                            } else {
+                                                other_events.push(re);
+                                            }
+                                        }
+
+                                        // Process non-EvalProcess events sequentially
+                                        for re in other_events {
+                                            self.process_event(re.event, t)?;
+                                        }
+
+                                        // Process EvalProcess events via DAG parallel
+                                        if !eval_pids.is_empty() {
+                                            self.evaluate_eval_processes_parallel(
+                                                &eval_pids,
+                                            )?;
+                                        }
+                                    } else {
+                                        // Sequential: process all events one by one
+                                        for re in events {
+                                            self.process_event(re.event, t)?;
+                                        }
                                     }
+
                                     // Inactive re-drains; Active drains once (outer loop
                                     // re-circulates if new events appear later)
                                     if region == EventRegion::Active {
@@ -355,6 +453,153 @@ impl SimulationEngine {
         if !self.paused {
             self.execute_final_blocks()?;
             self.report_coverage();
+        }
+
+        // ── Cleanup: deregister thread-local arena untuk cegah dangling pointer ──
+        crate::simulator::arena::set_thread_arena(None);
+
+        Ok(())
+    }
+
+    /// Evaluate EvalProcess events in parallel using DAG layers.
+    ///
+    /// Processes in the same DAG layer are independent (no signal conflicts)
+    /// and are evaluated via rayon work-stealing. Writes are collected and
+    /// applied after all processes in the layer complete.
+    ///
+    /// # Lock-Free Design
+    ///
+    /// Setiap process bekerja pada snapshot sinyal sendiri (clone).
+    /// Tidak ada shared mutable state antar process dalam satu layer.
+    fn evaluate_eval_processes_parallel(
+        &mut self,
+        pids: &[usize],
+    ) -> Result<(), SimError> {
+        // Clone DAG layers + signal snapshot + process bodies upfront
+        // untuk menghindari borrow conflicts dengan &mut self.
+        let dag_layers: Vec<Vec<usize>> = match &self.sim_dag {
+            Some(dag) => dag.layers().to_vec(),
+            None => {
+                for &pid in pids {
+                    self.process_event(EventKind::EvalProcess(pid), self.current_time as usize)?;
+                }
+                return Ok(());
+            }
+        };
+        let signal_snapshot = self.state.signals.clone();
+
+        // Clone only the process bodies we need (parallelizable ones)
+        let mut body_map: HashMap<usize, Vec<IrStmt>> = HashMap::new();
+        for &pid in pids {
+            if pid < self.design.top.processes.len() {
+                let process = &self.design.top.processes[pid];
+                if let Some(body) = match process {
+                    Process::Combinational { body, .. }
+                    | Process::CombReactive { body, .. }
+                    | Process::Initial { body, .. } => Some(body.clone()),
+                    _ => None,
+                } {
+                    body_map.insert(pid, body);
+                }
+            }
+        }
+
+        // Evaluate each layer sequentially (processes WITHIN a layer are parallel)
+        for layer in &dag_layers {
+            let layer_pids: Vec<&usize> = layer.iter().filter(|pid| pids.contains(pid)).collect();
+            if layer_pids.is_empty() {
+                continue;
+            }
+
+            // Evaluate all processes in this layer in parallel via rayon
+            // Each worker gets its own signal clone + body reference
+            let writes = evaluate_bodies_parallel(
+                &layer_pids,
+                &body_map,
+                &signal_snapshot,
+            )?;
+
+            // Apply writes back to state (no borrow conflicts, all data cloned)
+            for (sig_id, val) in writes {
+                if sig_id < self.state.signals.len() {
+                    self.state.write_signal(sig_id, val);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn evaluate_clock_domain(&mut self, domain: &ClockDomain) -> Result<(), SimError> {
+        // Clone process bodies upfront untuk hindari borrow conflicts
+        let num_sigs = self.state.signals.len();
+
+        // Collect sequential process bodies
+        let seq_bodies: Vec<(usize, Vec<IrStmt>)> = domain
+            .sequential_processes
+            .iter()
+            .filter_map(|&pid| {
+                if pid < self.design.top.processes.len() {
+                    if let Process::Sequential { body, .. } = &self.design.top.processes[pid] {
+                        return Some((pid, body.clone()));
+                    }
+                }
+                None
+            })
+            .collect();
+
+        // Collect follower combinational process bodies
+        let follower_bodies: Vec<(usize, Vec<IrStmt>)> = domain
+            .follower_processes
+            .iter()
+            .filter_map(|&pid| {
+                if pid < self.design.top.processes.len() {
+                    match &self.design.top.processes[pid] {
+                        Process::Combinational { body, .. }
+                        | Process::CombReactive { body, .. } => {
+                            Some((pid, body.clone()))
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Fixed-point iteration: evaluate sequential + follower until stable
+        let max_iter = 10; // Safety limit
+        for _iter in 0..max_iter {
+            let prev_snapshot: Vec<LogicVec> = (0..num_sigs)
+                .map(|i| self.state.read_signal(i).clone())
+                .collect();
+
+            // Step 1: Evaluate all sequential processes in the domain
+            for (_, body) in &seq_bodies {
+                self.evaluate_stmt_block(body)?;
+            }
+
+            // Commit NBA from sequential process evaluations
+            self.commit_nba();
+
+            // Step 2: Evaluate all follower combinational processes
+            for (_, body) in &follower_bodies {
+                self.evaluate_stmt_block(body)?;
+            }
+
+            // Check if stable: no signal changes
+            let mut changed = false;
+            for i in 0..num_sigs.min(prev_snapshot.len()) {
+                let cur = self.state.read_signal(i);
+                if cur != &prev_snapshot[i] {
+                    changed = true;
+                    break;
+                }
+            }
+
+            if !changed {
+                break; // Converged
+            }
         }
 
         Ok(())

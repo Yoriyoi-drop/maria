@@ -30,6 +30,7 @@ walkdir = "2"
 fxhash = "0.2"
 thread_local = "1"
 parking_lot = "0.12"
+itertools = "0.12"
 
 [profile.release]
 opt-level = 3

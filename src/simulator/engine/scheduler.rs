@@ -3215,9 +3215,18 @@ impl SimulationEngine {
         let processes = self.design.top.processes.clone();
 
         // Collect triggered combinational processes for potential parallel execution
+        // Skip fused processes — they're evaluated as part of clock domain fusion
         let mut comb_indices: Vec<usize> = Vec::new();
         for (pid, process) in processes.iter().enumerate() {
             if let Process::Combinational { sensitivity, .. } = process {
+                // Skip if this process is fused into a clock domain
+                if self.use_cycle_fusion
+                    && self.clock_analysis.as_ref()
+                        .map(|a| a.fused_processes.contains(&pid))
+                        .unwrap_or(false)
+                {
+                    continue;
+                }
                 let should_trigger = sensitivity.is_empty()
                     || changed.iter().any(|(id, _, _)| sensitivity.contains(id));
                 if should_trigger {
@@ -3304,7 +3313,43 @@ impl SimulationEngine {
                         }),
                     };
                     if trigger {
+                        // ── Cycle-Based Fusion: jika process ini termasuk fused domain,
+                        // evaluasi SEMUA process dalam domain sekaligus (sequential + follower comb).
+                        // Skip event queue overhead untuk process sinkronus murni. ──
+                        // Clone domain upfront untuk hindari borrow conflict
+                        // antara self.clock_analysis (immutable) dan self.evaluate_clock_domain (&mut).
+                        let fused_domain = if self.use_cycle_fusion {
+                            self.clock_analysis.as_ref()
+                                .and_then(|a| {
+                                    if a.fused_processes.contains(&pid) {
+                                        a.domains.iter().find(|d| d.sequential_processes.contains(&pid)).cloned()
+                                    } else {
+                                        None
+                                    }
+                                })
+                        } else {
+                            None
+                        };
+                        if let Some(domain) = fused_domain {
+                            self.evaluate_clock_domain(&domain)?;
+                            continue; // Skip individual eval
+                        }
+                        // Fallback: evaluate only this sequential process
                         self.evaluate_stmt_block(body)?;
+                    }
+                }
+                // Skip fused combinational/reactive processes — they're evaluated
+                // as part of their clock domain's follower set
+                Process::Combinational { .. } | Process::CombReactive { .. }
+                    if self.use_cycle_fusion
+                    && self.clock_analysis.as_ref()
+                        .map(|a| a.fused_processes.contains(&pid))
+                        .unwrap_or(false) => {}
+                Process::CombReactive { sensitivity, .. } => {
+                    let should_trigger = sensitivity.is_empty()
+                        || changed.iter().any(|(id, _, _)| sensitivity.contains(id));
+                    if should_trigger {
+                        self.reactive_events.push(EventKind::EvalProcess(pid));
                     }
                 }
                 _ => {}

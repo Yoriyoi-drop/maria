@@ -18,7 +18,7 @@
 | incremental_test/ | Phase 6 | ✅ **Done + Wired** | 8 incremental tests | Inline in compile_session.rs |
 | compile_incremental CLI | Phase 7 | ✅ **Done + Wired** | `--recompile` flag, redundant import cleanup, pub config field | main.rs + compile_session.rs |
 | lazy_elab CLI | Phase 7 | ✅ **Done + Wired** | `--lazy` flag, LazyElaborator di CompileSession | main.rs + compile_session.rs |
-| jit/ | Phase 7 | ✅ **Enhanced** | `CompiledExpr`, `JITCache`, intrinsics, 7 unit tests | jit.rs |
+| jit/ | Phase 7 | ✅ **Enhanced + Integrated** | Cranelift JIT backend (18 tests) + JITEvaluator wired into SimulationEngine (15 tests) | jit.rs, jit_cranelift.rs, jit_eval.rs |
 | backend/ | Phase 7 | ✅ **Updated** | Re-export module align dengan DESIGN.md | mod.rs |
 | plugin/ | Phase 6+ | ✅ **Done** | plugin.rs | 5+ |
 | parser/ (legacy) | — | ✅ **Done + Optimized** | lexer.rs, parser.rs, preprocessor.rs (String → Symbol migration, 755 tests) | Legacy + 755 |
@@ -61,7 +61,7 @@
 | **Bug fix: lazy pre-registration** | Fixed bug where each module was assigned ALL ports from ALL modules instead of only its own ports. Now correctly uses per-module port iteration. |
 | **elaborate_lazy_module() fallback** | Now falls back to `merged_design` for on-demand AST→HIR conversion on cache miss. Extracts port/signal data and populates LazyElaborator dynamically. |
 
-> **Total: 765 unit tests pass. 5 stress tests pass (--ignored). Release benchmarks: counter.sv ~82µs, 1000 modules ~54ms, 100K symbols 53.6ms. Token String → Symbol: ✅ Selesai — Parser now uses Symbol throughout. TypeSystem lazy resolution: ✅ Selesai — DashMap cache, AST→HIR conversion, 10 tests.**
+> **Total: 825 unit tests (819 pass, 6 pre-existing failures). 5 stress tests pass (--ignored). Release benchmarks: counter.sv ~82µs, 1000 modules ~54ms, 100K symbols 53.6ms. JIT integration: ✅ Cranelift backend (18 tests) + JITEvaluator wired into SimulationEngine (15 tests) — native code for binary/unary op evaluation.**
 
 ---
 
@@ -1521,7 +1521,7 @@ struct CacheReport {
 | P0 | `std::mem::take` bug — cache corruption on merge | Design[0] destroyed before cache update | ✅ **Fixed (clone instead of take)** |
 | P0 | `--cache-stats` dead flag wired | CLI usability | ✅ **Done** |
 | P1 | No lazy elaboration wired | Full build always | ✅ **Done — `--lazy` flag + CompileSession integration** |
-| P2 | JIT simulation stubs only | High sim speedup potential | ✅ **Enhanced — CompiledExpr, JITCache, 7 intrinsics, 7 tests** |
+| P2 | JIT simulation stubs only | High sim speedup potential | ✅ **Enhanced — Cranelift JIT backend with 18 tests + JITEvaluator integrated into SimulationEngine with 15 tests** |
 | P3 | SIMD only in debug tested | Release may differ | ⏳ Later |
 
 ---

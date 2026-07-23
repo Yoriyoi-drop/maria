@@ -177,6 +177,18 @@ struct Cli {
     /// Use lazy elaboration (HIR-based, on-demand)
     #[arg(long = "lazy")]
     lazy: bool,
+
+    /// Use packed 4-state eval (SIMD-ready bitmask ops for bitwise operations)
+    #[arg(long = "packed", short = 'P')]
+    packed: bool,
+
+    /// Use DAG-parallel process evaluation (parallel simulation via rayon)
+    #[arg(long = "parallel", short = 'L')]
+    parallel: bool,
+
+    /// Use cycle-based simulation fusion (clock-gated domain fusion)
+    #[arg(long = "cycle-fusion")]
+    cycle_fusion: bool,
 }
 
 fn main() {
@@ -486,6 +498,8 @@ fn run(cli: Cli) -> Result<(), SimError> {
     let mut engine = SimulationEngine::new(ir_design, cli.max_time);
     engine.debug_mode = debug_mode;
     engine.snapshot_interval = cli.snap_interval;
+    engine.use_packed_eval = cli.packed;
+    engine.use_dag_parallel = cli.parallel;
 
     // Apply plusargs
     for pa in &cli.plusargs {
@@ -790,6 +804,9 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     let mut engine = SimulationEngine::new(ir_design, cli.max_time);
     engine.debug_mode = debug_mode;
     engine.snapshot_interval = cli.snap_interval;
+    engine.use_packed_eval = cli.packed;
+    engine.use_dag_parallel = cli.parallel;
+    engine.use_cycle_fusion = cli.cycle_fusion;
 
     for pa in &cli.plusargs {
         if let Some((key, val)) = pa.split_once('=') {
