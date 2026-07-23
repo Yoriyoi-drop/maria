@@ -1010,12 +1010,12 @@ impl SimulationEngine {
                                     .iter()
                                     .find(|(_, n)| n.as_str() == name.as_str())
                                 {
-                                    h
+                                    h as u32
                                 } else {
                                     let h = self.next_coverage_model_handle;
                                     self.next_coverage_model_handle += 1;
                                     self.coverage_model_handles.insert(h, Symbol::intern(&name));
-                                    h
+                                    h as u32
                                 }
                             } else {
                                 eprintln!(

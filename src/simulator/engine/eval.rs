@@ -790,7 +790,7 @@ impl SimulationEngine {
                             LogicVec::new(1)
                         };
                         self.uvm_config_db_data
-                            .insert((Symbol::intern(&inst_name), Symbol::intern(&field_name)), value);
+                            .insert((inst_name, field_name), value);
                         Ok(LogicVec::from_u64(1, 1))
                     }
                     "uvm_config_db::get" => {
@@ -809,7 +809,7 @@ impl SimulationEngine {
                             String::new()
                         };
                         let key = (inst_name, field_name);
-                        let stored = self.uvm_config_db_data.get::<(Symbol, Symbol)>(&(Symbol::intern(&key.0), Symbol::intern(&key.1))).cloned();
+                        let stored = self.uvm_config_db_data.get(&key).cloned();
                         if let Some(val) = stored {
                             if let Some(last_arg) = args.get(3) {
                                 if let IrExpr::Signal(sig_id, _) = last_arg {
@@ -841,7 +841,7 @@ impl SimulationEngine {
                         } else {
                             LogicVec::new(1)
                         };
-                        self.uvm_resource_db_data.insert((Symbol::intern(&scope), Symbol::intern(&name)), value);
+                        self.uvm_resource_db_data.insert((scope, name), value);
                         Ok(LogicVec::from_u64(1, 1))
                     }
                     "uvm_resource_db::get" => {
@@ -860,7 +860,7 @@ impl SimulationEngine {
                             String::new()
                         };
                         let key = (scope, rname);
-                        let stored = self.uvm_resource_db_data.get::<(Symbol, Symbol)>(&(Symbol::intern(&key.0), Symbol::intern(&key.1))).cloned();
+                        let stored = self.uvm_resource_db_data.get(&key).cloned();
                         if let Some(val) = stored {
                             if let Some(last_arg) = args.get(2) {
                                 if let IrExpr::Signal(sig_id, _) = last_arg {
@@ -887,7 +887,7 @@ impl SimulationEngine {
                         } else {
                             String::new()
                         };
-                        self.factory_type_overrides.insert(Symbol::intern(&orig), Symbol::intern(&override_type));
+                        self.factory_type_overrides.insert(orig, override_type);
                         Ok(LogicVec::from_u64(1, 1))
                     }
                     "$test$plusargs" => {
@@ -942,7 +942,7 @@ impl SimulationEngine {
                             let key = format!("$rose({:?})", arg);
                             let prev = self
                                 .sysfunc_prev
-                                .entry(key)
+                                .entry(Symbol::intern(&key))
                                 .or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
                             let rose = prev.to_bool().unwrap_or(false) == false
                                 && val.to_bool().unwrap_or(false) == true;
@@ -958,7 +958,7 @@ impl SimulationEngine {
                             let key = format!("$fell({:?})", arg);
                             let prev = self
                                 .sysfunc_prev
-                                .entry(key)
+                                .entry(Symbol::intern(&key))
                                 .or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
                             let fell = prev.to_bool().unwrap_or(false) == true
                                 && val.to_bool().unwrap_or(false) == false;
@@ -974,7 +974,7 @@ impl SimulationEngine {
                             let key = format!("$stable({:?})", arg);
                             let prev = self
                                 .sysfunc_prev
-                                .entry(key)
+                                .entry(Symbol::intern(&key))
                                 .or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
                             let stable = *prev == val;
                             *prev = val;
@@ -989,7 +989,7 @@ impl SimulationEngine {
                             let key = format!("$changed({:?})", arg);
                             let prev = self
                                 .sysfunc_prev
-                                .entry(key)
+                                .entry(Symbol::intern(&key))
                                 .or_insert_with(|| LogicVec::fill(LogicVal::Zero, val.width));
                             let changed = *prev != val;
                             *prev = val;
@@ -1013,7 +1013,7 @@ impl SimulationEngine {
                             let key = format!("$past({:?})", arg);
                             let hist = self
                                 .sysfunc_history
-                                .entry(key)
+                                .entry(Symbol::intern(&key))
                                 .or_insert_with(Vec::new);
                             hist.push(val);
                             if hist.len() > n {
@@ -1045,7 +1045,7 @@ impl SimulationEngine {
                     .any(|c| c.name == *class_name);
                 let effective_name = if is_cg {
                     format!("__covergroup_{}", class_name)
-                } else if let Some(override_type) = self.factory_type_overrides.get::<str>(class_name.as_str()) {
+                } else if let Some(override_type) = self.factory_type_overrides.get(class_name.as_str()) {
                     override_type.to_string()
                 } else {
                     class_name.to_string()
@@ -1220,7 +1220,7 @@ impl SimulationEngine {
                         return self.evaluate_array_method(
                             *id,
                             &sig_info,
-                            method,
+                            method.as_str(),
                             args,
                             with_clause.as_deref(),
                         );
@@ -1241,11 +1241,11 @@ impl SimulationEngine {
                         .unwrap_or_default();
                     return self.execute_randomize_with(
                         obj_id,
-                        &class_name,
+                        class_name.as_str(),
                         with_clause.as_deref(),
                     );
                 }
-                let result = self.execute_method(obj_id, method, &arg_vals)?;
+                let result = self.execute_method(obj_id, method.as_str(), &arg_vals)?;
                 Ok(result)
             }
             IrExpr::MemberAccess { obj, field } => {
@@ -1266,9 +1266,9 @@ impl SimulationEngine {
                 name,
                 args,
                 return_width,
-            } => self.evaluate_dpi_call(name, args, *return_width),
+            } => self.evaluate_dpi_call(name.as_str(), args, *return_width),
             IrExpr::HierRef(name) => {
-                if let Some(sig_id) = self.find_signal(name) {
+                if let Some(sig_id) = self.find_signal(name.as_str()) {
                     let mut val = self.state.read_signal(sig_id).clone();
                     sanitize_for_2state(&self.design.top.signals, sig_id, &mut val);
                     Ok(val)
@@ -1414,7 +1414,7 @@ impl SimulationEngine {
                                             && sym_char_matches(chars[1], bit)
                                     } else {
                                         // Abbreviated edge: r, f, p, n, *
-                                        edge_matches_abbrev(edge_str, prev_bit, bit)
+                                        edge_matches_abbrev(edge_str.as_str(), prev_bit, bit)
                                     }
                                 } else {
                                     // No previous value — can't detect edge
@@ -1540,7 +1540,7 @@ impl SimulationEngine {
                 let mut locals = HashMap::new();
 
                 // Initialize return value slot (for Stmt::Return to write into via current_method)
-                locals.insert("__func_ret".to_string(), LogicVec::new(ret_width.max(1)));
+                locals.insert(Symbol::intern("__func_ret"), LogicVec::new(ret_width.max(1)));
 
                 // Bind arguments to port names
                 for (i, arg_val) in arg_vals.into_iter().enumerate() {
@@ -1605,7 +1605,7 @@ impl SimulationEngine {
                 // Fallback: match instance name as any path component: top.instance.sig
                 let target = instance_name.as_str();
                 for (sid, sig) in self.design.top.signals.iter().enumerate() {
-                    let parts: Vec<&str> = sig.name.split('.').collect();
+                    let parts: Vec<&str> = sig.name.as_str().split('.').collect();
                     if parts.iter().any(|p| *p == target) {
                         binding_handle = Some(sid);
                         break;
@@ -2160,7 +2160,7 @@ impl SimulationEngine {
 
     pub(crate) fn get_local(&self, name: &str) -> Option<LogicVec> {
         for scope in self.method_locals.iter().rev() {
-            if let Some(v) = scope.get(name) {
+            if let Some(v) = scope.get::<str>(name) {
                 return Some(v.clone());
             }
         }
@@ -2169,13 +2169,13 @@ impl SimulationEngine {
 
     fn set_local(&mut self, name: &str, val: LogicVec) {
         if let Some(scope) = self.method_locals.last_mut() {
-            scope.insert(name.to_string(), val);
+            scope.insert(Symbol::intern(name), val);
         }
     }
 
     pub(crate) fn write_ast_lvalue(&mut self, lhs: &crate::ast::Expr, val: LogicVec) -> Result<(), SimError> {
         match lhs {
-            crate::ast::Expr::Ident(name) => self.write_local_or_field(name, val),
+            crate::ast::Expr::Ident(name) => self.write_local_or_field(name.as_str(), val),
             crate::ast::Expr::MemberAccess { obj, field } => {
                 let obj_val = self.evaluate_ast_expr(obj)?;
                 let obj_id = obj_val.to_u64() as ObjId;
@@ -2199,7 +2199,7 @@ impl SimulationEngine {
     pub(crate) fn ast_lvalue_to_ir(&self, lhs: &crate::ast::Expr) -> Option<IrLValue> {
         match lhs {
             crate::ast::Expr::Ident(name) => {
-                let sig_id = self.find_signal(name)?;
+                let sig_id = self.find_signal(name.as_str())?;
                 Some(IrLValue::Signal(sig_id, 0))
             }
             _ => None,
@@ -2208,7 +2208,7 @@ impl SimulationEngine {
 
     pub(crate) fn find_ast_signal_id(&self, expr: &crate::ast::Expr) -> Option<SignalId> {
         match expr {
-            crate::ast::Expr::Ident(name) => self.find_signal(name),
+            crate::ast::Expr::Ident(name) => self.find_signal(name.as_str()),
             _ => None,
         }
     }
@@ -2244,7 +2244,7 @@ impl SimulationEngine {
         }
         if let Some(obj_id) = self.current_this {
             if let Some(obj) = self.state.get_object_mut(obj_id) {
-                obj.fields.insert(name.to_string(), val);
+                obj.fields.insert(Symbol::intern(name), val);
                 return Ok(());
             }
         }
@@ -2277,7 +2277,7 @@ impl SimulationEngine {
                         return Err(SimError::runtime("'this' used outside of class method"));
                     }
                 }
-                if let Some(local) = self.get_local(name) {
+                if let Some(local) = self.get_local(name.as_str()) {
                     return Ok(local);
                 }
                 if let Some(obj_id) = self.current_this {
@@ -2287,7 +2287,7 @@ impl SimulationEngine {
                         }
                     }
                 }
-                if let Some(sig_id) = self.find_signal(name) {
+                if let Some(sig_id) = self.find_signal(name.as_str()) {
                     return Ok(self.state.read_signal(sig_id).clone());
                 }
                 let ctx = self
@@ -2345,7 +2345,7 @@ impl SimulationEngine {
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
                     .collect::<Result<_, _>>()?;
-                let obj_id = self.state.alloc_object("");
+                let obj_id = self.state.alloc_object(Symbol::intern(""));
                 Ok(LogicVec::from_u64(obj_id as u64, 64))
             }
             Expr::FuncCall { name, args } if name.ends_with("::new") => {
@@ -2377,7 +2377,7 @@ impl SimulationEngine {
                     .get::<str>(effective.as_str())
                     .unwrap_or(&effective)
                     .clone();
-                let obj_id = self.state.alloc_object(&effective);
+                let obj_id = self.state.alloc_object(Symbol::intern(&effective));
                 let arg_vals: Vec<LogicVec> = args
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
@@ -2468,12 +2468,12 @@ impl SimulationEngine {
                     String::new()
                 };
                 let key = (inst_name, field_name);
-                let stored = self.uvm_config_db_data.get::<(Symbol, Symbol)>(&(Symbol::intern(&key.0), Symbol::intern(&key.1))).cloned();
+                let stored = self.uvm_config_db_data.get(&key).cloned();
                 if let Some(val) = stored {
                     if let Some(last_arg) = args.get(3) {
                         match last_arg {
                             Expr::Ident(var) => {
-                                self.write_local_or_field(var, val.clone())?;
+                                self.write_local_or_field(var.as_str(), val.clone())?;
                             }
                             Expr::MemberAccess { obj, field } => {
                                 let obj_val = self.evaluate_ast_expr(obj)?;
@@ -2529,12 +2529,12 @@ impl SimulationEngine {
                     String::new()
                 };
                 let key = (scope, rname);
-                let stored = self.uvm_resource_db_data.get::<(Symbol, Symbol)>(&(Symbol::intern(&key.0), Symbol::intern(&key.1))).cloned();
+                let stored = self.uvm_resource_db_data.get(&key).cloned();
                 if let Some(val) = stored {
                     if let Some(last_arg) = args.get(2) {
                         match last_arg {
                             Expr::Ident(var) => {
-                                self.write_local_or_field(var, val.clone())?;
+                                self.write_local_or_field(var.as_str(), val.clone())?;
                             }
                             Expr::MemberAccess { obj, field } => {
                                 let obj_val = self.evaluate_ast_expr(obj)?;
@@ -2566,7 +2566,7 @@ impl SimulationEngine {
                 } else {
                     String::new()
                 };
-                self.factory_type_overrides.insert(Symbol::intern(&orig), Symbol::intern(&override_type));
+                self.factory_type_overrides.insert(orig, override_type);
                 Ok(LogicVec::from_u64(1, 1))
             }
             Expr::FuncCall { name, args } => {
@@ -2603,7 +2603,7 @@ impl SimulationEngine {
                             .iter()
                             .map(|a| self.evaluate_ast_expr(a))
                             .collect::<Result<_, _>>()?;
-                        return self.execute_super_method(method, &arg_vals);
+                        return self.execute_super_method(method.as_str(), &arg_vals);
                     }
                 }
                 let obj_val = self.evaluate_ast_expr(obj)?;
@@ -2612,11 +2612,11 @@ impl SimulationEngine {
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
                     .collect::<Result<_, _>>()?;
-                self.execute_method(obj_id, method, &arg_vals)
+                self.execute_method(obj_id, method.as_str(), &arg_vals)
             }
             Expr::MemberAccess { obj, field } => {
                 // Try hierarchical signal reference first
-                let hier_name = Self::build_hier_name(obj, field);
+                let hier_name = Self::build_hier_name(obj, field.as_str());
                 if let Some(sig_id) = self.find_signal(&hier_name) {
                     return Ok(self.state.read_signal(sig_id).clone());
                 }
@@ -2823,7 +2823,7 @@ impl SimulationEngine {
             }
             Expr::Cast { dtype, expr: inner } => {
                 let val = self.evaluate_ast_expr(inner)?;
-                let cast_width = match crate::elaboration::elaborator::parse_type_spec_str(dtype) {
+                let cast_width = match crate::elaboration::elaborator::parse_type_spec_str(dtype.as_str()) {
                     Some(_) => {
                         // For AST path, compute width from type string
                         match dtype.as_str() {
@@ -2863,7 +2863,7 @@ impl SimulationEngine {
                 obj: inner,
                 field: inner_field,
             } => {
-                format!("{}.{}", Self::build_hier_name(inner, inner_field), field)
+                format!("{}.{}", Self::build_hier_name(inner, inner_field.as_str()), field)
             }
             _ => String::new(),
         }
@@ -2880,7 +2880,7 @@ impl SimulationEngine {
             Stmt::BlockingAssign { lhs, rhs, delay: _ } => {
                 let val = self.evaluate_ast_expr(rhs)?;
                 match lhs {
-                    Expr::Ident(name) => self.write_local_or_field(name, val),
+                    Expr::Ident(name) => self.write_local_or_field(name.as_str(), val),
                     Expr::MemberAccess { obj, field } => {
                         let obj_val = self.evaluate_ast_expr(obj)?;
                         let obj_id = obj_val.to_u64() as ObjId;
@@ -2912,7 +2912,7 @@ impl SimulationEngine {
                             };
                             match inner.as_ref() {
                                 Expr::Ident(name) => {
-                                    self.write_local_or_field(name, new_val)?;
+                                    self.write_local_or_field(name.as_str(), new_val)?;
                                 }
                                 Expr::MemberAccess { obj, field } => {
                                     let ov = self.evaluate_ast_expr(obj)?;
@@ -2935,7 +2935,7 @@ impl SimulationEngine {
                             let new_val = LogicVec { width, bits };
                             match inner.as_ref() {
                                 Expr::Ident(name) => {
-                                    self.write_local_or_field(name, new_val)?;
+                                    self.write_local_or_field(name.as_str(), new_val)?;
                                 }
                                 Expr::MemberAccess { obj, field } => {
                                     let ov = self.evaluate_ast_expr(obj)?;
@@ -2973,7 +2973,7 @@ impl SimulationEngine {
                         };
                         match inner.as_ref() {
                             Expr::Ident(name) => {
-                                self.write_local_or_field(name, new_val)?;
+                                self.write_local_or_field(name.as_str(), new_val)?;
                             }
                             Expr::MemberAccess { obj, field } => {
                                 let ov = self.evaluate_ast_expr(obj)?;
@@ -2995,7 +2995,7 @@ impl SimulationEngine {
             Stmt::NonBlockingAssign { lhs, rhs, delay: _ } => {
                 let val = self.evaluate_ast_expr(rhs)?;
                 match lhs {
-                    Expr::Ident(name) => self.write_local_or_field(name, val),
+                    Expr::Ident(name) => self.write_local_or_field(name.as_str(), val),
                     Expr::MemberAccess { obj, field } => {
                         let obj_val = self.evaluate_ast_expr(obj)?;
                         let obj_id = obj_val.to_u64() as ObjId;
@@ -3027,7 +3027,7 @@ impl SimulationEngine {
                             };
                             match inner.as_ref() {
                                 Expr::Ident(name) => {
-                                    self.write_local_or_field(name, new_val)?;
+                                    self.write_local_or_field(name.as_str(), new_val)?;
                                 }
                                 Expr::MemberAccess { obj, field } => {
                                     let ov = self.evaluate_ast_expr(obj)?;
@@ -3050,7 +3050,7 @@ impl SimulationEngine {
                             let new_val = LogicVec { width, bits };
                             match inner.as_ref() {
                                 Expr::Ident(name) => {
-                                    self.write_local_or_field(name, new_val)?;
+                                    self.write_local_or_field(name.as_str(), new_val)?;
                                 }
                                 Expr::MemberAccess { obj, field } => {
                                     let ov = self.evaluate_ast_expr(obj)?;
@@ -3088,7 +3088,7 @@ impl SimulationEngine {
                         };
                         match inner.as_ref() {
                             Expr::Ident(name) => {
-                                self.write_local_or_field(name, new_val)?;
+                                self.write_local_or_field(name.as_str(), new_val)?;
                             }
                             Expr::MemberAccess { obj, field } => {
                                 let ov = self.evaluate_ast_expr(obj)?;
@@ -3307,11 +3307,11 @@ impl SimulationEngine {
                 index_vars,
                 stmts,
             } => {
-                let count = self.get_foreach_count(array_var);
+                let count = self.get_foreach_count(array_var.as_str());
                 let iv = index_vars
                     .first()
                     .cloned()
-                    .unwrap_or_else(|| "i".to_string());
+                    .unwrap_or_else(|| Symbol::intern("i"));
                 for i in 0..count {
                     let idx_val = LogicVec::from_u64(i as u64, 32);
                     let mut scope = HashMap::new();
@@ -3328,7 +3328,7 @@ impl SimulationEngine {
             Stmt::Return(Some(expr)) => {
                 let val = self.evaluate_ast_expr(expr)?;
                 if let Some(ref method) = self.current_method.clone() {
-                    self.set_local(method, val);
+                    self.set_local(method.as_str(), val);
                 }
                 Ok(())
             }
@@ -3336,7 +3336,7 @@ impl SimulationEngine {
             Stmt::StmtAssign { lhs, rhs } => {
                 let val = self.evaluate_ast_expr(rhs)?;
                 match lhs {
-                    Expr::Ident(name) => self.write_local_or_field(name, val),
+                    Expr::Ident(name) => self.write_local_or_field(name.as_str(), val),
                     Expr::MemberAccess { obj, field } => {
                         let obj_val = self.evaluate_ast_expr(obj)?;
                         let obj_id = obj_val.to_u64() as ObjId;

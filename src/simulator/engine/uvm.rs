@@ -21,7 +21,7 @@ impl SimulationEngine {
         let phase_methods = ["build_phase", "connect_phase", "run_phase"];
         let mut best: Option<(String, usize)> = None;
         for (name, cls) in &self.design.classes {
-            if !self.is_uvm_test_hierarchy(name) {
+            if !self.is_uvm_test_hierarchy(name.as_str()) {
                 continue;
             }
             let count = phase_methods
@@ -53,7 +53,7 @@ impl SimulationEngine {
             if current == "__uvm_test" {
                 return true;
             }
-            match self.design.classes.get(current) {
+            match self.design.classes.get::<str>(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -69,7 +69,7 @@ impl SimulationEngine {
             None => return Ok(()),
         };
         // Create root test object once, shared across all phases
-        let obj_id = self.state.alloc_object(Symbol::intern(&class_name));
+        let obj_id = self.state.alloc_object(Symbol::intern(class_name.as_str()));
         self.root_test_obj_id = Some(obj_id);
 
         // build_phase: root then children
@@ -110,9 +110,9 @@ impl SimulationEngine {
             for child_id in children {
                 if let Some(obj) = self.state.get_object(child_id) {
                     let child_class = &obj.class_name;
-                    if self.find_method_in_hierarchy(child_class, phase).is_ok() {
+                    if self.find_method_in_hierarchy(child_class.as_str(), phase).is_ok() {
                         self.current_this = Some(child_id);
-                        self.execute_method(child_id, phase.as_str(), &[])?;
+                        self.execute_method(child_id, phase, &[])?;
                         self.current_this = None;
                     }
                 }
@@ -128,7 +128,7 @@ impl SimulationEngine {
             if current == "__uvm_object" {
                 return true;
             }
-            match self.design.classes.get(current) {
+            match self.design.classes.get::<str>(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -144,7 +144,7 @@ impl SimulationEngine {
             if current == "__uvm_component" {
                 return true;
             }
-            match self.design.classes.get(current) {
+            match self.design.classes.get::<str>(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -160,7 +160,7 @@ impl SimulationEngine {
             if current == "__uvm_report_object" {
                 return true;
             }
-            match self.design.classes.get(current) {
+            match self.design.classes.get::<str>(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -176,7 +176,7 @@ impl SimulationEngine {
             if current == "__uvm_sequence_item" {
                 return true;
             }
-            match self.design.classes.get(current) {
+            match self.design.classes.get::<str>(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -192,7 +192,7 @@ impl SimulationEngine {
             if current == "__uvm_sequence" {
                 return true;
             }
-            match self.design.classes.get(current) {
+            match self.design.classes.get::<str>(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -208,7 +208,7 @@ impl SimulationEngine {
             if current == "__uvm_sequencer" {
                 return true;
             }
-            match self.design.classes.get(current) {
+            match self.design.classes.get::<str>(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -224,7 +224,7 @@ impl SimulationEngine {
             if current == "__uvm_monitor" {
                 return true;
             }
-            match self.design.classes.get(current) {
+            match self.design.classes.get::<str>(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -240,7 +240,7 @@ impl SimulationEngine {
             if current == "__uvm_analysis_port" {
                 return true;
             }
-            match self.design.classes.get(current) {
+            match self.design.classes.get::<str>(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -256,7 +256,7 @@ impl SimulationEngine {
             if current == "__uvm_analysis_imp" {
                 return true;
             }
-            match self.design.classes.get(current) {
+            match self.design.classes.get::<str>(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -272,7 +272,7 @@ impl SimulationEngine {
             if current == "__uvm_driver" {
                 return true;
             }
-            match self.design.classes.get(current) {
+            match self.design.classes.get::<str>(current) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -318,71 +318,71 @@ impl SimulationEngine {
             }
         }
         // Check uvm_driver hierarchy (most specific first)
-        if self.is_uvm_driver_hierarchy(&class_name) {
-            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+        if self.is_uvm_driver_hierarchy(&class_name.as_str()) {
+            let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_driver_method(obj_id, method, args);
             }
         }
         // Check uvm_sequencer hierarchy
-        if self.is_uvm_sequencer_hierarchy(&class_name) {
-            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+        if self.is_uvm_sequencer_hierarchy(&class_name.as_str()) {
+            let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_sequencer_method(obj_id, method, args);
             }
         }
         // Check uvm_sequence hierarchy
-        if self.is_uvm_sequence_hierarchy(&class_name) {
-            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+        if self.is_uvm_sequence_hierarchy(&class_name.as_str()) {
+            let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_sequence_method(obj_id, method, args);
             }
         }
         // Check uvm_monitor hierarchy
-        if self.is_uvm_monitor_hierarchy(&class_name) {
-            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+        if self.is_uvm_monitor_hierarchy(&class_name.as_str()) {
+            let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_monitor_method(obj_id, method, args);
             }
         }
         // Check uvm_analysis_port hierarchy
-        if self.is_uvm_analysis_port_hierarchy(&class_name) {
-            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+        if self.is_uvm_analysis_port_hierarchy(&class_name.as_str()) {
+            let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_analysis_port_method(obj_id, method, args);
             }
         }
         // Check uvm_analysis_imp hierarchy
-        if self.is_uvm_analysis_imp_hierarchy(&class_name) {
-            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+        if self.is_uvm_analysis_imp_hierarchy(&class_name.as_str()) {
+            let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_analysis_imp_method(obj_id, method, args);
             }
         }
         // Check uvm_sequence_item hierarchy
-        if self.is_uvm_sequence_item_hierarchy(&class_name) {
-            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+        if self.is_uvm_sequence_item_hierarchy(&class_name.as_str()) {
+            let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_sequence_item_method(obj_id, method, args);
             }
         }
         // Check for uvm_component hierarchy methods — only intercept if class doesn't override
-        if self.is_uvm_component_hierarchy(&class_name) {
-            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+        if self.is_uvm_component_hierarchy(&class_name.as_str()) {
+            let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_component_method(obj_id, method, args);
             }
         }
         // Check for uvm_report_object hierarchy methods — only intercept if class doesn't override
-        if self.is_uvm_report_object_hierarchy(&class_name) {
-            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+        if self.is_uvm_report_object_hierarchy(&class_name.as_str()) {
+            let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_report_object_method(obj_id, method, args);
             }
         }
         // Check for uvm_object hierarchy methods — only intercept if class doesn't override
-        if self.is_uvm_object_hierarchy(&class_name) {
-            let has_override = self.find_method_in_hierarchy(&class_name, method).is_ok();
+        if self.is_uvm_object_hierarchy(&class_name.as_str()) {
+            let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_object_method(obj_id, method, args);
             }
@@ -390,13 +390,13 @@ impl SimulationEngine {
 
         // Check for built-in randomize() — only if no user-defined override exists
         if method == "randomize" {
-            let has_user_method = self.find_method_in_hierarchy(&class_name, method).is_ok();
+            let has_user_method = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_user_method {
-                return self.execute_randomize(obj_id, &class_name);
+                return self.execute_randomize(obj_id, class_name.as_str());
             }
         }
         // Normal dispatch: find method in the full class hierarchy (virtual dispatch)
-        let method_def = self.find_method_in_hierarchy(&class_name, method)?.clone();
+        let method_def = self.find_method_in_hierarchy(class_name.as_str(), method)?.clone();
         // Static methods don't receive `this`
         let this_opt = if method_def.is_static {
             None
@@ -421,7 +421,7 @@ impl SimulationEngine {
         self.current_this = Some(obj_id);
 
         // Extract solve...before ordering constraints
-        let mut before_map: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        let mut before_map: std::collections::HashMap<Symbol, std::collections::HashSet<Symbol>> =
             std::collections::HashMap::new();
         for (_, body) in &class_def.constraints {
             for item in body {
@@ -440,8 +440,8 @@ impl SimulationEngine {
         }
 
         // Order rand_fields: fields in solve-before come first
-        let mut ordered_fields: Vec<String> = Vec::new();
-        let mut remaining: std::collections::HashSet<String> =
+        let mut ordered_fields: Vec<Symbol> = Vec::new();
+        let mut remaining: std::collections::HashSet<Symbol> =
             class_def.rand_fields.iter().cloned().collect::<HashSet<Symbol>>();
         for fname in &class_def.rand_fields {
             if before_map.contains_key::<str>(fname.as_str()) && remaining.contains::<str>(fname.as_str()) {
@@ -528,7 +528,7 @@ impl SimulationEngine {
         let old_this = self.current_this;
         self.current_this = Some(obj_id);
 
-        let mut before_map: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        let mut before_map: std::collections::HashMap<Symbol, std::collections::HashSet<Symbol>> =
             std::collections::HashMap::new();
         for (_, body) in &class_def.constraints {
             for item in body {
@@ -546,8 +546,8 @@ impl SimulationEngine {
             }
         }
 
-        let mut ordered_fields: Vec<String> = Vec::new();
-        let mut remaining: std::collections::HashSet<String> =
+        let mut ordered_fields: Vec<Symbol> = Vec::new();
+        let mut remaining: std::collections::HashSet<Symbol> =
             class_def.rand_fields.iter().cloned().collect::<HashSet<Symbol>>();
         for fname in &class_def.rand_fields {
             if before_map.contains_key::<str>(fname.as_str()) && remaining.contains::<str>(fname.as_str()) {
@@ -642,7 +642,7 @@ impl SimulationEngine {
                 if q.is_empty() {
                     return Ok(LogicVec::default());
                 }
-                Ok(q.remove(0))
+                Ok(q.remove(0).unwrap_or(LogicVec::new(1)))
             }
             "try_get" => {
                 let q = self
@@ -848,7 +848,7 @@ impl SimulationEngine {
                     .get_object(obj_id)
                     .map(|o| o.class_name.clone())
                     .unwrap_or_default();
-                Ok(string_to_logicvec(&class_name))
+                Ok(string_to_logicvec(class_name.as_str()))
             }
             "print" => {
                 let data = self
@@ -1101,7 +1101,7 @@ impl SimulationEngine {
                     .get_object(obj_id)
                     .map(|o| o.class_name.clone())
                     .unwrap_or_default();
-                Ok(string_to_logicvec(&class_name))
+                Ok(string_to_logicvec(class_name.as_str()))
             }
             _ => self.execute_uvm_object_method(obj_id, method, args),
         }
@@ -1131,7 +1131,7 @@ impl SimulationEngine {
                 // Store sequencer obj_id on the sequence object's fields
                 if let Some(obj) = self.state.get_object_mut(obj_id) {
                     obj.fields.insert(
-                        "__sequencer".to_string(),
+                        Symbol::intern("__sequencer"),
                         LogicVec::from_u64(seqr_id as u64, 64),
                     );
                 }
@@ -1141,14 +1141,14 @@ impl SimulationEngine {
                         &{
                             self.state
                                 .get_object(obj_id)
-                                .map(|o| o.class_name.clone())
+                                .map(|o| o.class_name.to_string())
                                 .unwrap_or_default()
                         },
                         "body",
                     )
                     .is_ok()
                 {
-                    self.execute_method(obj_id, "body".as_str(), &[])?;
+                    self.execute_method(obj_id, "body", &[])?;
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
@@ -1195,7 +1195,7 @@ impl SimulationEngine {
                     .get_object(obj_id)
                     .map(|o| o.class_name.clone())
                     .unwrap_or_default();
-                let child = self.state.alloc_object(Symbol::intern(&class_name));
+                let child = self.state.alloc_object(Symbol::intern(class_name.as_str()));
                 // Set name on the new object
                 self.uvm_object_data
                     .entry(child)
@@ -1509,41 +1509,41 @@ impl SimulationEngine {
                 ))
             })?;
         // Check hierarchy from most specific to least
-        if parent == "__uvm_driver" || self.is_uvm_driver_hierarchy(&parent) {
+        if parent == "__uvm_driver" || self.is_uvm_driver_hierarchy(&parent.as_str()) {
             return self.execute_uvm_driver_method(obj_id, method, args);
         }
-        if parent == "__uvm_monitor" || self.is_uvm_monitor_hierarchy(&parent) {
+        if parent == "__uvm_monitor" || self.is_uvm_monitor_hierarchy(&parent.as_str()) {
             return self.execute_uvm_monitor_method(obj_id, method, args);
         }
-        if parent == "__uvm_sequencer" || self.is_uvm_sequencer_hierarchy(&parent) {
+        if parent == "__uvm_sequencer" || self.is_uvm_sequencer_hierarchy(&parent.as_str()) {
             return self.execute_uvm_sequencer_method(obj_id, method, args);
         }
-        if parent == "__uvm_sequence" || self.is_uvm_sequence_hierarchy(&parent) {
+        if parent == "__uvm_sequence" || self.is_uvm_sequence_hierarchy(&parent.as_str()) {
             return self.execute_uvm_sequence_method(obj_id, method, args);
         }
-        if parent == "__uvm_sequence_item" || self.is_uvm_sequence_item_hierarchy(&parent) {
+        if parent == "__uvm_sequence_item" || self.is_uvm_sequence_item_hierarchy(&parent.as_str()) {
             return self.execute_uvm_sequence_item_method(obj_id, method, args);
         }
-        if parent == "__uvm_analysis_port" || self.is_uvm_analysis_port_hierarchy(&parent) {
+        if parent == "__uvm_analysis_port" || self.is_uvm_analysis_port_hierarchy(&parent.as_str()) {
             return self.execute_uvm_analysis_port_method(obj_id, method, args);
         }
-        if parent == "__uvm_analysis_imp" || self.is_uvm_analysis_imp_hierarchy(&parent) {
+        if parent == "__uvm_analysis_imp" || self.is_uvm_analysis_imp_hierarchy(&parent.as_str()) {
             return self.execute_uvm_analysis_imp_method(obj_id, method, args);
         }
         // Check if parent is uvm_component hierarchy
-        if parent == "__uvm_component" || self.is_uvm_component_hierarchy(&parent) {
+        if parent == "__uvm_component" || self.is_uvm_component_hierarchy(&parent.as_str()) {
             return self.execute_uvm_component_method(obj_id, method, args);
         }
         // Check if parent is uvm_report_object hierarchy
-        if parent == "__uvm_report_object" || self.is_uvm_report_object_hierarchy(&parent) {
+        if parent == "__uvm_report_object" || self.is_uvm_report_object_hierarchy(&parent.as_str()) {
             return self.execute_uvm_report_object_method(obj_id, method, args);
         }
         // Check if parent is uvm_object hierarchy
-        if parent == "__uvm_object" || self.is_uvm_object_hierarchy(&parent) {
+        if parent == "__uvm_object" || self.is_uvm_object_hierarchy(&parent.as_str()) {
             return self.execute_uvm_object_method(obj_id, method, args);
         }
         // Super dispatch: start search from parent class, skipping current class override
-        let method_def = self.find_method_in_hierarchy(&parent, method)?.clone();
+        let method_def = self.find_method_in_hierarchy(parent.as_str(), method)?.clone();
         self.execute_method_body(Some(obj_id), &method_def, args, method)
     }
 
@@ -1559,7 +1559,7 @@ impl SimulationEngine {
             self.current_this = Some(oid);
         }
 
-        let mut local_signals: HashMap<String, LogicVec> = HashMap::new();
+        let mut local_signals: HashMap<Symbol, LogicVec> = HashMap::new();
         for (i, port) in method_def.ports.iter().enumerate() {
             let port_width = port.resolved_width(&HashMap::new()).unwrap_or(1);
             let val = if i < args.len() {
@@ -1567,13 +1567,13 @@ impl SimulationEngine {
             } else {
                 LogicVec::new(port_width)
             };
-            local_signals.insert(port.name.clone(), val);
+            local_signals.insert(port.name, val);
         }
 
         for decl in &method_def.decls {
             for dv in &decl.names {
                 let w = dv.resolved_width(&HashMap::new()).unwrap_or(1);
-                local_signals.insert(dv.name.clone(), LogicVec::new(w));
+                local_signals.insert(dv.name, LogicVec::new(w));
             }
         }
 
@@ -1671,12 +1671,12 @@ impl SimulationEngine {
     ) -> Result<IrClassMethod, SimError> {
         let mut current = class_name;
         loop {
-            if let Some(cls) = self.design.classes.get(current) {
+            if let Some(cls) = self.design.classes.get::<str>(current) {
                 if let Some(m) = cls.methods.iter().find(|m| m.name == method) {
                     return Ok(m.clone());
                 }
                 if let Some(parent) = &cls.extends {
-                    current = parent;
+                    current = parent.as_str();
                 } else {
                     break;
                 }
@@ -1699,7 +1699,7 @@ impl SimulationEngine {
         if let Some(wc) = with_clause {
             let depth = self.method_locals.len();
             let mut scope = std::collections::HashMap::new();
-            scope.insert("item".to_string(), elem.clone());
+            scope.insert(Symbol::intern("item"), elem.clone());
             self.method_locals.push(scope);
             let result = self.evaluate_expr(wc)?.to_bool().unwrap_or(false);
             self.method_locals.truncate(depth);
