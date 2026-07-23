@@ -8,6 +8,7 @@
 //!
 //! Compatibility: menghasilkan Token yang sama dengan legacy lexer.
 
+use crate::intern::Symbol;
 use crate::parser::lexer::Token;
 
 /// Fast byte-level lexer — zero-copy dari input `&[u8]`.
@@ -301,7 +302,7 @@ impl<'a> FastLexer<'a> {
             };
             let ident = std::str::from_utf8(&self.input[id_start..end])
                 .unwrap_or("");
-            return Token::Ident(ident.to_string());
+            return Token::Ident(Symbol::intern(ident));
         }
 
         // Normal identifier or keyword
@@ -475,7 +476,7 @@ impl<'a> FastLexer<'a> {
             "illegal_bins" => Token::IllegalBins,
             "ignore_bins" => Token::IgnoreBins,
             "option" => Token::Option_,
-            _ => Token::Ident(s.to_string()),
+            _ => Token::Ident(Symbol::intern(s)),
         }
     }
 
@@ -563,7 +564,7 @@ impl<'a> FastLexer<'a> {
             let s = unsafe {
                 std::str::from_utf8_unchecked(&self.input[start..self.pos])
             };
-            return Token::RealNum(s.to_string());
+            return Token::RealNum(Symbol::intern(s));
         }
 
         // Plain decimal
@@ -571,7 +572,7 @@ impl<'a> FastLexer<'a> {
             std::str::from_utf8_unchecked(&self.input[start..self.pos])
         };
         Token::Number {
-            value: s.to_string(),
+            value: Symbol::intern(s),
             base: None,
             width: None,
             is_signed: false,
@@ -582,7 +583,7 @@ impl<'a> FastLexer<'a> {
         let parts: Vec<&str> = s.split('\'').collect();
         if parts.len() != 2 {
             return Token::Number {
-                value: s.to_string(),
+                value: Symbol::intern(s),
                 base: None,
                 width: None,
                 is_signed: false,
@@ -599,7 +600,7 @@ impl<'a> FastLexer<'a> {
         let rest = parts[1];
         if rest.is_empty() {
             return Token::Number {
-                value: s.to_string(),
+                value: Symbol::intern(&s),
                 base: None,
                 width: None,
                 is_signed: false,
@@ -623,7 +624,7 @@ impl<'a> FastLexer<'a> {
         };
 
         Token::Number {
-            value: value_part.replace('_', "").replace('?', "z"),
+            value: Symbol::intern(&value_part.replace('_', "").replace('?', "z")),
             base,
             width,
             is_signed,
@@ -661,7 +662,7 @@ impl<'a> FastLexer<'a> {
                 s.push(self.advance() as char);
             }
         }
-        Token::StringLit(s)
+        Token::StringLit(Symbol::intern(&s))
     }
 
     // ─── Operator / Punctuation Scanner ───
@@ -903,7 +904,7 @@ impl<'a> FastLexer<'a> {
                             }
                         }
                         Token::Number {
-                            value: value.replace('_', ""),
+                            value: Symbol::intern(&value.replace('_', "")),
                             base: Some(base),
                             width: None,
                             is_signed: false,
@@ -937,7 +938,7 @@ impl<'a> FastLexer<'a> {
                                     }
                                 }
                                 Token::Number {
-                                    value: value.replace('_', ""),
+                                    value: Symbol::intern(&value.replace('_', "")),
                                     base: Some(base),
                                     width: None,
                                     is_signed: true,
@@ -980,7 +981,7 @@ mod tests {
         let tokens = fast_tokenize(input);
         assert_eq!(tokens.len(), 4, "expected 4 tokens: Module, Ident, Semi, Endmodule");
         assert_eq!(tokens[0].0, Token::Module);
-        assert_eq!(tokens[1].0, Token::Ident("test".to_string()));
+        assert_eq!(tokens[1].0, Token::Ident(Symbol::intern("test")));
         assert_eq!(tokens[2].0, Token::Semi);
         assert_eq!(tokens[3].0, Token::Endmodule);
     }
@@ -991,7 +992,7 @@ mod tests {
         let tokens = fast_tokenize(input);
         assert!(tokens.len() >= 4);
         assert_eq!(tokens[0].0, Token::Wire);
-        assert_eq!(tokens[1].0, Token::Ident("clk".to_string()));
+        assert_eq!(tokens[1].0, Token::Ident(Symbol::intern("clk")));
     }
 
     #[test]
@@ -1019,7 +1020,7 @@ mod tests {
         let tokens = fast_tokenize(input);
         assert_eq!(tokens.len(), 3);
         assert_eq!(tokens[0].0, Token::Module);
-        assert_eq!(tokens[1].0, Token::StringLit("hello".to_string()));
+        assert_eq!(tokens[1].0, Token::StringLit(Symbol::intern("hello")));
         assert_eq!(tokens[2].0, Token::Endmodule);
     }
 
@@ -1028,9 +1029,9 @@ mod tests {
         let input = "a + b - c * d / e";
         let tokens = fast_tokenize(input);
         let ops: Vec<&Token> = tokens.iter().map(|t| &t.0).collect();
-        assert_eq!(ops[0], &Token::Ident("a".to_string()));
+        assert_eq!(ops[0], &Token::Ident(Symbol::intern("a")));
         assert_eq!(ops[1], &Token::Plus);
-        assert_eq!(ops[2], &Token::Ident("b".to_string()));
+        assert_eq!(ops[2], &Token::Ident(Symbol::intern("b")));
         assert_eq!(ops[3], &Token::Minus);
     }
 
@@ -1039,7 +1040,7 @@ mod tests {
         let input = "a === b !== c == d != e";
         let tokens = fast_tokenize(input);
         let ops: Vec<&Token> = tokens.iter().map(|t| &t.0).collect();
-        assert_eq!(ops[0], &Token::Ident("a".to_string()));
+        assert_eq!(ops[0], &Token::Ident(Symbol::intern("a")));
         assert_eq!(ops[1], &Token::Equiv);
         assert_eq!(ops[3], &Token::NotEquiv);
         assert_eq!(ops[5], &Token::Eq);
@@ -1090,7 +1091,7 @@ mod tests {
         let input = "posedge clk";
         let tokens = fast_tokenize(input);
         assert_eq!(tokens[0].0, Token::PosEdge);
-        assert_eq!(tokens[1].0, Token::Ident("clk".to_string()));
+        assert_eq!(tokens[1].0, Token::Ident(Symbol::intern("clk")));
     }
 
     #[test]
@@ -1098,9 +1099,9 @@ mod tests {
         let input = "pkg::item";
         let tokens = fast_tokenize(input);
         assert_eq!(tokens.len(), 3);
-        assert_eq!(tokens[0].0, Token::Ident("pkg".to_string()));
+        assert_eq!(tokens[0].0, Token::Ident(Symbol::intern("pkg")));
         assert_eq!(tokens[1].0, Token::Scope);
-        assert_eq!(tokens[2].0, Token::Ident("item".to_string()));
+        assert_eq!(tokens[2].0, Token::Ident(Symbol::intern("item")));
     }
 
     #[test]

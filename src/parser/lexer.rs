@@ -1,4 +1,5 @@
 use std::fmt;
+use crate::intern::Symbol;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -116,14 +117,14 @@ pub enum Token {
     StarArrow,  // *>
     // Literals
     Number {
-        value: String,
+        value: Symbol,
         base: Option<u8>,
         width: Option<usize>,
         is_signed: bool,
     },
-    RealNum(String),
-    StringLit(String),
-    Ident(String),
+    RealNum(Symbol),
+    StringLit(Symbol),
+    Ident(Symbol),
 
     // Operators
     Plus,
@@ -253,7 +254,7 @@ pub enum Token {
     // Special
     FillLit(crate::ir::LogicVal),
     Quote, // bare ' (for type casts: int'(x))
-    Error(String),
+    Error(String), // Keep String for error messages
     Eof,
 }
 
@@ -567,7 +568,8 @@ impl Lexer {
                 }
                 s.push(self.advance());
             }
-            return (Token::Ident(s), start_line, start_col);
+            let sym = Symbol::intern(&s);
+            return (Token::Ident(sym), start_line, start_col);
         }
 
         while let Some(c) = self.peek() {
@@ -735,7 +737,7 @@ impl Lexer {
             "illegal_bins" => Token::IllegalBins,
             "ignore_bins" => Token::IgnoreBins,
             "option" => Token::Option_,
-            _ => Token::Ident(s),
+            _ => Token::Ident(Symbol::intern(&s)),
         };
 
         (token, start_line, start_col)
@@ -814,12 +816,12 @@ impl Lexer {
                     }
                 }
             }
-            return Token::RealNum(s);
+            return Token::RealNum(Symbol::intern(&s));
         }
 
         // Plain decimal
         Token::Number {
-            value: s,
+            value: Symbol::intern(&s),
             base: None,
             width: None,
             is_signed: false,
@@ -832,7 +834,7 @@ impl Lexer {
         let parts: Vec<&str> = s.split('\'').collect();
         if parts.len() != 2 {
             return Token::Number {
-                value: s.to_string(),
+                value: Symbol::intern(s),
                 base: None,
                 width: None,
                 is_signed: false,
@@ -849,7 +851,7 @@ impl Lexer {
         let rest = parts[1];
         if rest.is_empty() {
             return Token::Number {
-                value: s.to_string(),
+                value: Symbol::intern(s),
                 base: None,
                 width: None,
                 is_signed: false,
@@ -873,7 +875,7 @@ impl Lexer {
         };
 
         Token::Number {
-            value: value_part.replace('_', "").replace('?', "z"),
+            value: Symbol::intern(&value_part.replace('_', "").replace('?', "z")),
             base,
             width,
             is_signed,
@@ -907,7 +909,7 @@ impl Lexer {
                 s.push(self.advance());
             }
         }
-        Token::StringLit(s)
+        Token::StringLit(Symbol::intern(&s))
     }
 
     fn read_operator_or_punct(&mut self) -> Token {
@@ -1175,7 +1177,7 @@ impl Lexer {
                             }
                         }
                         Token::Number {
-                            value: value.replace('_', ""),
+                            value: Symbol::intern(&value.replace('_', "")),
                             base: Some(base),
                             width: None,
                             is_signed: false,
@@ -1207,12 +1209,12 @@ impl Lexer {
                                         break;
                                     }
                                 }
-                                Token::Number {
-                                    value: value.replace('_', ""),
-                                    base: Some(base),
-                                    width: None,
-                                    is_signed: true,
-                                }
+                        Token::Number {
+                            value: Symbol::intern(&value.replace('_', "")),
+                            base: Some(base),
+                            width: None,
+                            is_signed: true,
+                        }
                             }
                             _ => Token::Error(format!("expected base after 's in literal")),
                         }

@@ -137,7 +137,7 @@ impl Parser {
         match &tok {
             Token::Ident(s) => {
                 self.advance();
-                Ok(Symbol::intern(s))
+                Ok(*s)
             }
             Token::New => {
                 self.advance();
@@ -201,7 +201,7 @@ impl Parser {
                     let _ = self.expect(Token::RParen);
                 }
                 if let Token::Ident(name) = self.peek() {
-                    self.class_names.push(Symbol::intern(&name));
+                    self.class_names.push(*name);
                 }
                 self.pos = start;
                 let c = self.parse_class()?;
@@ -241,7 +241,7 @@ impl Parser {
                     }
                 }
                 if let Token::Ident(name) = self.peek() {
-                    self.class_names.push(Symbol::intern(&name));
+                    self.class_names.push(*name);
                 }
                 self.pos = start;
                 let c = self.parse_class()?;
@@ -372,8 +372,8 @@ impl Parser {
                 Token::Export => {
                     // export "DPI-C" function/task ...
                     self.advance();
-                    if self.peek() == &Token::StringLit("DPI-C".to_string())
-                        || self.peek() == &Token::StringLit("DPI".to_string())
+                    if self.peek() == &Token::StringLit(Symbol::intern("DPI-C"))
+                        || self.peek() == &Token::StringLit(Symbol::intern("DPI"))
                     {
                         self.parse_dpi_import()?;
                     } else {
@@ -525,7 +525,7 @@ impl Parser {
                             self.advance();
                             if let Token::Number { value, .. } = self.peek().clone() {
                                 self.advance();
-                                default_input_skew = value.parse::<u64>().ok();
+                                default_input_skew = value.as_str().parse::<u64>().ok();
                             }
                         }
                         self.skip_semi();
@@ -535,7 +535,7 @@ impl Parser {
                             self.advance();
                             if let Token::Number { value, .. } = self.peek().clone() {
                                 self.advance();
-                                default_output_skew = value.parse::<u64>().ok();
+                                default_output_skew = value.as_str().parse::<u64>().ok();
                             }
                         }
                         self.skip_semi();
@@ -555,12 +555,12 @@ impl Parser {
                             self.advance();
                             if let Token::Number { value, .. } = self.peek().clone() {
                                 self.advance();
-                                let _skew = value.parse::<u64>().ok();
+                                let _skew = value.as_str().parse::<u64>().ok();
                             }
                         }
                         if let Token::Ident(s) = self.peek().clone() {
                             self.advance();
-                            signals.push(Symbol::intern(&s));
+                            signals.push(s);
                         } else {
                             break;
                         }
@@ -587,12 +587,12 @@ impl Parser {
                             self.advance();
                             if let Token::Number { value, .. } = self.peek().clone() {
                                 self.advance();
-                                let _skew = value.parse::<u64>().ok();
+                                let _skew = value.as_str().parse::<u64>().ok();
                             }
                         }
                         if let Token::Ident(s) = self.peek().clone() {
                             self.advance();
-                            signals.push(Symbol::intern(&s));
+                            signals.push(s);
                         } else {
                             break;
                         }
@@ -617,7 +617,7 @@ impl Parser {
                         }
                         if let Token::Ident(s) = self.peek().clone() {
                             self.advance();
-                            signals.push(Symbol::intern(&s));
+                            signals.push(s);
                         } else {
                             break;
                         }
@@ -873,8 +873,8 @@ impl Parser {
                             self.expect(Token::RParen)?;
                             self.skip_semi();
                             return Ok(Some(SpecifyItem::PathDelay {
-                                src: Symbol::intern(&src),
-                                dst: Symbol::intern(&dst),
+                                src: src,
+                                dst: dst,
                                 rise: Some(rise),
                                 fall,
                             }));
@@ -919,13 +919,13 @@ impl Parser {
                 // Could be sized like 1'b0, but in table it's just '0', '1', 'x'
                 let trimmed = if let Some(b) = base {
                     let prefix = format!("'{}", *b as char);
-                    if let Some(idx) = value.find(&prefix) {
-                        value[idx + prefix.len()..].to_string()
+                    if let Some(idx) = value.as_str().find(&prefix) {
+                        value.as_str()[idx + prefix.len()..].to_string()
                     } else {
-                        value.clone()
+                        value.as_str().to_string()
                     }
                 } else {
-                    value.clone()
+                    value.as_str().to_string()
                 };
                 self.advance();
                 match trimmed.as_str() {
@@ -974,7 +974,7 @@ impl Parser {
                 while self.peek() != &Token::Eof && self.peek() != &Token::RParen {
                     match self.peek() {
                         Token::Number { value, .. } => {
-                            edge_str.push_str(value);
+                            edge_str.push_str(value.as_str());
                             self.advance();
                         }
                         Token::Question => {
@@ -986,7 +986,7 @@ impl Parser {
                             self.advance();
                         }
                         Token::Ident(s) => {
-                            edge_str.push_str(&s);
+                            edge_str.push_str(s.as_str());
                             self.advance();
                         }
                         _ => break,
@@ -1210,7 +1210,7 @@ impl Parser {
                     self.advance();
                     if let Token::Ident(name) = self.peek().clone() {
                         self.advance();
-                        design_top = Some(Symbol::intern(&name));
+                        design_top = Some(name);
                     }
                     self.skip_semi();
                 }
@@ -1220,7 +1220,7 @@ impl Parser {
                         self.advance();
                         if let Token::Ident(name) = self.peek().clone() {
                             self.advance();
-                            default_liblist = Some(name);
+                            default_liblist = Some(name.as_str().to_string());
                         }
                     }
                     self.skip_semi();
@@ -1230,7 +1230,7 @@ impl Parser {
                     let mut instance_path = String::new();
                     if let Token::Ident(s) = self.peek().clone() {
                         self.advance();
-                        instance_path = s;
+                        instance_path = s.as_str().to_string();
                     }
                     // Handle hierarchical paths: top.sub1
                     while self.peek() == &Token::Dot {
@@ -1238,16 +1238,17 @@ impl Parser {
                         if let Token::Ident(s) = self.peek().clone() {
                             self.advance();
                             instance_path.push('.');
-                            instance_path.push_str(&s);
+                            instance_path.push_str(s.as_str());
                         }
                     }
                     if self.peek() == &Token::Liblist {
                         self.advance();
                         if let Token::Ident(lib) = self.peek().clone() {
-                            self.advance();rules.push(ConfigRule::InstanceLiblist {
-    instance: Symbol::intern(&instance_path),
-    liblist: lib,
-});
+                            self.advance();
+                            rules.push(ConfigRule::InstanceLiblist {
+                                instance: Symbol::intern(&instance_path),
+                                liblist: lib.as_str().to_string(),
+                            });
                         }
                     }
                     self.skip_semi();
@@ -1257,15 +1258,16 @@ impl Parser {
                     let mut cell_name = String::new();
                     if let Token::Ident(s) = self.peek().clone() {
                         self.advance();
-                        cell_name = s;
+                        cell_name = s.as_str().to_string();
                     }
                     if self.peek() == &Token::Liblist {
                         self.advance();
                         if let Token::Ident(lib) = self.peek().clone() {
-                            self.advance();rules.push(ConfigRule::CellLiblist {
-    cell: Symbol::intern(&cell_name),
-    liblist: lib,
-});
+                            self.advance();
+                            rules.push(ConfigRule::CellLiblist {
+                                cell: Symbol::intern(&cell_name),
+                                liblist: lib.as_str().to_string(),
+                            });
                         }
                     }
                     self.skip_semi();
@@ -1276,7 +1278,7 @@ impl Parser {
                         self.advance();
                         if let Token::Ident(lib) = self.peek().clone() {
                             self.advance();
-                            rules.push(ConfigRule::UseLiblist { liblist: lib });
+                            rules.push(ConfigRule::UseLiblist { liblist: lib.as_str().to_string() });
                         }
                     }
                     self.skip_semi();
@@ -1456,12 +1458,12 @@ impl Parser {
                                     None
                                 };
                                 let resolved_dtype = if let Some(t) = &type_ident {
-                                    Some(DataType::UserDefined(Symbol::intern(&t)))
+                                    Some(DataType::UserDefined(*t))
                                 } else {
                                     dtype.clone()
                                 };
                                 items.push(PackageItem::Param(ParamDecl {
-                                    name: Symbol::intern(&pname),
+                                    name: pname,
                                     dtype: resolved_dtype,
                                     range: range.clone(),
                                     default,
@@ -1674,7 +1676,7 @@ impl Parser {
                     }
                     members.push(ClassMember::Decl(decl));
                 }
-                Token::Ident(name) if self.type_param_names.contains(&Symbol::intern(&name)) => {
+                Token::Ident(name) if self.type_param_names.contains(&name) => {
                     let tp_name = name.clone();
                     self.advance();
                     let decl_expr_range = if self.peek() == &Token::LBrack {
@@ -1691,7 +1693,7 @@ impl Parser {
                     let names = self.parse_decl_names(decl_expr_range, extra_packed)?;
                     self.skip_semi();
                     members.push(ClassMember::Decl(crate::ast::types::Decl {
-                        dtype: DataType::UserDefined(Symbol::intern(&tp_name)),
+                        dtype: DataType::UserDefined(tp_name),
                         kind: crate::ast::types::DeclKind::Logic,
                         names,
                     }));
@@ -1864,7 +1866,7 @@ impl Parser {
         }
 
         Ok(Module {
-            name: Symbol::intern(&name),
+            name: name,
             ports,
             params,
             decls,
@@ -2039,7 +2041,7 @@ impl Parser {
         }
 
         Ok(Interface {
-            name: Symbol::intern(&name),
+            name: name,
             params,
             decls,
             modports,
@@ -2100,7 +2102,7 @@ impl Parser {
                     }
                 };
                 items.push(ModportItem {
-                    name: Symbol::intern(&sig_name),
+                    name: sig_name,
                     direction: dir.clone(),
                 });
                 match self.peek() {
@@ -2124,7 +2126,7 @@ impl Parser {
             }
         }
         self.skip_semi();
-        Ok(Modport { name: Symbol::intern(&name), items })
+        Ok(Modport { name: name, items })
     }
 
     fn parse_param_list(&mut self, params: &mut Vec<ParamDecl>) -> Result<(), SimError> {
@@ -2215,7 +2217,7 @@ impl Parser {
             let name = match &name_tok {
                 Token::Ident(s) => {
                     self.advance();
-                    s.clone()
+                    s.as_str().to_string()
                 }
                 Token::Int => {
                     self.advance();
@@ -2264,7 +2266,7 @@ impl Parser {
             // Use type_ident as UserDefined dtype if set
             let resolved_dtype = type_ident
                 .as_ref()
-                .map(|t| DataType::UserDefined(Symbol::intern(&t)))
+                .map(|t| DataType::UserDefined(*t))
                 .or(dtype);
 
             params.push(ParamDecl {
@@ -2433,7 +2435,7 @@ impl Parser {
                                     self.expect(Token::RBrack)?;
                                 }
                                 ports.push(Port {
-                                    name: Symbol::intern(&name),
+                                    name: *name,
                                     direction: dir.clone(),
                                     range: range.clone(),
                                     expr_range: expr_range.clone(),
@@ -2600,7 +2602,7 @@ impl Parser {
                 Ok(Some(ModuleItem::Decl(decl)))
             }
             Token::Ident(name) => {
-                if self.class_names.contains(&Symbol::intern(&name)) || self.typedef_names.contains(&Symbol::intern(&name)) {                            let dtype = DataType::UserDefined(Symbol::intern(&name));
+                if self.class_names.contains(name) || self.typedef_names.contains(name) {                            let dtype = DataType::UserDefined(*name);
                     self.advance();
                     // Handle parameterized class: Class #(type) varname — skip type args, use base class name
                     if self.peek() == &Token::Hash {
@@ -2617,7 +2619,7 @@ impl Parser {
                             let vname = n.clone();
                             self.advance();
                             names.push(DeclVar {
-                                name: Symbol::intern(&vname),
+                                name: vname,
                                 range: None,
                                 expr_range: None,
                                 array_range: None,
@@ -2791,8 +2793,8 @@ impl Parser {
                     } else {
                         None
                     };
-                    params.push(ParamDecl {
-                        name: Symbol::intern(&name),
+            params.push(ParamDecl {
+                name: name,
                         dtype: dtype.clone(),
                         range: range.clone(),
                         default,
@@ -2880,8 +2882,8 @@ impl Parser {
             Token::Import => {
                 self.advance();
                 // Check for DPI-C import or export
-                if self.peek() == &Token::StringLit("DPI-C".to_string())
-                    || self.peek() == &Token::StringLit("DPI".to_string())
+                if self.peek() == &Token::StringLit(Symbol::intern("DPI-C"))
+                    || self.peek() == &Token::StringLit(Symbol::intern("DPI"))
                 {
                     let result = self.parse_dpi_import()?;
                     return Ok(Some(ModuleItem::DpiImport(result)));
@@ -2924,8 +2926,8 @@ impl Parser {
             Token::Export => {
                 // export "DPI-C" function/task
                 self.advance();
-                if self.peek() == &Token::StringLit("DPI-C".to_string())
-                    || self.peek() == &Token::StringLit("DPI".to_string())
+                if self.peek() == &Token::StringLit(Symbol::intern("DPI-C"))
+                    || self.peek() == &Token::StringLit(Symbol::intern("DPI"))
                 {
                     let result = self.parse_dpi_import()?;
                     Ok(Some(ModuleItem::DpiImport(result)))
@@ -3047,7 +3049,7 @@ impl Parser {
                 }
             } else if matches!(ahead, Token::Ident(_)) {
                 self.advance();
-                Some(DataType::UserDefined(Symbol::intern(&s)))
+                Some(DataType::UserDefined(s))
             } else {
                 None
             }
@@ -3453,7 +3455,7 @@ impl Parser {
                         None
                     };
                     names.push(DeclVar {
-                        name: Symbol::intern(&name),
+                        name: *name,
                         range: var_range,
                         expr_range: var_expr_range,
                         array_range,
@@ -3493,7 +3495,7 @@ impl Parser {
                     } else {
                         None
                     };
-                    members.push((Symbol::intern(&name), val));
+                    members.push((name, val));
                 }
                 _ => {
                     return Err(SimError::parse(format!(
@@ -3614,7 +3616,7 @@ impl Parser {
                         let type_name = self.expect_ident()?;
                         DataType::UserDefined(Symbol::intern(&format!("{}::{}", name, type_name)))
                     } else {
-                        DataType::UserDefined(Symbol::intern(&name))
+                        DataType::UserDefined(name)
                     }
                 }
                 _ => {
@@ -3694,7 +3696,7 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
-                    (Symbol::intern(&name), DataType::EnumType { base, members }, None)
+                    (name, DataType::EnumType { base, members }, None)
                 } else {
                     return Err(SimError::parse(format!(
                         "line {}: expected name after typedef enum",
@@ -3720,7 +3722,7 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
-                    (Symbol::intern(&name), dtype, range)
+                    (name, dtype, range)
                 } else {
                     return Err(SimError::parse(format!(
                         "line {}: expected name after typedef bit",
@@ -3746,7 +3748,7 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
-                    (Symbol::intern(&name), dtype, range)
+                    (name, dtype, range)
                 } else {
                     return Err(SimError::parse(format!(
                         "line {}: expected name after typedef byte",
@@ -3772,7 +3774,7 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
-                    (Symbol::intern(&name), dtype, range)
+                    (name, dtype, range)
                 } else {
                     return Err(SimError::parse(format!(
                         "line {}: expected name after typedef shortint",
@@ -3798,7 +3800,7 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
-                    (Symbol::intern(&name), dtype, range)
+                    (name, dtype, range)
                 } else {
                     return Err(SimError::parse(format!(
                         "line {}: expected name after typedef longint",
@@ -3816,7 +3818,7 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
-                    (Symbol::intern(&name), DataType::Time, range)
+                    (name, DataType::Time, range)
                 } else {
                     return Err(SimError::parse(format!(
                         "line {}: expected name after typedef time",
@@ -3842,7 +3844,7 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
-                    (Symbol::intern(&name), dtype, range)
+                    (name, dtype, range)
                 } else {
                     return Err(SimError::parse(format!(
                         "line {}: expected name after typedef int",
@@ -3868,7 +3870,7 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
-                    (Symbol::intern(&name), dtype, range)
+                    (name, dtype, range)
                 } else {
                     return Err(SimError::parse(format!(
                         "line {}: expected name after typedef integer",
@@ -3894,7 +3896,7 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
-                    (Symbol::intern(&name), dtype, range)
+                    (name, dtype, range)
                 } else {
                     return Err(SimError::parse(format!(
                         "line {}: expected name after typedef logic",
@@ -3913,7 +3915,7 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
-                    (Symbol::intern(&name), dtype, range)
+                    (name, dtype, range)
                 } else {
                     return Err(SimError::parse(format!(
                         "line {}: expected name after typedef reg",
@@ -3930,7 +3932,7 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
-(                    Symbol::intern(&name), DataType::StructType { members }, None)
+                    (name, DataType::StructType { members }, None)
                 } else {
                     return Err(SimError::parse(format!(
                         "line {}: expected name after typedef struct",
@@ -3947,7 +3949,7 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
-                    (Symbol::intern(&name), DataType::UnionType { members }, None)
+                    (name, DataType::UnionType { members }, None)
                 } else {
                     return Err(SimError::parse(format!(
                         "line {}: expected name after typedef union",
@@ -4017,7 +4019,7 @@ impl Parser {
                 let var = match &var_tok {
                     Token::Ident(n) => {
                         self.advance();
-                        n.clone()
+                        *n
                     }
                     _ => {
                         return Err(SimError::parse(format!(
@@ -4032,7 +4034,7 @@ impl Parser {
                     let init_expr = self.parse_expr(0)?;
                     self.expect(Token::Semi)?;
                     Some(Stmt::BlockingAssign {
-                        lhs: Expr::Ident(Symbol::intern(&var)),
+                        lhs: Expr::Ident(var),
                         rhs: init_expr,
                         delay: None,
                     })
@@ -4058,7 +4060,7 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 let body_items = self.parse_generate_block_body()?;
                 Ok(GenerateItem::For {
-                    var: Symbol::intern(&var),
+                    var: var,
                     init: None,
                     cond,
                     step,
@@ -4227,10 +4229,10 @@ impl Parser {
                 self.advance();
                 Some(Box::new(DataType::Signed(Box::new(DataType::Logic))))
             }
-    Token::Ident(name) if self.type_param_names.contains(&Symbol::intern(&name)) => {
+    Token::Ident(name) if self.type_param_names.contains(&name) => {
         let tp_name = name.clone();
         self.advance();
-        Some(Box::new(DataType::UserDefined(Symbol::intern(&tp_name))))
+        Some(Box::new(DataType::UserDefined(tp_name)))
     }
             Token::Ident(_) if matches!(self.peek_ahead(1), Token::Ident(_) | Token::LBrack) => {
                 let tp_name = self.expect_ident()?;
@@ -4250,7 +4252,7 @@ impl Parser {
         let name = match &name_tok {
             Token::Ident(n) => {
                 self.advance();
-                Symbol::intern(&n)
+                *n
             }
             Token::New => {
                 self.advance();
@@ -4301,7 +4303,7 @@ impl Parser {
                         });
                     }
                     self.advance();
-                } else if let Token::Ident(name) = self.peek() {                        if self.type_param_names.contains(&Symbol::intern(name)) {
+                } else if let Token::Ident(name) = self.peek() {                        if self.type_param_names.contains(name) {
                         self.advance();
                     } else if matches!(self.peek_ahead(1), Token::Ident(_) | Token::LBrack) {
                         // User-defined type name followed by port name or range
@@ -4324,7 +4326,7 @@ impl Parser {
                             let pn = pname.clone();
                             self.advance();
                             ports.push(FunctionPort {
-                                name: Symbol::intern(&pn),
+                                name: pn,
                                 range: range.clone(),
                                 expr_range: None,
                                 direction: last_direction,
@@ -4389,7 +4391,7 @@ impl Parser {
                             let pn = pname.clone();
                             self.advance();
                             ports.push(FunctionPort {
-                                name: Symbol::intern(&pn),
+                                name: pn,
                                 range: port_range.clone(),
                                 expr_range: None,
                                 direction: Some(direction),
@@ -4576,7 +4578,7 @@ impl Parser {
                             let pn = pname.clone();
                             self.advance();
                             ports.push(FunctionPort {
-                                name: Symbol::intern(&pn),
+                                name: pn,
                                 range: range.clone(),
                                 expr_range: None,
                                 direction: last_direction,
@@ -4642,7 +4644,7 @@ impl Parser {
                             let pn = pname.clone();
                             self.advance();
                             ports.push(FunctionPort {
-                                name: Symbol::intern(&pn),
+                                name: pn,
                                 range: port_range.clone(),
                                 expr_range: None,
                                 direction: Some(direction),
@@ -4883,7 +4885,7 @@ impl Parser {
         let module_name = match &name_tok {
             Token::Ident(s) => {
                 self.advance();
-                                Symbol::intern(&s)
+                                *s
             }
             _ => {
                 return Err(SimError::parse(format!(
@@ -4907,7 +4909,7 @@ impl Parser {
                         let pname: Symbol = match &pname_tok {
                             Token::Ident(s) => {
                                 self.advance();
-                                Symbol::intern(s)
+                                *s
                             }
                             _ => {
                                 return Err(SimError::parse(format!(
@@ -4945,7 +4947,7 @@ impl Parser {
         let instance_name = match &inst_tok {
             Token::Ident(s) => {
                 self.advance();
-                Symbol::intern(&s)
+                *s
             }
             _ => {
                 return Err(SimError::parse(format!(
@@ -4979,7 +4981,7 @@ impl Parser {
                         let port_name = match &port_tok {
                             Token::Ident(s) => {
                                 self.advance();
-                                Symbol::intern(&s)
+                                *s
                             }
                             _ => {
                                 return Err(SimError::parse(format!(
@@ -5173,16 +5175,16 @@ impl Parser {
             let saved = self.pos;
             self.advance(); // consume (
             if let Token::Ident(s1) = self.peek().clone() {
-                if is_strength_keyword(&s1) {
+                if is_strength_keyword(s1.as_str()) {
                     self.advance();
                     if self.peek() == &Token::Comma {
                         self.advance();
                         if let Token::Ident(s2) = self.peek().clone() {
-                            if is_strength_keyword(&s2) {
+                            if is_strength_keyword(s2.as_str()) {
                                 self.advance();
                                 if self.peek() == &Token::RParen {
                                     self.advance();
-                                    drive_strength = Some((s1.to_lowercase(), s2.to_lowercase()));
+                                    drive_strength = Some((s1.as_str().to_lowercase(), s2.as_str().to_lowercase()));
                                 }
                             }
                         }
@@ -5236,7 +5238,7 @@ impl Parser {
             let name = match self.peek().clone() {
                 Token::Ident(s) => {
                     self.advance();
-                    Some(Symbol::intern(&s))
+                    Some(s)
                 }
                 _ => {
                     return Err(SimError::parse(format!(
@@ -5902,7 +5904,7 @@ impl Parser {
                 if self.peek() == &Token::Colon {
                     self.advance();
                     if let Token::Ident(name) = self.peek() {
-                        block_name = name.clone();
+                        block_name = name.as_str().to_string();
                         self.advance();
                     }
                 }
@@ -5965,7 +5967,7 @@ impl Parser {
                 let name = match &tok {
                     Token::Ident(s) => {
                         self.advance();
-                        s.clone()
+                        *s
                     }
                     _ => {
                         return Err(SimError::parse(format!(
@@ -5975,7 +5977,7 @@ impl Parser {
                     }
                 };
                 self.skip_semi();
-                Ok(Stmt::Disable { name: Symbol::intern(&name) })
+                Ok(Stmt::Disable { name: name })
             }
             Token::Force => {
                 self.advance();
@@ -6068,7 +6070,7 @@ impl Parser {
                     }
                 };
                 self.skip_semi();
-                Ok(Stmt::EventTrigger { name: Symbol::intern(&name) })
+                Ok(Stmt::EventTrigger { name: name })
             }
             Token::Ident(ref s) if s == "randcase" => {
                 self.advance();
@@ -6679,7 +6681,7 @@ impl Parser {
         let name = match &name_tok {
             Token::Ident(s) => {
                 self.advance();
-                Symbol::intern(&s)
+                *s
             }
             _ => {
                 return Err(SimError::parse(format!(
@@ -7001,7 +7003,7 @@ impl Parser {
                 let name = match &name_tok {
                     Token::Ident(n) => {
                         self.advance();
-                        n.clone()
+                        n.as_str().to_string()
                     }
                     Token::Time => {
                         self.advance();
@@ -7079,7 +7081,7 @@ impl Parser {
                         });
                     }
                 return Ok(Expr::ScopedIdent {
-                    package: Symbol::intern(&name),
+                    package: *name,
                     item,
                 });
                 }
@@ -7105,7 +7107,7 @@ impl Parser {
                         type_specs.iter().map(|dt| dt.to_string()).collect();
                     let suffix = type_str.join(",");
                     let class_prefix = if suffix.is_empty() {
-                        Symbol::intern(&name)
+                        **name
                     } else {
                         Symbol::intern(&format!("{}#{}", name, suffix))
                     };
@@ -7158,7 +7160,7 @@ impl Parser {
                     let expr = self.parse_expr(0)?;
                     self.expect(Token::RParen)?;
                 return Ok(Expr::Cast {
-                    dtype: Symbol::intern(&name),
+                    dtype: *name,
                     expr: Box::new(expr),
                 });
                 }
@@ -7177,11 +7179,11 @@ impl Parser {
                     }
                     self.expect(Token::RParen)?;
                     Ok(Expr::FuncCall {
-                        name: Symbol::intern(&name),
+                        name: *name,
                         args,
                     })
                 } else {
-                    Ok(Expr::Ident(Symbol::intern(&name)))
+                    Ok(Expr::Ident(*name))
                 }
             }
             Token::Number {
@@ -7197,7 +7199,7 @@ impl Parser {
                     self.advance(); // consume (
                     let expr = self.parse_expr(0)?;
                     self.expect(Token::RParen)?;
-                    let n = value.parse::<i64>().unwrap_or(0);
+                    let n = value.as_str().parse::<i64>().unwrap_or(0);
                     return Ok(Expr::Cast {
                         dtype: Symbol::intern(&format!("{}", n)),
                         expr: Box::new(expr),
@@ -7206,42 +7208,42 @@ impl Parser {
                 let val = if let Some(base) = base {
                     match base {
                         2 => Expr::Value(Value::Binary {
-                            bits: value.clone(),
+                            bits: value.to_string(),
                             width: *width,
                             is_signed: *is_signed,
                         }),
                         8 => Expr::Value(Value::Octal {
-                            bits: value.clone(),
+                            bits: value.to_string(),
                             width: *width,
                             is_signed: *is_signed,
                         }),
                         10 => {
-                            let n = value.parse::<i64>().unwrap_or(0);
+                            let n = value.as_str().parse::<i64>().unwrap_or(0);
                             Expr::Value(Value::Decimal(n))
                         }
                         16 => Expr::Value(Value::Hex {
-                            bits: value.clone(),
+                            bits: value.to_string(),
                             width: *width,
                             is_signed: *is_signed,
                         }),
-                        _ => Expr::Value(Value::Decimal(value.parse::<i64>().unwrap_or(0))),
+                        _ => Expr::Value(Value::Decimal(value.as_str().parse::<i64>().unwrap_or(0))),
                     }
                 } else {
-                    if let Ok(n) = value.parse::<i64>() {
+                    if let Ok(n) = value.as_str().parse::<i64>() {
                         Expr::Value(Value::Decimal(n))
                     } else {
-                        Expr::Ident(Symbol::intern(&value))
+                        Expr::Ident(*value)
                     }
                 };
                 Ok(val)
             }
             Token::RealNum(s) => {
                 self.advance();
-                Ok(Expr::Value(Value::Real(s.parse::<f64>().unwrap_or(0.0))))
+                Ok(Expr::Value(Value::Real(s.as_str().parse::<f64>().unwrap_or(0.0))))
             }
             Token::StringLit(s) => {
                 self.advance();
-                Ok(Expr::String(s.clone()))
+                Ok(Expr::String(s.as_str().to_string()))
             }
             Token::New => {
                 self.advance();
