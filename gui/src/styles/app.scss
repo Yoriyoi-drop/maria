@@ -1,0 +1,30 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg-primary);
+
+  &__body {
+    flex: 1;
+    overflow: hidden;
+  }
+}
+
+.resize-handle {
+  background: var(--border-primary);
+  transition: background 0.15s;
+
+  &:hover {
+    background: var(--accent-blue);
+  }
+
+  &--v {
+    width: 3px;
+    cursor: col-resize;
+  }
+
+  &--h {
+    height: 3px;
+    cursor: row-resize;
+  }
+}

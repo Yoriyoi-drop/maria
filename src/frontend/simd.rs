@@ -141,7 +141,9 @@ pub unsafe fn count_whitespace_avx2(buf: &[u8]) -> usize {
 
             if mask != 0xFFFF_FFFF {
                 // Found a non-whitespace byte — count leading whitespace
-                count += mask.trailing_zeros() as usize;
+                // mask has 1 for whitespace, 0 for non-whitespace
+                // Invert: (!mask) has 1 at first non-whitespace byte
+                count += (!mask).trailing_zeros() as usize;
                 return count;
             }
             count += 32;
@@ -199,7 +201,8 @@ pub unsafe fn count_whitespace_sse42(buf: &[u8]) -> usize {
 
             if mask != 0xFFFF {
                 // Found non-whitespace byte
-                count += mask.trailing_zeros() as usize;
+                // mask has 1 for whitespace, 0 for non-whitespace
+                count += (!mask).trailing_zeros() as usize;
                 return count;
             }
             count += 16;
@@ -431,6 +434,8 @@ mod tests {
             b"  ",
             b"   ",
             b"    ",
+            b"     x",                            // 5 spaces + x (byte0=ws, bug-prone)
+            b"      x",                           // 6 spaces + x
             b"                        x", // 24 spaces + x
             b"                                x", // 32 spaces + x
             b"                                        x", // 40 spaces + x

@@ -1,0 +1,80 @@
+.toolbar {
+  height: var(--toolbar-height);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  gap: 4px;
+  user-select: none;
+  -webkit-app-region: drag;
+
+  &__left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    -webkit-app-region: no-drag;
+  }
+
+  &__brand {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent-blue);
+    padding: 0 8px;
+  }
+
+  &__project {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  &__sep {
+    width: 1px;
+    height: 16px;
+    background: var(--border-secondary);
+  }
+
+  &__center {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    -webkit-app-region: no-drag;
+  }
+
+  &__right {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    -webkit-app-region: no-drag;
+  }
+
+  &__divider {
+    width: 1px;
+    height: 20px;
+    background: var(--border-secondary);
+    margin: 0 4px;
+  }
+
+  &__btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 4px;
+    color: var(--text-secondary);
+    transition: all 0.12s;
+
+    &:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    &--active {
+      color: var(--accent-green);
+    }
+  }
+}

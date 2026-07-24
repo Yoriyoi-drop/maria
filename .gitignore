@@ -6,3 +6,6 @@
 /opentitan/
 /picorv32/
 /ibex/
+/gui/node_modules/
+/gui/dist/
+/src-tauri/target/
