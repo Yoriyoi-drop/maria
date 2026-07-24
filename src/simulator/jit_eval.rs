@@ -8,7 +8,7 @@
 //! - Operasi tidak didukung oleh JIT (Div, Mod, Power, dll)
 //! - Cranelift tidak tersedia (non-x86_64)
 
-use crate::ir::{BinaryIrOp, LogicVal, LogicVec, UnaryIrOp};
+use crate::ir::{BinaryIrOp, IrExpr, LogicVal, LogicVec, UnaryIrOp};
 use crate::simulator::jit_cranelift::{CraneliftCompiledFn, CraneliftEngine, JitOp};
 
 /// JIT Evaluator — wraps CraneliftEngine dengan API evaluasi LogicVec.
@@ -141,6 +141,61 @@ impl JITEvaluator {
         Some(LogicVec::from_u64(result, width))
     }
 
+    /// Evaluate an expression tree using expression-level JIT compilation.
+    ///
+    /// Walks the IrExpr tree, collects unique signal references, compiles
+    /// the entire tree into one native function, and evaluates it.
+    /// Returns `Some(LogicVec)` if JIT was used, `None` for fallback.
+    ///
+    /// Supports simple expression trees (≤8 signals, only Const/Signal/BinaryOp/UnaryOp/Cond).
+    pub fn eval_expression(
+        &mut self,
+        expr: &IrExpr,
+        signal_values: &[u64],
+        result_width: usize,
+    ) -> Option<LogicVec> {
+        let engine = self.engine.as_mut()?;
+
+        // Collect unique signal IDs from the expression
+        let mut sig_ids = Vec::new();
+        if !collect_signal_ids(expr, &mut sig_ids) {
+            return None; // Contains unsupported variant
+        }
+        // De-duplicate while preserving order
+        sig_ids.sort();
+        sig_ids.dedup();
+
+        if sig_ids.is_empty() || sig_ids.len() > 8 {
+            return None; // No signals or too many
+        }
+
+        // Compile the expression tree (or cache hit)
+        let compiled = engine.compile_expression(expr, &sig_ids)?;
+
+        // Extract signal values in the order expected by the compiled function
+        let mut sig_vals = Vec::with_capacity(sig_ids.len());
+        for &sid in &sig_ids {
+            if sid < signal_values.len() {
+                sig_vals.push(signal_values[sid]);
+            } else {
+                sig_vals.push(0);
+            }
+        }
+
+        // Call the compiled native function
+        let result = unsafe { CraneliftEngine::call_expression(compiled.code_ptr, &sig_vals) };
+
+        self.jit_eval_count += 1;
+
+        // Mask result to the required width
+        if result_width < 64 {
+            let mask = (1u64 << result_width) - 1;
+            Some(LogicVec::from_u64(result & mask, result_width))
+        } else {
+            Some(LogicVec::from_u64(result, result_width))
+        }
+    }
+
     /// Statistics
     pub fn stats(&self) -> (u64, u64, f64) {
         let total = self.jit_eval_count + self.fallback_count;
@@ -155,6 +210,39 @@ impl JITEvaluator {
     /// Check if JIT is available on this platform
     pub fn is_available(&self) -> bool {
         self.engine.is_some()
+    }
+
+    /// Check if JIT has any compiled expressions
+    pub fn compiled_count(&self) -> usize {
+        self.engine.as_ref().map_or(0, |e| e.compiled_count())
+    }
+
+    /// JIT cache hit rate
+    pub fn cache_hit_rate(&self) -> f64 {
+        self.engine.as_ref().map_or(0.0, |e| e.cache_hit_rate())
+    }
+}
+
+/// Recursively collect signal IDs from an IrExpr tree.
+/// Returns false if any unsupported variant is encountered.
+fn collect_signal_ids(expr: &IrExpr, ids: &mut Vec<usize>) -> bool {
+    match expr {
+        IrExpr::Const(_) | IrExpr::FillLit(_) => true,
+        IrExpr::Signal(id, _) => {
+            ids.push(*id);
+            true
+        }
+        IrExpr::BinaryOp(_, lhs, rhs) => {
+            collect_signal_ids(lhs, ids) && collect_signal_ids(rhs, ids)
+        }
+        IrExpr::UnaryOp(_, inner) => collect_signal_ids(inner, ids),
+        IrExpr::Cond(cond, t, f) => {
+            collect_signal_ids(cond, ids)
+                && collect_signal_ids(t, ids)
+                && collect_signal_ids(f, ids)
+        }
+        // Unsupported: stop collection
+        _ => false,
     }
 }
 

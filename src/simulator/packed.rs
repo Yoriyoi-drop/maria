@@ -294,27 +294,8 @@ impl PackedLogicVec {
     /// - result = 1 jika a=1 DAN b=1
     /// - result = X otherwise
     pub fn bitwise_and(&self, other: &PackedLogicVec) -> PackedLogicVec {
-        let max_chunks = self.chunks.len().max(other.chunks.len());
         let max_width = self.width.max(other.width);
-        let mut chunks = Vec::with_capacity(max_chunks);
-        for i in 0..max_chunks {
-            let (ak, av) = self.chunks.get(i).copied().unwrap_or((0, 0));
-            let (bk, bv) = other.chunks.get(i).copied().unwrap_or((0, 0));
-
-            // Detect known zeros: known=1, value=0
-            let a_is_0 = ak & !av;
-            let b_is_0 = bk & !bv;
-            // Detect known ones: known=1, value=1
-            let a_is_1 = ak & av;
-            let b_is_1 = bk & bv;
-
-            // Result is known when: either is 0, OR both are 1
-            let known = a_is_0 | b_is_0 | (a_is_1 & b_is_1);
-            // Value is 1 only when both are 1
-            let value = a_is_1 & b_is_1;
-
-            chunks.push((known, value));
-        }
+        let chunks = crate::simulator::simd_packed::simd_and(&self.chunks, &other.chunks);
         PackedLogicVec { chunks, width: max_width }
     }
 
@@ -326,27 +307,8 @@ impl PackedLogicVec {
     /// - result = 0 jika a=0 DAN b=0
     /// - result = X otherwise
     pub fn bitwise_or(&self, other: &PackedLogicVec) -> PackedLogicVec {
-        let max_chunks = self.chunks.len().max(other.chunks.len());
         let max_width = self.width.max(other.width);
-        let mut chunks = Vec::with_capacity(max_chunks);
-        for i in 0..max_chunks {
-            let (ak, av) = self.chunks.get(i).copied().unwrap_or((0, 0));
-            let (bk, bv) = other.chunks.get(i).copied().unwrap_or((0, 0));
-
-            // Detect known zeros: known=1, value=0
-            let a_is_0 = ak & !av;
-            let b_is_0 = bk & !bv;
-            // Detect known ones: known=1, value=1
-            let a_is_1 = ak & av;
-            let b_is_1 = bk & bv;
-
-            // Result is known when: either is 1, OR both are 0
-            let known = a_is_1 | b_is_1 | (a_is_0 & b_is_0);
-            // Value is 1 when either is 1
-            let value = a_is_1 | b_is_1;
-
-            chunks.push((known, value));
-        }
+        let chunks = crate::simulator::simd_packed::simd_or(&self.chunks, &other.chunks);
         PackedLogicVec { chunks, width: max_width }
     }
 
@@ -357,19 +319,8 @@ impl PackedLogicVec {
     /// - known = a.known & b.known
     /// - value = (a.value ^ b.value) & known
     pub fn bitwise_xor(&self, other: &PackedLogicVec) -> PackedLogicVec {
-        let max_chunks = self.chunks.len().max(other.chunks.len());
         let max_width = self.width.max(other.width);
-        let mut chunks = Vec::with_capacity(max_chunks);
-        for i in 0..max_chunks {
-            let (ak, av) = self.chunks.get(i).copied().unwrap_or((0, 0));
-            let (bk, bv) = other.chunks.get(i).copied().unwrap_or((0, 0));
-
-            // XOR: X if either is X/Z
-            let known = ak & bk;
-            let value = (av ^ bv) & known;
-
-            chunks.push((known, value));
-        }
+        let chunks = crate::simulator::simd_packed::simd_xor(&self.chunks, &other.chunks);
         PackedLogicVec { chunks, width: max_width }
     }
 
@@ -384,12 +335,7 @@ impl PackedLogicVec {
     /// Formula: known unchanged, value flipped where known.
     /// X→X, Z→Z, 0→1, 1→0
     pub fn bitwise_not(&self) -> PackedLogicVec {
-        let mut chunks = Vec::with_capacity(self.chunks.len());
-        for &(known, value) in &self.chunks {
-            // Flip value bits, but only where known
-            let new_value = (!value) & known;
-            chunks.push((known, new_value));
-        }
+        let chunks = crate::simulator::simd_packed::simd_not(&self.chunks);
         PackedLogicVec { chunks, width: self.width }
     }
 
@@ -675,34 +621,19 @@ pub fn eval_binary_packed(op: &BinaryIrOp, lhs: &PackedLogicVec, rhs: &PackedLog
         BinaryIrOp::BitOr => Some(lhs.bitwise_or(rhs)),
         BinaryIrOp::BitXor => Some(lhs.bitwise_xor(rhs)),
         BinaryIrOp::BitXnor => Some(lhs.bitwise_xnor(rhs)),
-        BinaryIrOp::Eq | BinaryIrOp::CaseEq => Some(lhs.eq(rhs)),
-        BinaryIrOp::Neq | BinaryIrOp::CaseNeq => Some(lhs.neq(rhs)),
-        BinaryIrOp::EqWild => Some(lhs.casex_eq(rhs)),
-        BinaryIrOp::NeqWild => {
-            let eq = lhs.casex_eq(rhs);
-            Some(eq.bitwise_not())
-        }
+        // Comparison ops (Eq, Neq, CaseEq, etc.) are handled by JIT or interpreted
+        // for correct 1-bit width handling and X/Z semantics.
         _ => None,
     }
-}
-
-/// Check if a binary operation can be accelerated by packed eval.
-/// Bitwise/logical ops benefit; arithmetic ops do not.
-pub fn is_packable_binary_op(op: &BinaryIrOp) -> bool {
-    matches!(
-        op,
-        BinaryIrOp::BitAnd
-            | BinaryIrOp::BitOr
-            | BinaryIrOp::BitXor
-            | BinaryIrOp::BitXnor
-            | BinaryIrOp::Eq
-            | BinaryIrOp::Neq
-            | BinaryIrOp::CaseEq
-            | BinaryIrOp::CaseNeq
-            | BinaryIrOp::EqWild
-            | BinaryIrOp::NeqWild
-    )
-}
+}    /// Check if a binary operation can be accelerated by packed eval.
+    /// Only true bitwise ops benefit from SIMD bitmask acceleration.
+    /// Comparison ops are handled by JIT or interpreted for correct width/XZ semantics.
+    pub fn is_packable_binary_op(op: &BinaryIrOp) -> bool {
+        matches!(
+            op,
+            BinaryIrOp::BitAnd | BinaryIrOp::BitOr | BinaryIrOp::BitXor | BinaryIrOp::BitXnor
+        )
+    }
 
 /// Extended packed binary evaluator dengan width extension.
 /// Fallback ke LogicVec untuk operasi non-bitwise.
@@ -1139,18 +1070,20 @@ mod tests {
 
     #[test]
     fn test_eval_binary_packed_eq() {
+        // Eq is now handled by JIT/interpreted, not packed eval
         let a = PackedLogicVec::from_u64(42, 8);
         let b = PackedLogicVec::from_u64(42, 8);
-        let r = eval_binary_packed(&BinaryIrOp::Eq, &a, &b).unwrap();
-        assert_eq!(r.to_u64(), 1);
+        let r = eval_binary_packed(&BinaryIrOp::Eq, &a, &b);
+        assert!(r.is_none(), "Eq should return None (not packable)");
     }
 
     #[test]
     fn test_eval_binary_packed_eq_wild() {
+        // EqWild is now handled by JIT/interpreted, not packed eval
         let a = PackedLogicVec::from_u64(0b1010, 4);
         let pattern = PackedLogicVec::from_u64(0b1010, 4);
-        let r = eval_binary_packed(&BinaryIrOp::EqWild, &a, &pattern).unwrap();
-        assert_eq!(r.to_u64(), 1);
+        let r = eval_binary_packed(&BinaryIrOp::EqWild, &a, &pattern);
+        assert!(r.is_none(), "EqWild should return None (not packable)");
     }
 
     // ─── Cross-validation with LogicVec ───
@@ -1325,8 +1258,9 @@ mod tests {
         assert!(is_packable_binary_op(&BinaryIrOp::BitAnd));
         assert!(is_packable_binary_op(&BinaryIrOp::BitOr));
         assert!(is_packable_binary_op(&BinaryIrOp::BitXor));
-        assert!(is_packable_binary_op(&BinaryIrOp::Eq));
-        assert!(is_packable_binary_op(&BinaryIrOp::Neq));
+        assert!(is_packable_binary_op(&BinaryIrOp::BitXnor));
+        assert!(!is_packable_binary_op(&BinaryIrOp::Eq)); // Eq now handled by JIT
+        assert!(!is_packable_binary_op(&BinaryIrOp::Neq)); // Neq now handled by JIT
     }
 
     #[test]
@@ -1355,10 +1289,6 @@ mod tests {
             BinaryIrOp::BitOr,
             BinaryIrOp::BitXor,
             BinaryIrOp::BitXnor,
-            BinaryIrOp::Eq,
-            BinaryIrOp::Neq,
-            BinaryIrOp::CaseEq,
-            BinaryIrOp::CaseNeq,
         ];
 
         for _ in 0..100 {

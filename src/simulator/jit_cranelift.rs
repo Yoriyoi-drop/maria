@@ -364,6 +364,313 @@ impl CraneliftEngine {
         self.cache.lock().unwrap().insert(hash, compiled);
     }
 
+    // ─── Expression-level JIT ───
+
+    // ─── Expression-level JIT ───
+
+    /// Compute a structural hash for an IrExpr tree (for expression-level caching).
+    fn hash_ir_expr(expr: &crate::ir::IrExpr) -> u64 {
+        use std::hash::{Hash, Hasher};
+        use crate::ir::{BinaryIrOp, IrExpr, UnaryIrOp};
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        Self::hash_ir_expr_recursive(expr, &mut hasher);
+        hasher.finish()
+    }
+
+    fn hash_ir_expr_recursive(expr: &crate::ir::IrExpr, hasher: &mut std::collections::hash_map::DefaultHasher) {
+        use std::hash::Hash;
+
+        match expr {
+            crate::ir::IrExpr::Const(lv) => {
+                0u64.hash(hasher);
+                lv.to_u64().hash(hasher);
+                lv.width.hash(hasher);
+            }
+            crate::ir::IrExpr::Signal(id, w) => {
+                1u64.hash(hasher);
+                id.hash(hasher);
+                w.hash(hasher);
+            }
+            crate::ir::IrExpr::BinaryOp(op, lhs, rhs) => {
+                2u64.hash(hasher);
+                Self::hash_binary_op(op, hasher);
+                Self::hash_ir_expr_recursive(lhs, hasher);
+                Self::hash_ir_expr_recursive(rhs, hasher);
+            }
+            crate::ir::IrExpr::UnaryOp(op, inner) => {
+                3u64.hash(hasher);
+                Self::hash_unary_op(op, hasher);
+                Self::hash_ir_expr_recursive(inner, hasher);
+            }
+            crate::ir::IrExpr::Cond(cond, t, f) => {
+                4u64.hash(hasher);
+                Self::hash_ir_expr_recursive(cond, hasher);
+                Self::hash_ir_expr_recursive(t, hasher);
+                Self::hash_ir_expr_recursive(f, hasher);
+            }
+            _ => {
+                255u64.hash(hasher); // unsupported variant
+            }
+        }
+    }
+
+    /// Hash a BinaryIrOp by its discriminant (manual since it doesn't derive Hash).
+    fn hash_binary_op(op: &crate::ir::BinaryIrOp, hasher: &mut std::collections::hash_map::DefaultHasher) {
+        use std::hash::Hash;
+        use crate::ir::BinaryIrOp;
+        let disc: u64 = match op {
+            BinaryIrOp::Add => 0,
+            BinaryIrOp::Sub => 1,
+            BinaryIrOp::Mul => 2,
+            BinaryIrOp::Div => 3,
+            BinaryIrOp::Mod => 4,
+            BinaryIrOp::Power => 5,
+            BinaryIrOp::Eq => 6,
+            BinaryIrOp::Neq => 7,
+            BinaryIrOp::CaseEq => 8,
+            BinaryIrOp::CaseNeq => 9,
+            BinaryIrOp::EqWild => 10,
+            BinaryIrOp::NeqWild => 11,
+            BinaryIrOp::Lt => 12,
+            BinaryIrOp::Le => 13,
+            BinaryIrOp::Gt => 14,
+            BinaryIrOp::Ge => 15,
+            BinaryIrOp::BitAnd => 16,
+            BinaryIrOp::BitOr => 17,
+            BinaryIrOp::BitXor => 18,
+            BinaryIrOp::BitXnor => 19,
+            BinaryIrOp::Shl => 20,
+            BinaryIrOp::Shr => 21,
+            BinaryIrOp::Sshl => 22,
+            BinaryIrOp::Sshr => 23,
+            BinaryIrOp::LogicalAnd => 24,
+            BinaryIrOp::LogicalOr => 25,
+        };
+        disc.hash(hasher);
+    }
+
+    /// Hash a UnaryIrOp by its discriminant (manual since it doesn't derive Hash).
+    fn hash_unary_op(op: &crate::ir::UnaryIrOp, hasher: &mut std::collections::hash_map::DefaultHasher) {
+        use std::hash::Hash;
+        use crate::ir::UnaryIrOp;
+        let disc: u64 = match op {
+            UnaryIrOp::Plus => 0,
+            UnaryIrOp::Minus => 1,
+            UnaryIrOp::Not => 2,
+            UnaryIrOp::BitNot => 3,
+            UnaryIrOp::RedAnd => 4,
+            UnaryIrOp::RedNand => 5,
+            UnaryIrOp::RedOr => 6,
+            UnaryIrOp::RedNor => 7,
+            UnaryIrOp::RedXor => 8,
+            UnaryIrOp::RedXnor => 9,
+        };
+        disc.hash(hasher);
+    }
+
+    /// Compile an IrExpr expression tree into a single native function.
+    ///
+    /// The function signature is: `fn(s0: u64, s1: u64, ..., sN: u64) -> u64`
+    /// where N is the number of unique signal references in the expression.
+    /// The `signal_ids` array maps each function parameter (index) to a global signal ID.
+    ///
+    /// Supported IrExpr variants:
+    /// - Const, Signal (by index)
+    /// - BinaryOp (all JitOps)
+    /// - UnaryOp (Not, Neg)
+    /// - Cond (ternary)
+    ///
+    /// Falls back to `None` for unsupported variants (SysFunc, MethodCall, etc.)
+    /// or expressions with more than 8 unique signal references.
+    pub fn compile_expression(
+        &mut self,
+        expr: &crate::ir::IrExpr,
+        signal_ids: &[usize],
+    ) -> Option<CraneliftCompiledFn> {
+        if signal_ids.len() > 8 || signal_ids.is_empty() {
+            return None;
+        }
+
+        let n_sigs = signal_ids.len();
+        let expr_hash = Self::hash_ir_expr(expr);
+        let hash = self.compute_hash("expr_tree", expr_hash as usize);
+
+        if let Some(cached) = self.cache_get(hash) {
+            return Some(cached);
+        }
+
+        // Build Cranelift IR for the expression tree
+        let mut sig = self.module.make_signature();
+        for _ in 0..n_sigs {
+            sig.params.push(AbiParam::new(types::I64));
+        }
+        sig.returns.push(AbiParam::new(types::I64));
+
+        let func_name = UserFuncName::user(0, hash as u32);
+        let mut func = cranelift::codegen::ir::Function::with_name_signature(func_name, sig);
+
+        {
+            let mut builder = FunctionBuilder::new(&mut func, &mut self.ctx);
+            let block = builder.create_block();
+            builder.append_block_params_for_function_params(block);
+            builder.switch_to_block(block);
+            builder.seal_block(block);
+
+            let params: Vec<Value> = builder.block_params(block).to_vec();
+
+            // Build expression recursively — returns Cranelift Value
+            let result = Self::build_expr_ir(expr, &params, signal_ids, &mut builder)?;
+
+            builder.ins().return_(&[result]);
+            builder.finalize();
+        }
+
+        let fn_name_str = format!("jit_expr_{:x}", hash);
+        let code_ptr = self.finalize_function(func, &fn_name_str)?;
+
+        let compiled = CraneliftCompiledFn {
+            name: format!("expr_tree_{}sig", n_sigs),
+            code_ptr,
+            arg_count: n_sigs,
+            width: 64,
+            hit_count: 0,
+        };
+
+        *self.compiled_count.lock().unwrap() += 1;
+        self.cache_insert(hash, compiled.clone());
+        Some(compiled)
+    }
+
+    /// Recursively build Cranelift IR for an IrExpr.
+    /// Returns the Cranelift `Value` representing the expression result.
+    ///
+    /// `signal_params` — Cranelift block parameters (index 0..n = signal_ids[0..n])
+    /// `signal_ids` — maps param index → global signal ID for Signal() lookup
+    /// Recursively build Cranelift IR for an IrExpr.
+    /// Returns the Cranelift `Value` representing the expression result.
+    ///
+    /// This is a standalone function (not a method) to avoid borrow conflicts
+    /// with `FunctionBuilder` that borrows `self.ctx`.
+    ///
+    /// `signal_params` — Cranelift block parameters (index 0..n = signal_ids[0..n])
+    /// `signal_ids` — maps param index → global signal ID for Signal() lookup
+    fn build_expr_ir(
+        expr: &crate::ir::IrExpr,
+        signal_params: &[Value],
+        signal_ids: &[usize],
+        builder: &mut FunctionBuilder,
+    ) -> Option<Value> {
+        use crate::ir::{BinaryIrOp, IrExpr, UnaryIrOp};
+
+        match expr {
+            IrExpr::Const(lv) => {
+                let val = lv.to_u64();
+                Some(builder.ins().iconst(types::I64, val as i64))
+            }
+            IrExpr::Signal(id, _width) => {
+                // Find the position of this global signal ID in signal_ids
+                let pos = signal_ids.iter().position(|sid| sid == id)?;
+                if pos < signal_params.len() {
+                    Some(signal_params[pos])
+                } else {
+                    None
+                }
+            }
+            IrExpr::BinaryOp(op, lhs, rhs) => {
+                let lv = Self::build_expr_ir(lhs, signal_params, signal_ids, builder)?;
+                let rv = Self::build_expr_ir(rhs, signal_params, signal_ids, builder)?;
+
+                match op {
+                    BinaryIrOp::Add => Some(builder.ins().iadd(lv, rv)),
+                    BinaryIrOp::Sub => Some(builder.ins().isub(lv, rv)),
+                    BinaryIrOp::Mul => Some(builder.ins().imul(lv, rv)),
+                    BinaryIrOp::BitAnd => Some(builder.ins().band(lv, rv)),
+                    BinaryIrOp::BitOr => Some(builder.ins().bor(lv, rv)),
+                    BinaryIrOp::BitXor => Some(builder.ins().bxor(lv, rv)),
+                    BinaryIrOp::Shl => Some(builder.ins().ishl(lv, rv)),
+                    BinaryIrOp::Shr => Some(builder.ins().ushr(lv, rv)),
+                    BinaryIrOp::Eq | BinaryIrOp::CaseEq => {
+                        let one = builder.ins().iconst(types::I64, 1i64);
+                        let zero = builder.ins().iconst(types::I64, 0i64);
+                        let cmp = builder.ins().icmp(IntCC::Equal, lv, rv);
+                        Some(builder.ins().select(cmp, one, zero))
+                    }
+                    BinaryIrOp::Neq | BinaryIrOp::CaseNeq => {
+                        let one = builder.ins().iconst(types::I64, 1i64);
+                        let zero = builder.ins().iconst(types::I64, 0i64);
+                        let cmp = builder.ins().icmp(IntCC::NotEqual, lv, rv);
+                        Some(builder.ins().select(cmp, one, zero))
+                    }
+                    _ => Some(builder.ins().iconst(types::I64, 0i64)),
+                }
+            }
+            IrExpr::UnaryOp(op, inner) => {
+                let val = Self::build_expr_ir(inner, signal_params, signal_ids, builder)?;
+                match op {
+                    UnaryIrOp::BitNot => Some(builder.ins().bnot(val)),
+                    UnaryIrOp::Minus => Some(builder.ins().ineg(val)),
+                    UnaryIrOp::Plus => Some(val),
+                    _ => Some(builder.ins().iconst(types::I64, 0i64)),
+                }
+            }
+            IrExpr::Cond(cond, true_expr, false_expr) => {
+                let cval = Self::build_expr_ir(cond, signal_params, signal_ids, builder)?;
+                let tval = Self::build_expr_ir(true_expr, signal_params, signal_ids, builder)?;
+                let fval = Self::build_expr_ir(false_expr, signal_params, signal_ids, builder)?;
+
+                let zero = builder.ins().iconst(types::I64, 0i64);
+                let is_true = builder.ins().icmp(IntCC::NotEqual, cval, zero);
+                Some(builder.ins().select(is_true, tval, fval))
+            }
+            _ => None, // Unsupported expression type
+        }
+    }
+
+    /// Call a compiled expression function with signal values.
+    ///
+    /// # Safety
+    /// `code_ptr` must point to a valid compiled function with signature
+    /// `fn(u64, ..., u64) -> u64` where the number of arguments matches `n_sigs`.
+    pub unsafe fn call_expression(code_ptr: *const u8, signal_values: &[u64]) -> u64 {
+        match signal_values.len() {
+            0 => 0u64,
+            1 => {
+                let func: fn(u64) -> u64 = std::mem::transmute(code_ptr);
+                func(signal_values[0])
+            }
+            2 => {
+                let func: fn(u64, u64) -> u64 = std::mem::transmute(code_ptr);
+                func(signal_values[0], signal_values[1])
+            }
+            3 => {
+                let func: fn(u64, u64, u64) -> u64 = std::mem::transmute(code_ptr);
+                func(signal_values[0], signal_values[1], signal_values[2])
+            }
+            4 => {
+                let func: fn(u64, u64, u64, u64) -> u64 = std::mem::transmute(code_ptr);
+                func(signal_values[0], signal_values[1], signal_values[2], signal_values[3])
+            }
+            5 => {
+                let func: fn(u64, u64, u64, u64, u64) -> u64 = std::mem::transmute(code_ptr);
+                func(signal_values[0], signal_values[1], signal_values[2], signal_values[3], signal_values[4])
+            }
+            6 => {
+                let func: fn(u64, u64, u64, u64, u64, u64) -> u64 = std::mem::transmute(code_ptr);
+                func(signal_values[0], signal_values[1], signal_values[2], signal_values[3], signal_values[4], signal_values[5])
+            }
+            7 => {
+                let func: fn(u64, u64, u64, u64, u64, u64, u64) -> u64 = std::mem::transmute(code_ptr);
+                func(signal_values[0], signal_values[1], signal_values[2], signal_values[3], signal_values[4], signal_values[5], signal_values[6])
+            }
+            8 => {
+                let func: fn(u64, u64, u64, u64, u64, u64, u64, u64) -> u64 = std::mem::transmute(code_ptr);
+                func(signal_values[0], signal_values[1], signal_values[2], signal_values[3], signal_values[4], signal_values[5], signal_values[6], signal_values[7])
+            }
+            _ => 0u64,
+        }
+    }
+
     // ─── Statistics ───
 
     pub fn compiled_count(&self) -> usize {

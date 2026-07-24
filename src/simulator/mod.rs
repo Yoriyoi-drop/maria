@@ -3,6 +3,7 @@ pub mod engine;
 pub mod jit;
 pub mod packed;
 pub mod parallel;
+pub mod simd_packed;
 pub mod sdf;
 pub mod state;
 pub mod types;

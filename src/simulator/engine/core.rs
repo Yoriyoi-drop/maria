@@ -98,7 +98,7 @@ impl SimulationEngine {
             objection_count: 0,
             objection_triggered: false,
             jit_evaluator: Some(crate::simulator::JITEvaluator::new()),
-            use_packed_eval: false,
+            use_packed_eval: true,
             sim_arena: crate::simulator::arena::SimulationArena::with_bump_size(4 * 1024 * 1024), // 4MB initial
             sim_dag: None,
             use_dag_parallel: false,
@@ -513,7 +513,7 @@ impl SimulationEngine {
 
             // Evaluate all processes in this layer in parallel via rayon
             // Each worker gets its own signal clone + body reference
-            let writes = evaluate_bodies_parallel(
+            let writes = crate::scheduler::sim_dag::evaluate_bodies_parallel(
                 &layer_pids,
                 &body_map,
                 &signal_snapshot,
