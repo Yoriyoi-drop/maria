@@ -29,7 +29,7 @@ pub use frontend::discovery::FileDiscovery;
 pub use intern::{init_string_table, Span, Symbol};
 
 use parser::lexer::Lexer;
-use parser::parser::Parser;
+use parser::Parser;
 use parser::preprocessor::Preprocessor;
 use std::fs;
 use std::path::Path;

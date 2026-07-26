@@ -9,7 +9,7 @@ use maria::elaboration::Elaborator;
 use maria::error::{ErrorContext, SimError};
 use maria::ir::LogicVec;
 use maria::parser::lexer::Lexer;
-use maria::parser::parser::Parser;
+use maria::parser::Parser;
 use maria::parser::preprocessor::Preprocessor;
 use maria::read_project_file;
 use maria::simulator::Breakpoint;

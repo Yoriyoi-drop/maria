@@ -20,7 +20,7 @@ use crate::frontend::module_index::{EntryKind, ModuleIndex, ModuleMeta, ParamMet
 use crate::intern::Symbol;
 use crate::frontend::lexer::FastLexer;
 use crate::parser::lexer::{Lexer, Token};
-use crate::parser::parser::Parser;
+use crate::parser::Parser;
 use crate::parser::preprocessor::Preprocessor;
 use crate::profiling::{Counter, Phase, Profiler};
 use crate::scheduler::incremental::IncrementalTracker;

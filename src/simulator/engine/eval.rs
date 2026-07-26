@@ -1,6 +1,7 @@
 use super::{
-    edge_matches_abbrev, evaluate_string_method, SimulationEngine, sym_char_matches,
+    SimulationEngine,
 };
+use super::engine_utils::{edge_matches_abbrev, evaluate_string_method, sym_char_matches};
 use crate::simulator::packed::{eval_binary_packed, eval_unary_packed, is_packable_binary_op, PackedLogicVec};
 use crate::simulator::util::*;
 use crate::ast::*;
@@ -2853,7 +2854,7 @@ impl SimulationEngine {
             }
             Expr::Cast { dtype, expr: inner } => {
                 let val = self.evaluate_ast_expr(inner)?;
-                let cast_width = match crate::elaboration::elaborator::parse_type_spec_str(dtype.as_str()) {
+                let cast_width = match crate::elaboration::util::parse_type_spec_str(dtype.as_str()) {
                     Some(_) => {
                         // For AST path, compute width from type string
                         match dtype.as_str() {

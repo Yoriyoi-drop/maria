@@ -5491,81 +5491,15 @@ impl Elaborator {
     }
 }
 
-/// Try to constant-fold an AST expression into an IrExpr::Const.
-/// Returns Ok(Some(IrExpr::Const(...))) if the expression is fully constant,
-/// Ok(None) if it cannot be folded, or Err on evaluation error.
+// CATATAN: impl DataType { fn width() } dan impl DeclKind { fn default_width() }
+// sudah dipindahkan ke src/ast/types.rs karena method-method ini adalah
+// bagian dari definisi tipe AST, bukan tanggung jawab elaborator.
+// Lihat src/ast/types.rs untuk implementasinya.
+//
+// CATATAN: parse_type_spec_str() sudah dipindahkan ke src/elaboration/util/type_util.rs
+// dan di-re-export via util/mod.rs.
 
-impl DataType {
-    pub(super) fn width(&self) -> usize {
-        match self {
-            DataType::Bit | DataType::Logic => 1,
-            DataType::Byte => 8,
-            DataType::Shortint => 16,
-            DataType::Int | DataType::Integer => 32,
-            DataType::Longint => 64,
-            DataType::Time => 64,
-            DataType::Real | DataType::Realtime => 64,
-            DataType::String => 0,
-            DataType::Signed(inner) => inner.width(),
-            DataType::UserDefined(_) => 64,
-            DataType::EnumType {
-                base: _,
-                members: _,
-            } => 32,
-            DataType::StructType { members } => members
-                .iter()
-                .map(|m| m.range.as_ref().map(|r| r.width()).unwrap_or(1))
-                .sum(),
-            DataType::UnionType { members } => members
-                .iter()
-                .map(|m| m.range.as_ref().map(|r| r.width()).unwrap_or(1))
-                .max()
-                .unwrap_or(1),
-            DataType::Void => 0,
-        }
-    }
-}
 
-impl DeclKind {
-    fn default_width(&self) -> usize {
-        match self {
-            DeclKind::Wire
-            | DeclKind::Reg
-            | DeclKind::Logic
-            | DeclKind::Wand
-            | DeclKind::Wor
-            | DeclKind::Tri
-            | DeclKind::Tri0
-            | DeclKind::Tri1
-            | DeclKind::TriAnd
-            | DeclKind::TriOr
-            | DeclKind::Supply0
-            | DeclKind::Supply1 => 1,
-            DeclKind::Int | DeclKind::Integer => 32,
-        }
-    }
-}
 
-pub(crate) fn parse_type_spec_str(s: &str) -> Option<DataType> {
-    match s {
-        "bit" => Some(DataType::Bit),
-        "logic" => Some(DataType::Logic),
-        "int" => Some(DataType::Int),
-        "integer" => Some(DataType::Integer),
-        "byte" => Some(DataType::Byte),
-        "shortint" => Some(DataType::Shortint),
-        "longint" => Some(DataType::Longint),
-        "time" => Some(DataType::Time),
-        "real" => Some(DataType::Real),
-        "realtime" => Some(DataType::Realtime),
-        "string" => Some(DataType::String),
-        _ => {
-            // Check for 'signed <type>' pattern
-            if let Some(inner) = s.strip_prefix("signed ") {
-                parse_type_spec_str(inner).map(|dt| DataType::Signed(Box::new(dt)))
-            } else {
-                None
-            }
-        }
-    }
-}
+
+

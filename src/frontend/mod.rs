@@ -19,7 +19,7 @@ pub mod legacy_lexer {
 
 pub mod parser {
     //! Re-export existing parser
-    pub use crate::parser::parser::*;
+    pub use crate::parser::*;
 }
 
 pub mod preprocessor {

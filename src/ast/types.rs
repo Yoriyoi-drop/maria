@@ -164,6 +164,67 @@ impl Range {
     }
 }
 
+// ============================================================================
+// CATATAN: impl DataType dan impl DeclKind dipindahkan ke sini dari
+// src/elaboration/elaborator.rs untuk memisahkan tanggung jawab.
+// DataType dan DeclKind adalah tipe AST, jadi method-methodnya
+// seharusnya berada di file definisi tipe (ast/types.rs), bukan di elaborator.
+// ============================================================================
+
+impl DataType {
+    /// Mengembalikan lebar (width) default untuk tipe data ini.
+    pub(crate) fn width(&self) -> usize {
+        match self {
+            DataType::Bit | DataType::Logic => 1,
+            DataType::Byte => 8,
+            DataType::Shortint => 16,
+            DataType::Int | DataType::Integer => 32,
+            DataType::Longint => 64,
+            DataType::Time => 64,
+            DataType::Real | DataType::Realtime => 64,
+            DataType::String => 0,
+            DataType::Signed(inner) => inner.width(),
+            DataType::UserDefined(_) => 64,
+            DataType::EnumType {
+                base: _,
+                members: _,
+            } => 32,
+            DataType::StructType { members } => members
+                .iter()
+                .map(|m| m.range.as_ref().map(|r| r.width()).unwrap_or(1))
+                .sum(),
+            DataType::UnionType { members } => members
+                .iter()
+                .map(|m| m.range.as_ref().map(|r| r.width()).unwrap_or(1))
+                .max()
+                .unwrap_or(1),
+            DataType::Void => 0,
+        }
+    }
+}
+
+impl DeclKind {
+    /// Mengembalikan lebar default untuk deklarasi jenis ini.
+    /// Contoh: wire/reg/logic default 1-bit, int/integer default 32-bit.
+    pub(crate) fn default_width(&self) -> usize {
+        match self {
+            DeclKind::Wire
+            | DeclKind::Reg
+            | DeclKind::Logic
+            | DeclKind::Wand
+            | DeclKind::Wor
+            | DeclKind::Tri
+            | DeclKind::Tri0
+            | DeclKind::Tri1
+            | DeclKind::TriAnd
+            | DeclKind::TriOr
+            | DeclKind::Supply0
+            | DeclKind::Supply1 => 1,
+            DeclKind::Int | DeclKind::Integer => 32,
+        }
+    }
+}
+
 /// A range whose bounds are expressions (may reference parameters).
 /// Resolved during elaboration once parameter values are known.
 #[derive(Debug, Clone, PartialEq)]
