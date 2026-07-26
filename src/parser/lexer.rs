@@ -378,6 +378,7 @@ impl fmt::Display for Token {
             Token::Type => write!(f, "type"),
             Token::Program => write!(f, "program"),
             Token::EndProgram => write!(f, "endprogram"),
+            Token::Ident(s) => write!(f, "'{}'", s.as_str()),
             Token::Eof => write!(f, "<eof>"),
             Token::Error(s) => write!(f, "<error: {}>", s),
             _ => write!(f, "{:?}", self),
@@ -390,6 +391,8 @@ pub struct Lexer {
     pos: usize,
     line: usize,
     col: usize,
+    pub current_source: String,
+    pub file_line_map: Vec<(usize, String)>,
 }
 
 impl Lexer {
@@ -400,6 +403,8 @@ impl Lexer {
             pos: 0,
             line: 1,
             col: 1,
+            current_source: String::new(),
+            file_line_map: Vec::new(),
         }
     }
 
@@ -506,16 +511,32 @@ impl Lexer {
         } else {
             after_cmd.trim()
         };
-        if let Ok(new_line) = num_str.parse::<usize>() {
-            self.line = new_line;
-            self.pos = line_end;
-            if self.pos < self.chars.len() && self.chars[self.pos] == '\n' {
-                self.pos += 1;
-            }
-            self.col = 1;
-            return true;
+        if num_str.parse::<usize>().is_err() {
+            return false;
         }
-        false
+        // DON'T reset self.line — keep cumulative line numbers
+        // so source_lines indexing works correctly
+        let path = if let Some(quote_pos) = after_cmd.find('"') {
+            let after_quote = &after_cmd[quote_pos + 1..];
+            if let Some(end_quote) = after_quote.find('"') {
+                after_quote[..end_quote].to_string()
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+        if !path.is_empty() {
+            self.current_source = path.clone();
+            self.file_line_map.push((self.line, path));
+        }
+        self.pos = line_end;
+        if self.pos < self.chars.len() && self.chars[self.pos] == '\n' {
+            self.advance();
+        } else {
+            self.col = 1;
+        }
+        true
     }
 
     fn skip_whitespace(&mut self) {

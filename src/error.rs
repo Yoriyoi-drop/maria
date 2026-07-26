@@ -165,17 +165,7 @@ impl SimError {
 
         let code = get_error_code(&msg);
 
-        // Extract the actual error message (after "error: CODE: file:line:col: ")
-        let error_msg = if let Some(idx) = msg.find(": error: ") {
-            &msg[idx + 9..].split(": ").nth(3).unwrap_or(&msg)
-        } else if let Some(idx) = msg.find(": ") {
-            let remainder = &msg[idx + 2..];
-            remainder.split(": ").last().unwrap_or(&remainder)
-        } else {
-            &msg
-        };
-
-        let mut output = format!("{}: {}: {}\n", kind, code, error_msg);
+        let mut output = format!("{}: {}: {}\n", kind, code, msg);
 
         if let Some(file) = &ctx.file {
             if let (Some(line), Some(col)) = (ctx.line, ctx.col) {

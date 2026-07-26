@@ -5,7 +5,7 @@ export function formatTime(ps: number): string {
 }
 
 export function binToHex(bin: string): string {
-  const padded = bin.padLength(Math.ceil(bin.length / 4) * 4, "0");
+  const padded = bin.padEnd(Math.ceil(bin.length / 4) * 4, "0");
   let hex = "";
   for (let i = 0; i < padded.length; i += 4) {
     const nibble = parseInt(padded.slice(i, i + 4), 2);
@@ -30,4 +30,11 @@ export function moduleKindColor(kind: string): string {
     case "program": return "var(--accent-orange)";
     default: return "var(--text-secondary)";
   }
+}
+
+export function formatMetricTime(ms: number): string {
+  if (ms < 0.001) return `${(ms * 1000).toFixed(2)} µs`;
+  if (ms < 1) return `${(ms * 1000).toFixed(1)} µs`;
+  if (ms < 1000) return `${ms.toFixed(2)} ms`;
+  return `${(ms / 1000).toFixed(2)} s`;
 }

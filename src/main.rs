@@ -343,7 +343,10 @@ fn run(cli: Cli) -> Result<(), SimError> {
     }
 
     let first_source = sources.first().map(|s| s.as_str()).unwrap_or("<unknown>");
-    let mut parser = Parser::new(tokens, first_source).with_source_lines(&combined);
+    let file_line_map = lexer.file_line_map.clone();
+    let mut parser = Parser::new(tokens, first_source)
+        .with_source_lines(&combined)
+        .with_file_line_map(file_line_map);
     let mut design = parser.parse_design()?;
     let ts_for_ir = design_timescale.clone();
     design.timescale = design_timescale;

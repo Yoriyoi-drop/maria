@@ -109,7 +109,15 @@ pub fn compile_str(source: &str) -> Result<ir::IrDesign, SimError> {
         tokens.push((tok, line, col));
     }
 
-    let mut parser = Parser::new(tokens, "<string>");
+    let file_line_map = lexer.file_line_map.clone();
+    let first_source = if file_line_map.is_empty() {
+        "<string>".to_string()
+    } else {
+        file_line_map[0].1.clone()
+    };
+    let mut parser = Parser::new(tokens, &first_source)
+        .with_source_lines(&preprocessed)
+        .with_file_line_map(file_line_map);
     let mut design = parser.parse_design()?;
     design.timescale = timescale;
 

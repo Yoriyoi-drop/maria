@@ -14,6 +14,7 @@ pub struct Parser {
     typedef_names: Vec<Symbol>,
     package_tdefs: std::collections::HashMap<Symbol, Vec<Symbol>>,
     type_param_names: Vec<Symbol>,
+    file_line_map: Vec<(usize, String)>,
 }
 
 impl Parser {
@@ -44,12 +45,35 @@ impl Parser {
             typedef_names: Vec::new(),
             package_tdefs: std::collections::HashMap::new(),
             type_param_names: Vec::new(),
+            file_line_map: Vec::new(),
         }
     }
 
     pub fn with_source_lines(mut self, source: &str) -> Self {
         self.source_lines = source.lines().map(|s| s.to_string()).collect();
         self
+    }
+
+    pub fn with_file_line_map(mut self, map: Vec<(usize, String)>) -> Self {
+        self.file_line_map = map;
+        self
+    }
+
+    fn resolve_source_file(&self, cumulative_line: usize) -> (String, usize) {
+        let mut best_file = self.source_file.clone();
+        let mut best_line: usize = 0;
+        for (d_line, file) in &self.file_line_map {
+            if *d_line < cumulative_line && *d_line >= best_line {
+                best_line = *d_line;
+                best_file = file.clone();
+            }
+        }
+        let file_relative = if best_line > 0 {
+            cumulative_line - best_line
+        } else {
+            cumulative_line
+        };
+        (best_file, file_relative)
     }
 
     fn peek(&self) -> &Token {
@@ -75,17 +99,18 @@ impl Parser {
 
     fn err(&self, msg: impl Into<String>) -> SimError {
         let msg_str = msg.into();
-        let line = self.peek_line();
+        let cumulative_line = self.peek_line();
         let col = self.peek_col();
-        let source_line = if line > 0 && line <= self.source_lines.len() {
-            Some(self.source_lines[line - 1].clone())
+        let (display_file, display_line) = self.resolve_source_file(cumulative_line);
+        let source_line = if cumulative_line > 0 && cumulative_line <= self.source_lines.len() {
+            Some(self.source_lines[cumulative_line - 1].clone())
         } else {
             None
         };
 
         let mut ctx = ErrorContext::new()
-            .with_file(&self.source_file)
-            .with_line(line)
+            .with_file(&display_file)
+            .with_line(display_line)
             .with_col(col);
 
         if let Some(sl) = source_line {
@@ -94,7 +119,7 @@ impl Parser {
 
         let simple_err = SimError::parse(format!(
             "{}:{}:{}: {}",
-            self.source_file, line, col, msg_str
+            display_file, display_line, col, msg_str
         ));
 
         // If we have source lines available, format with rich context
@@ -244,6 +269,7 @@ impl Parser {
                     self.class_names.push(*name);
                 }
                 self.pos = start;
+                self.advance(); // consume virtual so parse_class() sees 'class'
                 let c = self.parse_class()?;
                 classes.push(c);
             } else if self.peek() == &Token::Covergroup {
@@ -294,11 +320,42 @@ impl Parser {
                 if self.peek() == &Token::EndSequence {
                     self.advance();
                 }
+            } else if self.peek() == &Token::Function {
+                self.advance(); // consume 'function'
+                while self.peek() != &Token::EndFunction && self.peek() != &Token::Eof {
+                    self.advance();
+                }
+                if self.peek() == &Token::EndFunction {
+                    self.advance();
+                    // Consume optional 'endfunction : name'
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
+                }
+            } else if self.peek() == &Token::Task {
+                self.advance(); // consume 'task'
+                while self.peek() != &Token::EndTask && self.peek() != &Token::Eof {
+                    self.advance();
+                }
+                if self.peek() == &Token::EndTask {
+                    self.advance();
+                    // Consume optional 'endtask : name'
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
+                }
             } else {
                 // Gracefully skip unknown top-level constructs
                 eprintln!(
-                    "warning: skipping top-level construct at line {}: {}",
+                    "warning: skipping top-level construct at line {} in {}: {}",
                     self.peek_line(),
+                    self.source_file,
                     self.peek()
                 );
                 // Try to advance past the unknown construct
@@ -348,6 +405,7 @@ impl Parser {
                     self.skip_attribute();
                 }
                 Token::Virtual if self.peek_ahead(1) == &Token::Class => {
+                    self.advance(); // consume 'virtual' so parse_class() sees 'class'
                     let c = self.parse_class()?;
                     classes.push(c);
                 }
@@ -448,12 +506,14 @@ impl Parser {
                         )));
                     }
                     let line = self.peek_line();
+                    let tok = self.peek().clone();
                     // Gracefully skip unknown constructs at top level
                     self.advance();
                     eprintln!(
-                        "warning: skipping top-level construct at line {}: {}",
+                        "warning: skipping top-level construct at line {} in {}: {}",
                         line,
-                        self.peek()
+                        self.source_file,
+                        tok
                     );
                 }
             }
@@ -1606,10 +1666,43 @@ impl Parser {
             match self.peek() {
                 Token::EndClass => {
                     self.advance();
+                    // Handle optional 'endclass : name'
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
                     break;
                 }
                 Token::Function => {
                     members.push(ClassMember::Function(self.parse_function(false)?));
+                }
+                Token::Ident(s) if s == "extern" => {
+                    // Extern prototype — consume until semicolon
+                    // (matches extern function/task, optionally with virtual/local/protected)
+                    self.advance(); // extern
+                    // Skip optional 'local' or 'protected'
+                    if matches!(self.peek(), Token::Ident(n) if n == "local" || n == "protected") {
+                        self.advance();
+                    }
+                    // Skip optional 'virtual'
+                    if self.peek() == &Token::Virtual { self.advance(); }
+                    // Must be function or task
+                    if !matches!(self.peek(), Token::Function | Token::Task) {
+                        continue;
+                    }
+                    self.advance(); // consume function/task
+                    let mut depth = 0i32;
+                    loop {
+                        match self.peek() {
+                            Token::Semi if depth <= 0 => { self.advance(); break; }
+                            Token::LParen => { depth += 1; self.advance(); }
+                            Token::RParen => { depth -= 1; self.advance(); }
+                            Token::EndClass | Token::Eof => break,
+                            _ => { self.advance(); }
+                        }
+                    }
                 }
                 Token::Virtual => {
                     self.advance();
@@ -1621,10 +1714,12 @@ impl Parser {
                             members.push(ClassMember::Task(self.parse_task(true)?));
                         }
                         _ => {
-                            return Err(SimError::parse(format!(
-                                "line {}: expected function/task after virtual",
-                                self.peek_line()
-                            )))
+                            // virtual as qualifier for interface/class variable
+                            let mut decl = self.parse_decl()?;
+                            for n in &mut decl.names {
+                                n.is_rand = false;
+                            }
+                            members.push(ClassMember::Decl(decl));
                         }
                     }
                 }
@@ -1697,6 +1792,17 @@ impl Parser {
                         kind: crate::ast::types::DeclKind::Logic,
                         names,
                     }));
+                }
+                Token::Ident(s) if s == "pure" && self.peek_ahead(1) == &Token::Virtual => {
+                    // pure virtual function/task prototype — consume until semicolon
+                    self.advance(); // pure
+                    loop {
+                        match self.peek() {
+                            Token::Semi => { self.advance(); break; }
+                            Token::EndClass | Token::Eof => break,
+                            _ => { self.advance(); }
+                        }
+                    }
                 }
                 Token::Constraint => {
                     self.advance();
@@ -2712,10 +2818,12 @@ impl Parser {
                 } else {
                     // Not recognized — skip silently
                     let line = self.peek_line();
+                    let tok = self.peek().clone();
                     eprintln!(
-                        "warning: skipping unknown construct at line {}: {}",
+                        "warning: skipping unknown construct at line {} in {}: {}",
                         line,
-                        self.peek()
+                        self.source_file,
+                        tok
                     );
                     self.skip_until_semi_or_end()?;
                     Ok(None)
@@ -4265,6 +4373,29 @@ impl Parser {
                 )))
             }
         };
+        // Handle out-of-body method: class_name :: method_name
+        let name = if self.peek() == &Token::Scope {
+            self.advance(); // consume ::
+            let tok = self.peek().clone();
+            match &tok {
+                Token::Ident(m) => {
+                    self.advance();
+                    *m
+                }
+                Token::New => {
+                    self.advance();
+                    Symbol::intern("new")
+                }
+                _ => {
+                    return Err(SimError::parse(format!(
+                        "line {}: expected method name after ::",
+                        self.peek_line()
+                    )));
+                }
+            }
+        } else {
+            name
+        };
         // Parse ANSI-style port list in parens (e.g., function new(int level, string name))
         let mut ports = Vec::new();
         let mut decls = Vec::new();
@@ -4469,7 +4600,7 @@ impl Parser {
         // No begin/end block - parse statements until endfunction
         let mut stmts = Vec::new();
         loop {
-            if matches!(self.peek(), Token::EndFunction | Token::End | Token::Eof) {
+            if matches!(self.peek(), Token::EndFunction | Token::End | Token::EndClass | Token::EndInterface | Token::EndPackage | Token::Eof) {
                 break;
             }
             stmts.push(self.parse_stmt()?);
@@ -4516,6 +4647,25 @@ impl Parser {
             false
         };
         let name = self.expect_ident()?;
+        // Handle out-of-body method: class_name :: method_name
+        let name = if self.peek() == &Token::Scope {
+            self.advance(); // consume ::
+            let tok = self.peek().clone();
+            match &tok {
+                Token::Ident(m) => {
+                    self.advance();
+                    *m
+                }
+                _ => {
+                    return Err(SimError::parse(format!(
+                        "line {}: expected method name after ::",
+                        self.peek_line()
+                    )));
+                }
+            }
+        } else {
+            name
+        };
         let mut ports = Vec::new();
         let mut decls = Vec::new();
         let mut last_direction: Option<PortDirection> = None;
@@ -4703,7 +4853,7 @@ impl Parser {
         }
         let mut stmts = Vec::new();
         loop {
-            if matches!(self.peek(), Token::EndTask | Token::End | Token::Eof) {
+            if matches!(self.peek(), Token::EndTask | Token::End | Token::EndClass | Token::EndInterface | Token::EndPackage | Token::Eof) {
                 break;
             }
             stmts.push(self.parse_stmt()?);
@@ -5499,13 +5649,51 @@ impl Parser {
         } else {
             None
         };
-        self.skip_semi();
+        // Handle optional 'with function sample(...)' for covergroups
+        if let Token::Ident(s) = self.peek() {
+            if *s == Symbol::intern("with") {
+                self.advance(); // consume 'with'
+                // Skip 'function sample(type param, ...)' until ';'
+                let mut depth = 0;
+                loop {
+                    match self.peek() {
+                        Token::Semi if depth == 0 => {
+                            self.advance();
+                            break;
+                        }
+                        Token::LParen => {
+                            depth += 1;
+                            self.advance();
+                        }
+                        Token::RParen if depth > 0 => {
+                            depth -= 1;
+                            self.advance();
+                        }
+                        Token::Eof => break,
+                        _ => {
+                            self.advance();
+                        }
+                    }
+                }
+            } else {
+                self.skip_semi();
+            }
+        } else {
+            self.skip_semi();
+        }
         let mut coverpoints = Vec::new();
         let mut crosses = Vec::new();
         loop {
             match self.peek() {
                 Token::EndGroup | Token::Eof => {
                     self.advance();
+                    // Handle optional 'endgroup : name'
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
                     break;
                 }
                 Token::Ident(_) => {
@@ -6695,6 +6883,10 @@ impl Parser {
             "finish" | "stop" => {
                 if self.peek() == &Token::LParen {
                     self.advance();
+                    // Optional argument (e.g. $finish(0), $finish(1))
+                    if self.peek() != &Token::RParen {
+                        self.parse_expr(0)?;
+                    }
                     self.expect(Token::RParen)?;
                 }
                 self.skip_semi();

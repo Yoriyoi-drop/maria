@@ -10,12 +10,15 @@ interface LayoutState {
   bottomTab: BottomTab;
   showSidebar: boolean;
   showBottom: boolean;
+  showCommandPalette: boolean;
   setSidebarWidth: (w: number) => void;
   setBottomHeight: (h: number) => void;
   setSidebarTab: (t: SidebarTab) => void;
   setBottomTab: (t: BottomTab) => void;
   toggleSidebar: () => void;
   toggleBottom: () => void;
+  toggleCommandPalette: () => void;
+  closeCommandPalette: () => void;
 }
 
 export default create<LayoutState>((set) => ({
@@ -25,10 +28,13 @@ export default create<LayoutState>((set) => ({
   bottomTab: "problems",
   showSidebar: true,
   showBottom: true,
+  showCommandPalette: false,
   setSidebarWidth: (w) => set({ sidebarWidth: w }),
   setBottomHeight: (h) => set({ bottomHeight: h }),
   setSidebarTab: (t) => set({ sidebarTab: t }),
   setBottomTab: (t) => set({ bottomTab: t }),
   toggleSidebar: () => set((s) => ({ showSidebar: !s.showSidebar })),
   toggleBottom: () => set((s) => ({ showBottom: !s.showBottom })),
+  toggleCommandPalette: () => set((s) => ({ showCommandPalette: !s.showCommandPalette })),
+  closeCommandPalette: () => set({ showCommandPalette: false }),
 }));

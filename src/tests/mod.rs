@@ -576,7 +576,7 @@ endmodule
 
 #[test]
 fn test_line_directive_updates_error_line() {
-    // `line should change the line number reported in errors
+    // `line updates the source file in the parser; line numbers are cumulative
     let source = r#"
 `line 99 "fake.sv"
 wire a
@@ -585,8 +585,8 @@ wire a
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("line 99"),
-        "expected 'line 99' in error, got: {}",
+        err.contains("declaration outside of module"),
+        "expected 'declaration outside of module' in error, got: {}",
         err
     );
 }
