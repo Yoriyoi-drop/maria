@@ -1750,3 +1750,45 @@ Memisahkan file-file dengan >1 tanggung jawab menjadi 1 file = 1 tanggung jawab.
     simulator/engine/eval.rs (3396 baris)
 
 ========================================
+
+[COMPLETED] Phase 3.5: Ekstraksi elaborator/mod.rs (4452 -> 3 file)
+├── elaborator/mod.rs       ~2053 lines (Core: struct, impl new, elaborate, resolve_param_values, elaborate_classes)
+├── elaborator/stmt.rs      ~1150 lines (elaborate_stmt_block, elaborate_stmt, elaborate_lvalue)
+├── elaborator/expr.rs      ~1250 lines (elaborate_expr, package func call, expr-to-signal, resolve_typedef_width)
+├── Perbaikan:
+│   ├── pub(crate) visibility: build_hier_name, elaborate_expr, elaborate_expr_to_signal,
+│   │   instance_port_expr_to_signal, resolve_typedef_width, elaborate_stmt_block,
+│   │   elaborate_stmt, elaborate_lvalue
+│   ├── Fix duplicate closing brace di expr.rs (line 4452 sdh punya impl close)
+│   └── Added use super::BUILTIN_UVM_CLASSES di expr.rs
+├── Total submodules elaborator/: ext, flatten, always, stmt, expr (+ mod.rs)
+└── Semua test lulus ✅ (5 passed)
+
+[COMPLETED] Phase 4: Ekstraksi parser/mod.rs (4032 -> 1105 + 3 submodule)
+├── parser/mod.rs          ~1105 lines (Core: struct, impl new, parse_design, parse_module_item dispatcher, skip utilities)
+├── parser/decl.rs         ~1147 lines (parse_decl, parse_decl_names, parse_enum_members, parse_struct_body,
+│                          parse_typedef, parse_scoped_type_name, parse_type_expr, parse_param_list, parse_range)
+├── parser/instance.rs     ~853 lines (parse_module, parse_interface, parse_interface_fast, parse_program_fast,
+│                          skip_balanced_paren, parse_modport, parse_port_list, parse_instance, parse_gate_primitive)
+├── parser/proc.rs         ~968 lines (parse_always, parse_initial, parse_final, parse_sensitivity_events,
+│                          parse_sensitivity_list, parse_assign, parse_delay,
+│                          parse_function, parse_task,
+│                          parse_generate_block, parse_generate_item, parse_generate_block_body)
+├── Perbaikan:
+│   ├── pub(crate) visibility di semua fungsi (30 total)
+│   ├── use super::Parser; + crate imports di setiap submodule baru
+│   └── use crate::parser::util::*; di instance.rs (is_strength_keyword)
+├── Total submodules parser/: lexer, preprocessor, util, specify, udp, config, package,
+│                          class, expr, stmt, decl, instance, proc (+ mod.rs)
+└── Semua test lulus ✅ (5 passed)
+
+[COMPLETED] Phase 5: Ekstraksi ast/inline.rs (2599 -> 1858 + inline_util.rs 747)
+├── ast/inline.rs           ~1858 lines (Core: inline_func_calls_in_module, inline_funcs_in_stmt, replace_func_calls_in_expr)
+├── ast/inline_util.rs      ~747 lines (Helpers: detect_recursive_functions, stmt_has_func_call, expr_has_func_call,
+│                          func_port_width, func_return_width, rename_in_stmt, rename_func_decls_in_stmt, rename_in_expr)
+├── Perbaikan:
+│   ├── pub(crate) visibility di semua 8 helper functions
+│   ├── Added use crate::ast::inline_util::*; di inline.rs
+│   ├── Added Decl import di inline_util.rs
+│   └── Updated ast/mod.rs: pub mod inline_util; + pub use inline_util::*;
+└── Semua test lulus ✅ (5 passed)

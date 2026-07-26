@@ -1,5 +1,7 @@
 # maria — RTL Simulator untuk SystemVerilog
 
+## Aturan 
+1 file = 1 tanggung jawab tidak boleh lebih dari 1
 Rust-based SystemVerilog simulator. Pipeline: preprocessor → lexer → parser → AST → elaborator → IR → simulation engine → VCD output.
 
 ## Build & Test

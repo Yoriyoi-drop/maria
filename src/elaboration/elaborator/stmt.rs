@@ -1,0 +1,1160 @@
+use std::collections::{HashMap, HashSet};
+use super::Elaborator;
+use super::super::util::*;
+use crate::ast::types::{const_eval_simple, const_eval_with_params};
+use crate::ast::*;
+use crate::error::SimError;
+use crate::intern::Symbol;
+use crate::ir::*;
+
+impl Elaborator {
+    pub(crate) fn elaborate_stmt_block(
+        &self,
+        stmts: &[Stmt],
+        signal_map: &HashMap<Symbol, SignalId>,
+        _known_modules: &[Symbol],
+        signals: &[SignalInfo],
+    ) -> Result<Vec<IrStmt>, SimError> {
+        let mut ir_stmts = Vec::new();
+        for stmt in stmts {
+            ir_stmts.push(self.elaborate_stmt(stmt, signal_map, _known_modules, signals)?);
+        }
+        Ok(ir_stmts)
+    }
+
+    fn elaborate_stmt(
+        &self,
+        stmt: &Stmt,
+        signal_map: &HashMap<Symbol, SignalId>,
+        known_modules: &[Symbol],
+        signals: &[SignalInfo],
+    ) -> Result<IrStmt, SimError> {
+        match stmt {
+            Stmt::Block { stmts } => {
+                let body = self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
+                Ok(IrStmt::Block { stmts: body })
+            }
+            Stmt::BlockingAssign { lhs, rhs, .. } => {
+                let ir_lhs = self.elaborate_lvalue(lhs, signal_map, signals)?;
+                // Check if LHS is a virtual interface signal
+                let is_vif_lhs = match &ir_lhs {
+                    IrLValue::Signal(sid, _) => signals
+                        .get(*sid)
+                        .map(|s| s.iface_type.is_some())
+                        .unwrap_or(false),
+                    _ => false,
+                };
+                let mut ir_rhs = if is_vif_lhs {
+                    // For vif binding, RHS might be an instance name (not a signal)
+                    match rhs {
+                        Expr::Ident(name) if !signal_map.contains_key(name) => {
+                            // Vif binding: store instance name for runtime resolution
+                            IrExpr::VifBinding {
+                                instance_name: name.clone(),
+                            }
+                        }
+                        _ => self.elaborate_expr(rhs, signal_map, signals)?,
+                    }
+                } else {
+                    self.elaborate_expr(rhs, signal_map, signals)?
+                };
+                // Fill in class name for new() calls from LHS signal info
+                if let IrExpr::NewCall {
+                    ref mut class_name, ..
+                } = ir_rhs
+                {
+                    if class_name.is_empty() {
+                        if let IrLValue::Signal(sid, _) = ir_lhs {
+                            if let Some(sig) = signals.get(sid) {
+                                if let Some(cn) = &sig.class_name {
+                                    *class_name = cn.clone();
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(IrStmt::BlockingAssign {
+                    lhs: ir_lhs,
+                    rhs: ir_rhs,
+                    delay: None,
+                })
+            }
+            Stmt::NonBlockingAssign { lhs, rhs, .. } => {
+                let ir_lhs = self.elaborate_lvalue(lhs, signal_map, signals)?;
+                let ir_is_vif = match &ir_lhs {
+                    IrLValue::Signal(sid, _) => signals
+                        .get(*sid)
+                        .map(|s| s.iface_type.is_some())
+                        .unwrap_or(false),
+                    _ => false,
+                };
+                let mut ir_rhs = if ir_is_vif {
+                    match rhs {
+                        Expr::Ident(name) if !signal_map.contains_key(name) => IrExpr::VifBinding {
+                            instance_name: name.clone(),
+                        },
+                        _ => self.elaborate_expr(rhs, signal_map, signals)?,
+                    }
+                } else {
+                    self.elaborate_expr(rhs, signal_map, signals)?
+                };
+                if let IrExpr::NewCall {
+                    ref mut class_name, ..
+                } = ir_rhs
+                {
+                    if class_name.is_empty() {
+                        if let IrLValue::Signal(sid, _) = ir_lhs {
+                            if let Some(sig) = signals.get(sid) {
+                                if let Some(cn) = &sig.class_name {
+                                    *class_name = cn.clone();
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(IrStmt::NonBlockingAssign {
+                    lhs: ir_lhs,
+                    rhs: ir_rhs,
+                    delay: None,
+                })
+            }
+            Stmt::IfElse {
+                cond,
+                true_branch,
+                false_branch,
+            } => {
+                // Constant-fold condition — if known at compile time, eliminate dead branch
+                if let Ok(val) = const_eval_with_params(cond, &self.param_vals) {
+                    if val != 0 {
+                        // Condition is always true — keep only true branch
+                        Ok(self.elaborate_stmt(true_branch, signal_map, known_modules, signals)?)
+                    } else {
+                        // Condition is always false — keep only false branch
+                        match false_branch {
+                            Some(fb) => self.elaborate_stmt(fb, signal_map, known_modules, signals),
+                            None => Ok(IrStmt::Block { stmts: vec![] }),
+                        }
+                    }
+                } else {
+                    let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
+                    let true_stmt = vec![self.elaborate_stmt(
+                        true_branch,
+                        signal_map,
+                        known_modules,
+                        signals,
+                    )?];
+                    let false_stmt = match false_branch {
+                        Some(fb) => {
+                            vec![self.elaborate_stmt(fb, signal_map, known_modules, signals)?]
+                        }
+                        None => vec![],
+                    };
+                    Ok(IrStmt::If {
+                        cond: ir_cond,
+                        true_branch: true_stmt,
+                        false_branch: false_stmt,
+                    })
+                }
+            }
+            Stmt::Case {
+                expr,
+                items,
+                default,
+            } => {
+                // Try constant-fold the case expression
+                if let Ok(case_val) = const_eval_with_params(expr, &self.param_vals) {
+                    // Case expression is compile-time constant — find matching branch
+                    let mut matched_body: Option<&Stmt> = None;
+                    for item in items {
+                        for label in &item.labels {
+                            let label_val = const_eval_with_params(label, &self.param_vals);
+                            if let Ok(lv) = label_val {
+                                if lv == case_val {
+                                    matched_body = Some(&item.stmt);
+                                    break;
+                                }
+                            } else if let Expr::Value(v) = label {
+                                let lv = match v {
+                                    Value::Decimal(d) => *d,
+                                    Value::Hex { bits, .. } => i64::from_str_radix(
+                                        bits.trim_start_matches("0x").trim_start_matches("0X"),
+                                        16,
+                                    )
+                                    .unwrap_or(0),
+                                    Value::Binary { bits, .. } => i64::from_str_radix(
+                                        bits.trim_start_matches("0b").trim_start_matches("0B"),
+                                        2,
+                                    )
+                                    .unwrap_or(0),
+                                    Value::Octal { bits, .. } => i64::from_str_radix(
+                                        bits.trim_start_matches("0o").trim_start_matches("0O"),
+                                        8,
+                                    )
+                                    .unwrap_or(0),
+                                    Value::Real(_) => 0,
+                                };
+                                if lv == case_val {
+                                    matched_body = Some(&item.stmt);
+                                    break;
+                                }
+                            }
+                        }
+                        if matched_body.is_some() {
+                            break;
+                        }
+                    }
+                    match matched_body {
+                        Some(body) => self.elaborate_stmt(body, signal_map, known_modules, signals),
+                        None => {
+                            if let Some(def) = default {
+                                self.elaborate_stmt(def, signal_map, known_modules, signals)
+                            } else {
+                                Ok(IrStmt::Block { stmts: vec![] })
+                            }
+                        }
+                    }
+                } else {
+                    let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                    let mut ir_items = Vec::new();
+                    for item in items {
+                        let mut labels = Vec::new();
+                        for label in &item.labels {
+                            labels.push(self.elaborate_expr(label, signal_map, signals)?);
+                        }
+                        let body = match &*item.stmt {
+                            Stmt::Block { stmts } => self.elaborate_stmt_block(
+                                stmts,
+                                signal_map,
+                                known_modules,
+                                signals,
+                            )?,
+                            other => self.elaborate_stmt_block(
+                                &[other.clone()],
+                                signal_map,
+                                known_modules,
+                                signals,
+                            )?,
+                        };
+                        ir_items.push(IrCaseItem { labels, body });
+                    }
+                    let ir_default = match default {
+                        Some(d) => {
+                            vec![self.elaborate_stmt(d, signal_map, known_modules, signals)?]
+                        }
+                        None => vec![],
+                    };
+                    Ok(IrStmt::Case {
+                        case_type: CaseType::Normal,
+                        expr: ir_expr,
+                        items: ir_items,
+                        default: ir_default,
+                    })
+                }
+            }
+            Stmt::StmtAssign { lhs, rhs } => {
+                let ir_lhs = self.elaborate_lvalue(lhs, signal_map, signals)?;
+                let ir_rhs = self.elaborate_expr(rhs, signal_map, signals)?;
+                Ok(IrStmt::BlockingAssign {
+                    lhs: ir_lhs,
+                    rhs: ir_rhs,
+                    delay: None,
+                })
+            }
+            Stmt::Expr { expr } => {
+                match expr {
+                    Expr::MethodCall {
+                        obj,
+                        method,
+                        args,
+                        with_clause,
+                    } => {
+                        let ir_obj = self.elaborate_expr(obj, signal_map, signals)?;
+                        let ir_args: Vec<IrExpr> = args
+                            .iter()
+                            .map(|a| self.elaborate_expr(a, signal_map, signals))
+                            .collect::<Result<_, _>>()?;
+                        let ir_with = match with_clause {
+                            Some(wc) => {
+                                Some(Box::new(self.elaborate_expr(wc, signal_map, signals)?))
+                            }
+                            None => None,
+                        };
+                        Ok(IrStmt::MethodCallStmt {
+                            obj: ir_obj,
+                            method: method.clone(),
+                            args: ir_args,
+                            with_clause: ir_with,
+                        })
+                    }
+                    Expr::FuncCall { name, .. } if name.starts_with("$") => {
+                        let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                        Ok(IrStmt::SysCall {
+                            name: Symbol::intern(""),
+                            args: vec![ir_expr],
+                        })
+                    }
+                    Expr::FuncCall { name, .. } if name.ends_with("::new") => {
+                        let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                        Ok(IrStmt::SysCall {
+                            name: Symbol::intern(""),
+                            args: vec![ir_expr],
+                        })
+                    }
+                    Expr::FuncCall { name, .. } => {
+                        // Check if this is a DPI function call used as a statement
+                        let is_dpi = self.design.modules.iter().flat_map(|m| m.items.iter()).any(
+                            |item| matches!(item, ModuleItem::DpiImport(d) if d.name == *name),
+                        );
+                        if is_dpi {
+                            let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                            Ok(IrStmt::SysCall {
+                                name: Symbol::intern("__dpi_stmt"),
+                                args: vec![ir_expr],
+                            })
+                        } else {
+                            // Side-effect-free expression statement — eliminate it
+                            Ok(IrStmt::Block { stmts: vec![] })
+                        }
+                    }
+                    _ => {
+                        // Side-effect-free expression statement — eliminate it
+                        Ok(IrStmt::Block { stmts: vec![] })
+                    }
+                }
+            }
+            Stmt::SysCall { name, args } => {
+                let ir_args: Vec<IrExpr> = args
+                    .iter()
+                    .map(|a| self.elaborate_expr(a, signal_map, signals))
+                    .collect::<Result<_, _>>()?;
+                Ok(IrStmt::SysCall {
+                    name: name.clone(),
+                    args: ir_args,
+                })
+            }
+            Stmt::SysFinish => Ok(IrStmt::SysFinish),
+            Stmt::Null => Ok(IrStmt::Null),
+            Stmt::Return(_) => Ok(IrStmt::Null),
+            Stmt::EventControl { events, stmt } => {
+                if events.is_empty() {
+                    return Ok(IrStmt::Null);
+                }
+                let event = &events[0];
+                let body = match stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                match event {
+                    SensitivityEvent::PosEdge(expr) | SensitivityEvent::NegEdge(expr) => {
+                        let is_pos = matches!(event, SensitivityEvent::PosEdge(_));
+                        if let Some(sig_id) = resolve_expr_signal(expr, signal_map) {
+                            let edge = if is_pos {
+                                ClockEdge::PosEdge(sig_id)
+                            } else {
+                                ClockEdge::NegEdge(sig_id)
+                            };
+                            Ok(IrStmt::EventControl {
+                                sig_id,
+                                edge: Some(edge),
+                                body,
+                            })
+                        } else {
+                            Err(SimError::elaborate(format!(
+                                "cannot resolve signal in @(...)"
+                            )))
+                        }
+                    }
+                    SensitivityEvent::Level(expr) => {
+                        if let Some(sig_id) = resolve_expr_signal(expr, signal_map) {
+                            Ok(IrStmt::EventControl {
+                                sig_id,
+                                edge: None,
+                                body,
+                            })
+                        } else {
+                            Err(SimError::elaborate(format!(
+                                "cannot resolve signal in @(...)"
+                            )))
+                        }
+                    }
+                    SensitivityEvent::Wildcard => {
+                        // @(*) in procedural context: wait for any signal change
+                        // For now, treat as immediate
+                        Ok(IrStmt::Block { stmts: body })
+                    }
+                }
+            }
+            Stmt::EventTrigger { name } => {
+                if let Some(sig_id) = signal_map.get(name) {
+                    Ok(IrStmt::EventTrigger { sig_id: *sig_id })
+                } else {
+                    Ok(IrStmt::Null)
+                }
+            }
+            Stmt::Force { lhs, rhs } => {
+                let ir_lhs = self.elaborate_lvalue(lhs, signal_map, signals)?;
+                let ir_rhs = self.elaborate_expr(rhs, signal_map, signals)?;
+                Ok(IrStmt::Force {
+                    lvalue: ir_lhs,
+                    rhs: ir_rhs,
+                })
+            }
+            Stmt::Release { expr } => {
+                let ir_lhs = self.elaborate_lvalue(expr, signal_map, signals)?;
+                Ok(IrStmt::Release { lvalue: ir_lhs })
+            }
+            Stmt::Deassign { expr } => {
+                let ir_lhs = self.elaborate_lvalue(expr, signal_map, signals)?;
+                Ok(IrStmt::Deassign { lvalue: ir_lhs })
+            }
+            Stmt::CaseX {
+                expr,
+                items,
+                default,
+            } => {
+                let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                let mut ir_items = Vec::new();
+                for item in items {
+                    let mut labels = Vec::new();
+                    for label in &item.labels {
+                        labels.push(self.elaborate_expr(label, signal_map, signals)?);
+                    }
+                    let body = match &*item.stmt {
+                        Stmt::Block { stmts } => {
+                            self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?
+                        }
+                        other => self.elaborate_stmt_block(
+                            &[other.clone()],
+                            signal_map,
+                            known_modules,
+                            signals,
+                        )?,
+                    };
+                    ir_items.push(IrCaseItem { labels, body });
+                }
+                let ir_default = match default {
+                    Some(d) => vec![self.elaborate_stmt(d, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                Ok(IrStmt::Case {
+                    case_type: CaseType::CaseX,
+                    expr: ir_expr,
+                    items: ir_items,
+                    default: ir_default,
+                })
+            }
+            Stmt::CaseZ {
+                expr,
+                items,
+                default,
+            } => {
+                let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                let mut ir_items = Vec::new();
+                for item in items {
+                    let mut labels = Vec::new();
+                    for label in &item.labels {
+                        labels.push(self.elaborate_expr(label, signal_map, signals)?);
+                    }
+                    let body = match &*item.stmt {
+                        Stmt::Block { stmts } => {
+                            self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?
+                        }
+                        other => self.elaborate_stmt_block(
+                            &[other.clone()],
+                            signal_map,
+                            known_modules,
+                            signals,
+                        )?,
+                    };
+                    ir_items.push(IrCaseItem { labels, body });
+                }
+                let ir_default = match default {
+                    Some(d) => vec![self.elaborate_stmt(d, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                Ok(IrStmt::Case {
+                    case_type: CaseType::CaseZ,
+                    expr: ir_expr,
+                    items: ir_items,
+                    default: ir_default,
+                })
+            }
+            Stmt::NamedBlock { name, stmts, decls } => {
+                let body = self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
+                Ok(IrStmt::NamedBlock {
+                    name: name.clone(),
+                    stmts: body,
+                    decls: decls.clone(),
+                })
+            }
+            Stmt::Delay { delay, stmt } => {
+                let d = const_eval_params(delay, &self.param_vals)? as u64;
+                let body = vec![self.elaborate_stmt(stmt, signal_map, known_modules, signals)?];
+                Ok(IrStmt::Delay { delay: d, body })
+            }
+            Stmt::Wait { cond, stmt } => {
+                let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
+                let body = match stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                Ok(IrStmt::Wait {
+                    cond: ir_cond,
+                    body,
+                })
+            }
+            Stmt::LoopFor {
+                init,
+                cond,
+                step,
+                stmts,
+            } => {
+                // Try to unroll constant-bounded for loops at elaboration time
+                if let Ok(Some(unrolled)) = try_unroll_for_loop(
+                    init.as_deref(),
+                    cond.as_ref(),
+                    step.as_deref(),
+                    stmts,
+                    &|stmts, var_name, iter_val| {
+                        let subst_stmts = substitute_loop_var_in_stmts(stmts, var_name, iter_val);
+                        self.elaborate_stmt_block(&subst_stmts, signal_map, known_modules, signals)
+                            .map_err(|e| e.to_string())
+                    },
+                    &self.param_vals,
+                ) {
+                    return Ok(IrStmt::Block { stmts: unrolled });
+                }
+                // Fallback: generate runtime LoopFor
+                let ir_init = match init {
+                    Some(s) => Some(Box::new(self.elaborate_stmt(
+                        s,
+                        signal_map,
+                        known_modules,
+                        signals,
+                    )?)),
+                    None => None,
+                };
+                let ir_cond = if let Some(c) = cond {
+                    self.elaborate_expr(c, signal_map, signals)?
+                } else {
+                    IrExpr::Const(LogicVec::from_u64(1, 1))
+                };
+                let ir_step = match step {
+                    Some(s) => Some(Box::new(self.elaborate_stmt(
+                        s,
+                        signal_map,
+                        known_modules,
+                        signals,
+                    )?)),
+                    None => None,
+                };
+                let ir_body =
+                    self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
+                Ok(IrStmt::LoopFor {
+                    init: ir_init,
+                    cond: ir_cond,
+                    step: ir_step,
+                    body: ir_body,
+                })
+            }
+            Stmt::LoopWhile { cond, stmts } => {
+                let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
+                let ir_body =
+                    self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
+                Ok(IrStmt::LoopWhile {
+                    cond: ir_cond,
+                    body: ir_body,
+                })
+            }
+            Stmt::DoWhile { cond, stmts } => {
+                let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
+                let ir_body =
+                    self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
+                Ok(IrStmt::LoopDoWhile {
+                    cond: ir_cond,
+                    body: ir_body,
+                })
+            }
+            Stmt::LoopForever { stmts } => {
+                let ir_body =
+                    self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
+                Ok(IrStmt::LoopWhile {
+                    cond: IrExpr::Const(LogicVec::from_u64(1, 1)),
+                    body: ir_body,
+                })
+            }
+            Stmt::ForeachLoop {
+                array_var,
+                index_vars,
+                stmts,
+            } => {
+                let sig_id = signal_map.get(array_var).ok_or_else(|| {
+                    SimError::elaborate(format!("array '{}' not found for foreach", array_var))
+                })?;
+                let sig_info = signals.get(*sig_id).ok_or_else(|| {
+                    SimError::elaborate(format!("signal info not found for '{}'", array_var))
+                })?;
+                if sig_info.is_dynamic || sig_info.is_queue {
+                    let ir_body =
+                        self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
+                    let iv = index_vars
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| Symbol::intern("i"));
+                    Ok(IrStmt::Foreach {
+                        array_var: IrExpr::Signal(*sig_id, sig_info.width),
+                        index_var: iv,
+                        body: ir_body,
+                    })
+                } else {
+                    let n = sig_info.array_depth;
+                    if n == 0 {
+                        return Err(SimError::elaborate(format!(
+                            "'{}' is not an array, cannot use foreach",
+                            array_var
+                        )));
+                    }
+                    let mut all_stmts = Vec::new();
+                    let iv = index_vars
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| Symbol::intern("i"));
+                    for i in 0..n {
+                        let subst_stmts = substitute_loop_var_in_stmts(stmts, iv.as_str(), i as i64);
+                        all_stmts.extend(self.elaborate_stmt_block(
+                            &subst_stmts,
+                            signal_map,
+                            known_modules,
+                            signals,
+                        )?);
+                    }
+                    Ok(IrStmt::Block { stmts: all_stmts })
+                }
+            }
+            Stmt::StmtCase {
+                expr,
+                items,
+                default,
+            } => {
+                let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                let mut ir_items = Vec::new();
+                for item in items {
+                    let mut labels = Vec::new();
+                    for label in &item.labels {
+                        labels.push(self.elaborate_expr(label, signal_map, signals)?);
+                    }
+                    let body = match &*item.stmt {
+                        Stmt::Block { stmts } => {
+                            self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?
+                        }
+                        other => self.elaborate_stmt_block(
+                            &[other.clone()],
+                            signal_map,
+                            known_modules,
+                            signals,
+                        )?,
+                    };
+                    ir_items.push(IrCaseItem { labels, body });
+                }
+                let ir_default = match default {
+                    Some(d) => vec![self.elaborate_stmt(d, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                Ok(IrStmt::Case {
+                    case_type: CaseType::Normal,
+                    expr: ir_expr,
+                    items: ir_items,
+                    default: ir_default,
+                })
+            }
+            Stmt::Break => Ok(IrStmt::Break),
+            Stmt::Continue => Ok(IrStmt::Continue),
+            Stmt::Disable { name } => Ok(IrStmt::Disable { name: name.clone() }),
+            Stmt::Repeat { count, stmts } => {
+                if let Ok(n) = const_eval_params(count, &self.param_vals) {
+                    let mut all = Vec::new();
+                    for _ in 0..n {
+                        all.extend(self.elaborate_stmt_block(
+                            stmts,
+                            signal_map,
+                            known_modules,
+                            signals,
+                        )?);
+                    }
+                    Ok(IrStmt::Block { stmts: all })
+                } else {
+                    let ir_count = self.elaborate_expr(count, signal_map, signals)?;
+                    let ir_body =
+                        self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
+                    Ok(IrStmt::Repeat {
+                        count: ir_count,
+                        body: ir_body,
+                    })
+                }
+            }
+            // New variants: elaborate as comparable constructs
+            Stmt::UniqueCase {
+                expr,
+                items,
+                default,
+            }
+            | Stmt::PriorityCase {
+                expr,
+                items,
+                default,
+            } => self.elaborate_stmt(
+                &Stmt::Case {
+                    expr: expr.clone(),
+                    items: items.clone(),
+                    default: default.clone(),
+                },
+                signal_map,
+                known_modules,
+                signals,
+            ),
+            Stmt::CaseInside {
+                expr,
+                items,
+                default,
+            } => self.elaborate_stmt(
+                &Stmt::Case {
+                    expr: expr.clone(),
+                    items: items.clone(),
+                    default: default.clone(),
+                },
+                signal_map,
+                known_modules,
+                signals,
+            ),
+            Stmt::UniqueIf {
+                cond,
+                true_branch,
+                false_branch,
+            } => self.elaborate_stmt(
+                &Stmt::IfElse {
+                    cond: cond.clone(),
+                    true_branch: true_branch.clone(),
+                    false_branch: false_branch.clone(),
+                },
+                signal_map,
+                known_modules,
+                signals,
+            ),
+            Stmt::PriorityIf {
+                cond,
+                true_branch,
+                false_branch,
+            } => self.elaborate_stmt(
+                &Stmt::IfElse {
+                    cond: cond.clone(),
+                    true_branch: true_branch.clone(),
+                    false_branch: false_branch.clone(),
+                },
+                signal_map,
+                known_modules,
+                signals,
+            ),
+            Stmt::Assert {
+                cond,
+                pass_stmt,
+                fail_stmt,
+                clock_event,
+                disable_iff,
+            } => {
+                let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
+                let pass = match pass_stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                let fail = match fail_stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                let ir_disable = match disable_iff {
+                    Some(e) => Some(Box::new(self.elaborate_expr(&*e, signal_map, signals)?)),
+                    None => None,
+                };
+                Ok(IrStmt::Assert {
+                    cond: ir_cond,
+                    pass_stmt: pass,
+                    fail_stmt: fail,
+                    clock_event: clock_event.clone(),
+                    disable_iff: ir_disable,
+                    sequence: None,
+                })
+            }
+            Stmt::Assume {
+                cond,
+                pass_stmt,
+                fail_stmt,
+                clock_event,
+                disable_iff,
+            } => {
+                let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
+                let pass = match pass_stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                let fail = match fail_stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                let ir_disable = match disable_iff {
+                    Some(e) => Some(Box::new(self.elaborate_expr(&*e, signal_map, signals)?)),
+                    None => None,
+                };
+                Ok(IrStmt::Assume {
+                    cond: ir_cond,
+                    pass_stmt: pass,
+                    fail_stmt: fail,
+                    clock_event: clock_event.clone(),
+                    disable_iff: ir_disable,
+                    sequence: None,
+                })
+            }
+            Stmt::Cover {
+                cond,
+                pass_stmt,
+                clock_event,
+                disable_iff,
+            } => {
+                let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
+                let pass = match pass_stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                let ir_disable = match disable_iff {
+                    Some(e) => Some(Box::new(self.elaborate_expr(&*e, signal_map, signals)?)),
+                    None => None,
+                };
+                Ok(IrStmt::Cover {
+                    cond: ir_cond,
+                    pass_stmt: pass,
+                    clock_event: clock_event.clone(),
+                    disable_iff: ir_disable,
+                    sequence: None,
+                })
+            }
+            Stmt::Expect { .. } => Ok(IrStmt::Null),
+            Stmt::WaitOrder { events, fail_stmt } => {
+                let mut sig_ids = Vec::new();
+                for name in events {
+                    if let Some(idx) = signal_map.get(name) {
+                        sig_ids.push(*idx);
+                    } else {
+                        return Err(SimError::elaborate(format!(
+                            "wait_order: signal '{}' not found",
+                            name
+                        )));
+                    }
+                }
+                let failure = match fail_stmt {
+                    Some(s) => {
+                        vec![self.elaborate_stmt(&*s, signal_map, known_modules, signals)?]
+                    }
+                    None => vec![],
+                };
+                Ok(IrStmt::WaitOrder {
+                    events: sig_ids,
+                    failure_stmts: failure,
+                })
+            }
+            Stmt::Fork {
+                processes,
+                join_type,
+            } => {
+                let mut ir_processes = Vec::new();
+                for proc_stmt in processes {
+                    let ir = self.elaborate_stmt(proc_stmt, signal_map, known_modules, signals)?;
+                    ir_processes.push(vec![ir]);
+                }
+                let ir_join = match join_type {
+                    JoinType::Join => IrJoinType::Join,
+                    JoinType::JoinAny => IrJoinType::JoinAny,
+                    JoinType::JoinNone => IrJoinType::JoinNone,
+                };
+                Ok(IrStmt::Fork {
+                    processes: ir_processes,
+                    join_type: ir_join,
+                })
+            }
+            Stmt::RandCase { items } => {
+                let new_items: Result<Vec<(IrExpr, Vec<IrStmt>)>, SimError> = items
+                    .iter()
+                    .map(|rc| {
+                        let weight_expr = IrExpr::Const(LogicVec::from_u64(rc.weight as u64, 32));
+                        let body = self.elaborate_stmt_block(
+                            &[*rc.stmt.clone()],
+                            signal_map,
+                            known_modules,
+                            signals,
+                        )?;
+                        Ok((weight_expr, body))
+                    })
+                    .collect();
+                Ok(IrStmt::RandCase { items: new_items? })
+            }
+            Stmt::RandSequence { productions } => {
+                let mut ir_productions = Vec::new();
+                for prod in productions {
+                    let mut ir_items = Vec::new();
+                    for item in &prod.items {
+                        let weight_expr = if let Some(w) = item.weight {
+                            IrExpr::Const(LogicVec::from_u64(w, 32))
+                        } else {
+                            IrExpr::Const(LogicVec::from_u64(1, 32))
+                        };
+                        let body = self.elaborate_stmt_block(
+                            &[(*item.value).clone()],
+                            signal_map,
+                            known_modules,
+                            signals,
+                        )?;
+                        ir_items.push((weight_expr, body));
+                    }
+                    ir_productions.push((prod.name.clone(), ir_items));
+                }
+                Ok(IrStmt::RandSequence {
+                    productions: ir_productions,
+                })
+            }
+        }
+    }
+
+    pub(crate) fn elaborate_lvalue(
+        &self,
+        expr: &Expr,
+        signal_map: &HashMap<Symbol, SignalId>,
+        signals: &[SignalInfo],
+    ) -> Result<IrLValue, SimError> {
+        match expr {
+            Expr::Ident(name) => {
+                let sig_id = signal_map
+                    .get(name)
+                    .ok_or_else(|| SimError::elaborate(format!("signal '{}' not found", name)))?;
+                Ok(IrLValue::Signal(*sig_id, 0))
+            }
+            Expr::RangeSelect {
+                expr: inner,
+                msb,
+                lsb,
+            } => {
+                let inner_lv = self.elaborate_lvalue(inner, signal_map, signals)?;
+                let msb_c = const_eval_params(msb, &self.param_vals)? as usize;
+                let lsb_c = const_eval_params(lsb, &self.param_vals)? as usize;
+                match inner_lv {
+                    IrLValue::Signal(sid, _) => Ok(IrLValue::RangeSelect(sid, msb_c, lsb_c)),
+                    IrLValue::RangeSelect(sid, outer_msb, outer_lsb) => {
+                        let outer_start = if outer_msb > outer_lsb {
+                            outer_lsb
+                        } else {
+                            outer_msb
+                        };
+                        let inner_start = outer_start + if msb_c > lsb_c { lsb_c } else { msb_c };
+                        let inner_end = outer_start + if msb_c > lsb_c { msb_c } else { lsb_c };
+                        Ok(IrLValue::RangeSelect(sid, inner_end, inner_start))
+                    }
+                    IrLValue::ArrayIndex {
+                        sig_id,
+                        index,
+                        elem_width,
+                    } => Ok(IrLValue::ArrayRangeSelect {
+                        sig_id,
+                        index,
+                        elem_width,
+                        msb: msb_c,
+                        lsb: lsb_c,
+                    }),
+                    _ => Err(SimError::elaborate("nested range select not supported")),
+                }
+            }
+            Expr::BitSelect {
+                expr: inner,
+                index: bs_index,
+            } => {
+                let inner_lv = self.elaborate_lvalue(inner, signal_map, signals)?;
+                match inner_lv {
+                    IrLValue::Signal(sid, _) => {
+                        let sig = &signals[sid];
+                        // Check for multi-dim packed array: packed_dims.len() > 1
+                        if sig.packed_dims.len() > 1 {
+                            let outer_elem_width = sig.width / sig.packed_dims[0];
+                            if let Ok(idx) = const_eval_params(bs_index, &self.param_vals) {
+                                let idx = idx as usize;
+                                let lsb = idx * outer_elem_width;
+                                let msb = lsb + outer_elem_width - 1;
+                                Ok(IrLValue::RangeSelect(sid, msb, lsb))
+                            } else {
+                                let index_expr =
+                                    self.elaborate_expr(bs_index, signal_map, signals)?;
+                                Ok(IrLValue::ArrayIndex {
+                                    sig_id: sid,
+                                    index: Box::new(index_expr),
+                                    elem_width: outer_elem_width,
+                                })
+                            }
+                        } else if sig.array_depth > 1 || sig.is_dynamic || sig.is_queue {
+                            let index_expr = self.elaborate_expr(bs_index, signal_map, signals)?;
+                            Ok(IrLValue::ArrayIndex {
+                                sig_id: sid,
+                                index: Box::new(index_expr),
+                                elem_width: sig.elem_width,
+                            })
+                        } else if let Ok(idx) = const_eval_params(bs_index, &self.param_vals) {
+                            Ok(IrLValue::BitSelect(sid, idx as usize))
+                        } else {
+                            // Dynamic index on a flat signal — treat as array index
+                            let index_expr = self.elaborate_expr(bs_index, signal_map, signals)?;
+                            Ok(IrLValue::ArrayIndex {
+                                sig_id: sid,
+                                index: Box::new(index_expr),
+                                elem_width: sig.elem_width,
+                            })
+                        }
+                    }
+                    IrLValue::RangeSelect(sid, outer_msb, outer_lsb) => {
+                        if let Ok(idx) = const_eval_params(bs_index, &self.param_vals) {
+                            let base = if outer_msb > outer_lsb {
+                                outer_lsb
+                            } else {
+                                outer_msb
+                            };
+                            Ok(IrLValue::BitSelect(sid, base + idx as usize))
+                        } else {
+                            let index_expr = self.elaborate_expr(bs_index, signal_map, signals)?;
+                            Ok(IrLValue::ArrayIndex {
+                                sig_id: sid,
+                                index: Box::new(index_expr),
+                                elem_width: outer_msb.max(outer_lsb) - outer_msb.min(outer_lsb) + 1,
+                            })
+                        }
+                    }
+                    IrLValue::ArrayIndex {
+                        sig_id,
+                        index,
+                        elem_width,
+                    } => {
+                        if let Ok(idx) = const_eval_params(bs_index, &self.param_vals) {
+                            Ok(IrLValue::ArrayBitSelect {
+                                sig_id,
+                                index,
+                                elem_width,
+                                bit: idx as usize,
+                            })
+                        } else {
+                            Err(SimError::elaborate(
+                                "dynamic bit-select on array element not supported",
+                            ))
+                        }
+                    }
+                    _ => Err(SimError::elaborate("nested bit select not supported")),
+                }
+            }
+            Expr::PartSelect {
+                expr: inner,
+                base,
+                width,
+            } => {
+                let inner_lv = self.elaborate_lvalue(inner, signal_map, signals)?;
+                let base_r = const_eval_params(base, &self.param_vals);
+                let width_r = const_eval_params(width, &self.param_vals);
+                let (base_c, width_c) = match (base_r, width_r) {
+                    (Ok(b), Ok(w)) => (b as usize, w as usize),
+                    _ => return Err(SimError::elaborate("dynamic part-select not supported")),
+                };
+                match inner_lv {
+                    IrLValue::Signal(sid, _) => {
+                        if width_c > 0 {
+                            Ok(IrLValue::RangeSelect(sid, base_c + width_c - 1, base_c))
+                        } else {
+                            Ok(IrLValue::RangeSelect(sid, base_c, base_c))
+                        }
+                    }
+                    IrLValue::RangeSelect(sid, outer_msb, outer_lsb) => {
+                        let outer_base = if outer_msb > outer_lsb {
+                            outer_lsb
+                        } else {
+                            outer_msb
+                        };
+                        let new_base = outer_base + base_c;
+                        if width_c > 0 {
+                            Ok(IrLValue::RangeSelect(sid, new_base + width_c - 1, new_base))
+                        } else {
+                            Ok(IrLValue::RangeSelect(sid, new_base, new_base))
+                        }
+                    }
+                    IrLValue::ArrayIndex {
+                        sig_id,
+                        index,
+                        elem_width,
+                    } => {
+                        if width_c > 0 {
+                            Ok(IrLValue::ArrayRangeSelect {
+                                sig_id,
+                                index,
+                                elem_width,
+                                msb: base_c + width_c - 1,
+                                lsb: base_c,
+                            })
+                        } else {
+                            Ok(IrLValue::ArrayRangeSelect {
+                                sig_id,
+                                index,
+                                elem_width,
+                                msb: base_c,
+                                lsb: base_c,
+                            })
+                        }
+                    }
+                    _ => Err(SimError::elaborate(
+                        "nested part-select in lvalue not supported",
+                    )),
+                }
+            }
+            Expr::Concat(exprs) => {
+                let parts: Result<Vec<IrLValue>, SimError> = exprs
+                    .iter()
+                    .map(|e| self.elaborate_lvalue(e, signal_map, signals))
+                    .collect();
+                Ok(IrLValue::Concat(parts?))
+            }
+            Expr::MethodCall { .. } => Err(SimError::elaborate(
+                "method calls cannot be used as lvalues",
+            )),
+            Expr::MemberAccess { obj, field } => {
+                // Try struct/union field write
+                let hier_name = Self::build_hier_name(obj, field.as_str());
+                if let Some(&sig_id) = signal_map.get(hier_name.as_str()) {
+                    return Ok(IrLValue::Signal(sig_id, 0));
+                }
+                match self.elaborate_expr(obj, signal_map, signals) {
+                    Ok(IrExpr::Signal(sig_id, _)) => {
+                        let sig_info = &signals[sig_id];
+                        if !sig_info.struct_fields.is_empty() {
+                            if let Some(f) =
+                                sig_info.struct_fields.iter().find(|f| f.name == *field)
+                            {
+                                let lsb = f.offset;
+                                let msb = f.offset + f.width - 1;
+                                return Ok(IrLValue::RangeSelect(sig_id, lsb, msb));
+                            }
+                            return Err(SimError::elaborate(format!(
+                                "field '{}' not found in struct type",
+                                field
+                            )));
+                        }
+                        Err(SimError::elaborate(format!("member access on signal '{:?}' that has no struct fields (cannot use as lvalue)", obj)))
+                    }
+                    _ => Err(SimError::elaborate(
+                        "member access cannot be used as lvalues",
+                    )),
+                }
+            }
+            _ => Err(SimError::elaborate(format!(
+                "invalid lvalue expression: {:?}",
+                expr
+            ))),
+        }
+    }
+
+}
