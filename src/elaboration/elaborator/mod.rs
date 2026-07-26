@@ -1,7 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use super::util::*;
-use crate::ast::types::const_eval_simple;
 use crate::ast::types::const_eval_with_params;
 use crate::ast::*;
 use crate::error::SimError;

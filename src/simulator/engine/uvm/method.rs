@@ -3,9 +3,6 @@ use crate::error::SimError;
 use crate::ir::*;
 use crate::ast::*;
 use crate::Symbol;
-use crate::simulator::types::*;
-use crate::simulator::value::*;
-use crate::simulator::util::*;
 use std::collections::HashSet;
 
 impl SimulationEngine {

@@ -3,7 +3,6 @@ use crate::error::SimError;
 use crate::ir::*;
 use crate::ast::*;
 use crate::Symbol;
-use crate::simulator::state::SimulationState;
 use crate::simulator::types::*;
 use crate::simulator::util::*;
 use crate::simulator::value::*;

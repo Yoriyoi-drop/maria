@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use super::expr::Expr;
 use super::expr::Value;
 use super::stmt::Stmt;
-use super::types::{DataType, FunctionDecl, Module, ModuleItem};
+use super::types::{FunctionDecl, Module, ModuleItem};
 use crate::ast::inline_util::*;
 use crate::intern::Symbol;
 pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(String, usize)>, String> {

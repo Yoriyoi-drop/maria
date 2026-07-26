@@ -1,20 +1,11 @@
 use super::super::SequenceAttempt;
 use super::super::SimulationEngine;
-use super::super::MAX_LOOP_ITER;
-use crate::waveform::VcdWriter;
-use crate::simulator::parallel;
 use crate::simulator::util::*;
-use crate::ast::*;
 use crate::error::SimError;
 use crate::ir::*;
 use crate::Symbol;
-use crate::simulator::state::SimulationState;
 use crate::simulator::types::*;
-use crate::simulator::value::*;
 use rand::Rng;
-use rand::SeedableRng;
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::Write;
 
 impl SimulationEngine {
     pub(crate) fn evaluate_block_with_delay(&mut self, stmts: &[IrStmt]) -> Result<bool, SimError> {
@@ -35,34 +26,24 @@ impl SimulationEngine {
             }
             match stmt {
                 IrStmt::Block { stmts: inner } => {
-                    self.evaluate_block_with_delay_fork(inner, fork_id)?;
+                    if !self.evaluate_block_fork(inner, fork_id)? {
+                        return Ok(false);
+                    }
                 }
                 IrStmt::NamedBlock {
                     name, stmts: inner, ..
                 } => {
-                    if self.disable_pending == Some(*name) {
-                        self.disable_pending = None;
-                        return Ok(true);
+                    if !self.evaluate_named_block_fork(*name, inner, fork_id)? {
+                        return Ok(false);
                     }
-                    let old = self.disable_pending.take();
-                    self.evaluate_block_with_delay_fork(inner, fork_id)?;
-                    if let Some(ref n) = self.disable_pending {
-                        if *n == *name {
-                            self.disable_pending = None;
-                        }
-                    }
-                    self.disable_pending = self.disable_pending.take().or(old);
                 }
                 IrStmt::If {
                     cond,
                     true_branch: then_stmts,
                     false_branch: else_stmts,
                 } => {
-                    let cond_val = self.evaluate_expr(cond)?;
-                    if cond_val.to_bool().unwrap_or(false) {
-                        self.evaluate_block_with_delay_fork(then_stmts, fork_id)?;
-                    } else if !else_stmts.is_empty() {
-                        self.evaluate_block_with_delay_fork(else_stmts, fork_id)?;
+                    if !self.evaluate_if_fork(cond, then_stmts, else_stmts, fork_id)? {
+                        return Ok(false);
                     }
                 }
                 IrStmt::Case {
@@ -71,33 +52,8 @@ impl SimulationEngine {
                     items,
                     default,
                 } => {
-                    let case_val = self.evaluate_expr(case_expr)?;
-                    let mut matched = false;
-                    for case_item in items {
-                        let mut item_matched = false;
-                        for pat in &case_item.labels {
-                            let pat_val = self.evaluate_expr(pat)?;
-                            let eq = match case_type {
-                                CaseType::CaseX => case_val.casex_eq(&pat_val),
-                                CaseType::CaseZ => case_val.casez_eq(&pat_val),
-                                CaseType::Normal => case_val.eq(&pat_val),
-                            };
-                            if eq {
-                                self.evaluate_block_with_delay_fork(&case_item.body, fork_id)?;
-                                if self.disable_pending.is_some() {
-                                    return Ok(true);
-                                }
-                                item_matched = true;
-                                matched = true;
-                                break;
-                            }
-                        }
-                        if item_matched {
-                            break;
-                        }
-                    }
-                    if !matched && !default.is_empty() {
-                        self.evaluate_block_with_delay_fork(default, fork_id)?;
+                    if !self.evaluate_case_fork(case_type, case_expr, items, default, fork_id)? {
+                        return Ok(false);
                     }
                 }
                 IrStmt::BlockingAssign { lhs, rhs, delay: _ } => {
@@ -341,753 +297,7 @@ impl SimulationEngine {
                             continue;
                         }
                     }
-                    if name == "display" || name == "write" {
-                        let msg = format_display(
-                            &self.state,
-                            &self.design.top.signals,
-                            &self.design.hier_signal_map,
-                            &self.assoc_data,
-                            ir_args,
-                        );
-                        print!("{}", msg);
-                    } else if name == "strobe" {
-                        self.strobe_events.push(ir_args.clone());
-                    } else if name == "fstrobe" {
-                        let handle = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        if let Some(h) = handle {
-                            self.fstrobe_events.push((h, ir_args[1..].to_vec()));
-                        }
-                    } else if name == "fmonitor" {
-                        let handle = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        if let Some(h) = handle {
-                            let vals: Vec<LogicVec> = ir_args[1..]
-                                .iter()
-                                .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
-                                .collect();
-                            self.fmonitor_map.insert(h, (ir_args[1..].to_vec(), vals));
-                        }
-                    } else if name == "monitor" {
-                        let vals: Vec<LogicVec> = ir_args
-                            .iter()
-                            .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
-                            .collect();
-                        self.monitor_args = Some(ir_args.clone());
-                        self.monitor_last_values = Some(vals);
-                    } else if name == "readmemh" {
-                        let file = ir_args.first().and_then(|a| {
-                            if let IrExpr::String(s) = a {
-                                Some(s.clone())
-                            } else {
-                                None
-                            }
-                        });
-                        let sig_id = ir_args.get(1).and_then(|a| {
-                            if let IrExpr::Signal(id, _) = a {
-                                Some(*id)
-                            } else {
-                                None
-                            }
-                        });
-                        if let (Some(file), Some(sig_id)) = (file, sig_id) {
-                            let data = read_hex_file(&file, 8, 4096, None, None)?;
-                            let elem_width = data.first().map(|d| d.width).unwrap_or(8);
-                            let mut all_bits = Vec::new();
-                            for d in &data {
-                                all_bits.extend(d.bits.iter().cloned());
-                            }
-                            let packed = LogicVec {
-                                bits: all_bits,
-                                width: data.len() * elem_width,
-                            };
-                            self.state.write_signal(sig_id, packed);
-                        }
-                    } else if name == "readmemb" {
-                        let file = ir_args.first().and_then(|a| {
-                            if let IrExpr::String(s) = a {
-                                Some(s.clone())
-                            } else {
-                                None
-                            }
-                        });
-                        let sig_id = ir_args.get(1).and_then(|a| {
-                            if let IrExpr::Signal(id, _) = a {
-                                Some(*id)
-                            } else {
-                                None
-                            }
-                        });
-                        if let (Some(file), Some(sig_id)) = (file, sig_id) {
-                            let data = read_bin_file(&file, 8, 4096, None, None)?;
-                            let elem_width = data.first().map(|d| d.width).unwrap_or(8);
-                            let mut all_bits = Vec::new();
-                            for d in &data {
-                                all_bits.extend(d.bits.iter().cloned());
-                            }
-                            let packed = LogicVec {
-                                bits: all_bits,
-                                width: data.len() * elem_width,
-                            };
-                            self.state.write_signal(sig_id, packed);
-                        }
-                    } else if name == "random" {
-                        // If seed argument provided (second arg after dest signal),
-                        // reseed RNG for reproducibility
-                        if let Some(seed_arg) = ir_args.get(1) {
-                            if let Ok(seed_val) = self.evaluate_expr(seed_arg) {
-                                let seed = seed_val.to_u64();
-                                self.rng = rand::rngs::StdRng::seed_from_u64(seed);
-                            }
-                        }
-                        let val: i32 = self.rng.gen();
-                        let sig_id = ir_args.first().and_then(|a| {
-                            if let IrExpr::Signal(id, _) = a {
-                                Some(*id)
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some(sid) = sig_id {
-                            self.state
-                                .write_signal(sid, LogicVec::from_u64(val as u64, 32));
-                        }
-                    } else if name == "urandom" {
-                        let val: u32 = self.rng.gen();
-                        let sig_id = ir_args.first().and_then(|a| {
-                            if let IrExpr::Signal(id, _) = a {
-                                Some(*id)
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some(sid) = sig_id {
-                            self.state
-                                .write_signal(sid, LogicVec::from_u64(val as u64, 32));
-                        }
-                    } else if name == "urandom_range" {
-                        let args_eval: Vec<LogicVec> = ir_args
-                            .iter()
-                            .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
-                            .collect();
-                        let maxval = args_eval.first().map(|v| v.to_u64()).unwrap_or(0);
-                        let minval = args_eval.get(1).map(|v| v.to_u64()).unwrap_or(0);
-                        let val = if maxval <= minval {
-                            minval
-                        } else {
-                            let range = maxval - minval + 1;
-                            if range <= 1 {
-                                minval
-                            } else {
-                                minval + (self.rng.gen::<u64>() % range)
-                            }
-                        };
-                        let sig_id = ir_args.first().and_then(|a| {
-                            if let IrExpr::Signal(id, _) = a {
-                                Some(*id)
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some(sid) = sig_id {
-                            self.state.write_signal(sid, LogicVec::from_u64(val, 32));
-                        }
-                    } else if name == "dumpfile" {
-                        if let Some(IrExpr::String(fname)) = ir_args.first() {
-                            let path = fname.clone();
-                            let design = &self.design;
-                            let state = &self.state.signals;
-                            if let Some(ref mut vcd) = self.vcd {
-                                let _ = vcd.reopen(&path, design, state);
-                            } else {
-                                match VcdWriter::new(&path, design) {
-                                    Ok(v) => self.vcd = Some(v),
-                                    Err(e) => eprintln!("VCD: cannot create '{}': {}", path, e),
-                                }
-                            }
-                        }
-                    } else if name == "dumpall" {
-                        if let Some(ref mut vcd) = self.vcd {
-                            vcd.write_time_header(self.state.time)?;
-                            let design = &self.design;
-                            let state = &self.state.signals;
-                            vcd.dump_all(design, state)?;
-                        }
-                    } else if name == "dumplimit" {
-                        if let Some(limit) = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64()))
-                        {
-                            if let Some(ref mut vcd) = self.vcd {
-                                vcd.max_dump_size = Some(limit);
-                            }
-                        }
-                    } else if name == "dumpvars" {
-                        if let Some(ref mut vcd) = self.vcd {
-                            vcd.enabled = true;
-                        }
-                    } else if name == "dumpon" {
-                        if let Some(ref mut vcd) = self.vcd {
-                            vcd.enabled = true;
-                        }
-                    } else if name == "dumpoff" {
-                        if let Some(ref mut vcd) = self.vcd {
-                            vcd.enabled = false;
-                        }
-                    } else if name == "fopen" {
-                        let fname = ir_args.first().and_then(|a| {
-                            if let IrExpr::String(s) = a {
-                                Some(s.clone())
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some(fname) = fname {
-                            let mode = ir_args.get(1).and_then(|a| {
-                                if let IrExpr::String(s) = a {
-                                    Some(s.as_str())
-                                } else {
-                                    None
-                                }
-                            });
-                            let open_result = match mode {
-                                Some("r") | Some("rb") => std::fs::File::open(&fname),
-                                _ => std::fs::OpenOptions::new()
-                                    .read(true)
-                                    .write(true)
-                                    .create(true)
-                                    .truncate(true)
-                                    .open(&fname),
-                            };
-                            match open_result {
-                                Ok(f) => {
-                                    let handle = self.next_file_handle;
-                                    self.next_file_handle += 1;
-                                    self.file_handles.insert(handle, f);
-                                    self.file_read_pos.insert(handle, 0);
-                                    let sig_id = ir_args.get(1).and_then(|a| {
-                                        if let IrExpr::Signal(id, _) = a {
-                                            Some(*id)
-                                        } else {
-                                            None
-                                        }
-                                    });
-                                    if let Some(sid) = sig_id {
-                                        self.state.write_signal(
-                                            sid,
-                                            LogicVec::from_u64(handle as u64, 32),
-                                        );
-                                    }
-                                }
-                                Err(_) => {
-                                    let sig_id = ir_args.get(1).and_then(|a| {
-                                        if let IrExpr::Signal(id, _) = a {
-                                            Some(*id)
-                                        } else {
-                                            None
-                                        }
-                                    });
-                                    if let Some(sid) = sig_id {
-                                        self.state.write_signal(sid, LogicVec::from_u64(0, 32));
-                                    }
-                                }
-                            }
-                        }
-                    } else if name == "fdisplay" {
-                        let handle = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        if let Some(h) = handle {
-                            if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(
-                                    &self.state,
-                                    &self.design.top.signals,
-                                    &self.design.hier_signal_map,
-                                    &self.assoc_data,
-                                    &ir_args[1..],
-                                );
-                                let _ = write!(f, "{}", msg);
-                            }
-                        }
-                    } else if name == "fwrite" {
-                        let handle = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        if let Some(h) = handle {
-                            if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(
-                                    &self.state,
-                                    &self.design.top.signals,
-                                    &self.design.hier_signal_map,
-                                    &self.assoc_data,
-                                    &ir_args[1..],
-                                );
-                                let _ = write!(f, "{}", msg);
-                            }
-                        }
-                    } else if name == "fscanf" {
-                        let handle = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        if let Some(h) = handle {
-                            if let Some(f) = self.file_handles.get_mut(&h) {
-                                use std::io::{Read, Seek};
-                                let read_pos = self.file_read_pos.entry(h).or_insert(0);
-                                f.seek(std::io::SeekFrom::Start(*read_pos)).ok();
-                                let mut content = String::new();
-                                let _bytes_read = f.read_to_string(&mut content).unwrap_or(0);
-                                *read_pos = f.stream_position().unwrap_or(0);
-                                let fmt = ir_args.get(1).and_then(|a| {
-                                    if let IrExpr::String(s) = a {
-                                        Some(s.clone())
-                                    } else {
-                                        None
-                                    }
-                                });
-                                if let Some(ref fmt_str) = fmt {
-                                    let tokens: Vec<&str> = content.split_whitespace().collect();
-                                    let mut ti = 0;
-                                    let mut ai = 0;
-                                    let mut chars = fmt_str.chars().peekable();
-                                    while let Some(c) = chars.next() {
-                                        if c == '%' {
-                                            if let Some(spec) = chars.next() {
-                                                if spec == 'd' || spec == 'h' || spec == 'b' {
-                                                    if let Some(tok) = tokens.get(ti) {
-                                                        if let Ok(val) = if spec == 'h' {
-                                                            i64::from_str_radix(tok, 16)
-                                                        } else if spec == 'b' {
-                                                            i64::from_str_radix(tok, 2)
-                                                        } else {
-                                                            tok.parse::<i64>()
-                                                        } {
-                                                            let out_idx = 2 + ai;
-                                                            if let Some(arg) = ir_args.get(out_idx)
-                                                            {
-                                                                if let IrExpr::Signal(sid, _) = arg
-                                                                {
-                                                                    self.state.write_signal(
-                                                                        *sid,
-                                                                        LogicVec::from_u64(
-                                                                            val as u64, 32,
-                                                                        ),
-                                                                    );
-                                                                }
-                                                            }
-                                                            ai += 1;
-                                                        }
-                                                    }
-                                                    ti += 1;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else if name == "fread" {
-                        let target = ir_args.first().and_then(|a| {
-                            if let IrExpr::Signal(id, _) = a {
-                                Some(*id)
-                            } else {
-                                None
-                            }
-                        });
-                        let src = ir_args.get(1);
-                        let data = if let Some(IrExpr::String(fname)) = src {
-                            std::fs::read(fname).ok()
-                        } else if let Some(arg) = src {
-                            let handle = self
-                                .evaluate_expr(arg)
-                                .ok()
-                                .map(|v| v.to_u64() as u32)
-                                .unwrap_or(0);
-                            if handle > 0 {
-                                use std::io::Read;
-                                self.file_handles.get_mut(&handle).and_then(|f| {
-                                    let mut buf = Vec::new();
-                                    f.read_to_end(&mut buf).ok().map(|_| buf)
-                                })
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        };
-                        if let (Some(sid), Some(bytes)) = (target, data) {
-                            let mut bits = Vec::with_capacity(bytes.len() * 8);
-                            for byte in bytes {
-                                for i in 0..8 {
-                                    bits.push(if (byte >> i) & 1 == 1 {
-                                        LogicVal::One
-                                    } else {
-                                        LogicVal::Zero
-                                    });
-                                }
-                            }
-                            self.state.write_signal(
-                                sid,
-                                LogicVec {
-                                    width: bits.len(),
-                                    bits,
-                                },
-                            );
-                        }
-                    } else if name == "fclose" {
-                        let handle = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        if let Some(h) = handle {
-                            self.file_handles.remove(&h);
-                        }
-                    } else if name == "fflush" {
-                        let handle = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        if let Some(h) = handle {
-                            if let Some(f) = self.file_handles.get_mut(&h) {
-                                let _ = f.flush();
-                            }
-                        }
-                    } else if name == "fseek" {
-                        let handle = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        let offset = ir_args
-                            .get(1)
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as i64));
-                        let op = ir_args
-                            .get(2)
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64()));
-                        if let (Some(h), Some(off)) = (handle, offset) {
-                            if let Some(f) = self.file_handles.get_mut(&h) {
-                                use std::io::{Seek, SeekFrom};
-                                let seek_from = match op {
-                                    Some(1) => SeekFrom::Current(off),
-                                    Some(2) => SeekFrom::End(off),
-                                    _ => SeekFrom::Start(off as u64),
-                                };
-                                let _ = f.seek(seek_from);
-                                if let Some(pos) = f.stream_position().ok() {
-                                    self.file_read_pos.insert(h, pos);
-                                }
-                            }
-                        }
-                    } else if name == "__dpi_stmt" {
-                        if let Some(arg) = ir_args.first() {
-                            self.evaluate_expr(arg)?;
-                        }
-                    } else if name == "value$plusargs" {
-                        let pattern = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok())
-                            .map(|v| logicvec_to_string(&v))
-                            .unwrap_or_default();
-                        let plusarg_name = pattern
-                            .split('%')
-                            .next()
-                            .unwrap_or(&pattern)
-                            .trim_end_matches('=');
-                        let plusargs = self.plusargs.clone();
-                        for (key, val) in &plusargs {
-                            if key == plusarg_name {
-                                if let Some(var_arg) = ir_args.get(1) {
-                                    let num = if let Some(hex) =
-                                        val.strip_prefix("0x").or_else(|| val.strip_prefix("0X"))
-                                    {
-                                        u64::from_str_radix(hex, 16).unwrap_or(0)
-                                    } else {
-                                        val.parse::<u64>().unwrap_or(0)
-                                    };
-                                    if let IrExpr::Signal(id, _) = var_arg {
-                                        self.state.write_signal(*id, LogicVec::from_u64(num, 32));
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    } else if name == "asserton" {
-                        // $asserton — re-enable all assertions
-                        self.assert_off_all = false;
-                    } else if name == "assertoff" {
-                        // $assertoff — disable all assertions
-                        self.assert_off_all = true;
-                        // If scope argument provided, disable assertions in that scope
-                        if let Some(scope_arg) = ir_args.first() {
-                            if let Ok(scope_val) = self.evaluate_expr(scope_arg) {
-                                let scope_name = logicvec_to_string(&scope_val);
-                                self.assert_modules_off.insert(Symbol::intern(&scope_name));
-                            }
-                        }
-                    } else if name == "assertkill" {
-                        // $assertkill — disable and kill all assertions
-                        self.assert_kill_all = true;
-                        self.assert_off_all = true;
-                        if let Some(scope_arg) = ir_args.first() {
-                            if let Ok(scope_val) = self.evaluate_expr(scope_arg) {
-                                let scope_name = logicvec_to_string(&scope_val);
-                                self.assert_modules_off.insert(Symbol::intern(&scope_name));
-                            }
-                        }
-                    } else if name == "assertpasson" {
-                        // $assertpasson — re-enable assertion pass action (stub)
-                    } else if name == "assertfailon" {
-                        // $assertfailon — re-enable assertion fail action (stub)
-                    } else if name == "assertnonvacuouson" {
-                        // $assertnonvacuouson — stub
-                    } else if name == "isunbounded" {
-                        // $isunbounded — always returns false for bounded simulations
-                        if let Some(sig_arg) = ir_args.first() {
-                            if let IrExpr::Signal(id, _) = sig_arg {
-                                self.state.write_signal(*id, LogicVec::from_u64(0, 1));
-                            }
-                        }
-                    } else if name == "coverage_control" {
-                        // $coverage_control - control coverage collection
-                        if let Some(arg) = ir_args.first() {
-                            if let Ok(val) = self.evaluate_expr(arg) {
-                                let bitmask = val.to_u64();
-                                // Bit 0: coverage on/off
-                                self.coverage_enabled = (bitmask & 1) == 0;
-                                self.coverage_options.insert("control".to_string(), bitmask.to_string());
-                            }
-                        }
-                    } else if name == "coverage_get" {
-                        // $coverage_get - get current coverage level
-                        let mut total = 0u64;
-                        let mut hit = 0u64;
-                        for cg in &self.design.covergroups {
-                            for cp in &cg.coverpoints {
-                                let key = format!("{}.{}", cg.name, cp.name);
-                                let key_sym = Symbol::intern(&key);
-                                if let Some(t) = self.cover_total.get(&key_sym) {
-                                    total += t;
-                                }
-                                if let Some(h) = self.cover_hits.get(&key_sym) {
-                                    hit += h;
-                                }
-                            }
-                        }
-                        let pct = if total > 0 {
-                            (hit as f64 / total as f64) * 100.0
-                        } else {
-                            0.0
-                        };
-                        if let Some(sig_arg) = ir_args.first() {
-                            if let IrExpr::Signal(id, _) = sig_arg {
-                                self.state
-                                    .write_signal(*id, LogicVec::from_u64(pct as u64, 64));
-                            }
-                        }
-                    } else if name == "coverage_save" {
-                        // $coverage_save — save coverage data to a file
-                        let path = ir_args
-                            .first()
-                            .and_then(|a| {
-                                if let IrExpr::String(s) = a {
-                                    Some(s.clone())
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or_else(|| "coverage.ucis".to_string());
-                        let _ = self.export_coverage_ucis(&path);
-                    } else if name == "coverage_model" {
-                        // $coverage_model — get coverage model handle for a covergroup
-                        // Usage: $coverage_model(output_signal [, "covergroup_name"])
-                        let cg_name = ir_args.get(1).and_then(|a| {
-                            if let IrExpr::String(s) = a {
-                                Some(s.clone())
-                            } else {
-                                None
-                            }
-                        });
-                        let handle: u32 = if let Some(ref name) = cg_name {
-                            let exists = self
-                                .design
-                                .covergroups
-                                .iter()
-                                .any(|cg| cg.name.as_str() == name.as_str());
-                            if exists {
-                                if let Some((&h, _)) = self
-                                    .coverage_model_handles
-                                    .iter()
-                                    .find(|(_, n)| n.as_str() == name.as_str())
-                                {
-                                    h as u32
-                                } else {
-                                    let h = self.next_coverage_model_handle;
-                                    self.next_coverage_model_handle += 1;
-                                    self.coverage_model_handles.insert(h, Symbol::intern(&name));
-                                    h as u32
-                                }
-                            } else {
-                                eprintln!(
-                                    "warning: $coverage_model: covergroup '{}' not found",
-                                    name
-                                );
-                                0
-                            }
-                        } else if let Some(first_cg) = self.design.covergroups.first() {
-                            if let Some((&h, _)) = self
-                                .coverage_model_handles
-                                .iter()
-                                .find(|(_, n)| n.as_str() == first_cg.name.as_str())
-                            {
-                                h as u32
-                            } else {
-                                let h = self.next_coverage_model_handle;
-                                self.next_coverage_model_handle += 1;
-                                self.coverage_model_handles.insert(h, first_cg.name);
-                                h as u32
-                            }
-                        } else {
-                            0
-                        };
-                        if let Some(sig_arg) = ir_args.first() {
-                            if let IrExpr::Signal(id, _) = sig_arg {
-                                self.state
-                                    .write_signal(*id, LogicVec::from_u64(handle as u64, 32));
-                            }
-                        }
-                    } else if name == "load_coverage_db" {
-                        // $load_coverage_db — stub: acknowledge but do nothing
-                        eprintln!("warning: $load_coverage_db not yet implemented");
-                    } else if name == "swrite" || name == "sformat" {
-                        // $swrite/$sformat — format values into string variable
-                        // Format: $swrite(output_str, format, args...)
-                        // Note: $swrite appends newline, $sformat does not
-                        if let Some(IrExpr::Signal(out_id, _)) = ir_args.first() {
-                            let format_args = &ir_args[1..];
-                            let mut msg = format_display(
-                                &self.state,
-                                &self.design.top.signals,
-                                &self.design.hier_signal_map,
-                                &self.assoc_data,
-                                format_args,
-                            );
-                            if name == "swrite" {
-                                msg.push('\n');
-                            }
-                            let mut bits = Vec::with_capacity(msg.len() * 8);
-                            for c in msg.chars() {
-                                let byte = c as u8;
-                                for i in 0..8 {
-                                    bits.push(if (byte >> i) & 1 == 1 {
-                                        LogicVal::One
-                                    } else {
-                                        LogicVal::Zero
-                                    });
-                                }
-                            }
-                            self.state.write_signal(
-                                *out_id,
-                                LogicVec {
-                                    width: bits.len(),
-                                    bits,
-                                },
-                            );
-                        }
-                    } else if name == "sscanf" {
-                        // $sscanf — scan values from string
-                        // Format: $sscanf(input_str, format, output_args...)
-                        if let Some(input_arg) = ir_args.first() {
-                            let input_str = if let IrExpr::String(s) = input_arg {
-                                s.clone()
-                            } else if let Ok(val) = self.evaluate_expr(input_arg) {
-                                logicvec_to_string(&val)
-                            } else {
-                                String::new()
-                            };
-                            let fmt = ir_args.get(1).and_then(|a| {
-                                if let IrExpr::String(s) = a {
-                                    Some(s.clone())
-                                } else {
-                                    None
-                                }
-                            });
-                            if let Some(ref fmt_str) = fmt {
-                                let tokens: Vec<&str> = input_str.split_whitespace().collect();
-                                let mut ti = 0;
-                                let mut ai = 0;
-                                let mut chars = fmt_str.chars().peekable();
-                                while let Some(c) = chars.next() {
-                                    if c == '%' {
-                                        if let Some(spec) = chars.next() {
-                                            if spec == 'd'
-                                                || spec == 'h'
-                                                || spec == 'b'
-                                                || spec == 'o'
-                                            {
-                                                if let Some(tok) = tokens.get(ti) {
-                                                    let radix = if spec == 'h' {
-                                                        16
-                                                    } else if spec == 'o' {
-                                                        8
-                                                    } else if spec == 'b' {
-                                                        2
-                                                    } else {
-                                                        10
-                                                    };
-                                                    if let Ok(val) = i64::from_str_radix(tok, radix)
-                                                    {
-                                                        if let Some(out_arg) = ir_args.get(2 + ai) {
-                                                            if let IrExpr::Signal(sid, _) = out_arg
-                                                            {
-                                                                self.state.write_signal(
-                                                                    *sid,
-                                                                    LogicVec::from_u64(
-                                                                        val as u64, 32,
-                                                                    ),
-                                                                );
-                                                            }
-                                                        }
-                                                        ai += 1;
-                                                    }
-                                                }
-                                                ti += 1;
-                                            } else if spec == 's' {
-                                                // String format: consume all remaining tokens
-                                                if let Some(out_arg) = ir_args.get(2 + ai) {
-                                                    if let IrExpr::Signal(sid, _) = out_arg {
-                                                        let s = tokens[ti..].join(" ");
-                                                        let mut bits =
-                                                            Vec::with_capacity(s.len() * 8);
-                                                        for c in s.chars() {
-                                                            let byte = c as u8;
-                                                            for i in 0..8 {
-                                                                bits.push(
-                                                                    if (byte >> i) & 1 == 1 {
-                                                                        LogicVal::One
-                                                                    } else {
-                                                                        LogicVal::Zero
-                                                                    },
-                                                                );
-                                                            }
-                                                        }
-                                                        self.state.write_signal(
-                                                            *sid,
-                                                            LogicVec {
-                                                                width: bits.len(),
-                                                                bits,
-                                                            },
-                                                        );
-                                                    }
-                                                }
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else if name == "test$plusargs" {
-                        // $test$plusargs in statement context — return value ignored
-                    } else {
-                        eprintln!("warning: unknown system call '{}' ignored", name);
-                    }
+                    self.evaluate_syscall(name.as_str(), ir_args, fork_id, stmts, i)?;
                 }
                 IrStmt::SysFinish => {
                     // Flush all pending await continuations before stopping
@@ -1207,11 +417,11 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::Break => {
-                    self.control_flow = Some(FlowControl::Break);
+                    self.evaluate_break_fork()?;
                     return Ok(true);
                 }
                 IrStmt::Continue => {
-                    self.control_flow = Some(FlowControl::Continue);
+                    self.evaluate_continue_fork()?;
                     return Ok(true);
                 }
                 IrStmt::LoopFor {
@@ -1220,153 +430,23 @@ impl SimulationEngine {
                     step,
                     body,
                 } => {
-                    if let Some(init_stmt) = init {
-                        self.evaluate_block_with_delay_fork(&[*init_stmt.clone()], fork_id)?;
-                    }
-                    let mut iter_count = 0usize;
-                    loop {
-                        if iter_count >= MAX_LOOP_ITER {
-                            eprintln!(
-                                "warning: for loop exceeded {} iterations, breaking",
-                                MAX_LOOP_ITER
-                            );
-                            break;
-                        }
-                        iter_count += 1;
-                        if self.disable_pending.is_some() {
-                            break;
-                        }
-                        if self.control_flow.is_some() {
-                            self.control_flow = None;
-                            break;
-                        }
-                        let cond_val = self.evaluate_expr(cond)?;
-                        if !cond_val.to_bool().unwrap_or(false) {
-                            break;
-                        }
-                        self.evaluate_block_with_delay_fork(body, fork_id)?;
-                        let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) {
-                            if let Some(step_stmt) = step {
-                                self.evaluate_block_with_delay_fork(
-                                    &[*step_stmt.clone()],
-                                    fork_id,
-                                )?;
-                            }
-                            continue;
-                        }
-                        if cf == Some(FlowControl::Break) {
-                            break;
-                        }
-                        if self.disable_pending.is_some() {
-                            break;
-                        }
-                        if let Some(step_stmt) = step {
-                            self.evaluate_block_with_delay_fork(&[*step_stmt.clone()], fork_id)?;
-                        }
+                    if !self.evaluate_loop_for_fork(init, cond, step, body, fork_id)? {
+                        return Ok(false);
                     }
                 }
                 IrStmt::LoopWhile { cond, body } => {
-                    let mut iter_count = 0usize;
-                    loop {
-                        if iter_count >= MAX_LOOP_ITER {
-                            eprintln!(
-                                "warning: while loop exceeded {} iterations, breaking",
-                                MAX_LOOP_ITER
-                            );
-                            break;
-                        }
-                        iter_count += 1;
-                        if self.disable_pending.is_some() {
-                            break;
-                        }
-                        if self.control_flow.is_some() {
-                            self.control_flow = None;
-                            break;
-                        }
-                        let cond_val = self.evaluate_expr(cond)?;
-                        if !cond_val.to_bool().unwrap_or(false) {
-                            break;
-                        }
-                        let old_loop_cont = self.loop_continuation.take();
-                        self.loop_continuation = Some(vec![IrStmt::LoopWhile {
-                            cond: cond.clone(),
-                            body: body.clone(),
-                        }]);
-                        let completed = self.evaluate_block_with_delay_fork(body, fork_id)?;
-                        self.loop_continuation = old_loop_cont;
-                        if !completed {
-                            return Ok(false);
-                        }
-                        let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) {
-                            continue;
-                        }
-                        if cf == Some(FlowControl::Break) {
-                            break;
-                        }
+                    if !self.evaluate_loop_while_fork(cond, body, fork_id)? {
+                        return Ok(false);
                     }
                 }
                 IrStmt::LoopDoWhile { cond, body } => {
-                    let mut iter_count = 0usize;
-                    loop {
-                        if iter_count >= MAX_LOOP_ITER {
-                            eprintln!(
-                                "warning: do-while loop exceeded {} iterations, breaking",
-                                MAX_LOOP_ITER
-                            );
-                            break;
-                        }
-                        iter_count += 1;
-                        if self.disable_pending.is_some() {
-                            break;
-                        }
-                        if self.control_flow.is_some() {
-                            self.control_flow = None;
-                            break;
-                        }
-                        let old_loop_cont = self.loop_continuation.take();
-                        self.loop_continuation = Some(vec![IrStmt::LoopDoWhile {
-                            cond: cond.clone(),
-                            body: body.clone(),
-                        }]);
-                        let completed = self.evaluate_block_with_delay_fork(body, fork_id)?;
-                        self.loop_continuation = old_loop_cont;
-                        if !completed {
-                            return Ok(false);
-                        }
-                        let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) {
-                            continue;
-                        }
-                        if cf == Some(FlowControl::Break) {
-                            break;
-                        }
-                        let cond_val = self.evaluate_expr(cond)?;
-                        if !cond_val.to_bool().unwrap_or(false) {
-                            break;
-                        }
+                    if !self.evaluate_loop_do_while_fork(cond, body, fork_id)? {
+                        return Ok(false);
                     }
                 }
                 IrStmt::Repeat { count, body } => {
-                    let count_val = self.evaluate_expr(count)?;
-                    let n = (count_val.to_u64() as usize).min(MAX_LOOP_ITER);
-                    for _ in 0..n {
-                        if self.disable_pending.is_some() {
-                            break;
-                        }
-                        if self.control_flow.is_some() {
-                            self.control_flow = None;
-                            break;
-                        }
-                        self.evaluate_block_with_delay_fork(body, fork_id)?;
-                        let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) {
-                            continue;
-                        }
-                        if cf == Some(FlowControl::Break) {
-                            break;
-                        }
+                    if !self.evaluate_repeat_fork(count, body, fork_id)? {
+                        return Ok(false);
                     }
                 }
                 IrStmt::Foreach {
@@ -1374,40 +454,8 @@ impl SimulationEngine {
                     index_var,
                     body,
                 } => {
-                    let lv = self.evaluate_expr(array_var)?;
-                    let sig_info = if let IrExpr::Signal(id, _) = array_var {
-                        self.design.top.signals.get(*id)
-                    } else {
-                        None
-                    };
-                    let elem_width = sig_info.map(|s| s.elem_width).unwrap_or(1);
-                    let count = if elem_width > 0 {
-                        lv.width / elem_width
-                    } else {
-                        0
-                    };
-                    for i in 0..count {
-                        if self.disable_pending.is_some() {
-                            break;
-                        }
-                        if self.control_flow.is_some() {
-                            self.control_flow = None;
-                            break;
-                        }
-                        let idx_val = LogicVec::from_u64(i as u64, 32);
-                        let mut scope = HashMap::new();
-                        scope.insert(index_var.clone(), idx_val);
-                        let depth = self.method_locals.len();
-                        self.method_locals.push(scope);
-                        self.evaluate_block_with_delay_fork(body, fork_id)?;
-                        self.method_locals.truncate(depth);
-                        let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) {
-                            continue;
-                        }
-                        if cf == Some(FlowControl::Break) {
-                            break;
-                        }
+                    if !self.evaluate_foreach_fork(array_var, index_var, body, fork_id)? {
+                        return Ok(false);
                     }
                 }
                 IrStmt::MethodCallStmt {
@@ -1566,7 +614,9 @@ impl SimulationEngine {
             }
             match stmt {
                 crate::ast::Stmt::Block { stmts: inner } => {
-                    self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                    if !self.evaluate_ast_block_with_delay_fork(inner, fork_id)? {
+                        return Ok(false);
+                    }
                 }
                 crate::ast::Stmt::NamedBlock {
                     name,
@@ -1578,13 +628,16 @@ impl SimulationEngine {
                         return Ok(true);
                     }
                     let old = self.disable_pending.take();
-                    self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                    let completed = self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
                     if let Some(ref n) = self.disable_pending {
                         if *n == *name {
                             self.disable_pending = None;
                         }
                     }
                     self.disable_pending = self.disable_pending.take().or(old);
+                    if !completed {
+                        return Ok(false);
+                    }
                 }
                 crate::ast::Stmt::BlockingAssign { lhs, rhs, delay: _ } => {
                     let val = self.evaluate_ast_expr(rhs)?;
@@ -1606,9 +659,13 @@ impl SimulationEngine {
                 } => {
                     let cond_val = self.evaluate_ast_expr(cond)?;
                     if cond_val.to_bool().unwrap_or(false) {
-                        self.evaluate_ast_block_with_delay_fork(&[*true_branch.clone()], fork_id)?;
+                        if !self.evaluate_ast_block_with_delay_fork(&[*true_branch.clone()], fork_id)? {
+                            return Ok(false);
+                        }
                     } else if let Some(fb) = false_branch {
-                        self.evaluate_ast_block_with_delay_fork(&[*fb.clone()], fork_id)?;
+                        if !self.evaluate_ast_block_with_delay_fork(&[*fb.clone()], fork_id)? {
+                            return Ok(false);
+                        }
                     }
                 }
                 crate::ast::Stmt::Case {
@@ -1623,10 +680,12 @@ impl SimulationEngine {
                         for pat in &item.labels {
                             let pat_val = self.evaluate_ast_expr(pat)?;
                             if case_val.eq(&pat_val) {
-                                self.evaluate_ast_block_with_delay_fork(
+                                if !self.evaluate_ast_block_with_delay_fork(
                                     &[*item.stmt.clone()],
                                     fork_id,
-                                )?;
+                                )? {
+                                    return Ok(false);
+                                }
                                 if self.disable_pending.is_some() {
                                     return Ok(true);
                                 }
@@ -1641,7 +700,9 @@ impl SimulationEngine {
                     }
                     if !matched {
                         if let Some(def) = default {
-                            self.evaluate_ast_block_with_delay_fork(&[*def.clone()], fork_id)?;
+                            if !self.evaluate_ast_block_with_delay_fork(&[*def.clone()], fork_id)? {
+                                return Ok(false);
+                            }
                         }
                     }
                 }
@@ -1656,10 +717,12 @@ impl SimulationEngine {
                         for pat in &item.labels {
                             let pat_val = self.evaluate_ast_expr(pat)?;
                             if case_val.casex_eq(&pat_val) {
-                                self.evaluate_ast_block_with_delay_fork(
+                                if !self.evaluate_ast_block_with_delay_fork(
                                     &[*item.stmt.clone()],
                                     fork_id,
-                                )?;
+                                )? {
+                                    return Ok(false);
+                                }
                                 matched = true;
                                 break;
                             }
@@ -1670,7 +733,9 @@ impl SimulationEngine {
                     }
                     if !matched {
                         if let Some(def) = default {
-                            self.evaluate_ast_block_with_delay_fork(&[*def.clone()], fork_id)?;
+                            if !self.evaluate_ast_block_with_delay_fork(&[*def.clone()], fork_id)? {
+                                return Ok(false);
+                            }
                         }
                     }
                 }
@@ -1685,10 +750,12 @@ impl SimulationEngine {
                         for pat in &item.labels {
                             let pat_val = self.evaluate_ast_expr(pat)?;
                             if case_val.casez_eq(&pat_val) {
-                                self.evaluate_ast_block_with_delay_fork(
+                                if !self.evaluate_ast_block_with_delay_fork(
                                     &[*item.stmt.clone()],
                                     fork_id,
-                                )?;
+                                )? {
+                                    return Ok(false);
+                                }
                                 matched = true;
                                 break;
                             }
@@ -1699,7 +766,9 @@ impl SimulationEngine {
                     }
                     if !matched {
                         if let Some(def) = default {
-                            self.evaluate_ast_block_with_delay_fork(&[*def.clone()], fork_id)?;
+                            if !self.evaluate_ast_block_with_delay_fork(&[*def.clone()], fork_id)? {
+                                return Ok(false);
+                            }
                         }
                     }
                 }
@@ -1711,7 +780,9 @@ impl SimulationEngine {
                         self.control_flow = None;
                         break;
                     }
-                    self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                    if !self.evaluate_ast_block_with_delay_fork(inner, fork_id)? {
+                        break;
+                    }
                     let cf = self.control_flow.take();
                     if cf == Some(FlowControl::Break) {
                         break;
@@ -1732,7 +803,9 @@ impl SimulationEngine {
                     if !cond_val.to_bool().unwrap_or(false) {
                         break;
                     }
-                    self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                    if !self.evaluate_ast_block_with_delay_fork(inner, fork_id)? {
+                        break;
+                    }
                     let cf = self.control_flow.take();
                     if cf == Some(FlowControl::Break) {
                         break;
@@ -1749,7 +822,9 @@ impl SimulationEngine {
                         self.control_flow = None;
                         break;
                     }
-                    self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                    if !self.evaluate_ast_block_with_delay_fork(inner, fork_id)? {
+                        break;
+                    }
                     let cf = self.control_flow.take();
                     if cf == Some(FlowControl::Continue) {
                         continue;
@@ -1769,7 +844,9 @@ impl SimulationEngine {
                     stmts: inner,
                 } => {
                     if let Some(init_stmt) = init {
-                        self.evaluate_ast_block_with_delay_fork(&[*init_stmt.clone()], fork_id)?;
+                        if !self.evaluate_ast_block_with_delay_fork(&[*init_stmt.clone()], fork_id)? {
+                            break;
+                        }
                     }
                     loop {
                         if self.disable_pending.is_some() {
@@ -1785,11 +862,15 @@ impl SimulationEngine {
                                 break;
                             }
                         }
-                        self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                        if !self.evaluate_ast_block_with_delay_fork(inner, fork_id)? {
+                            break;
+                        }
                         let cf = self.control_flow.take();
                         if cf == Some(FlowControl::Continue) {
                             if let Some(s) = step {
-                                self.evaluate_ast_block_with_delay_fork(&[*s.clone()], fork_id)?;
+                                if !self.evaluate_ast_block_with_delay_fork(&[*s.clone()], fork_id)? {
+                                    break;
+                                }
                             }
                             continue;
                         }
@@ -1800,7 +881,9 @@ impl SimulationEngine {
                             break;
                         }
                         if let Some(s) = step {
-                            self.evaluate_ast_block_with_delay_fork(&[*s.clone()], fork_id)?;
+                            if !self.evaluate_ast_block_with_delay_fork(&[*s.clone()], fork_id)? {
+                                break;
+                            }
                         }
                     }
                 }
@@ -1818,7 +901,9 @@ impl SimulationEngine {
                             self.control_flow = None;
                             break;
                         }
-                        self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                        if !self.evaluate_ast_block_with_delay_fork(inner, fork_id)? {
+                            break;
+                        }
                         let cf = self.control_flow.take();
                         if cf == Some(FlowControl::Continue) {
                             continue;
@@ -2065,424 +1150,21 @@ impl SimulationEngine {
                     true_branch: then_stmts,
                     false_branch: else_stmts,
                 } => {
-                    let cond_val = self.evaluate_expr(cond)?;
-                    if cond_val.to_bool().unwrap_or(false) {
-                        self.evaluate_stmt_block(then_stmts)?;
-                    } else if !else_stmts.is_empty() {
-                        self.evaluate_stmt_block(else_stmts)?;
-                    }
+                    self.evaluate_if_stmt(cond, then_stmts, else_stmts)?;
                 }
                 IrStmt::Block { stmts: inner } => {
-                    self.evaluate_stmt_block(inner)?;
+                    self.evaluate_block_stmt(inner)?;
                 }
                 IrStmt::NamedBlock {
                     name, stmts: inner, ..
                 } => {
-                    if self.disable_pending == Some(*name) {
-                        self.disable_pending = None;
-                        return Ok(());
-                    }
-                    let old = self.disable_pending.take();
-                    self.evaluate_stmt_block(inner)?;
-                    if let Some(ref n) = self.disable_pending {
-                        if *n == *name {
-                            self.disable_pending = None;
-                        }
-                    }
-                    self.disable_pending = self.disable_pending.take().or(old);
+                    self.evaluate_named_block_stmt(*name, inner)?;
                 }
                 IrStmt::SysCall {
                     name,
                     args: ir_args,
                 } => {
-                    if name == "display" || name == "write" {
-                        let msg = format_display(
-                            &self.state,
-                            &self.design.top.signals,
-                            &self.design.hier_signal_map,
-                            &self.assoc_data,
-                            ir_args,
-                        );
-                        print!("{}", msg);
-                    } else if name == "strobe" {
-                        self.strobe_events.push(ir_args.clone());
-                    } else if name == "fstrobe" {
-                        let handle = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        if let Some(h) = handle {
-                            self.fstrobe_events.push((h, ir_args[1..].to_vec()));
-                        }
-                    } else if name == "fmonitor" {
-                        let handle = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        if let Some(h) = handle {
-                            let vals: Vec<LogicVec> = ir_args[1..]
-                                .iter()
-                                .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
-                                .collect();
-                            self.fmonitor_map.insert(h, (ir_args[1..].to_vec(), vals));
-                        }
-                    } else if name == "monitor" {
-                        let vals: Vec<LogicVec> = ir_args
-                            .iter()
-                            .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
-                            .collect();
-                        self.monitor_args = Some(ir_args.clone());
-                        self.monitor_last_values = Some(vals);
-                    } else if name == "urandom" {
-                        let val: u32 = self.rng.gen();
-                        let sig_id = ir_args.first().and_then(|a| {
-                            if let IrExpr::Signal(id, _) = a {
-                                Some(*id)
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some(sid) = sig_id {
-                            self.state
-                                .write_signal(sid, LogicVec::from_u64(val as u64, 32));
-                        }
-                    } else if name == "urandom_range" {
-                        let args_eval: Vec<LogicVec> = ir_args
-                            .iter()
-                            .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
-                            .collect();
-                        let maxval = args_eval.first().map(|v| v.to_u64()).unwrap_or(0);
-                        let minval = args_eval.get(1).map(|v| v.to_u64()).unwrap_or(0);
-                        let val = if maxval <= minval {
-                            minval
-                        } else {
-                            let range = maxval - minval + 1;
-                            if range <= 1 {
-                                minval
-                            } else {
-                                minval + (self.rng.gen::<u64>() % range)
-                            }
-                        };
-                        let sig_id = ir_args.first().and_then(|a| {
-                            if let IrExpr::Signal(id, _) = a {
-                                Some(*id)
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some(sid) = sig_id {
-                            self.state.write_signal(sid, LogicVec::from_u64(val, 32));
-                        }
-                    } else if name == "random" {
-                        // If seed argument provided (second arg after dest signal),
-                        // reseed RNG for reproducibility
-                        if let Some(seed_arg) = ir_args.get(1) {
-                            if let Ok(seed_val) = self.evaluate_expr(seed_arg) {
-                                let seed = seed_val.to_u64();
-                                self.rng = rand::rngs::StdRng::seed_from_u64(seed);
-                            }
-                        }
-                        let val: i32 = self.rng.gen();
-                        let sig_id = ir_args.first().and_then(|a| {
-                            if let IrExpr::Signal(id, _) = a {
-                                Some(*id)
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some(sid) = sig_id {
-                            self.state
-                                .write_signal(sid, LogicVec::from_u64(val as u64, 32));
-                        }
-                    } else if name == "dumpfile" {
-                        if let Some(IrExpr::String(fname)) = ir_args.first() {
-                            let path = fname.clone();
-                            let design = &self.design;
-                            let state = &self.state.signals;
-                            if let Some(ref mut vcd) = self.vcd {
-                                let _ = vcd.reopen(&path, design, state);
-                            } else {
-                                match VcdWriter::new(&path, design) {
-                                    Ok(v) => self.vcd = Some(v),
-                                    Err(e) => eprintln!("VCD: cannot create '{}': {}", path, e),
-                                }
-                            }
-                        }
-                    } else if name == "dumpall" {
-                        if let Some(ref mut vcd) = self.vcd {
-                            vcd.write_time_header(self.state.time)?;
-                            let design = &self.design;
-                            let state = &self.state.signals;
-                            vcd.dump_all(design, state)?;
-                        }
-                    } else if name == "dumplimit" {
-                        if let Some(limit) = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64()))
-                        {
-                            if let Some(ref mut vcd) = self.vcd {
-                                vcd.max_dump_size = Some(limit);
-                            }
-                        }
-                    } else if name == "dumpvars" || name == "dumpon" {
-                        if let Some(ref mut vcd) = self.vcd {
-                            vcd.enabled = true;
-                        }
-                    } else if name == "dumpoff" {
-                        if let Some(ref mut vcd) = self.vcd {
-                            vcd.enabled = false;
-                        }
-                    } else if name == "fopen" {
-                        let fname = ir_args.first().and_then(|a| {
-                            if let IrExpr::String(s) = a {
-                                Some(s.clone())
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some(fname) = fname {
-                            let mode = ir_args.get(1).and_then(|a| {
-                                if let IrExpr::String(s) = a {
-                                    Some(s.as_str())
-                                } else {
-                                    None
-                                }
-                            });
-                            let open_result = match mode {
-                                Some("r") | Some("rb") => std::fs::File::open(&fname),
-                                _ => std::fs::OpenOptions::new()
-                                    .read(true)
-                                    .write(true)
-                                    .create(true)
-                                    .truncate(true)
-                                    .open(&fname),
-                            };
-                            match open_result {
-                                Ok(f) => {
-                                    let handle = self.next_file_handle;
-                                    self.next_file_handle += 1;
-                                    self.file_handles.insert(handle, f);
-                                    self.file_read_pos.insert(handle, 0);
-                                    let sig_id = ir_args.get(1).and_then(|a| {
-                                        if let IrExpr::Signal(id, _) = a {
-                                            Some(*id)
-                                        } else {
-                                            None
-                                        }
-                                    });
-                                    if let Some(sid) = sig_id {
-                                        self.state.write_signal(
-                                            sid,
-                                            LogicVec::from_u64(handle as u64, 32),
-                                        );
-                                    }
-                                }
-                                Err(_) => {
-                                    let sig_id = ir_args.get(1).and_then(|a| {
-                                        if let IrExpr::Signal(id, _) = a {
-                                            Some(*id)
-                                        } else {
-                                            None
-                                        }
-                                    });
-                                    if let Some(sid) = sig_id {
-                                        self.state.write_signal(sid, LogicVec::from_u64(0, 32));
-                                    }
-                                }
-                            }
-                        }
-                    } else if name == "fdisplay" {
-                        let handle = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        if let Some(h) = handle {
-                            if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(
-                                    &self.state,
-                                    &self.design.top.signals,
-                                    &self.design.hier_signal_map,
-                                    &self.assoc_data,
-                                    &ir_args[1..],
-                                );
-                                let _ = write!(f, "{}", msg);
-                            }
-                        }
-                    } else if name == "fwrite" {
-                        let handle = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        if let Some(h) = handle {
-                            if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(
-                                    &self.state,
-                                    &self.design.top.signals,
-                                    &self.design.hier_signal_map,
-                                    &self.assoc_data,
-                                    &ir_args[1..],
-                                );
-                                let _ = write!(f, "{}", msg);
-                            }
-                        }
-                    } else if name == "fscanf" {
-                        let handle = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        if let Some(h) = handle {
-                            if let Some(f) = self.file_handles.get_mut(&h) {
-                                use std::io::{Read, Seek};
-                                let read_pos = self.file_read_pos.entry(h).or_insert(0);
-                                f.seek(std::io::SeekFrom::Start(*read_pos)).ok();
-                                let mut content = String::new();
-                                let _bytes_read = f.read_to_string(&mut content).unwrap_or(0);
-                                *read_pos = f.stream_position().unwrap_or(0);
-                                let fmt = ir_args.get(1).and_then(|a| {
-                                    if let IrExpr::String(s) = a {
-                                        Some(s.clone())
-                                    } else {
-                                        None
-                                    }
-                                });
-                                if let Some(ref fmt_str) = fmt {
-                                    let tokens: Vec<&str> = content.split_whitespace().collect();
-                                    let mut ti = 0;
-                                    let mut ai = 0;
-                                    let mut chars = fmt_str.chars().peekable();
-                                    while let Some(c) = chars.next() {
-                                        if c == '%' {
-                                            if let Some(spec) = chars.next() {
-                                                if spec == 'd' || spec == 'h' || spec == 'b' {
-                                                    if let Some(tok) = tokens.get(ti) {
-                                                        if let Ok(val) = if spec == 'h' {
-                                                            i64::from_str_radix(tok, 16)
-                                                        } else if spec == 'b' {
-                                                            i64::from_str_radix(tok, 2)
-                                                        } else {
-                                                            tok.parse::<i64>()
-                                                        } {
-                                                            let out_idx = 2 + ai;
-                                                            if let Some(arg) = ir_args.get(out_idx)
-                                                            {
-                                                                if let IrExpr::Signal(sid, _) = arg
-                                                                {
-                                                                    self.state.write_signal(
-                                                                        *sid,
-                                                                        LogicVec::from_u64(
-                                                                            val as u64, 32,
-                                                                        ),
-                                                                    );
-                                                                }
-                                                            }
-                                                            ai += 1;
-                                                        }
-                                                    }
-                                                    ti += 1;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else if name == "fread" {
-                        let target = ir_args.first().and_then(|a| {
-                            if let IrExpr::Signal(id, _) = a {
-                                Some(*id)
-                            } else {
-                                None
-                            }
-                        });
-                        let src = ir_args.get(1);
-                        let data = if let Some(IrExpr::String(fname)) = src {
-                            std::fs::read(fname).ok()
-                        } else if let Some(arg) = src {
-                            let handle = self
-                                .evaluate_expr(arg)
-                                .ok()
-                                .map(|v| v.to_u64() as u32)
-                                .unwrap_or(0);
-                            if handle > 0 {
-                                use std::io::Read;
-                                self.file_handles.get_mut(&handle).and_then(|f| {
-                                    let mut buf = Vec::new();
-                                    f.read_to_end(&mut buf).ok().map(|_| buf)
-                                })
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        };
-                        if let (Some(sid), Some(bytes)) = (target, data) {
-                            let mut bits = Vec::with_capacity(bytes.len() * 8);
-                            for byte in bytes {
-                                for i in 0..8 {
-                                    bits.push(if (byte >> i) & 1 == 1 {
-                                        LogicVal::One
-                                    } else {
-                                        LogicVal::Zero
-                                    });
-                                }
-                            }
-                            self.state.write_signal(
-                                sid,
-                                LogicVec {
-                                    width: bits.len(),
-                                    bits,
-                                },
-                            );
-                        }
-                    } else if name == "fclose" {
-                        let handle = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        if let Some(h) = handle {
-                            self.file_handles.remove(&h);
-                            self.file_read_pos.remove(&h);
-                        }
-                    } else if name == "fflush" {
-                        let handle = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
-                        if let Some(h) = handle {
-                            if let Some(f) = self.file_handles.get_mut(&h) {
-                                let _ = f.flush();
-                            }
-                        }
-                    } else if name == "__dpi_stmt" {
-                        if let Some(arg) = ir_args.first() {
-                            self.evaluate_expr(arg)?;
-                        }
-                    } else if name == "value$plusargs" {
-                        let pattern = ir_args
-                            .first()
-                            .and_then(|a| self.evaluate_expr(a).ok())
-                            .map(|v| logicvec_to_string(&v))
-                            .unwrap_or_default();
-                        let plusarg_name = pattern
-                            .split('%')
-                            .next()
-                            .unwrap_or(&pattern)
-                            .trim_end_matches('=');
-                        let plusargs = self.plusargs.clone();
-                        for (key, val) in &plusargs {
-                            if key == plusarg_name {
-                                if let Some(var_arg) = ir_args.get(1) {
-                                    let num = if let Some(hex) =
-                                        val.strip_prefix("0x").or_else(|| val.strip_prefix("0X"))
-                                    {
-                                        u64::from_str_radix(hex, 16).unwrap_or(0)
-                                    } else {
-                                        val.parse::<u64>().unwrap_or(0)
-                                    };
-                                    if let IrExpr::Signal(id, _) = var_arg {
-                                        self.state.write_signal(*id, LogicVec::from_u64(num, 32));
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    } else if name == "test$plusargs" {
-                    } else {
-                        eprintln!("warning: unknown system call '{}' ignored", name);
-                    }
+                    self.evaluate_syscall_stmt(name.as_str(), ir_args)?;
                 }
                 IrStmt::SysFinish => {
                     self.running = false;
@@ -2494,34 +1176,7 @@ impl SimulationEngine {
                     items,
                     default,
                 } => {
-                    let case_val = self.evaluate_expr(case_expr)?;
-                    let mut matched = false;
-                    for case_item in items {
-                        let mut item_matched = false;
-                        for pat in &case_item.labels {
-                            let pat_val = self.evaluate_expr(pat)?;
-                            let eq = match case_type {
-                                CaseType::CaseX => case_val.casex_eq(&pat_val),
-                                CaseType::CaseZ => case_val.casez_eq(&pat_val),
-                                CaseType::Normal => case_val.eq(&pat_val),
-                            };
-                            if eq {
-                                self.evaluate_stmt_block(&case_item.body)?;
-                                if self.disable_pending.is_some() {
-                                    return Ok(());
-                                }
-                                item_matched = true;
-                                matched = true;
-                                break;
-                            }
-                        }
-                        if item_matched {
-                            break;
-                        }
-                    }
-                    if !matched && !default.is_empty() {
-                        self.evaluate_stmt_block(default)?;
-                    }
+                    self.evaluate_case_stmt(case_type, case_expr, items, default)?;
                 }
                 IrStmt::Null => {}
                 IrStmt::Assert {
@@ -2616,11 +1271,11 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::Break => {
-                    self.control_flow = Some(FlowControl::Break);
+                    self.evaluate_break_stmt()?;
                     return Ok(());
                 }
                 IrStmt::Continue => {
-                    self.control_flow = Some(FlowControl::Continue);
+                    self.evaluate_continue_stmt()?;
                     return Ok(());
                 }
                 IrStmt::LoopFor {
@@ -2629,133 +1284,16 @@ impl SimulationEngine {
                     step,
                     body,
                 } => {
-                    if let Some(init_stmt) = init {
-                        self.evaluate_stmt_block(&[*init_stmt.clone()])?;
-                    }
-                    let mut iter_count = 0usize;
-                    loop {
-                        if iter_count >= MAX_LOOP_ITER {
-                            eprintln!(
-                                "warning: for loop exceeded {} iterations, breaking",
-                                MAX_LOOP_ITER
-                            );
-                            break;
-                        }
-                        iter_count += 1;
-                        if self.disable_pending.is_some() {
-                            break;
-                        }
-                        if self.control_flow.is_some() {
-                            self.control_flow = None;
-                            break;
-                        }
-                        let cond_val = self.evaluate_expr(cond)?;
-                        if !cond_val.to_bool().unwrap_or(false) {
-                            break;
-                        }
-                        self.evaluate_stmt_block(body)?;
-                        let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) {
-                            if let Some(step_stmt) = step {
-                                self.evaluate_stmt_block(&[*step_stmt.clone()])?;
-                            }
-                            continue;
-                        }
-                        if cf == Some(FlowControl::Break) {
-                            break;
-                        }
-                        if self.disable_pending.is_some() {
-                            break;
-                        }
-                        if let Some(step_stmt) = step {
-                            self.evaluate_stmt_block(&[*step_stmt.clone()])?;
-                        }
-                    }
+                    self.evaluate_loop_for_stmt(init, cond, step, body)?;
                 }
                 IrStmt::LoopWhile { cond, body } => {
-                    let mut iter_count = 0usize;
-                    loop {
-                        if iter_count >= MAX_LOOP_ITER {
-                            eprintln!(
-                                "warning: while loop exceeded {} iterations, breaking",
-                                MAX_LOOP_ITER
-                            );
-                            break;
-                        }
-                        iter_count += 1;
-                        if self.disable_pending.is_some() {
-                            break;
-                        }
-                        if self.control_flow.is_some() {
-                            self.control_flow = None;
-                            break;
-                        }
-                        let cond_val = self.evaluate_expr(cond)?;
-                        if !cond_val.to_bool().unwrap_or(false) {
-                            break;
-                        }
-                        self.evaluate_stmt_block(body)?;
-                        let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) {
-                            continue;
-                        }
-                        if cf == Some(FlowControl::Break) {
-                            break;
-                        }
-                    }
+                    self.evaluate_loop_while_stmt(cond, body)?;
                 }
                 IrStmt::LoopDoWhile { cond, body } => {
-                    let mut iter_count = 0usize;
-                    loop {
-                        if iter_count >= MAX_LOOP_ITER {
-                            eprintln!(
-                                "warning: do-while loop exceeded {} iterations, breaking",
-                                MAX_LOOP_ITER
-                            );
-                            break;
-                        }
-                        iter_count += 1;
-                        if self.disable_pending.is_some() {
-                            break;
-                        }
-                        if self.control_flow.is_some() {
-                            self.control_flow = None;
-                            break;
-                        }
-                        self.evaluate_stmt_block(body)?;
-                        let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) {
-                            continue;
-                        }
-                        if cf == Some(FlowControl::Break) {
-                            break;
-                        }
-                        let cond_val = self.evaluate_expr(cond)?;
-                        if !cond_val.to_bool().unwrap_or(false) {
-                            break;
-                        }
-                    }
+                    self.evaluate_loop_do_while_stmt(cond, body)?;
                 }
                 IrStmt::Repeat { count, body } => {
-                    let count_val = self.evaluate_expr(count)?;
-                    let n = (count_val.to_u64() as usize).min(MAX_LOOP_ITER);
-                    for _ in 0..n {
-                        if self.disable_pending.is_some() {
-                            break;
-                        }
-                        if self.control_flow.is_some() {
-                            self.control_flow = None;
-                            break;
-                        }
-                        self.evaluate_stmt_block(body)?;
-                        let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) {
-                            continue;
-                        }
-                        if cf == Some(FlowControl::Break) {
-                            break;
-                        }
-                    }
+                    self.evaluate_repeat_stmt(count, body)?;
                 }
                 IrStmt::RandCase { items } => {
                     let total: u64 = items
@@ -2813,41 +1351,7 @@ impl SimulationEngine {
                     index_var,
                     body,
                 } => {
-                    let lv = self.evaluate_expr(array_var)?;
-                    let sig_info = if let IrExpr::Signal(id, _) = array_var {
-                        self.design.top.signals.get(*id)
-                    } else {
-                        None
-                    };
-                    let elem_width = sig_info.map(|s| s.elem_width).unwrap_or(1);
-                    let count = if elem_width > 0 {
-                        lv.width / elem_width
-                    } else {
-                        0
-                    };
-                    for i in 0..count {
-                        if self.disable_pending.is_some() {
-                            break;
-                        }
-                        if self.control_flow.is_some() {
-                            self.control_flow = None;
-                            break;
-                        }
-                        let idx_val = LogicVec::from_u64(i as u64, 32);
-                        let mut scope = HashMap::new();
-                        scope.insert(index_var.clone(), idx_val);
-                        let depth = self.method_locals.len();
-                        self.method_locals.push(scope);
-                        self.evaluate_stmt_block(body)?;
-                        self.method_locals.truncate(depth);
-                        let cf = self.control_flow.take();
-                        if cf == Some(FlowControl::Continue) {
-                            continue;
-                        }
-                        if cf == Some(FlowControl::Break) {
-                            break;
-                        }
-                    }
+                    self.evaluate_foreach_stmt(array_var, index_var, body)?;
                 }
                 IrStmt::MethodCallStmt {
                     obj,

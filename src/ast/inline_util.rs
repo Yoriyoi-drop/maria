@@ -1,9 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use super::expr::Expr;
-use super::expr::Value;
 use super::stmt::Stmt;
-use super::types::{DataType, Decl, DeclKind, FunctionDecl, FunctionPort};
+use super::types::{DataType, Decl, FunctionDecl};
 use crate::intern::Symbol;
 pub(crate) fn detect_recursive_functions(funcs: &HashMap<Symbol, FunctionDecl>) -> HashSet<Symbol> {
     let mut recursive = HashSet::new();

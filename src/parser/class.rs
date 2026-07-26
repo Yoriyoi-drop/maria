@@ -9,7 +9,6 @@
 use super::Parser;
 use crate::ast::*;
 use crate::error::SimError;
-use crate::intern::Symbol;
 use crate::parser::lexer::*;
 
 impl Parser {

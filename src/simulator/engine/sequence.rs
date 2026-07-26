@@ -1,7 +1,6 @@
 use super::SimulationEngine;
 use crate::error::SimError;
 use crate::ir::*;
-use crate::simulator::types::*;
 
 impl SimulationEngine {
     pub(crate) fn eval_sequence_at_cycle(&mut self, seq: &IrSequence, cycles: u64) -> Result<bool, SimError> {

@@ -9,7 +9,6 @@ use crate::simulator::types::*;
 use crate::Symbol;
 use crate::waveform::FstWaveWriter;
 use crate::waveform::VcdWriter;
-use rand::Rng;
 use rand::SeedableRng;
 use std::collections::{HashMap, HashSet};
 
@@ -174,11 +173,10 @@ impl SimulationEngine {
             let t = self.state.time as usize;
 
             // ── Zero-deallocation: reset cycle arena (O(1) — bump pointer reset) ──
-            // Pool Vec<LogicVal> tetap hidup (backing storage tidak di-free),
-            // sehingga alokasi siklus berikutnya langsung reuse backing storage.
             self.sim_arena.reset_cycle();
 
-            // ── Preponed region: snapshot all signals (once per time slot) ──
+            // ── Preponed region: initial snapshot for edge detection ──
+            // Updated every delta cycle for correct edge detection (Sched-04 fix)
             let num_sigs = self.state.signals.len();
             let mut snapshot = Vec::with_capacity(num_sigs);
             for i in 0..num_sigs {
@@ -226,6 +224,25 @@ impl SimulationEngine {
                                         for event in to_process {
                                             self.process_event(event, t)?;
                                         }
+                                    }
+                                }
+                            }
+                        }
+                        EventRegion::Postponed => {
+                            // Postponed region: process once per time step, does NOT re-circulate
+                            if t < self.events.len() {
+                                let mut to_process = Vec::new();
+                                self.events[t].retain(|re| {
+                                    if re.region == EventRegion::Postponed {
+                                        to_process.push(re.event.clone());
+                                        false
+                                    } else {
+                                        true
+                                    }
+                                });
+                                if !to_process.is_empty() {
+                                    for event in to_process {
+                                        self.process_event(event, t)?;
                                     }
                                 }
                             }
@@ -369,10 +386,16 @@ impl SimulationEngine {
                     }
                 }
 
-                if delta_count > 10_000_000 {
+                if delta_count > 20_000_000 {
                     return Err(SimError::runtime(
-                        "simulation exceeded max delta cycles per time step (10M)",
+                        "simulation exceeded max delta cycles per time step (20M)",
                     ));
+                }
+                if delta_count > 0 && delta_count % 100_000 == 0 {
+                    eprintln!(
+                        "warning: {} delta cycles at time {} (limit 20M)",
+                        delta_count, self.state.time
+                    );
                 }
                 delta_count += 1;
 
@@ -391,6 +414,7 @@ impl SimulationEngine {
                 }
 
                 // Re-circulate if any events remain or NBA is pending
+                // Postponed events do NOT re-circulate (they fire once per time step)
                 let has_remaining = t < self.events.len()
                     && self.events[t].iter().any(|re| {
                         matches!(
@@ -417,9 +441,19 @@ impl SimulationEngine {
                 if !activity {
                     break;
                 }
+
+                // Sched-04: Refresh preponed snapshot every delta cycle for edge detection
+                let num_sigs = self.state.signals.len();
+                let mut snap = Vec::with_capacity(num_sigs);
+                for i in 0..num_sigs {
+                    snap.push(self.state.read_signal(i).clone());
+                }
+                self.signal_snapshot = Some(snap);
             }
 
             // ── Postponed region: $strobe, $monitor, VCD, timing checks ──
+            // Postponed region events from events[t] are processed in the region loop above.
+            // Standalone postponed operations execute here, once per time step.
             self.process_strobe()?;
             self.dump_vcd_state()?;
             self.dump_fst_state()?;

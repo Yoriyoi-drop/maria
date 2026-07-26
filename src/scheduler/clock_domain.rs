@@ -17,7 +17,6 @@
 //!    TIDAK boleh di-fuse — mereka tetap pakai event-driven evaluation.
 
 use std::collections::{HashMap, HashSet};
-use crate::intern::Symbol;
 use crate::ir::*;
 
 // ─── Types ───

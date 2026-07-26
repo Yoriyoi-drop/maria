@@ -1,6 +1,7 @@
 use super::super::SimulationEngine;
 use super::super::engine_utils::{edge_matches_abbrev, evaluate_string_method, sym_char_matches};
-use crate::simulator::packed::{eval_binary_packed, eval_unary_packed, is_packable_binary_op, PackedLogicVec};
+use crate::simulator::packed::PackedLogicVec;
+use crate::simulator::packed_eval::{eval_binary_packed, eval_unary_packed, is_packable_binary_op};
 use crate::simulator::util::*;
 use crate::ast::*;
 use crate::error::SimError;
@@ -10,7 +11,7 @@ use crate::simulator::types::*;
 use crate::simulator::value::*;
 use rand::Rng;
 use rand::SeedableRng;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 
 impl SimulationEngine {

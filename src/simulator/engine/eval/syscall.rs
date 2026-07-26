@@ -2,12 +2,8 @@ use super::super::SimulationEngine;
 use crate::error::SimError;
 use crate::ir::*;
 use crate::ast::*;
-use crate::simulator::value::*;
 use crate::simulator::util::*;
 use rand::Rng;
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{Read, Write, BufReader};
 
 impl SimulationEngine {
     pub(crate) fn check_timing_constraints(&mut self) -> Result<(), SimError> {

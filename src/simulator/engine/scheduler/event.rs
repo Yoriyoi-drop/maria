@@ -1,16 +1,8 @@
-use super::super::SequenceAttempt;
 use super::super::SimulationEngine;
-use super::super::MAX_LOOP_ITER;
 use crate::error::SimError;
 use crate::ir::*;
-use crate::ast::*;
-use crate::Symbol;
-use crate::simulator::state::SimulationState;
 use crate::simulator::types::*;
-use crate::simulator::value::*;
-use crate::simulator::util::*;
 use crate::simulator::parallel;
-use std::collections::{HashMap, HashSet};
 
 impl SimulationEngine {
     pub(crate) fn process_event(&mut self, event: EventKind, t: usize) -> Result<(), SimError> {
@@ -101,9 +93,6 @@ impl SimulationEngine {
                         }
                     }
                 }
-            }
-            EventKind::NbaCommit => {
-                self.commit_nba();
             }
         }
         Ok(())

@@ -81,7 +81,6 @@ pub enum EventKind {
     EvalProcess(usize),
     ContinueBlock(Continuation),
     ContinueAstBlock(Vec<crate::ast::Stmt>, Option<usize>),
-    NbaCommit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -98,9 +97,10 @@ pub enum EventRegion {
     PostObserved = 10,
     Reactive = 11,
     PostReactive = 12,
+    Postponed = 13,
 }
 
-pub(super) const IEEE_REGIONS: [EventRegion; 12] = [
+pub(super) const IEEE_REGIONS: [EventRegion; 13] = [
     EventRegion::Preponed,
     EventRegion::PreActive,
     EventRegion::Active,
@@ -113,6 +113,7 @@ pub(super) const IEEE_REGIONS: [EventRegion; 12] = [
     EventRegion::PostObserved,
     EventRegion::Reactive,
     EventRegion::PostReactive,
+    EventRegion::Postponed,
 ];
 
 #[derive(Debug, Clone)]

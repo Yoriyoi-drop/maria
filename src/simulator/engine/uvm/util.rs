@@ -3,12 +3,8 @@ use crate::error::SimError;
 use crate::ir::*;
 use crate::ast::*;
 use crate::Symbol;
-use crate::simulator::types::*;
-use crate::simulator::value::*;
-use crate::simulator::util::*;
-use crate::simulator::packed::*;
 use rand::Rng;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashMap;
 
 impl SimulationEngine {
     pub(crate) fn execute_method_body(

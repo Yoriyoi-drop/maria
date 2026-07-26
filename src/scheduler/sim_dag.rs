@@ -14,8 +14,7 @@
 //! sekuensial setelah semua process dalam layer selesai — lock-free karena
 //! tidak ada shared mutable state antar process dalam satu layer.
 
-use std::collections::{HashMap, HashSet};
-use crate::intern::Symbol;
+use std::collections::HashSet;
 use crate::ir::*;
 
 // ─── Signal Access Analysis ───

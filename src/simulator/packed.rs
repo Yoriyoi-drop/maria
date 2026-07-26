@@ -21,7 +21,7 @@
 //! Catatan: AND dan OR membutuhkan logika 4-state khusus (0/1 dominance),
 //! sehingga sedikit lebih kompleks dari XOR/NOT yang bisa bitmask langsung.
 
-use crate::ir::{BinaryIrOp, LogicVal, LogicVec, UnaryIrOp};
+use crate::ir::{BinaryIrOp, LogicVal, LogicVec};
 
 /// Number of cells per chunk (u64 = 64 bits).
 const CELLS_PER_CHUNK: usize = 64;
@@ -416,7 +416,7 @@ impl PackedLogicVec {
             if km != full_mask {
                 all_known = false;
             }
-            xor_acc ^= (vm & km);
+            xor_acc ^= vm & km;
         }
         if !all_known {
             PackedLogicVec::fill(LogicVal::X, 1)

@@ -244,7 +244,7 @@ impl CompileSession {
 
         // Separate file paths and designs
         let paths: Vec<PathBuf> = file_designs.iter().map(|(p, _)| p.clone()).collect();
-        let mut designs: Vec<Design> = file_designs.into_iter().map(|(_, d)| d).collect();
+        let designs: Vec<Design> = file_designs.into_iter().map(|(_, d)| d).collect();
 
         // Build module index + dependency graph + incremental tracking (with profiling)
         let index_timer_start = self.profiler.as_ref().map(|_| Instant::now());

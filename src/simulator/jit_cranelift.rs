@@ -370,8 +370,8 @@ impl CraneliftEngine {
 
     /// Compute a structural hash for an IrExpr tree (for expression-level caching).
     fn hash_ir_expr(expr: &crate::ir::IrExpr) -> u64 {
-        use std::hash::{Hash, Hasher};
-        use crate::ir::{BinaryIrOp, IrExpr, UnaryIrOp};
+        use std::hash::Hasher;
+        
 
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         Self::hash_ir_expr_recursive(expr, &mut hasher);

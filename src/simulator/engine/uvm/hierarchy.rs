@@ -2,7 +2,6 @@ use super::super::SimulationEngine;
 use crate::error::SimError;
 use crate::ir::*;
 use crate::Symbol;
-use std::collections::HashSet;
 
 impl SimulationEngine {
     pub(crate) fn find_phase_class_name(&self) -> Option<String> {

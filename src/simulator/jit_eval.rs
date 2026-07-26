@@ -9,7 +9,7 @@
 //! - Cranelift tidak tersedia (non-x86_64)
 
 use crate::ir::{BinaryIrOp, IrExpr, LogicVal, LogicVec, UnaryIrOp};
-use crate::simulator::jit_cranelift::{CraneliftCompiledFn, CraneliftEngine, JitOp};
+use crate::simulator::jit_cranelift::{CraneliftEngine, JitOp};
 
 /// JIT Evaluator — wraps CraneliftEngine dengan API evaluasi LogicVec.
 pub struct JITEvaluator {

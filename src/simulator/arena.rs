@@ -53,7 +53,7 @@ pub fn set_thread_arena(arena: Option<&mut SimulationArena>) {
 /// Dipanggil oleh LogicVec::new() dan LogicVec::fill().
 pub fn try_alloc_logicvec(width: usize, init: LogicVal) -> Option<LogicVec> {
     CYCLE_ARENA.with(|cell| {
-        let mut borrow = cell.borrow_mut();
+        let borrow = cell.borrow_mut();
         if let Some(ptr) = *borrow {
             let arena = unsafe { &mut *ptr };
             Some(arena.alloc_logicvec(width, init))

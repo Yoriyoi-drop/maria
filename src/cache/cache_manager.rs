@@ -98,7 +98,7 @@ impl<V> CacheStore<V> {
     pub fn get(
         &self,
         key: &CacheKey,
-    ) -> Option<dashmap::mapref::one::Ref<CacheKey, CacheEntry<V>>> {
+    ) -> Option<dashmap::mapref::one::Ref<'_, CacheKey, CacheEntry<V>>> {
         let entry = self.primary.get(key)?;
         entry.touch();
         self.hits.fetch_add(1, Ordering::Relaxed);

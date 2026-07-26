@@ -56,7 +56,6 @@ endmodule
 }
 
 #[test]
-#[ignore]
 fn test_stress_100_modules() {
     let source = generate_n_modules(100);
     let start = Instant::now();
@@ -71,7 +70,6 @@ fn test_stress_100_modules() {
 }
 
 #[test]
-#[ignore]
 fn test_stress_1000_modules() {
     let source = generate_n_modules(1000);
     let start = Instant::now();
@@ -85,7 +83,6 @@ fn test_stress_1000_modules() {
 }
 
 #[test]
-#[ignore]
 fn test_stress_symbol_table() {
     // Verify DashMap-based string table scales
     use crate::intern::Symbol;
@@ -101,7 +98,6 @@ fn test_stress_symbol_table() {
 }
 
 #[test]
-#[ignore]
 fn test_stress_parallel_compile_session() {
     // Generate 10 small files, compile via CompileSession
     let dir = std::env::temp_dir().join("maria_stress_session");
@@ -135,7 +131,6 @@ fn test_stress_parallel_compile_session() {
 }
 
 #[test]
-#[ignore]
 fn test_stress_mmap_io() {
     use crate::frontend::io::MmapFile;
     let dir = std::env::temp_dir().join("maria_mmap_stress");

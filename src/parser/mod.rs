@@ -12,8 +12,6 @@ pub mod stmt;
 pub mod decl;
 pub mod instance;
 pub mod proc;
-use crate::parser::util::*;
-use crate::ast::types::const_eval_simple;
 use crate::ast::*;
 use crate::error::{ErrorContext, SimError};
 use crate::intern::Symbol;

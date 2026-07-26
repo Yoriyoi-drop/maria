@@ -9,7 +9,7 @@ pub mod uvm;
 pub mod sequence;
 
 use crate::ir::*;
-use crate::scheduler::clock_domain::{ClockDomain, ClockDomainAnalysis};
+use crate::scheduler::clock_domain::ClockDomainAnalysis;
 use crate::scheduler::SimulationDag;
 use crate::simulator::arena::SimulationArena;
 use crate::simulator::parallel::ParallelConfig;

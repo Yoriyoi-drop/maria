@@ -1,9 +1,7 @@
 use super::super::SimulationEngine;
-use crate::ast::*;
 use crate::error::SimError;
 use crate::ir::*;
 use crate::simulator::util::*;
-use crate::simulator::value::*;
 use crate::Symbol;
 use std::collections::HashMap;
 
