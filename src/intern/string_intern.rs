@@ -226,7 +226,7 @@ fn table() -> &'static StringTable {
             "endtask",    // 33
             "generate",   // 34
             "endgenerate",// 35
-            "class",      // 36
+            "class",     // 36
             "endclass",   // 37
             "package",    // 38
             "endpackage", // 39
@@ -250,6 +250,31 @@ fn table() -> &'static StringTable {
         }
         table
     })
+}
+
+/// Clear the string table for daemon mode (frees all memory).
+pub fn reset_string_table() {
+    let t = table();
+    t.lookup.clear();
+    let mut strings = t.strings.lock();
+    strings.clear();
+    let prelude = vec![
+        "", "logic", "wire", "reg", "int", "integer", "bit", "byte",
+        "shortint", "longint", "real", "time", "string",
+        "input", "output", "inout", "module", "endmodule",
+        "assign", "always", "initial", "begin", "end",
+        "if", "else", "for", "while", "case",
+        "parameter", "localparam", "function", "endfunction",
+        "task", "endtask", "generate", "endgenerate",
+        "class", "endclass", "package", "endpackage",
+        "interface", "endinterface",
+        "fork", "join", "typedef", "enum", "struct", "union",
+        "import", "bind",
+        "uvm_object", "uvm_component", "uvm_test", "process",
+    ];
+    for s in &prelude {
+        t.intern(s);
+    }
 }
 
 impl StringTable {

@@ -286,7 +286,7 @@ impl<'a> FastLexer<'a> {
         }
 
         let raw = &self.input[start..self.pos];
-        let s = unsafe { std::str::from_utf8_unchecked(raw) };
+        let s = std::str::from_utf8(raw).unwrap_or("");
 
         // Keyword matching via match on raw bytes
         match s {
@@ -497,9 +497,7 @@ impl<'a> FastLexer<'a> {
                         break;
                     }
                 }
-                let s = unsafe {
-                    std::str::from_utf8_unchecked(&self.input[start..self.pos])
-                };
+                let s = std::str::from_utf8(&self.input[start..self.pos]).unwrap_or("");
                 return self.parse_verilog_number(s);
             } else {
                 break;
@@ -531,16 +529,12 @@ impl<'a> FastLexer<'a> {
                     }
                 }
             }
-            let s = unsafe {
-                std::str::from_utf8_unchecked(&self.input[start..self.pos])
-            };
+            let s = std::str::from_utf8(&self.input[start..self.pos]).unwrap_or("");
             return Token::RealNum(Symbol::intern(s));
         }
 
         // Plain decimal
-        let s = unsafe {
-            std::str::from_utf8_unchecked(&self.input[start..self.pos])
-        };
+        let s = std::str::from_utf8(&self.input[start..self.pos]).unwrap_or("");
         Token::Number {
             value: Symbol::intern(s),
             base: None,

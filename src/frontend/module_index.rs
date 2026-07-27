@@ -150,6 +150,79 @@ impl ModuleIndex {
             .map(|entry| entry.key().as_str().to_string())
             .collect()
     }
+
+    /// Detect cycles in module instantiation graph via DFS coloring.
+    /// Returns a cycle path if found, None if graph is acyclic.
+    pub fn detect_cycles(&self) -> Option<Vec<String>> {
+        use std::collections::HashMap;
+
+        #[derive(Clone, Copy, PartialEq)]
+        enum Color { White, Gray, Black }
+
+        let all: Vec<_> = self.module_names();
+        let mut adj: HashMap<Symbol, Vec<Symbol>> = HashMap::new();
+        let mut name_map: HashMap<Symbol, String> = HashMap::new();
+
+        for name in &all {
+            name_map.insert(*name, name.as_str().to_string());
+            if let Some(entries) = self.modules.get(name) {
+                for (_, meta) in entries.iter() {
+                    adj.entry(*name).or_default().extend(meta.instances.iter().copied());
+                }
+            }
+        }
+
+        let mut color: HashMap<Symbol, Color> = HashMap::new();
+        for name in &all {
+            color.insert(*name, Color::White);
+        }
+
+        fn dfs(
+            u: Symbol,
+            adj: &HashMap<Symbol, Vec<Symbol>>,
+            color: &mut HashMap<Symbol, Color>,
+            parent: &mut Vec<Symbol>,
+            name_map: &HashMap<Symbol, String>,
+        ) -> Option<Vec<String>> {
+            color.insert(u, Color::Gray);
+            parent.push(u);
+            if let Some(neighbors) = adj.get(&u) {
+                for v in neighbors {
+                    match color.get(v).copied().unwrap_or(Color::White) {
+                        Color::Gray => {
+                            // Found cycle — extract path from first occurrence of v
+                            let start = parent.iter().position(|x| x == v).unwrap_or(0);
+                            let cycle: Vec<String> = parent[start..]
+                                .iter()
+                                .chain(std::iter::once(v))
+                                .map(|s| name_map.get(s).cloned().unwrap_or_default())
+                                .collect();
+                            return Some(cycle);
+                        }
+                        Color::White => {
+                            if let Some(cycle) = dfs(*v, adj, color, parent, name_map) {
+                                return Some(cycle);
+                            }
+                        }
+                        Color::Black => {}
+                    }
+                }
+            }
+            parent.pop();
+            color.insert(u, Color::Black);
+            None
+        }
+
+        let mut parent = Vec::new();
+        for name in &all {
+            if color.get(name).copied().unwrap_or(Color::White) == Color::White {
+                if let Some(cycle) = dfs(*name, &adj, &mut color, &mut parent, &name_map) {
+                    return Some(cycle);
+                }
+            }
+        }
+        None
+    }
 }
 
 impl Default for ModuleIndex {
@@ -274,5 +347,83 @@ mod tests {
             },
         );
         assert_eq!(index.iter().count(), 1);
+    }
+
+    #[test]
+    fn test_cycle_detection_no_cycle() {
+        let index = ModuleIndex::new();
+        let meta_a = ModuleMeta {
+            name: Symbol::intern("a"),
+            file: "a.sv".into(),
+            file_checksum: 0,
+            ports: vec![],
+            params: vec![],
+            instances: vec![Symbol::intern("b")],
+            imports: vec![],
+        };
+        let meta_b = ModuleMeta {
+            name: Symbol::intern("b"),
+            file: "b.sv".into(),
+            file_checksum: 0,
+            ports: vec![],
+            params: vec![],
+            instances: vec![],
+            imports: vec![],
+        };
+        index.insert(Symbol::intern("a"), EntryKind::Module, meta_a);
+        index.insert(Symbol::intern("b"), EntryKind::Module, meta_b);
+        assert!(index.detect_cycles().is_none());
+    }
+
+    #[test]
+    fn test_cycle_detection_self_loop() {
+        let index = ModuleIndex::new();
+        let meta = ModuleMeta {
+            name: Symbol::intern("a"),
+            file: "a.sv".into(),
+            file_checksum: 0,
+            ports: vec![],
+            params: vec![],
+            instances: vec![Symbol::intern("a")],
+            imports: vec![],
+        };
+        index.insert(Symbol::intern("a"), EntryKind::Module, meta);
+        assert!(index.detect_cycles().is_some());
+    }
+
+    #[test]
+    fn test_cycle_detection_multi() {
+        let index = ModuleIndex::new();
+        let meta_a = ModuleMeta {
+            name: Symbol::intern("a"),
+            file: "a.sv".into(),
+            file_checksum: 0,
+            ports: vec![],
+            params: vec![],
+            instances: vec![Symbol::intern("b")],
+            imports: vec![],
+        };
+        let meta_b = ModuleMeta {
+            name: Symbol::intern("b"),
+            file: "b.sv".into(),
+            file_checksum: 0,
+            ports: vec![],
+            params: vec![],
+            instances: vec![Symbol::intern("c")],
+            imports: vec![],
+        };
+        let meta_c = ModuleMeta {
+            name: Symbol::intern("c"),
+            file: "c.sv".into(),
+            file_checksum: 0,
+            ports: vec![],
+            params: vec![],
+            instances: vec![Symbol::intern("a")],
+            imports: vec![],
+        };
+        index.insert(Symbol::intern("a"), EntryKind::Module, meta_a);
+        index.insert(Symbol::intern("b"), EntryKind::Module, meta_b);
+        index.insert(Symbol::intern("c"), EntryKind::Module, meta_c);
+        assert!(index.detect_cycles().is_some());
     }
 }

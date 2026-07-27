@@ -155,20 +155,29 @@ impl<V> CacheStore<V> {
     }
 
     fn evict_lru(&self, needed: u64) {
-        // Simple eviction: remove oldest entries until we have enough space
         let budget = self.budget.load(Ordering::Relaxed);
         let current = self.used.load(Ordering::Relaxed);
-        let mut to_remove = Vec::new();
+        if current + needed <= budget {
+            return;
+        }
+        let target = budget.saturating_sub(needed);
 
-        for entry in self.primary.iter() {
-            if current - (to_remove.len() as u64 * entry.value().size) + needed <= budget {
+        // Collect entries sorted by access time (oldest first)
+        let mut entries: Vec<(CacheKey, u64)> = self
+            .primary
+            .iter()
+            .map(|e| (e.key().clone(), e.value().accessed.load(Ordering::Relaxed)))
+            .collect();
+        entries.sort_by_key(|(_, accessed)| *accessed);
+
+        let mut freed = 0u64;
+        for (key, _) in &entries {
+            if current.saturating_sub(freed) <= target {
                 break;
             }
-            to_remove.push(entry.key().clone());
-        }
-
-        for key in to_remove {
-            self.remove(&key);
+            if let Some(size) = self.remove(key) {
+                freed += size;
+            }
         }
     }
 }

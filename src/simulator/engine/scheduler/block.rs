@@ -435,14 +435,24 @@ impl SimulationEngine {
                     }
                 }
                 IrStmt::LoopWhile { cond, body } => {
-                    if !self.evaluate_loop_while_fork(cond, body, fork_id)? {
+                    let saved_tail = std::mem::take(&mut self.post_loop_tail);
+                    self.post_loop_tail = stmts[i + 1..].to_vec();
+                    let completed = self.evaluate_loop_while_fork(cond, body, fork_id)?;
+                    if !completed {
+                        self.post_loop_tail = saved_tail;
                         return Ok(false);
                     }
+                    self.post_loop_tail = saved_tail;
                 }
                 IrStmt::LoopDoWhile { cond, body } => {
-                    if !self.evaluate_loop_do_while_fork(cond, body, fork_id)? {
+                    let saved_tail = std::mem::take(&mut self.post_loop_tail);
+                    self.post_loop_tail = stmts[i + 1..].to_vec();
+                    let completed = self.evaluate_loop_do_while_fork(cond, body, fork_id)?;
+                    if !completed {
+                        self.post_loop_tail = saved_tail;
                         return Ok(false);
                     }
+                    self.post_loop_tail = saved_tail;
                 }
                 IrStmt::Repeat { count, body } => {
                     if !self.evaluate_repeat_fork(count, body, fork_id)? {

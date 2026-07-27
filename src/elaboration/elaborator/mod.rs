@@ -307,6 +307,49 @@ impl Elaborator {
             }
         }
 
+        // Dead module detection: find unreachable modules via reachability from top
+        let top_sym = top_module.map(|s| Symbol::intern(s));
+        {
+            use std::collections::{HashSet, VecDeque};
+            let all_names: HashSet<Symbol> =
+                self.design.modules.iter().map(|m| m.name).collect();
+            let mut reachable: HashSet<Symbol> = HashSet::new();
+            let mut queue: VecDeque<Symbol> = VecDeque::new();
+            if let Some(ref top) = top_sym {
+                if all_names.contains(top) {
+                    queue.push_back(*top);
+                    reachable.insert(*top);
+                }
+            } else if let Some(first) = self.design.modules.first() {
+                queue.push_back(first.name);
+                reachable.insert(first.name);
+            }
+            while let Some(name) = queue.pop_front() {
+                if let Some(module) = self.design.modules.iter().find(|m| m.name == name) {
+                    for item in &module.items {
+                        if let ModuleItem::Instance(inst) = item {
+                            if all_names.contains(&inst.module_name)
+                                && !reachable.contains(&inst.module_name)
+                            {
+                                reachable.insert(inst.module_name);
+                                queue.push_back(inst.module_name);
+                            }
+                        }
+                    }
+                }
+            }
+            for m in &self.design.modules {
+                if !reachable.contains(&m.name)
+                    && top_sym.as_ref().map(|t| *t != m.name).unwrap_or(true)
+                {
+                    eprintln!(
+                        "warning: module '{}' is unreachable (not instantiated from top)",
+                        m.name
+                    );
+                }
+            }
+        }
+
         // First pass: elaborate all modules
         let module_names: Vec<Symbol> =
             self.design.modules.iter().map(|m| m.name).collect();

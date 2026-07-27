@@ -18,6 +18,7 @@
 
 use std::collections::{HashMap, HashSet};
 use crate::ir::*;
+use crate::Symbol;
 
 // ─── Types ───
 

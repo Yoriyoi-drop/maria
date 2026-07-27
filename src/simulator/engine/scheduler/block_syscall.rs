@@ -62,61 +62,63 @@ impl SimulationEngine {
             self.monitor_args = Some(ir_args.to_vec());
             self.monitor_last_values = Some(vals);
         } else if name == "readmemh" {
-            let file = ir_args.first().and_then(|a| {
-                if let IrExpr::String(s) = a {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            });
+            let file = ir_args.first().ok_or_else(|| {
+                SimError::runtime("$readmemh requires at least a filename argument")
+            })?;
+            let file_str = if let IrExpr::String(s) = file {
+                s.clone()
+            } else {
+                return Err(SimError::runtime("$readmemh first argument must be a string (filename)"));
+            };
             let sig_id = ir_args.get(1).and_then(|a| {
-                if let IrExpr::Signal(id, _) = a {
-                    Some(*id)
-                } else {
-                    None
-                }
-            });
-            if let (Some(file), Some(sig_id)) = (file, sig_id) {
-                let data = read_hex_file(&file, 8, 4096, None, None)?;
-                let elem_width = data.first().map(|d| d.width).unwrap_or(8);
-                let mut all_bits = Vec::new();
-                for d in &data {
-                    all_bits.extend(d.bits.iter().cloned());
-                }
-                let packed = LogicVec {
-                    bits: all_bits,
-                    width: data.len() * elem_width,
-                };
-                self.state.write_signal(sig_id, packed);
+                if let IrExpr::Signal(id, _) = a { Some(*id) } else { None }
+            }).ok_or_else(|| {
+                SimError::runtime("$readmemh requires a signal/memory argument")
+            })?;
+            let sig_info = self.design.top.signals.get(sig_id).ok_or_else(|| {
+                SimError::runtime("$readmemh: signal not found")
+            })?;
+            let elem_w = sig_info.elem_width.max(1);
+            let max_words = sig_info.width / elem_w;
+            let data = read_hex_file(&file_str, elem_w, max_words, None, None)?;
+            let mut all_bits = Vec::new();
+            for d in &data {
+                all_bits.extend(d.bits.iter().cloned());
             }
+            let packed = LogicVec {
+                bits: all_bits,
+                width: data.len() * elem_w,
+            };
+            self.state.write_signal(sig_id, packed);
         } else if name == "readmemb" {
-            let file = ir_args.first().and_then(|a| {
-                if let IrExpr::String(s) = a {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            });
+            let file = ir_args.first().ok_or_else(|| {
+                SimError::runtime("$readmemb requires at least a filename argument")
+            })?;
+            let file_str = if let IrExpr::String(s) = file {
+                s.clone()
+            } else {
+                return Err(SimError::runtime("$readmemb first argument must be a string (filename)"));
+            };
             let sig_id = ir_args.get(1).and_then(|a| {
-                if let IrExpr::Signal(id, _) = a {
-                    Some(*id)
-                } else {
-                    None
-                }
-            });
-            if let (Some(file), Some(sig_id)) = (file, sig_id) {
-                let data = read_bin_file(&file, 8, 4096, None, None)?;
-                let elem_width = data.first().map(|d| d.width).unwrap_or(8);
-                let mut all_bits = Vec::new();
-                for d in &data {
-                    all_bits.extend(d.bits.iter().cloned());
-                }
-                let packed = LogicVec {
-                    bits: all_bits,
-                    width: data.len() * elem_width,
-                };
-                self.state.write_signal(sig_id, packed);
+                if let IrExpr::Signal(id, _) = a { Some(*id) } else { None }
+            }).ok_or_else(|| {
+                SimError::runtime("$readmemb requires a signal/memory argument")
+            })?;
+            let sig_info = self.design.top.signals.get(sig_id).ok_or_else(|| {
+                SimError::runtime("$readmemb: signal not found")
+            })?;
+            let elem_w = sig_info.elem_width.max(1);
+            let max_words = sig_info.width / elem_w;
+            let data = read_bin_file(&file_str, elem_w, max_words, None, None)?;
+            let mut all_bits = Vec::new();
+            for d in &data {
+                all_bits.extend(d.bits.iter().cloned());
             }
+            let packed = LogicVec {
+                bits: all_bits,
+                width: data.len() * elem_w,
+            };
+            self.state.write_signal(sig_id, packed);
         } else if name == "random" {
             if let Some(seed_arg) = ir_args.get(1) {
                 if let Ok(seed_val) = self.evaluate_expr(seed_arg) {

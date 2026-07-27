@@ -3,6 +3,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const MAX_INCLUDE_DEPTH: usize = 64;
+
 struct CondFrame {
     taking_branch: bool,
     branch_taken: bool,
@@ -19,6 +21,7 @@ pub struct Preprocessor {
     defines: HashMap<String, MacroDef>,
     search_paths: Vec<PathBuf>,
     warned_includes: HashSet<String>,
+    include_stack: Vec<PathBuf>,
     pub quiet: bool,
     pub timescale: Option<(String, String)>, // (unit, precision)
 }
@@ -29,6 +32,7 @@ impl Preprocessor {
             defines: HashMap::new(),
             search_paths: Vec::new(),
             warned_includes: HashSet::new(),
+            include_stack: Vec::new(),
             quiet: false,
             timescale: None,
         }
@@ -119,36 +123,39 @@ impl Preprocessor {
                         };
                         match self.resolve_path(&inc_path, current_dir) {
                             Ok(resolved) => {
+                                if self.include_stack.len() >= MAX_INCLUDE_DEPTH {
+                                    return Err(SimError::preprocessor(format!(
+                                        "include depth exceeded ({}) — possible circular include for '{}'",
+                                        MAX_INCLUDE_DEPTH, inc_path
+                                    )));
+                                }
+                                if self.include_stack.contains(&resolved) {
+                                    return Err(SimError::preprocessor(format!(
+                                        "circular include detected: '{}' already in include stack",
+                                        inc_path
+                                    )));
+                                }
+                                self.include_stack.push(resolved.clone());
                                 self.warned_includes.remove(&inc_path);
-                                match fs::read_to_string(&resolved) {
-                                    Ok(inc_source) => {
-                                        let inc_dir = resolved.parent().map(|p| p.to_path_buf());
-                                        output.push_str(&format!(
-                                            "`line 1 \"{}\"\n",
-                                            resolved.display()
-                                        ));
-                                        match self.preprocess(&inc_source, inc_dir.as_ref()) {
-                                            Ok(processed) => {
-                                                output.push_str(&processed);
-                                                if !processed.ends_with('\n') {
-                                                    output.push('\n');
-                                                }
-                                            }
-                                            Err(e) => {
-                                                if !self.quiet {
-                                                    eprintln!("  ** WARNING: error processing include '{}': {}", resolved.display(), e);
-                                                }
-                                            }
-                                        }
+                                let inc_result = (|| -> Result<(), SimError> {
+                                    let inc_source = fs::read_to_string(&resolved)
+                                        .map_err(|e| SimError::preprocessor(format!("cannot read include '{}': {}", resolved.display(), e)))?;
+                                    let inc_dir = resolved.parent().map(|p| p.to_path_buf());
+                                    output.push_str(&format!(
+                                        "`line 1 \"{}\"\n",
+                                        resolved.display()
+                                    ));
+                                    let processed = self.preprocess(&inc_source, inc_dir.as_ref())?;
+                                    output.push_str(&processed);
+                                    if !processed.ends_with('\n') {
+                                        output.push('\n');
                                     }
-                                    Err(e) => {
-                                        if !self.quiet {
-                                            eprintln!(
-                                                "  ** WARNING: cannot read include '{}': {}",
-                                                resolved.display(),
-                                                e
-                                            );
-                                        }
+                                    Ok(())
+                                })();
+                                self.include_stack.pop();
+                                if let Err(e) = inc_result {
+                                    if !self.quiet {
+                                        eprintln!("  ** WARNING: {}", e);
                                     }
                                 }
                             }
@@ -174,16 +181,14 @@ impl Preprocessor {
                     }
                 }
                 "ifdef" => {
-                    let macro_name = rest.trim();
-                    let defined = self.defines.contains_key(macro_name);
+                    let defined = self.eval_ifdef_expr(rest.trim());
                     cond_stack.push(CondFrame {
                         taking_branch: defined,
                         branch_taken: defined,
                     });
                 }
                 "ifndef" => {
-                    let macro_name = rest.trim();
-                    let defined = self.defines.contains_key(macro_name);
+                    let defined = self.eval_ifdef_expr(rest.trim());
                     cond_stack.push(CondFrame {
                         taking_branch: !defined,
                         branch_taken: !defined,
@@ -199,8 +204,7 @@ impl Preprocessor {
                     if frame.branch_taken {
                         frame.taking_branch = false;
                     } else {
-                        let macro_name = rest.trim();
-                        let defined = self.defines.contains_key(macro_name);
+                        let defined = self.eval_ifdef_expr(rest.trim());
                         if defined {
                             frame.taking_branch = true;
                             frame.branch_taken = true;
@@ -257,6 +261,7 @@ impl Preprocessor {
                 | "pragma"
                 | "assert"
                 | "debug"
+                | "resetall"
                 | "PICORV32_REGS" => {
                     // Standard or tool-specific Verilog directives that we ignore
                 }
@@ -402,6 +407,37 @@ impl Preprocessor {
         };
 
         self.defines.insert(name, MacroDef { value, params });
+    }
+
+    /// Evaluate `ifdef/`ifndef expression. Supports:
+    ///   MACRO                — true if defined
+    ///   MACRO_A || MACRO_B  — true if any defined
+    ///   MACRO_A && MACRO_B  — true if all defined
+    fn eval_ifdef_expr(&self, expr: &str) -> bool {
+        let expr = expr.trim();
+        if expr.is_empty() {
+            return false;
+        }
+        if let Some((a, b)) = expr.split_once("||") {
+            let a = a.trim();
+            let b = b.trim();
+            let left = if a.contains("&&") {
+                a.split("&&").all(|m| self.defines.contains_key(m.trim()))
+            } else {
+                self.defines.contains_key(a)
+            };
+            let right = if b.contains("&&") {
+                b.split("&&").all(|m| self.defines.contains_key(m.trim()))
+            } else {
+                self.defines.contains_key(b)
+            };
+            return left || right;
+        }
+        if let Some((a, b)) = expr.split_once("&&") {
+            return self.defines.contains_key(a.trim())
+                && self.defines.contains_key(b.trim());
+        }
+        self.defines.contains_key(expr)
     }
 
     fn expand_inline_macros(&self, line: &str) -> String {

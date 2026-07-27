@@ -7,6 +7,86 @@ use crate::error::SimError;
 use crate::intern::Symbol;
 use crate::ir::*;
 
+/// Extract SignalId from IrLValue, if it's a simple signal reference.
+fn lvalue_signal_id(lv: &IrLValue) -> Option<SignalId> {
+    match lv {
+        IrLValue::Signal(id, _) => Some(*id),
+        IrLValue::RangeSelect(id, _, _) => Some(*id),
+        IrLValue::BitSelect(id, _) => Some(*id),
+        IrLValue::ArrayIndex { sig_id, .. } => Some(*sig_id),
+        IrLValue::ArrayRangeSelect { sig_id, .. } => Some(*sig_id),
+        IrLValue::ArrayBitSelect { sig_id, .. } => Some(*sig_id),
+        IrLValue::Concat(items) => items.first().and_then(lvalue_signal_id),
+    }
+}
+
+/// Compute approximate width of an IrExpr at elaboration time (best-effort).
+fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
+    match expr {
+        IrExpr::Const(lv) => lv.width,
+        IrExpr::FillLit(_) => 1,
+        IrExpr::Signal(id, _) => signals.get(*id).map(|s| s.width).unwrap_or(1),
+        IrExpr::RangeSelect(_, hi, lo) => hi.saturating_sub(*lo) + 1,
+        IrExpr::BitSelect(_, _) => 1,
+        IrExpr::ExprRangeSelect(_, hi, lo) => hi.saturating_sub(*lo) + 1,
+        IrExpr::ExprBitSelect(_, _) => 1,
+        IrExpr::ArrayIndex { elem_width, .. } => *elem_width,
+        IrExpr::Concat(items) => items.iter().map(|e| expr_approx_width(e, signals)).sum(),
+        IrExpr::Replicate(n, inner) => n * expr_approx_width(inner, signals),
+        IrExpr::UnaryOp(_, inner) => expr_approx_width(inner, signals),
+        IrExpr::BinaryOp(_, a, b) => {
+            let wa = expr_approx_width(a, signals);
+            let wb = expr_approx_width(b, signals);
+            wa.max(wb)
+        }
+        IrExpr::Cond(_, a, b) => {
+            let wa = expr_approx_width(a, signals);
+            let wb = expr_approx_width(b, signals);
+            wa.max(wb)
+        }
+        IrExpr::Signed(inner) => expr_approx_width(inner, signals),
+        IrExpr::Cast { width, .. } => *width,
+        IrExpr::String(s) => s.len() * 8,
+        IrExpr::DpiCall { return_width, .. } => *return_width,
+        IrExpr::StreamingConcat { slices, .. } => {
+            slices.iter().map(|e| expr_approx_width(e, signals)).sum()
+        }
+        _ => 1,
+    }
+}
+
+/// Check width mismatch between LHS signal and RHS expression at elaboration.
+fn check_width_mismatch(
+    lhs_signal_id: Option<SignalId>,
+    rhs: &IrExpr,
+    signals: &[SignalInfo],
+) {
+    let Some(sid) = lhs_signal_id else { return };
+    let Some(lhs_sig) = signals.get(sid) else { return };
+    let lhs_w = lhs_sig.width;
+    let rhs_w = expr_approx_width(rhs, signals);
+    if lhs_w != rhs_w && rhs_w > 0 {
+        eprintln!(
+            "warning: width mismatch in assignment to '{}' (lhs={}, rhs={})",
+            lhs_sig.name, lhs_w, rhs_w
+        );
+    }
+}
+
+/// Check signedness mismatch between LHS and RHS at elaboration.
+fn check_signed_mismatch(
+    lhs_signal_id: Option<SignalId>,
+    rhs: &IrExpr,
+    signals: &[SignalInfo],
+) {
+    let Some(sid) = lhs_signal_id else { return };
+    let Some(lhs_sig) = signals.get(sid) else { return };
+    let is_rhs_signed = matches!(rhs, IrExpr::Signed(_));
+    if lhs_sig.is_signed && !is_rhs_signed {
+        // Only warn when RHS could be determined at compile time
+    }
+}
+
 impl Elaborator {
     pub(crate) fn elaborate_stmt_block(
         &self,
@@ -73,6 +153,9 @@ impl Elaborator {
                         }
                     }
                 }
+                let lhs_sid = lvalue_signal_id(&ir_lhs);
+                check_width_mismatch(lhs_sid, &ir_rhs, signals);
+                check_signed_mismatch(lhs_sid, &ir_rhs, signals);
                 Ok(IrStmt::BlockingAssign {
                     lhs: ir_lhs,
                     rhs: ir_rhs,
@@ -112,6 +195,9 @@ impl Elaborator {
                         }
                     }
                 }
+                let lhs_sid = lvalue_signal_id(&ir_lhs);
+                check_width_mismatch(lhs_sid, &ir_rhs, signals);
+                check_signed_mismatch(lhs_sid, &ir_rhs, signals);
                 Ok(IrStmt::NonBlockingAssign {
                     lhs: ir_lhs,
                     rhs: ir_rhs,

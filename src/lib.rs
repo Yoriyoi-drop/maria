@@ -29,10 +29,72 @@ pub use frontend::discovery::FileDiscovery;
 pub use intern::{init_string_table, Span, Symbol};
 
 use parser::lexer::Lexer;
-use parser::Parser;
 use parser::preprocessor::Preprocessor;
+use parser::Parser;
 use std::fs;
 use std::path::Path;
+
+/// Compare two ASTs for regression testing. Returns list of structural differences.
+pub fn compare_asts(design_a: &ir::IrDesign, design_b: &ir::IrDesign) -> Vec<String> {
+    let mut diffs = Vec::new();
+
+    // Compare module count
+    if design_a.modules.len() != design_b.modules.len() {
+        diffs.push(format!(
+            "module count: {} vs {}",
+            design_a.modules.len(),
+            design_b.modules.len()
+        ));
+    }
+
+    // Compare signal count
+    if design_a.top.signals.len() != design_b.top.signals.len() {
+        diffs.push(format!(
+            "top signal count: {} vs {}",
+            design_a.top.signals.len(),
+            design_b.top.signals.len()
+        ));
+    }
+
+    // Compare process count
+    if design_a.top.processes.len() != design_b.top.processes.len() {
+        diffs.push(format!(
+            "process count: {} vs {}",
+            design_a.top.processes.len(),
+            design_b.top.processes.len()
+        ));
+    }
+
+    // Compare each signal info
+    for (i, (sa, sb)) in design_a.top.signals.iter().zip(design_b.top.signals.iter()).enumerate() {
+        if sa.width != sb.width {
+            diffs.push(format!("signal[{}] '{}' width: {} vs {}", i, sa.name, sa.width, sb.width));
+        }
+        if sa.is_signed != sb.is_signed {
+            diffs.push(format!("signal[{}] '{}' signed: {} vs {}", i, sa.name, sa.is_signed, sb.is_signed));
+        }
+    }
+
+    // Compare class definitions
+    if design_a.classes.len() != design_b.classes.len() {
+        diffs.push(format!(
+            "class count: {} vs {}",
+            design_a.classes.len(),
+            design_b.classes.len()
+        ));
+    }
+
+    // Compare covergroups
+    if design_a.covergroups.len() != design_b.covergroups.len() {
+        diffs.push(format!(
+            "covergroup count: {} vs {}",
+            design_a.covergroups.len(),
+            design_b.covergroups.len()
+        ));
+    }
+
+    diffs
+}
 
 /// Read a .maria project file and return list of .sv file paths
 /// Paths in .maria are resolved relative to the .maria file's directory
@@ -186,6 +248,10 @@ pub fn simulate_signals(
         .collect();
     Ok(sigs)
 }
+
+#[cfg(test)]
+#[macro_use]
+pub mod test_util;
 
 #[cfg(test)]
 mod tests;

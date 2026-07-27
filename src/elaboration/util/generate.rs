@@ -13,6 +13,8 @@
 use std::collections::HashMap;
 
 use crate::ast::types::const_eval_simple;
+
+const MAX_GENERATED_ITEMS: usize = 1_000_000;
 use crate::ast::types::const_eval_with_params;
 use crate::ast::*;
 use crate::intern::Symbol;
@@ -25,9 +27,16 @@ pub fn expand_all_generates(
     param_vals: &HashMap<Symbol, i64>,
 ) -> Result<(), String> {
     let mut i = 0;
+    let mut total_items = 0usize;
     while i < module.items.len() {
         if let ModuleItem::Generate(gen) = &module.items[i] {
             let expanded = expand_generate_block(gen, param_vals)?;
+            total_items += expanded.len();
+            if total_items > MAX_GENERATED_ITEMS {
+                return Err(format!(
+                    "generate expansion exceeded limit ({} items)", MAX_GENERATED_ITEMS
+                ));
+            }
             for item in &expanded {
                 if let ModuleItem::Decl(d) = item {
                     module.decls.push(d.clone());
@@ -124,9 +133,18 @@ pub fn expand_generate_block(
                     None => 0,
                 };
                 let step_val = extract_generate_step(step, param_vals);
+                let max_iter = MAX_GENERATED_ITEMS / body_items.len().max(1);
                 if step_val > 0 {
                     let mut cur = start_val;
+                    let mut iter = 0usize;
                     while cur < limit {
+                        if iter >= max_iter {
+                            return Err(format!(
+                                "generate for loop exceeded {} iterations (possible O(2^N) blowup)",
+                                max_iter
+                            ));
+                        }
+                        iter += 1;
                         for mut item in body_items.clone() {
                             substitute_genvar_in_module_item(&mut item, var.as_str(), cur);
                             result.push(item);
@@ -135,7 +153,15 @@ pub fn expand_generate_block(
                     }
                 } else if step_val < 0 {
                     let mut cur = start_val;
+                    let mut iter = 0usize;
                     while cur > limit {
+                        if iter >= max_iter {
+                            return Err(format!(
+                                "generate for loop exceeded {} iterations (possible O(2^N) blowup)",
+                                max_iter
+                            ));
+                        }
+                        iter += 1;
                         for mut item in body_items.clone() {
                             substitute_genvar_in_module_item(&mut item, var.as_str(), cur);
                             result.push(item);

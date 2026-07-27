@@ -47,6 +47,17 @@ impl SimulationEngine {
     }
 
     pub(crate) fn evaluate_expr(&mut self, expr: &IrExpr) -> Result<LogicVec, SimError> {
+        self.expr_recursion_depth += 1;
+        if self.expr_recursion_depth > 4096 {
+            self.expr_recursion_depth = 0;
+            return Err(SimError::runtime("expression recursion depth exceeded (possible infinite recursion in expression evaluation)"));
+        }
+        let result = self.evaluate_expr_impl(expr);
+        self.expr_recursion_depth = self.expr_recursion_depth.saturating_sub(1);
+        result
+    }
+
+    fn evaluate_expr_impl(&mut self, expr: &IrExpr) -> Result<LogicVec, SimError> {
         match expr {
             IrExpr::Const(val) => Ok(val.clone()),
             IrExpr::FillLit(val) => Ok(LogicVec::fill(*val, 1)),
@@ -322,6 +333,23 @@ impl SimulationEngine {
                             };
                             Ok(LogicVec::from_u64(val, 32))
                         }
+                    }
+                    "$urandom_seed" => {
+                        let seed = args.first()
+                            .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
+                            .unwrap_or(LogicVec::from_u64(0, 32))
+                            .to_u64();
+                        self.rng = rand::rngs::StdRng::seed_from_u64(seed);
+                        let val: u32 = self.rng.gen();
+                        Ok(LogicVec::from_u64(val as u64, 32))
+                    }
+                    "$srandom" => {
+                        if let Some(seed_arg) = args.first() {
+                            if let Ok(seed_val) = self.evaluate_expr(seed_arg) {
+                                self.rng = rand::rngs::StdRng::seed_from_u64(seed_val.to_u64());
+                            }
+                        }
+                        Ok(LogicVec::new(0))
                     }
                     "$signed" => {
                         if let Some(arg) = args.first() {

@@ -363,6 +363,13 @@ impl Parser {
     }
 
     pub(crate) fn parse_stmt(&mut self) -> Result<Stmt, SimError> {
+        self.push_depth()?;
+        let result = self.parse_stmt_impl();
+        self.pop_depth();
+        result
+    }
+
+    fn parse_stmt_impl(&mut self) -> Result<Stmt, SimError> {
         if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
             self.skip_attribute();
             return self.parse_stmt();

@@ -282,6 +282,13 @@ impl Parser {
     }
 
     pub(crate) fn parse_primary_expr(&mut self) -> Result<Expr, SimError> {
+        self.push_depth()?;
+        let result = self.parse_primary_expr_impl();
+        self.pop_depth();
+        result
+    }
+
+    fn parse_primary_expr_impl(&mut self) -> Result<Expr, SimError> {
         let tok = self.peek().clone();
         match &tok {
             Token::Dollar => {

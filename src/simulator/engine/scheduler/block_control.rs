@@ -373,10 +373,14 @@ impl SimulationEngine {
                 break;
             }
             let old_loop_cont = self.loop_continuation.take();
-            self.loop_continuation = Some(vec![IrStmt::LoopWhile {
+            let mut lc = vec![IrStmt::LoopWhile {
                 cond: cond.clone(),
                 body: body.to_vec(),
-            }]);
+            }];
+            if !self.post_loop_tail.is_empty() {
+                lc.extend(self.post_loop_tail.clone());
+            }
+            self.loop_continuation = Some(lc);
             let completed = self.evaluate_block_with_delay_fork(body, fork_id)?;
             self.loop_continuation = old_loop_cont;
             if !completed {
@@ -459,10 +463,14 @@ impl SimulationEngine {
                 break;
             }
             let old_loop_cont = self.loop_continuation.take();
-            self.loop_continuation = Some(vec![IrStmt::LoopDoWhile {
+            let mut lc = vec![IrStmt::LoopDoWhile {
                 cond: cond.clone(),
                 body: body.to_vec(),
-            }]);
+            }];
+            if !self.post_loop_tail.is_empty() {
+                lc.extend(self.post_loop_tail.clone());
+            }
+            self.loop_continuation = Some(lc);
             let completed = self.evaluate_block_with_delay_fork(body, fork_id)?;
             self.loop_continuation = old_loop_cont;
             if !completed {

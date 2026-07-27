@@ -2,6 +2,7 @@
 /// Contains signal history tracking, breakpoint checking, and watchpoint logic.
 use crate::error::SimError;
 use crate::simulator::types::*;
+use std::collections::VecDeque;
 
 
 use super::SimulationEngine;
@@ -32,11 +33,11 @@ impl SimulationEngine {
                 let val = self.state.read_signal(id).clone();
                 self.signal_history
                     .entry(sig.name)
-                    .or_insert_with(Vec::new)
-                    .push((time, val));
+                    .or_insert_with(|| VecDeque::with_capacity(self.signal_history_max.min(1024)))
+                    .push_back((time, val));
                 if let Some(hist) = self.signal_history.get(&sig.name) {
-                    if hist.len() > 100000 {
-                        self.signal_history.get_mut(&sig.name).unwrap().remove(0);
+                    if hist.len() > self.signal_history_max {
+                        self.signal_history.get_mut(&sig.name).unwrap().pop_front();
                     }
                 }
             }
