@@ -180,11 +180,40 @@ pub fn compile_str(source: &str) -> Result<ir::IrDesign, SimError> {
     let mut parser = Parser::new(tokens, &first_source)
         .with_source_lines(&preprocessed)
         .with_file_line_map(file_line_map);
-    let mut design = parser.parse_design()?;
+    let mut design = match parser.parse_design() {
+        Ok(d) => d,
+        Err(e) => {
+            // Parse function returned fatal error — emit collected errors too
+            if !parser.errors.is_empty() {
+                let mut emitter = diagnostics::TerminalEmitter::new().with_simple_mode(true);
+                for diag in &parser.errors {
+                    let _ = emitter.emit(diag);
+                }
+            }
+            return Err(e);
+        }
+    };
+    // Cek accumulated parser errors (error recovery — parsing lanjut walau ada error)
+    if !parser.errors.is_empty() {
+        let mut emitter = diagnostics::TerminalEmitter::new().with_simple_mode(true);
+        for diag in &parser.errors {
+            let _ = emitter.emit(diag);
+        }
+        return Err(SimError::from_parse_diagnostic(parser.errors[0].clone()));
+    }
     design.timescale = timescale;
 
     let mut elaborator = elaboration::Elaborator::new(design);
     let ir_design = elaborator.elaborate(None)?;
+
+    // Flush elaboration-time diagnostics (warnings like WR0102)
+    let elab_diags = elaborator.flush_diagnostics();
+    if !elab_diags.is_empty() {
+        let mut emitter = diagnostics::TerminalEmitter::new().with_simple_mode(true);
+        for diag in &elab_diags {
+            let _ = emitter.emit(diag);
+        }
+    }
 
     Ok(ir_design)
 }

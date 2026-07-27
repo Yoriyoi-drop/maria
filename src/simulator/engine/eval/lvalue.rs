@@ -137,8 +137,11 @@ impl SimulationEngine {
                         existing.bits[abs_start + i] = *b;
                     }
                 }
+                let is_init = self.state.read_signal(*sig_id).all_x() || self.state.read_signal(*sig_id).all_z();
                 self.state.write_signal(*sig_id, existing);
-                self.signal_last_change.insert(*sig_id, self.state.time);
+                if !is_init {
+                    self.signal_last_change.insert(*sig_id, self.state.time);
+                }
             }
             IrLValue::ArrayBitSelect {
                 sig_id,

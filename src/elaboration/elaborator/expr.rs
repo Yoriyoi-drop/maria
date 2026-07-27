@@ -4,7 +4,9 @@ use super::BUILTIN_UVM_CLASSES;
 use super::super::util::*;
 use crate::ast::types::{const_eval_simple, const_eval_with_params};
 use crate::ast::*;
+use crate::diagnostics::diagnostic::DiagCode;
 use crate::error::SimError;
+
 use crate::intern::Symbol;
 use crate::ir::*;
 
@@ -65,7 +67,7 @@ impl Elaborator {
                 }
                 let sig_id = signal_map
                     .get(name)
-                    .ok_or_else(|| SimError::elaborate(format!("signal '{}' not found", name)))?;
+                    .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, format!("signal '{}' not found", name)))?;
                 Ok(IrExpr::Signal(*sig_id, 0))
             }
             Expr::ScopedIdent { package, item } => {
@@ -81,13 +83,13 @@ impl Elaborator {
                                         )));
                                     }
                                 }
-                                return Err(SimError::elaborate(format!(
+                                return Err(self.elab_diag(DiagCode::ParamMismatch, format!(
                                     "package param '{}.{}' has no default",
                                     package, item
                                 )));
                             }
                             _ => {
-                                return Err(SimError::elaborate(format!(
+                                return Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
                                     "'{}' is not a constant in package '{}'",
                                     item, package
                                 )))
@@ -95,7 +97,7 @@ impl Elaborator {
                         }
                     }
                 }
-                return Err(SimError::elaborate(format!(
+                return Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
                     "'{}' not found in package '{}'",
                     item, package
                 )));
@@ -118,7 +120,7 @@ impl Elaborator {
                         Ok(IrExpr::ExprRangeSelect(Box::new(inner_expr), msb_c, lsb_c))
                     }
                 } else {
-                    Err(SimError::elaborate("dynamic range select not supported"))
+                    Err(self.elab_diag(DiagCode::ModuleNotFound, "dynamic range select not supported"))
                 }
             }
             Expr::BitSelect { expr: inner, index } => {
@@ -173,7 +175,7 @@ impl Elaborator {
                 } else if let Ok(idx) = const_eval_params(index, &self.param_vals) {
                     Ok(IrExpr::ExprBitSelect(Box::new(inner_expr), idx as usize))
                 } else {
-                    Err(SimError::elaborate(
+                    Err(self.elab_diag(DiagCode::ModuleNotFound,
                         "dynamic bit-select on non-signal not supported",
                     ))
                 }
@@ -290,14 +292,14 @@ impl Elaborator {
             Expr::FuncCall { name, args } if name.starts_with("$") => match name.as_str() {
                 "$signed" => {
                     if args.len() != 1 {
-                        return Err(SimError::elaborate("$signed requires exactly one argument"));
+                        return Err(self.elab_diag(DiagCode::ParamMismatch, "$signed requires exactly one argument"));
                     }
                     let inner = self.elaborate_expr(&args[0], signal_map, signals)?;
                     Ok(IrExpr::Signed(Box::new(inner)))
                 }
                 "$unsigned" => {
                     if args.len() != 1 {
-                        return Err(SimError::elaborate(
+                        return Err(self.elab_diag(DiagCode::ParamMismatch,
                             "$unsigned requires exactly one argument",
                         ));
                     }
@@ -314,7 +316,7 @@ impl Elaborator {
                         let result = if n.is_power_of_two() { msb - 1 } else { msb };
                         Ok(IrExpr::Const(LogicVec::from_u64(result, 32)))
                     } else {
-                        Err(SimError::elaborate("$clog2 requires one argument"))
+                        Err(self.elab_diag(DiagCode::ParamMismatch, "$clog2 requires one argument"))
                     }
                 }
                 "$bits" => {
@@ -325,67 +327,67 @@ impl Elaborator {
                                     info.width * if info.array_depth > 0 { info.array_depth } else { 1 }
                                 })
                                 .or_else(|| compute_expr_width(arg, signal_map, signals, &self.param_vals, &self.package_symbols).ok())
-                                .ok_or_else(|| SimError::elaborate("$bits argument must resolve to a signal or computable expression"))?;
+                                .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, "$bits argument must resolve to a signal or computable expression"))?;
                         Ok(IrExpr::Const(LogicVec::from_u64(width as u64, 32)))
                     } else {
-                        Err(SimError::elaborate("$bits requires one argument"))
+                        Err(self.elab_diag(DiagCode::ParamMismatch, "$bits requires one argument"))
                     }
                 }
                 "$high" => {
                     if let Some(arg) = args.first() {
                         let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
-                            SimError::elaborate("$high argument must resolve to a signal")
+                            self.elab_diag(DiagCode::ModuleNotFound, "$high argument must resolve to a signal")
                         })?;
                         let info = &signals[sig_id];
                         let high = info.msb.max(info.lsb);
                         Ok(IrExpr::Const(LogicVec::from_u64(high as u64, 32)))
                     } else {
-                        Err(SimError::elaborate("$high requires one argument"))
+                        Err(self.elab_diag(DiagCode::ParamMismatch, "$high requires one argument"))
                     }
                 }
                 "$low" => {
                     if let Some(arg) = args.first() {
                         let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
-                            SimError::elaborate("$low argument must resolve to a signal")
+                            self.elab_diag(DiagCode::ModuleNotFound, "$low argument must resolve to a signal")
                         })?;
                         let info = &signals[sig_id];
                         let low = info.msb.min(info.lsb);
                         Ok(IrExpr::Const(LogicVec::from_u64(low as u64, 32)))
                     } else {
-                        Err(SimError::elaborate("$low requires one argument"))
+                        Err(self.elab_diag(DiagCode::ParamMismatch, "$low requires one argument"))
                     }
                 }
                 "$left" => {
                     if let Some(arg) = args.first() {
                         let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
-                            SimError::elaborate("$left argument must resolve to a signal")
+                            self.elab_diag(DiagCode::ModuleNotFound, "$left argument must resolve to a signal")
                         })?;
                         let info = &signals[sig_id];
                         Ok(IrExpr::Const(LogicVec::from_u64(info.msb as u64, 32)))
                     } else {
-                        Err(SimError::elaborate("$left requires one argument"))
+                        Err(self.elab_diag(DiagCode::ParamMismatch, "$left requires one argument"))
                     }
                 }
                 "$right" => {
                     if let Some(arg) = args.first() {
                         let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
-                            SimError::elaborate("$right argument must resolve to a signal")
+                            self.elab_diag(DiagCode::ModuleNotFound, "$right argument must resolve to a signal")
                         })?;
                         let info = &signals[sig_id];
                         Ok(IrExpr::Const(LogicVec::from_u64(info.lsb as u64, 32)))
                     } else {
-                        Err(SimError::elaborate("$right requires one argument"))
+                        Err(self.elab_diag(DiagCode::ParamMismatch, "$right requires one argument"))
                     }
                 }
                 "$size" => {
                     if let Some(arg) = args.first() {
                         let sig_id = resolve_expr_signal(arg, signal_map).ok_or_else(|| {
-                            SimError::elaborate("$size argument must resolve to a signal")
+                            self.elab_diag(DiagCode::ModuleNotFound, "$size argument must resolve to a signal")
                         })?;
                         let info = &signals[sig_id];
                         Ok(IrExpr::Const(LogicVec::from_u64(info.width as u64, 32)))
                     } else {
-                        Err(SimError::elaborate("$size requires one argument"))
+                        Err(self.elab_diag(DiagCode::ParamMismatch, "$size requires one argument"))
                     }
                 }
                 "$countones" => {
@@ -401,7 +403,7 @@ impl Elaborator {
                             })
                         }
                     } else {
-                        Err(SimError::elaborate("$countones requires one argument"))
+                        Err(self.elab_diag(DiagCode::ParamMismatch, "$countones requires one argument"))
                     }
                 }
                 "$onehot" => {
@@ -420,7 +422,7 @@ impl Elaborator {
                             })
                         }
                     } else {
-                        Err(SimError::elaborate("$onehot requires one argument"))
+                        Err(self.elab_diag(DiagCode::ParamMismatch, "$onehot requires one argument"))
                     }
                 }
                 "$isunknown" => {
@@ -439,7 +441,7 @@ impl Elaborator {
                             })
                         }
                     } else {
-                        Err(SimError::elaborate("$isunknown requires one argument"))
+                        Err(self.elab_diag(DiagCode::ParamMismatch, "$isunknown requires one argument"))
                     }
                 }
                 _ => {
@@ -534,7 +536,7 @@ impl Elaborator {
                                 let msb = f.offset + f.width - 1;
                                 return Ok(IrExpr::RangeSelect(sig_id, lsb, msb));
                             }
-                            return Err(SimError::elaborate(format!(
+                            return Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
                                 "field '{}' not found in struct type (width {})",
                                 field, sig_info.width
                             )));
@@ -583,10 +585,10 @@ impl Elaborator {
                     match const_eval_params(ss, &self.param_vals) {
                         Ok(v) if v > 0 => Some(v as usize),
                         Ok(_) => {
-                            return Err(SimError::elaborate("streaming slice_size must be > 0"))
+                            return Err(self.elab_diag(DiagCode::ParamMismatch, "streaming slice_size must be > 0"))
                         }
                         Err(_) => {
-                            return Err(SimError::elaborate(
+                            return Err(self.elab_diag(DiagCode::ParamMismatch,
                                 "slice_size must be a constant expression",
                             ))
                         }
@@ -816,13 +818,13 @@ impl Elaborator {
                             args: ir_args?,
                         });
                     }
-                    Err(SimError::elaborate(format!(
+                    Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
                         "function '{}' not found (not a DPI import)",
                         name
                     )))
                 }
             }
-            _ => Err(SimError::elaborate(format!(
+            _ => Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
                 "expression type not yet supported"
             ))),
         }
@@ -837,7 +839,7 @@ impl Elaborator {
     ) -> Result<IrExpr, SimError> {
         let (pkg_name, func_name) = name
             .split_once("::")
-            .ok_or_else(|| SimError::elaborate(format!("invalid function name '{}'", name)))?;
+            .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, format!("invalid function name '{}'", name)))?;
 
         let func = self
             .package_symbols
@@ -851,7 +853,7 @@ impl Elaborator {
                 }
             })
             .ok_or_else(|| {
-                SimError::elaborate(format!(
+                self.elab_diag(DiagCode::ModuleNotFound, format!(
                     "function '{}' not found in package '{}'",
                     func_name, pkg_name
                 ))
@@ -869,7 +871,7 @@ impl Elaborator {
                 }
             })
             .ok_or_else(|| {
-                SimError::elaborate(format!("function '{}' has no return expression", name))
+                self.elab_diag(DiagCode::ModuleNotFound, format!("function '{}' has no return expression", name))
             })?;
 
         // Substitute formal parameters with actual arguments
@@ -1143,15 +1145,15 @@ impl Elaborator {
         match expr {
             Expr::Ident(name) => signal_map
                 .get(name)
-                .ok_or_else(|| SimError::elaborate(format!("signal '{}' not found", name)))
+                .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, format!("signal '{}' not found", name)))
                 .copied(),
-            Expr::MethodCall { .. } => Err(SimError::elaborate(
+            Expr::MethodCall { .. } => Err(self.elab_diag(DiagCode::ModuleNotFound,
                 "method calls cannot resolve to a signal",
             )),
-            Expr::MemberAccess { .. } => Err(SimError::elaborate(
+            Expr::MemberAccess { .. } => Err(self.elab_diag(DiagCode::ModuleNotFound,
                 "member access cannot resolve to a signal",
             )),
-            _ => Err(SimError::elaborate("expected simple signal identifier")),
+            _ => Err(self.elab_diag(DiagCode::ModuleNotFound, "expected simple signal identifier")),
         }
     }
 

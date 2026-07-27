@@ -227,12 +227,31 @@ impl Parser {
                                 continue;
                             }
                         }
-                        let expr = self.parse_expr(0)?;
-                        self.skip_semi();
-                        body.push(ConstraintItem::Expr(expr));
+                        // parse_expr might fail on complex constraint expressions;
+                        // if so, skip to ';' to recover
+                        match self.parse_expr(0) {
+                            Ok(expr) => {
+                                self.skip_semi();
+                                body.push(ConstraintItem::Expr(expr));
+                            }
+                            Err(_) => {
+                                // Error in constraint expression — skip to ';' or '}'
+                                loop {
+                                    match self.peek() {
+                                        Token::Semi => { self.advance(); break; }
+                                        Token::RBrace | Token::Eof => break,
+                                        _ => { self.advance(); }
+                                    }
+                                }
+                            }
+                        }
                     }
                     self.advance(); // consume '}'
                     members.push(ClassMember::Constraint { name: cname, body });
+                }
+                Token::Class => {
+                    // Nested class — skip entire body to matching endclass
+                    self.skip_class_body();
                 }
                 _ => {
                     self.advance();

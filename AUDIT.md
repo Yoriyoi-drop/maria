@@ -282,7 +282,7 @@ Semua fitur Fase Alpha + Beta + RC + Production selesai. 20 dari 20 bug kritis t
 | **Step simulation** | ✅ Supported | `--step` flag; `Debugger::step()` single-cycle execution |
 | **`$monitor`** | ✅ Supported | Change detect per time step |
 | **`$strobe`** | ✅ Supported | Postponed region display |
-| **`$display`/`$write`** | ✅ Supported | `%d`, `%b`, `%h`, `%s`, `%f`; **tidak ada `%0d`** |
+| **`$display`/`$write`** | ✅ Supported | `%d`, `%b`, `%h`, `%s`, `%f`; **`%0d` zero-fill didukung penuh** |
 | **`$fopen`/`$fclose`** | ✅ Supported | File handle management; handle 32-bit |
 | **`$fdisplay`/`$fwrite`** | ✅ Supported | File output via `format_display` |
 | **`$fstrobe`** | ✅ Supported | Postponed region file output; evaluasi di Postponed |

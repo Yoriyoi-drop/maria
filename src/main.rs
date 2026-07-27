@@ -191,6 +191,17 @@ struct Cli {
     cycle_fusion: bool,
 }
 
+/// Emit a list of diagnostics through TerminalEmitter.
+fn emit_diags(diags: &[maria::diagnostics::diagnostic::Diagnostic]) {
+    if diags.is_empty() {
+        return;
+    }
+    let mut emitter = maria::diagnostics::TerminalEmitter::new();
+    for diag in diags {
+        let _ = emitter.emit(diag);
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -349,7 +360,25 @@ fn run(cli: Cli) -> Result<(), SimError> {
     let mut parser = Parser::new(tokens, first_source)
         .with_source_lines(&combined)
         .with_file_line_map(file_line_map);
-    let mut design = parser.parse_design()?;
+    let mut design = match parser.parse_design() {
+        Ok(d) => d,
+        Err(e) => {
+            if !parser.errors.is_empty() {
+                let mut emitter = maria::diagnostics::TerminalEmitter::new();
+                for diag in &parser.errors {
+                    let _ = emitter.emit(diag);
+                }
+            }
+            return Err(e);
+        }
+    };
+    if !parser.errors.is_empty() {
+        let mut emitter = maria::diagnostics::TerminalEmitter::new();
+        for diag in &parser.errors {
+            let _ = emitter.emit(diag);
+        }
+        return Err(maria::error::SimError::from_parse_diagnostic(parser.errors[0].clone()));
+    }
     let ts_for_ir = design_timescale.clone();
     design.timescale = design_timescale;
 
@@ -466,6 +495,10 @@ fn run(cli: Cli) -> Result<(), SimError> {
     }
     let mut elaborator = Elaborator::new(design);
     let mut ir_design = elaborator.elaborate(top_name)?;
+
+    // Flush elaboration-time diagnostics (warnings like WR0102)
+    emit_diags(&elaborator.flush_diagnostics());
+
     ir_design.timescale = ts_for_ir;
 
     if !cli.quiet {
@@ -607,13 +640,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
     }
 
     // Flush runtime diagnostics (warnings, etc.)
-    let diags = debugger.engine.flush_diagnostics();
-    if !diags.is_empty() {
-        let mut emitter = maria::diagnostics::TerminalEmitter::new();
-        for diag in &diags {
-            let _ = emitter.emit(diag);
-        }
-    }
+    emit_diags(&debugger.engine.flush_diagnostics());
 
     if debug_mode != DebugMode::Normal && !cli.quiet {
         if debugger.engine.paused {
@@ -739,12 +766,20 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         let (design, module_index) = session.compile_incremental(&all_sources)?;
         let index_len = module_index.len();
         if !cli.quiet { session.print_timing(); }
-        (design.clone(), Elaborator::new(design).elaborate(top_name)?, index_len)
+        let design_clone = design.clone();
+        let mut elab = Elaborator::new(design);
+        let ir_design = elab.elaborate(top_name)?;
+        emit_diags(&elab.flush_diagnostics());
+        (design_clone, ir_design, index_len)
     } else {
         let (design, module_index) = session.compile()?;
         let index_len = module_index.len();
         if !cli.quiet { session.print_timing(); }
-        (design.clone(), Elaborator::new(design).elaborate(top_name)?, index_len)
+        let design_clone = design.clone();
+        let mut elab = Elaborator::new(design);
+        let ir_design = elab.elaborate(top_name)?;
+        emit_diags(&elab.flush_diagnostics());
+        (design_clone, ir_design, index_len)
     };
 
     if !cli.quiet {
@@ -911,13 +946,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     }
 
     // Flush runtime diagnostics (warnings, etc.)
-    let diags = debugger.engine.flush_diagnostics();
-    if !diags.is_empty() {
-        let mut emitter = maria::diagnostics::TerminalEmitter::new();
-        for diag in &diags {
-            let _ = emitter.emit(diag);
-        }
-    }
+    emit_diags(&debugger.engine.flush_diagnostics());
 
     if debug_mode != DebugMode::Normal && !cli.quiet {
         if debugger.engine.paused {

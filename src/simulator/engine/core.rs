@@ -625,26 +625,35 @@ impl SimulationEngine {
             }
 
             // ── WR0202: Clock Never Toggles ──
-            // Signal is a clock but never changed value
-            if clock_sigs.contains(&sig_id) && never_changed {
-                self.emit_warning(
-                    DiagCode::ClockNeverToggles,
-                    format!("clock signal '{}' never toggled during simulation", sig_name),
-                );
+            // Signal is a clock but never toggled (only written at init time or never)
+            // We check if the signal was ever written AFTER time 0 (init = time 0)
+            if clock_sigs.contains(&sig_id) {
+                let last_change_time = self.signal_last_change.get(&sig_id).copied();
+                let has_real_change = last_change_time.map_or(false, |t| t > 0);
+                if !has_real_change {
+                    self.emit_warning(
+                        DiagCode::ClockNeverToggles,
+                        format!("clock signal '{}' never toggled during simulation", sig_name),
+                    );
+                }
             }
 
             // ── WR0203: Reset Permanently Asserted ──
-            // Reset signal is active but never de-asserted
-            if reset_sigs.contains(&sig_id) && never_changed {
-                let val = self.state.read_signal(sig_id);
-                if !val.all_x() && !val.all_z() {
-                    self.emit_warning(
-                        DiagCode::ResetPermanentlyAsserted,
-                        format!(
-                            "reset signal '{}' was permanently asserted during simulation",
-                            sig_name
-                        ),
-                    );
+            // Reset signal was never de-asserted (only written at init time or never)
+            if reset_sigs.contains(&sig_id) {
+                let last_change_time = self.signal_last_change.get(&sig_id).copied();
+                let has_real_change = last_change_time.map_or(false, |t| t > 0);
+                if !has_real_change {
+                    let val = self.state.read_signal(sig_id);
+                    if !val.all_x() && !val.all_z() {
+                        self.emit_warning(
+                            DiagCode::ResetPermanentlyAsserted,
+                            format!(
+                                "reset signal '{}' was permanently asserted during simulation",
+                                sig_name
+                            ),
+                        );
+                    }
                 }
             }
         }

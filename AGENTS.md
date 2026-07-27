@@ -43,7 +43,7 @@ Diexpand di `eval_assign_rhs()` (assignment level), bukan di `evaluate_expr()`, 
 `$clog2`, `$bits`, `$size`, `$left`, `$right`, `$low`, `$high` dievaluasi di **elaborator** (compile-time) via constant folding. `$clog2` membutuhkan koreksi `is_power_of_two()` (jika power-of-two, hasil = msb - 1).
 
 ### `$display` format
-`%0d` (zero-padded) **tidak didukung** — hanya `%d` dasar. Format yang tidak dikenal dicetak literal.
+`%0d` (zero-padded) **didukung penuh** — format `%0d`, `%0b`, `%0h` bekerja dengan zero-fill padding. Format yang tidak dikenal dicetak literal.
 
 ### Test pattern
 Test menggunakan `simulate_signals(source, max_time)` yang mengembalikan `Vec<(String, LogicVec)>`. Cari signal dengan `.iter().find(|(n,_)| n == "name")`. Semua test ada di `src/lib.rs` di `mod tests`. Tidak ada test integration terpisah.

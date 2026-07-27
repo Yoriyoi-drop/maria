@@ -3,6 +3,7 @@ use super::Elaborator;
 use super::super::util::*;
 use crate::ast::types::const_eval_with_params;
 use crate::ast::*;
+use crate::diagnostics::diagnostic::DiagCode;
 use crate::error::SimError;
 use crate::intern::Symbol;
 use crate::ir::*;
@@ -55,24 +56,6 @@ fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
     }
 }
 
-/// Check width mismatch between LHS signal and RHS expression at elaboration.
-fn check_width_mismatch(
-    lhs_signal_id: Option<SignalId>,
-    rhs: &IrExpr,
-    signals: &[SignalInfo],
-) {
-    let Some(sid) = lhs_signal_id else { return };
-    let Some(lhs_sig) = signals.get(sid) else { return };
-    let lhs_w = lhs_sig.width;
-    let rhs_w = expr_approx_width(rhs, signals);
-    if lhs_w != rhs_w && rhs_w > 0 {
-        eprintln!(
-            "warning: width mismatch in assignment to '{}' (lhs={}, rhs={})",
-            lhs_sig.name, lhs_w, rhs_w
-        );
-    }
-}
-
 /// Check signedness mismatch between LHS and RHS at elaboration.
 fn check_signed_mismatch(
     lhs_signal_id: Option<SignalId>,
@@ -88,6 +71,25 @@ fn check_signed_mismatch(
 }
 
 impl Elaborator {
+    /// Check width mismatch between LHS signal and RHS expression at elaboration.
+    fn check_width_mismatch(
+        &self,
+        lhs_signal_id: Option<SignalId>,
+        rhs: &IrExpr,
+        signals: &[SignalInfo],
+    ) {
+        let Some(sid) = lhs_signal_id else { return };
+        let Some(lhs_sig) = signals.get(sid) else { return };
+        let lhs_w = lhs_sig.width;
+        let rhs_w = expr_approx_width(rhs, signals);
+        if lhs_w != rhs_w && rhs_w > 0 {
+            self.elab_warn(
+                DiagCode::WidthMismatchWarning,
+                format!("width mismatch in assignment to '{}' (lhs={}, rhs={})", lhs_sig.name, lhs_w, rhs_w),
+            );
+        }
+    }
+
     pub(crate) fn elaborate_stmt_block(
         &self,
         stmts: &[Stmt],
@@ -154,7 +156,7 @@ impl Elaborator {
                     }
                 }
                 let lhs_sid = lvalue_signal_id(&ir_lhs);
-                check_width_mismatch(lhs_sid, &ir_rhs, signals);
+                self.check_width_mismatch(lhs_sid, &ir_rhs, signals);
                 check_signed_mismatch(lhs_sid, &ir_rhs, signals);
                 Ok(IrStmt::BlockingAssign {
                     lhs: ir_lhs,
@@ -196,7 +198,7 @@ impl Elaborator {
                     }
                 }
                 let lhs_sid = lvalue_signal_id(&ir_lhs);
-                check_width_mismatch(lhs_sid, &ir_rhs, signals);
+                self.check_width_mismatch(lhs_sid, &ir_rhs, signals);
                 check_signed_mismatch(lhs_sid, &ir_rhs, signals);
                 Ok(IrStmt::NonBlockingAssign {
                     lhs: ir_lhs,
@@ -445,7 +447,7 @@ impl Elaborator {
                                 body,
                             })
                         } else {
-                            Err(SimError::elaborate(format!(
+                            Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
                                 "cannot resolve signal in @(...)"
                             )))
                         }
@@ -458,7 +460,7 @@ impl Elaborator {
                                 body,
                             })
                         } else {
-                            Err(SimError::elaborate(format!(
+                            Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
                                 "cannot resolve signal in @(...)"
                             )))
                         }
@@ -675,10 +677,10 @@ impl Elaborator {
                 stmts,
             } => {
                 let sig_id = signal_map.get(array_var).ok_or_else(|| {
-                    SimError::elaborate(format!("array '{}' not found for foreach", array_var))
+                    self.elab_diag(DiagCode::ModuleNotFound, format!("array '{}' not found for foreach", array_var))
                 })?;
                 let sig_info = signals.get(*sig_id).ok_or_else(|| {
-                    SimError::elaborate(format!("signal info not found for '{}'", array_var))
+                    self.elab_diag(DiagCode::ModuleNotFound, format!("signal info not found for '{}'", array_var))
                 })?;
                 if sig_info.is_dynamic || sig_info.is_queue {
                     let ir_body =
@@ -695,7 +697,7 @@ impl Elaborator {
                 } else {
                     let n = sig_info.array_depth;
                     if n == 0 {
-                        return Err(SimError::elaborate(format!(
+                        return Err(self.elab_diag(DiagCode::TypeMismatch, format!(
                             "'{}' is not an array, cannot use foreach",
                             array_var
                         )));
@@ -928,7 +930,7 @@ impl Elaborator {
                     if let Some(idx) = signal_map.get(name) {
                         sig_ids.push(*idx);
                     } else {
-                        return Err(SimError::elaborate(format!(
+                        return Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
                             "wait_order: signal '{}' not found",
                             name
                         )));
@@ -1017,7 +1019,7 @@ impl Elaborator {
             Expr::Ident(name) => {
                 let sig_id = signal_map
                     .get(name)
-                    .ok_or_else(|| SimError::elaborate(format!("signal '{}' not found", name)))?;
+                    .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, format!("signal '{}' not found", name)))?;
                 Ok(IrLValue::Signal(*sig_id, 0))
             }
             Expr::RangeSelect {
@@ -1051,7 +1053,7 @@ impl Elaborator {
                         msb: msb_c,
                         lsb: lsb_c,
                     }),
-                    _ => Err(SimError::elaborate("nested range select not supported")),
+                    _ => Err(self.elab_diag(DiagCode::NotImplemented, "nested range select not supported")),
                 }
             }
             Expr::BitSelect {
@@ -1128,12 +1130,12 @@ impl Elaborator {
                                 bit: idx as usize,
                             })
                         } else {
-                            Err(SimError::elaborate(
+                            Err(self.elab_diag(DiagCode::NotImplemented,
                                 "dynamic bit-select on array element not supported",
                             ))
                         }
                     }
-                    _ => Err(SimError::elaborate("nested bit select not supported")),
+                    _ => Err(self.elab_diag(DiagCode::NotImplemented, "nested bit select not supported")),
                 }
             }
             Expr::PartSelect {
@@ -1146,7 +1148,7 @@ impl Elaborator {
                 let width_r = const_eval_params(width, &self.param_vals);
                 let (base_c, width_c) = match (base_r, width_r) {
                     (Ok(b), Ok(w)) => (b as usize, w as usize),
-                    _ => return Err(SimError::elaborate("dynamic part-select not supported")),
+                    _ => return Err(self.elab_diag(DiagCode::NotImplemented, "dynamic part-select not supported")),
                 };
                 match inner_lv {
                     IrLValue::Signal(sid, _) => {
@@ -1192,7 +1194,7 @@ impl Elaborator {
                             })
                         }
                     }
-                    _ => Err(SimError::elaborate(
+                    _ => Err(self.elab_diag(DiagCode::NotImplemented,
                         "nested part-select in lvalue not supported",
                     )),
                 }
@@ -1204,7 +1206,7 @@ impl Elaborator {
                     .collect();
                 Ok(IrLValue::Concat(parts?))
             }
-            Expr::MethodCall { .. } => Err(SimError::elaborate(
+            Expr::MethodCall { .. } => Err(self.elab_diag(DiagCode::NotImplemented,
                 "method calls cannot be used as lvalues",
             )),
             Expr::MemberAccess { obj, field } => {
@@ -1224,19 +1226,19 @@ impl Elaborator {
                                 let msb = f.offset + f.width - 1;
                                 return Ok(IrLValue::RangeSelect(sig_id, lsb, msb));
                             }
-                            return Err(SimError::elaborate(format!(
+                            return Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
                                 "field '{}' not found in struct type",
                                 field
                             )));
                         }
-                        Err(SimError::elaborate(format!("member access on signal '{:?}' that has no struct fields (cannot use as lvalue)", obj)))
+                        Err(self.elab_diag(DiagCode::ModuleNotFound, format!("member access on signal '{:?}' that has no struct fields (cannot use as lvalue)", obj)))
                     }
-                    _ => Err(SimError::elaborate(
+                    _ => Err(self.elab_diag(DiagCode::NotImplemented,
                         "member access cannot be used as lvalues",
                     )),
                 }
             }
-            _ => Err(SimError::elaborate(format!(
+            _ => Err(self.elab_diag(DiagCode::InvalidSyntax, format!(
                 "invalid lvalue expression: {:?}",
                 expr
             ))),

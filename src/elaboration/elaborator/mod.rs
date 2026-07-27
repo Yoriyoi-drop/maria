@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::util::*;
 use crate::ast::types::const_eval_with_params;
 use crate::ast::*;
-use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic};
+use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, DiagSink};
 use crate::error::SimError;
 use crate::intern::Symbol;
 pub mod ext;
@@ -39,6 +39,7 @@ pub struct Elaborator {
     pub typedef_field_map: HashMap<Symbol, Vec<StructFieldInfo>>,
     pub package_symbols: HashMap<Symbol, HashMap<Symbol, PackageItem>>,
     pub specialized_classes: std::cell::RefCell<Vec<ClassDecl>>,
+    pub diag_sink: DiagSink,
 }
 
 impl Elaborator {
@@ -146,6 +147,7 @@ impl Elaborator {
             typedef_field_map: HashMap::new(),
             package_symbols,
             specialized_classes: std::cell::RefCell::new(Vec::new()),
+            diag_sink: DiagSink::new(),
         }
     }
 
@@ -764,6 +766,18 @@ impl Elaborator {
         let msg: String = message.into();
         let diag = Diagnostic::new(DiagLevel::Error, code, msg.clone());
         SimError::from_elab_diagnostic(diag)
+    }
+
+    /// Emit warning diagnostic ke DiagSink (elaboration-time warnings).
+    fn elab_warn(&self, code: DiagCode, message: impl Into<String>) {
+        let msg: String = message.into();
+        let diag = Diagnostic::new(DiagLevel::Warning, code, msg);
+        self.diag_sink.push(diag);
+    }
+
+    /// Flush diagnostics from DiagSink and return them.
+    pub fn flush_diagnostics(&self) -> Vec<Diagnostic> {
+        self.diag_sink.diagnostics()
     }
 
     fn store_typedef_fields(&mut self, name: Symbol, dtype: &DataType) {
