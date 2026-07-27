@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use super::Elaborator;
 use crate::ast::*;
 use super::super::util::const_eval_params;
+use crate::diagnostics::diagnostic::DiagCode;
 use crate::error::SimError;
 use crate::intern::Symbol;
 use crate::ir::*;
@@ -123,7 +124,7 @@ impl Elaborator {
     ) -> Result<(ClockEdge, Option<ResetInfo>), SimError> {
         let events = match sensitivity {
             Some(sl) => &sl.events,
-            None => return Err(SimError::elaborate("always_ff requires sensitivity list")),
+            None => return Err(self.elab_diag(DiagCode::ModuleNotFound, "always_ff requires sensitivity list")),
         };
 
         let mut clock_edge = None;
@@ -156,7 +157,7 @@ impl Elaborator {
         }
 
         clock_edge
-            .ok_or_else(|| SimError::elaborate("always_ff must have at least one clock edge"))
+            .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, "always_ff must have at least one clock edge"))
             .map(|ce| (ce, reset))
     }
 }

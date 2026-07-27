@@ -72,10 +72,7 @@ impl Parser {
                     DistWeight::Range(weight),
                 ))
             } else {
-                return Err(SimError::parse(format!(
-                    "line {}: expected := or :/ after dist range",
-                    self.peek_line()
-                )));
+                return Err(self.err("expected := or :/ after dist range"));
             }
         } else {
             // Single value: expr := weight or expr :/ weight
@@ -94,10 +91,7 @@ impl Parser {
                 let weight = const_eval_simple(&val).unwrap_or(0) as u64;
                 Ok(DistItem::Value(Box::new(expr), DistWeight::Range(weight)))
             } else {
-                return Err(SimError::parse(format!(
-                    "line {}: expected := or :/ after dist item",
-                    self.peek_line()
-                )));
+                return Err(self.err("expected := or :/ after dist item"));
             }
         }
     }
@@ -301,7 +295,7 @@ impl Parser {
                     Token::RealTime => { self.advance(); "realtime".to_string() }
                     Token::Signed => { self.advance(); "signed".to_string() }
                     Token::Unsigned => { self.advance(); "unsigned".to_string() }
-                    _ => return Err(SimError::parse(format!("line {}: expected system function name", self.peek_line()))),
+                    _ => return Err(self.err("expected system function name")),
                 };
                 let full_name = format!("${}", name);
                 if self.peek() == &Token::LParen {
@@ -534,7 +528,7 @@ impl Parser {
                     Ok(Expr::Cast { dtype: Symbol::intern(type_name), expr: Box::new(expr) })
                 } else { Ok(Expr::Ident(Symbol::intern(type_name))) }
             }
-            _ => Err(SimError::parse(format!("line {}: expected expression, found {}", self.peek_line(), tok))),
+            _ => Err(self.err(format!("expected expression, found {}", tok))),
         }
     }
 }

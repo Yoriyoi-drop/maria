@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use super::util::*;
 use crate::ast::types::const_eval_with_params;
 use crate::ast::*;
+use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic};
 use crate::error::SimError;
 use crate::intern::Symbol;
 pub mod ext;
@@ -470,13 +471,13 @@ impl Elaborator {
                 .modules
                 .first()
                 .map(|m| m.name)
-                .ok_or_else(|| SimError::elaborate("no modules in design"))?,
+                .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, "no modules in design"))?,
         };
 
         let mut top = self
             .modules
             .remove(&top_name)
-            .ok_or_else(|| SimError::elaborate(format!("top module '{}' not found", top_name)))?;
+            .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, format!("top module '{}' not found", top_name)))?;
 
         // Flatten instances: merge child module processes into the top module
         let hier_signal_map = self.flatten_instances(&mut top)?;
@@ -755,7 +756,14 @@ impl Elaborator {
         module: &Module,
         instance_overrides: &HashMap<Symbol, i64>,
     ) -> Result<HashMap<Symbol, i64>, SimError> {
-        resolve_param_values_fn(module, instance_overrides).map_err(|e| SimError::elaborate(e))
+        resolve_param_values_fn(module, instance_overrides).map_err(|e| self.elab_diag(DiagCode::ParamMismatch, e))
+    }
+
+    /// Buat structured diagnostic untuk elaboration error dengan error code tepat.
+    fn elab_diag(&self, code: DiagCode, message: impl Into<String>) -> SimError {
+        let msg: String = message.into();
+        let diag = Diagnostic::new(DiagLevel::Error, code, msg.clone());
+        SimError::from_elab_diagnostic(diag)
     }
 
     fn store_typedef_fields(&mut self, name: Symbol, dtype: &DataType) {
@@ -1680,7 +1688,7 @@ impl Elaborator {
                             sig_ids.push(sid);
                         }
                         if sig_ids.len() < 2 {
-                            return Err(SimError::elaborate(format!(
+                            return Err(self.elab_diag(DiagCode::ParamMismatch, format!(
                                 "UDP '{}' requires at least 2 ports (1 output + 1+ inputs)",
                                 udp.name
                             )));
@@ -1847,14 +1855,14 @@ impl Elaborator {
                         let sid = match port {
                             Expr::Ident(name) => {
                                 signal_map.get(name).copied().ok_or_else(|| {
-                                    SimError::elaborate(format!(
+                                    self.elab_diag(DiagCode::ModuleNotFound, format!(
                                         "signal '{}' not found for gate",
                                         name
                                     ))
                                 })?
                             }
                             _ => {
-                                return Err(SimError::elaborate(format!(
+                                return Err(self.elab_diag(DiagCode::InstanceNotFound, format!(
                                     "gate port must be a simple signal (port expression: {:?})",
                                     port
                                 )))
@@ -1863,7 +1871,7 @@ impl Elaborator {
                         sig_ids.push(sid);
                     }
                     if sig_ids.len() < 2 {
-                        return Err(SimError::elaborate(format!(
+                        return Err(self.elab_diag(DiagCode::ParamMismatch, format!(
                             "gate requires at least 2 ports (gate type: {:?}, got {} ports)",
                             gate.gate_type,
                             sig_ids.len()

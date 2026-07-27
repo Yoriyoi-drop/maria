@@ -719,7 +719,7 @@ impl SimulationEngine {
                 let data = self
                     .uvm_driver_data
                     .get(&obj_id)
-                    .ok_or_else(|| SimError::runtime("driver not initialized"))?;
+                    .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, "driver not initialized"))?;
                 let seqr_id = data.sequencer_id.unwrap_or(0);
                 if seqr_id != 0 {
                     self.execute_uvm_sequencer_method(seqr_id, "get_next_item", args)

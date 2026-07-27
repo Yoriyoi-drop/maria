@@ -110,16 +110,22 @@ impl SimulationEngine {
             diag_sink: crate::diagnostics::DiagSink::new(),
             current_delta: 0,
             current_process_name: None,
+            current_instance_path: None,
         }
     }
 
     /// Buat RuntimeContext dari state engine saat ini.
+    /// Menyertakan: time, delta, module, process, seed.
     pub fn runtime_context(&self) -> RuntimeContext {
         let mut ctx = RuntimeContext::new()
             .with_time(format!("{} ns", self.state.time))
-            .with_delta(self.current_delta);
+            .with_delta(self.current_delta)
+            .with_module(self.design.top.name.as_str());
         if let Some(ref pname) = self.current_process_name {
             ctx = ctx.with_process(pname.clone());
+        }
+        if let Some(ref inst) = self.current_instance_path {
+            ctx = ctx.with_instance(inst.clone());
         }
         ctx
     }
@@ -453,6 +459,7 @@ impl SimulationEngine {
                     );
                 }
                 delta_count += 1;
+                self.current_delta = delta_count;
 
                 // Check pending $wait conditions
                 if !self.pending_waits.is_empty() && !deltas.is_empty() {
@@ -542,12 +549,105 @@ impl SimulationEngine {
         if !self.paused {
             self.execute_final_blocks()?;
             self.report_coverage();
+            self.check_post_simulation_warnings();
         }
 
         // ── Cleanup: deregister thread-local arena untuk cegah dangling pointer ──
         crate::simulator::arena::set_thread_arena(None);
 
         Ok(())
+    }
+
+    /// Check post-simulation warnings: uninitialized registers, unused signals,
+    /// clock never toggles, reset permanently asserted.
+    fn check_post_simulation_warnings(&self) {
+        // Collect clock signal IDs from Sequential processes
+        let clock_sigs: HashSet<SignalId> = self
+            .design
+            .top
+            .processes
+            .iter()
+            .filter_map(|p| {
+                if let Process::Sequential { clock, .. } = p {
+                    match clock {
+                        ClockEdge::PosEdge(id) | ClockEdge::NegEdge(id) => Some(*id),
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Collect reset signal IDs
+        let reset_sigs: HashSet<SignalId> = self
+            .design
+            .top
+            .processes
+            .iter()
+            .filter_map(|p| {
+                if let Process::Sequential { reset: Some(r), .. } = p {
+                    Some(r.signal)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for (sig_id, sig) in self.design.top.signals.iter().enumerate() {
+            let sig_name = sig.name.as_str();
+            let last_change = self.signal_last_change.get(&sig_id);
+            let never_changed = last_change.is_none();
+
+            // Skip input-only signals (driven by testbench, not by design)
+            if sig.kind == SignalKind::Input || sig.kind == SignalKind::Inout {
+                continue;
+            }
+
+            // ── WR0014: Uninitialized Register ──
+            // Signal is all-X at init and was never written to
+            if never_changed
+                && (sig.kind == SignalKind::Reg || sig.kind == SignalKind::Logic)
+                && sig.init_val.all_x()
+            {
+                self.emit_warning(
+                    DiagCode::UninitializedRegister,
+                    format!("uninitialized register '{}' was never assigned", sig_name),
+                );
+            }
+
+            // ── WR0104: Unused Signal ──
+            // Signal has a defined init value but never changed during simulation
+            if never_changed && !sig.init_val.all_x() && !sig.init_val.all_z() {
+                self.emit_warning(
+                    DiagCode::UnusedSignal,
+                    format!("unused signal '{}' never changed during simulation", sig_name),
+                );
+            }
+
+            // ── WR0202: Clock Never Toggles ──
+            // Signal is a clock but never changed value
+            if clock_sigs.contains(&sig_id) && never_changed {
+                self.emit_warning(
+                    DiagCode::ClockNeverToggles,
+                    format!("clock signal '{}' never toggled during simulation", sig_name),
+                );
+            }
+
+            // ── WR0203: Reset Permanently Asserted ──
+            // Reset signal is active but never de-asserted
+            if reset_sigs.contains(&sig_id) && never_changed {
+                let val = self.state.read_signal(sig_id);
+                if !val.all_x() && !val.all_z() {
+                    self.emit_warning(
+                        DiagCode::ResetPermanentlyAsserted,
+                        format!(
+                            "reset signal '{}' was permanently asserted during simulation",
+                            sig_name
+                        ),
+                    );
+                }
+            }
+        }
     }
 
     /// Evaluate EvalProcess events in parallel using DAG layers.

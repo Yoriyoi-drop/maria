@@ -47,11 +47,7 @@ impl Parser {
                         let edge = trimmed[1..end].to_string();
                         Ok(UdpSymbol::Edge(Symbol::intern(&edge)))
                     }
-                    _ => Err(SimError::parse(format!(
-                        "line {}: invalid UDP table symbol '{}'",
-                        self.peek_line(),
-                        trimmed
-                    ))),
+                    _ => Err(self.err(format!("invalid UDP table symbol '{}'", trimmed))),
                 }
             }
             Token::Number { value, .. } if value == "0" || value == "1" => {
@@ -127,11 +123,7 @@ impl Parser {
                 self.advance();
                 Ok(UdpSymbol::Edge(Symbol::intern("??")))
             }
-            _ => Err(SimError::parse(format!(
-                "line {}: unexpected token in UDP table: {}",
-                self.peek_line(),
-                tok
-            ))),
+            _ => Err(self.err(format!("unexpected token in UDP table: {}", tok))),
         }
     }
 
@@ -146,7 +138,7 @@ impl Parser {
                 break;
             }
             if self.peek() == &Token::Eof {
-                return Err(SimError::parse("unexpected EOF in UDP table"));
+                return Err(self.err("unexpected EOF in UDP table"));
             }
             // Parse one line
             let mut inputs = Vec::new();
@@ -246,10 +238,7 @@ impl Parser {
                 }
                 continue;
             } else {
-                return Err(SimError::parse(format!(
-                    "line {}: expected direction (input/output) in UDP port list",
-                    self.peek_line()
-                )));
+                return Err(self.err("expected direction (input/output) in UDP port list"));
             };
 
             let name = self.expect_ident()?;

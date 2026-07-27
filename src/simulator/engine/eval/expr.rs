@@ -5,6 +5,7 @@ use crate::simulator::packed_eval::{eval_binary_packed, eval_unary_packed, is_pa
 use crate::simulator::util::*;
 use crate::ast::*;
 use crate::error::SimError;
+use crate::diagnostics::DiagCode;
 use crate::ir::*;
 use crate::Symbol;
 use crate::simulator::types::*;
@@ -1330,10 +1331,10 @@ impl SimulationEngine {
                     sanitize_for_2state(&self.design.top.signals, sig_id, &mut val);
                     Ok(val)
                 } else {
-                    Err(SimError::runtime(format!(
-                        "hierarchical signal '{}' not found",
-                        name
-                    )))
+                    Err(SimError::with_diag(
+                        DiagCode::NullHandle,
+                        format!("hierarchical signal '{}' not found", name),
+                    ))
                 }
             }
             IrExpr::Inside { expr, list } => {

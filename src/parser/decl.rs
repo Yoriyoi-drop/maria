@@ -190,7 +190,7 @@ impl Parser {
                 self.skip_semi();
                 return Ok(Decl { dtype, kind: DeclKind::Logic, names });
             }
-            _ => return Err(SimError::parse(format!("line {}: expected wire/reg/logic/int/byte/shortint/longint/enum/struct/union/wand/wor/tri", self.peek_line()))),
+            _ => return Err(self.err("expected wire/reg/logic/int/byte/shortint/longint/enum/struct/union/wand/wor/tri")),
         };
         self.advance();
 
@@ -478,10 +478,7 @@ impl Parser {
                     members.push((name, val));
                 }
                 _ => {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected identifier in enum",
-                        self.peek_line()
-                    )))
+                    return Err(self.err("expected identifier in enum"))
                 }
             }
             if self.peek() == &Token::Comma {
@@ -600,10 +597,7 @@ impl Parser {
                     }
                 }
                 _ => {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected type in struct/union member",
-                        self.peek_line()
-                    )))
+                    return Err(self.err("expected type in struct/union member"))
                 }
             };
             let range = if self.peek() == &Token::LBrack {
@@ -678,10 +672,7 @@ impl Parser {
                     self.advance();
                     (name, DataType::EnumType { base, members }, None)
                 } else {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected name after typedef enum",
-                        self.peek_line()
-                    )));
+                    return Err(self.err("expected name after typedef enum"));
                 }
             }
             Token::Bit => {
@@ -704,10 +695,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected name after typedef bit",
-                        self.peek_line()
-                    )));
+                    return Err(self.err("expected name after typedef bit"));
                 }
             }
             Token::Byte => {
@@ -730,10 +718,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected name after typedef byte",
-                        self.peek_line()
-                    )));
+                    return Err(self.err("expected name after typedef byte"));
                 }
             }
             Token::Shortint => {
@@ -756,10 +741,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected name after typedef shortint",
-                        self.peek_line()
-                    )));
+                    return Err(self.err("expected name after typedef shortint"));
                 }
             }
             Token::Longint => {
@@ -782,10 +764,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected name after typedef longint",
-                        self.peek_line()
-                    )));
+                    return Err(self.err("expected name after typedef longint"));
                 }
             }
             Token::Time => {
@@ -800,10 +779,7 @@ impl Parser {
                     self.advance();
                     (name, DataType::Time, range)
                 } else {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected name after typedef time",
-                        self.peek_line()
-                    )));
+                    return Err(self.err("expected name after typedef time"));
                 }
             }
             Token::Int => {
@@ -826,10 +802,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected name after typedef int",
-                        self.peek_line()
-                    )));
+                    return Err(self.err("expected name after typedef int"));
                 }
             }
             Token::Integer => {
@@ -852,10 +825,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected name after typedef integer",
-                        self.peek_line()
-                    )));
+                    return Err(self.err("expected name after typedef integer"));
                 }
             }
             Token::Logic => {
@@ -878,10 +848,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected name after typedef logic",
-                        self.peek_line()
-                    )));
+                    return Err(self.err("expected name after typedef logic"));
                 }
             }
             Token::Reg => {
@@ -897,10 +864,7 @@ impl Parser {
                     self.advance();
                     (name, dtype, range)
                 } else {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected name after typedef reg",
-                        self.peek_line()
-                    )));
+                    return Err(self.err("expected name after typedef reg"));
                 }
             }
             Token::Struct => {
@@ -914,10 +878,7 @@ impl Parser {
                     self.advance();
                     (name, DataType::StructType { members }, None)
                 } else {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected name after typedef struct",
-                        self.peek_line()
-                    )));
+                    return Err(self.err("expected name after typedef struct"));
                 }
             }
             Token::Union => {
@@ -931,17 +892,11 @@ impl Parser {
                     self.advance();
                     (name, DataType::UnionType { members }, None)
                 } else {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected name after typedef union",
-                        self.peek_line()
-                    )));
+                    return Err(self.err("expected name after typedef union"));
                 }
             }
             _ => {
-                return Err(SimError::parse(format!(
-                    "line {}: expected type after typedef",
-                    self.peek_line()
-                )))
+                return Err(self.err("expected type after typedef"))
             }
         };
         self.skip_semi();
@@ -966,7 +921,7 @@ impl Parser {
                 let name = self.expect_ident()?;
                 DataType::UserDefined(name)
             }
-            _ => return Err(SimError::parse(format!("expected type"))),
+            _ => return Err(self.err("expected type")),
         };
         self.advance();
         if self.peek() == &Token::Signed {

@@ -142,6 +142,8 @@ pub struct SimulationEngine {
     pub current_delta: u64,
     /// Current process name (for runtime context)
     pub current_process_name: Option<String>,
+    /// Current instance path (for runtime context), e.g. "soc.cpu0.fetch"
+    pub current_instance_path: Option<String>,
 }
 
 // ============================================================================

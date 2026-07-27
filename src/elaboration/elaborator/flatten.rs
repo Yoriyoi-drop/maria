@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use super::Elaborator;
 use crate::ast::*;
+use crate::diagnostics::diagnostic::DiagCode;
 use crate::error::SimError;
 use crate::intern::Symbol;
 use crate::ir::*;
@@ -34,7 +35,7 @@ impl Elaborator {
                     items: vec![],
                 }
             } else {
-                return Err(SimError::elaborate(format!(
+                return Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
                     "module or interface '{}' not found for instance '{}'",
                     inst.module_name, inst.instance_name
                 )));
@@ -58,7 +59,7 @@ impl Elaborator {
                 self.modules
                     .get(&inst.module_name)
                     .ok_or_else(|| {
-                        SimError::elaborate(format!("module '{}' not found", inst.module_name))
+                        self.elab_diag(DiagCode::ModuleNotFound, format!("module '{}' not found", inst.module_name))
                     })?
                     .clone()
             };
@@ -77,7 +78,7 @@ impl Elaborator {
                     let child_width = child.signals[child_sig].width;
                     let parent_width = top.signals[parent_sig].elem_width;
                     if child_width != parent_width {
-                        return Err(SimError::elaborate(format!(
+                        return Err(self.elab_diag(DiagCode::ParamMismatch, format!(
                             "port width mismatch on instance '{}': port '{}' expects width {}, connected signal '{}' has width {}",
                             inst.instance_name, port_name, child_width,
                             top.signals[parent_sig].name, parent_width
@@ -87,7 +88,7 @@ impl Elaborator {
                     if child.signals[child_sig].kind == SignalKind::Inout
                         && top.signals[parent_sig].net_type != NetType::Tri
                     {
-                        return Err(SimError::elaborate(format!(
+                        return Err(self.elab_diag(DiagCode::ParamMismatch, format!(
                             "port type mismatch on instance '{}': inout port '{}' must connect to a tri signal, but '{}' has net type {:?}",
                             inst.instance_name, port_name,
                             top.signals[parent_sig].name,

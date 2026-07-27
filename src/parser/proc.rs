@@ -244,10 +244,7 @@ impl Parser {
                 Symbol::intern("new")
             }
             _ => {
-                return Err(SimError::parse(format!(
-                    "line {}: expected function name",
-                    self.peek_line()
-                )))
+                return Err(self.err("expected function name"))
             }
         };
         // Handle out-of-body method: class_name :: method_name
@@ -264,10 +261,7 @@ impl Parser {
                     Symbol::intern("new")
                 }
                 _ => {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected method name after ::",
-                        self.peek_line()
-                    )));
+                    return Err(self.err("expected method name after ::"));
                 }
             }
         } else {
@@ -426,10 +420,7 @@ impl Parser {
                     if let Ok(decl) = self.parse_decl() {
                         decls.push(decl);
                     } else {
-                        return Err(SimError::parse(format!(
-                            "line {}: expected declaration after automatic/static",
-                            self.peek_line()
-                        )));
+                        return Err(self.err("expected declaration after automatic/static"));
                     }
                 }
                 Token::Begin => {
@@ -487,10 +478,7 @@ impl Parser {
                 self.advance();
             }
             _ => {
-                return Err(SimError::parse(format!(
-                    "line {}: expected endfunction",
-                    self.peek_line()
-                )));
+                return Err(self.err("expected endfunction"));
             }
         }
         if self.peek() == &Token::Colon {
@@ -534,10 +522,7 @@ impl Parser {
                     *m
                 }
                 _ => {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected method name after ::",
-                        self.peek_line()
-                    )));
+                    return Err(self.err("expected method name after ::"));
                 }
             }
         } else {
@@ -740,10 +725,7 @@ impl Parser {
                 self.advance();
             }
             _ => {
-                return Err(SimError::parse(format!(
-                    "line {}: expected endtask",
-                    self.peek_line()
-                )));
+                return Err(self.err("expected endtask"));
             }
         }
         if self.peek() == &Token::Colon {
@@ -816,10 +798,7 @@ impl Parser {
                         *n
                     }
                     _ => {
-                        return Err(SimError::parse(format!(
-                            "line {}: expected genvar name",
-                            self.peek_line()
-                        )))
+                        return Err(self.err("expected genvar name"))
                     }
                 };
                 // Parse init: i = <expr>

@@ -187,25 +187,18 @@ impl TerminalEmitter {
             }
         }
 
-        // Runtime context
+        // Runtime context — format: = key : value (satu baris)
         if let Some(ctx) = &diag.runtime_context {
             let ctx_str = ctx.format();
             if !ctx_str.is_empty() {
-                writeln!(self.writer, "   {}Simulation Context{}", DIM, RESET)?;
-                writeln!(self.writer)?;
                 for line in ctx_str.lines() {
                     if line.starts_with("  •") {
                         let content = line.trim_start_matches("  • ");
                         if let Some((key, value)) = content.split_once(": ") {
                             writeln!(
                                 self.writer,
-                                "   {}= {}{}",
-                                DIM, key, RESET
-                            )?;
-                            writeln!(
-                                self.writer,
-                                "       {}",
-                                value
+                                "   {}= {}{} : {}{}",
+                                DIM, CYAN, key, RESET, value
                             )?;
                         }
                     }
@@ -303,17 +296,15 @@ impl TerminalEmitter {
             }
         }
 
-        // Runtime context
+        // Runtime context — format: = key : value (satu baris)
         if let Some(ctx) = &diag.runtime_context {
             let ctx_str = ctx.format();
             if !ctx_str.is_empty() {
-                writeln!(self.writer, "   Simulation Context")?;
-                writeln!(self.writer)?;
                 for line in ctx_str.lines() {
                     if line.starts_with("  •") {
                         let content = line.trim_start_matches("  • ");
                         if let Some((key, value)) = content.split_once(": ") {
-                            writeln!(self.writer, "   = {}: {}", key, value)?;
+                            writeln!(self.writer, "   = {} : {}", key, value)?;
                         }
                     }
                 }
@@ -569,16 +560,15 @@ pub fn format_diagnostic(diag: &Diagnostic) -> String {
         output.push('\n');
     }
 
-    // Runtime context
+    // Runtime context — format: = key : value (satu baris)
     if let Some(ctx) = &diag.runtime_context {
         let ctx_str = ctx.format();
         if !ctx_str.is_empty() {
-            output.push_str("Simulation Context\n\n");
             for line in ctx_str.lines() {
                 if line.starts_with("  •") {
                     let content = line.trim_start_matches("  • ");
                     if let Some((key, value)) = content.split_once(": ") {
-                        output.push_str(&format!("  = {}: {}\n", key, value));
+                        output.push_str(&format!("  = {} : {}\n", key, value));
                     }
                 }
             }

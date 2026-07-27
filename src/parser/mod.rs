@@ -13,6 +13,7 @@ pub mod decl;
 pub mod instance;
 pub mod proc;
 use crate::ast::*;
+use crate::diagnostics::diagnostic::{DiagCode, Diagnostic, SourceSnippet};
 use crate::error::{ErrorContext, SimError};
 use crate::intern::Symbol;
 use crate::parser::lexer::*;
@@ -129,31 +130,44 @@ impl Parser {
         let cumulative_line = self.peek_line();
         let col = self.peek_col();
         let (display_file, display_line) = self.resolve_source_file(cumulative_line);
+
+        // Tentukan DiagCode berdasarkan pesan error
+        let code = if msg_str.contains("unexpected token") || msg_str.contains("Unexpected") {
+            DiagCode::UnexpectedToken
+        } else if msg_str.contains("expected") && msg_str.contains("';'") {
+            DiagCode::ExpectedSemi
+        } else if msg_str.contains("expected") {
+            DiagCode::ExpectedToken
+        } else if msg_str.contains("unclosed") || msg_str.contains("unterminated") || msg_str.contains("unexpected EOF") {
+            DiagCode::UnclosedBlock
+        } else {
+            DiagCode::InvalidSyntax
+        };
+
+        // Buat source snippet jika ada source line
         let source_line = if cumulative_line > 0 && cumulative_line <= self.source_lines.len() {
             Some(self.source_lines[cumulative_line - 1].clone())
         } else {
             None
         };
 
-        let mut ctx = ErrorContext::new()
-            .with_file(&display_file)
-            .with_line(display_line)
-            .with_col(col);
+        let msg_for_diag = msg_str.clone();
+        let mut diag = Diagnostic::error(code, msg_for_diag);
 
         if let Some(sl) = source_line {
-            ctx = ctx.with_source(&sl);
+            let snippet = SourceSnippet::new(&display_file, display_line, col, sl.trim_end());
+            diag = diag.with_source_snippet(snippet);
         }
 
-        let simple_err = SimError::parse(format!(
-            "{}:{}:{}: {}",
-            display_file, display_line, col, msg_str
-        ));
-
-        // If we have source lines available, format with rich context
+        // Jika ada source lines, gunakan Diagnostic variant
         if !self.source_lines.is_empty() {
-            SimError::parse(simple_err.format_with_context(&ctx))
+            SimError::from_parse_diagnostic(diag)
         } else {
-            simple_err
+            // Fallback: tetap pakai flat string
+            SimError::parse(format!(
+                "{}:{}:{}: {}",
+                display_file, display_line, col, msg_str
+            ))
         }
     }
 
@@ -199,9 +213,8 @@ impl Parser {
                 self.advance();
                 Ok(Symbol::intern("this"))
             }
-            _ => Err(SimError::parse(format!(
-                "line {}: expected identifier, found {}",
-                self.peek_line(),
+            _ => Err(self.err(format!(
+                "expected identifier, found {}",
                 self.peek()
             ))),
         }
@@ -527,10 +540,7 @@ impl Parser {
                             | Token::Struct
                             | Token::Union
                     ) {
-                        return Err(SimError::parse(format!(
-                            "line {}: declaration outside of module",
-                            self.peek_line()
-                        )));
+                        return Err(self.err("declaration outside of module"));
                     }
                     let line = self.peek_line();
                     let tok = self.peek().clone();

@@ -14,6 +14,19 @@ impl SimulationEngine {
                     return Ok(());
                 }
                 let process = self.design.top.processes[pid].clone();
+
+                // Set runtime context: process name + instance path
+                let pname = match &process {
+                    Process::Combinational { name, .. }
+                    | Process::CombReactive { name, .. }
+                    | Process::Sequential { name, .. }
+                    | Process::Initial { name, .. }
+                    | Process::Final { name, .. }
+                    | Process::AlwaysWithDelay { name, .. } => name.as_str(),
+                };
+                self.current_process_name = Some(pname.to_string());
+                self.current_instance_path = Some(self.design.top.name.to_string());
+
                 match &process {
                     Process::Initial { body, .. } => {
                         if self.state.time == 0 {

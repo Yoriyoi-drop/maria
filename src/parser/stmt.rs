@@ -285,14 +285,14 @@ impl Parser {
                                 self.skip_semi();
                                 crosses.push(CrossDef { name: ident, coverpoints: cps });
                             }
-                            _ => return Err(SimError::parse(format!("line {}: unexpected token after ':' in covergroup body", self.peek_line()))),
+                            _ => return Err(self.err("unexpected token after ':' in covergroup body")),
                         }
                     } else {
-                        return Err(SimError::parse(format!("line {}: unexpected token after identifier in covergroup body", self.peek_line())));
+                        return Err(self.err("unexpected token after identifier in covergroup body"));
                     }
                 }
                 Token::Option_ => { self.advance(); self.skip_until_semi_or_end()?; }
-                _ => return Err(SimError::parse(format!("line {}: unexpected token in covergroup body: {}", self.peek_line(), self.peek()))),
+                _ => return Err(self.err(format!("unexpected token in covergroup body: {}", self.peek()))),
             }
         }
         Ok(CovergroupDecl { name, clocking_event, coverpoints, crosses })
@@ -302,7 +302,7 @@ impl Parser {
         self.advance();
         let is_task = if self.peek() == &Token::Task { self.advance(); true }
             else if self.peek() == &Token::Function { self.advance(); false }
-            else { return Err(SimError::parse(format!("line {}: expected 'function' or 'task' after import \\\"DPI-C\\\"", self.peek_line()))); };
+            else { return Err(self.err("expected 'function' or 'task' after import \"DPI-C\"")); };
         if matches!(self.peek(), Token::Auto | Token::Static) { self.advance(); }
         let return_type = if is_task { None }
             else if self.peek() == &Token::Void { self.advance(); None }
@@ -824,7 +824,7 @@ impl Parser {
                 Token::Join => { self.advance(); return Ok(Stmt::Fork { processes, join_type: JoinType::Join }); }
                 Token::JoinAny => { self.advance(); return Ok(Stmt::Fork { processes, join_type: JoinType::JoinAny }); }
                 Token::JoinNone => { self.advance(); return Ok(Stmt::Fork { processes, join_type: JoinType::JoinNone }); }
-                Token::Eof => return Err(SimError::parse(format!("line {}: unexpected EOF in fork block", self.peek_line()))),
+                Token::Eof => return Err(self.err("unexpected EOF in fork block")),
                 _ => { processes.push(self.parse_stmt()?); }
             }
         }
@@ -835,7 +835,7 @@ impl Parser {
         let name_tok = self.peek().clone();
         let name = match &name_tok {
             Token::Ident(s) => { self.advance(); *s }
-            _ => return Err(SimError::parse(format!("line {}: expected system call name after $", self.peek_line()))),
+            _ => return Err(self.err("expected system call name after $")),
         };
         match name.as_str() {
             "finish" | "stop" => {

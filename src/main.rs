@@ -606,6 +606,15 @@ fn run(cli: Cli) -> Result<(), SimError> {
         );
     }
 
+    // Flush runtime diagnostics (warnings, etc.)
+    let diags = debugger.engine.flush_diagnostics();
+    if !diags.is_empty() {
+        let mut emitter = maria::diagnostics::TerminalEmitter::new();
+        for diag in &diags {
+            let _ = emitter.emit(diag);
+        }
+    }
+
     if debug_mode != DebugMode::Normal && !cli.quiet {
         if debugger.engine.paused {
             println!("(debugger paused)");
@@ -899,6 +908,15 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
 
     if !cli.quiet {
         println!("\nSimulation completed at time {}", debugger.engine.state.time);
+    }
+
+    // Flush runtime diagnostics (warnings, etc.)
+    let diags = debugger.engine.flush_diagnostics();
+    if !diags.is_empty() {
+        let mut emitter = maria::diagnostics::TerminalEmitter::new();
+        for diag in &diags {
+            let _ = emitter.emit(diag);
+        }
     }
 
     if debug_mode != DebugMode::Normal && !cli.quiet {

@@ -27,10 +27,7 @@ impl Parser {
                 s.clone()
             }
             _ => {
-                return Err(SimError::parse(format!(
-                    "line {}: expected module name",
-                    self.peek_line()
-                )))
+                return Err(self.err("expected module name"))
             }
         };
 
@@ -138,7 +135,7 @@ impl Parser {
             Token::Ident(_) => {
                 self.advance();
             }
-            _ => return Err(SimError::parse("expected interface name")),
+            _ => return Err(self.err("expected interface name")),
         }
         self.skip_semi();
         loop {
@@ -229,7 +226,7 @@ impl Parser {
                         break;
                     }
                 }
-                Token::Eof => return Err(SimError::parse("unexpected EOF in balanced paren")),
+                Token::Eof => return Err(self.err("unexpected EOF in balanced paren")),
                 _ => {
                     self.advance();
                 }
@@ -249,10 +246,7 @@ impl Parser {
                 n
             }
             _ => {
-                return Err(SimError::parse(format!(
-                    "line {}: expected interface name",
-                    self.peek_line()
-                )))
+                return Err(self.err("expected interface name"))
             }
         };
         self.skip_semi();
@@ -285,10 +279,7 @@ impl Parser {
                 self.advance();
             }
             _ => {
-                return Err(SimError::parse(format!(
-                    "line {}: expected endinterface",
-                    self.peek_line()
-                )));
+                return Err(self.err("expected endinterface"));
             }
         }
         if self.peek() == &Token::Colon {
@@ -315,10 +306,7 @@ impl Parser {
                 n
             }
             _ => {
-                return Err(SimError::parse(format!(
-                    "line {}: expected modport name",
-                    self.peek_line()
-                )))
+                return Err(self.err("expected modport name"))
             }
         };
         self.expect(Token::LParen)?;
@@ -338,10 +326,7 @@ impl Parser {
                     PortDirection::Inout
                 }
                 _ => {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected direction in modport",
-                        self.peek_line()
-                    )))
+                    return Err(self.err("expected direction in modport"))
                 }
             };
             // Collect all signals under this direction, comma-separated
@@ -353,10 +338,7 @@ impl Parser {
                         n
                     }
                     _ => {
-                        return Err(SimError::parse(format!(
-                            "line {}: expected signal name in modport",
-                            self.peek_line()
-                        )))
+                        return Err(self.err("expected signal name in modport"))
                     }
                 };
                 items.push(ModportItem {
@@ -402,10 +384,7 @@ impl Parser {
                             self.advance();
                         }
                         _ => {
-                            return Err(SimError::parse(format!(
-                                "line {}: expected port name",
-                                self.peek_line()
-                            )))
+                            return Err(self.err("expected port name"))
                         }
                     }
                     self.expect(Token::LParen)?;
@@ -551,10 +530,7 @@ impl Parser {
                                 *s
             }
             _ => {
-                return Err(SimError::parse(format!(
-                    "line {}: expected module name",
-                    self.peek_line()
-                )))
+                return Err(self.err("expected module name"))
             }
         };
 
@@ -575,10 +551,7 @@ impl Parser {
                                 *s
                             }
                             _ => {
-                                return Err(SimError::parse(format!(
-                                    "line {}: expected parameter name",
-                                    self.peek_line()
-                                )))
+                                return Err(self.err("expected parameter name"))
                             }
                         };
                         self.expect(Token::LParen)?;
@@ -613,10 +586,7 @@ impl Parser {
                 *s
             }
             _ => {
-                return Err(SimError::parse(format!(
-                    "line {}: expected instance name",
-                    self.peek_line()
-                )))
+                return Err(self.err("expected instance name"))
             }
         };
 
@@ -647,10 +617,7 @@ impl Parser {
                                 *s
                             }
                             _ => {
-                                return Err(SimError::parse(format!(
-                                    "line {}: expected port name",
-                                    self.peek_line()
-                                )))
+                            return Err(self.err("expected port name"))
                             }
                         };
 
@@ -739,10 +706,7 @@ impl Parser {
                 GateType::Not
             }
             _ => {
-                return Err(SimError::parse(format!(
-                    "line {}: expected gate type",
-                    self.peek_line()
-                )))
+                return Err(self.err("expected gate type"))
             }
         };
 
@@ -819,10 +783,7 @@ impl Parser {
                     Some(s)
                 }
                 _ => {
-                    return Err(SimError::parse(format!(
-                        "line {}: expected gate instance name",
-                        self.peek_line()
-                    )))
+                    return Err(self.err("expected gate instance name"))
                 }
             };
             name

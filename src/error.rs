@@ -1,4 +1,5 @@
-use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic};
+use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, SourceSnippet};
+use crate::diagnostics::emitter::format_diagnostic;
 
 /// Error context for rich error reporting
 #[derive(Debug, Clone)]
@@ -56,6 +57,9 @@ pub enum SimError {
     Waveform(String),
     Debugger(String),
     Io(std::io::ErrorKind, String),
+    /// Error yang membawa Diagnostic terstruktur (source snippet, error code, dll).
+    /// Ini adalah varian modern — menggantikan Parse/String untuk error dengan konteks kaya.
+    Diagnostic(Diagnostic),
 }
 
 impl SimError {
@@ -92,21 +96,19 @@ impl SimError {
     }
 
     /// Buat runtime error dari Diagnostic struct.
+    /// OBSOLETE: Gunakan SimError::Diagnostic(diag) langsung.
     pub fn from_diagnostic(diag: &Diagnostic) -> Self {
-        let mut msg = format!("[{}] {}", diag.code.as_str(), diag.message);
-        if let Some(expl) = &diag.explanation {
-            msg.push_str(&format!("\n  Explanation: {}", expl));
-        }
-        if let Some(sugg) = &diag.suggestion {
-            msg.push_str(&format!("\n  Help: {}", sugg));
-        }
-        if let Some(ctx) = &diag.runtime_context {
-            let ctx_str = ctx.format();
-            if !ctx_str.is_empty() {
-                msg.push_str(&format!("\n  {}", ctx_str));
-            }
-        }
-        Self::Runtime(msg)
+        Self::Diagnostic(diag.clone())
+    }
+
+    /// Buat error parser dari Diagnostic yang sudah jadi dengan source snippet.
+    pub fn from_parse_diagnostic(diag: Diagnostic) -> Self {
+        Self::Diagnostic(diag)
+    }
+
+    /// Buat error elaboration dari Diagnostic.
+    pub fn from_elab_diagnostic(diag: Diagnostic) -> Self {
+        Self::Diagnostic(diag)
     }
 
     /// Ekstrak error code dari message format "[RT0001] message"
@@ -122,6 +124,29 @@ impl SimError {
         None
     }
 
+    /// Try to extract file:line:col from common error format.
+    fn extract_location(msg: &str) -> (Option<String>, Option<usize>, Option<usize>) {
+        // Format: "filename:line:col: message"
+        let parts: Vec<&str> = msg.splitn(4, ':').collect();
+        if parts.len() >= 4 {
+            let file = parts[0].trim().to_string();
+            if let Ok(line) = parts[1].trim().parse::<usize>() {
+                if let Ok(col) = parts[2].trim().parse::<usize>() {
+                    return (Some(file), Some(line), Some(col));
+                }
+            }
+        }
+        // Format: "line N: message"
+        if let Some(rest) = msg.strip_prefix("line ") {
+            if let Some(end) = rest.find(':') {
+                if let Ok(line) = rest[..end].trim().parse::<usize>() {
+                    return (None, Some(line), None);
+                }
+            }
+        }
+        (None, None, None)
+    }
+
     /// Dapatkan error code yang sesuai.
     pub fn error_code(&self) -> &'static str {
         let msg = self.to_string();
@@ -129,6 +154,11 @@ impl SimError {
         // Coba parse dari format "[RT0001] message"
         if let Some(code) = Self::parse_error_code(&msg) {
             return code;
+        }
+
+        // For Diagnostic variant, use its code directly
+        if let SimError::Diagnostic(diag) = self {
+            return diag.code.as_str();
         }
 
         match self {
@@ -161,12 +191,18 @@ impl SimError {
             SimError::Waveform(_) => "E0002",
             SimError::Debugger(_) => "E0003",
             SimError::Io(_, _) => "E0000",
+            SimError::Diagnostic(diag) => diag.code.as_str(),
         }
     }
 
     /// Convert ke Diagnostic struct untuk formatting penuh.
     /// Jika message mengandung "[CODE] ...", extract code dan message terpisah.
     pub fn to_diagnostic(&self) -> Diagnostic {
+        // Fast path: already a Diagnostic
+        if let SimError::Diagnostic(diag) = self {
+            return diag.clone();
+        }
+
         let msg = self.to_string();
         let level = match self {
             SimError::Parse(_) | SimError::Elaborate(_) | SimError::Runtime(_) => DiagLevel::Error,
@@ -174,6 +210,7 @@ impl SimError {
             SimError::Waveform(_) => DiagLevel::Error,
             SimError::Debugger(_) => DiagLevel::Error,
             SimError::Io(_, _) => DiagLevel::Error,
+            SimError::Diagnostic(diag) => diag.level,
         };
 
         let code_str = self.error_code();
@@ -194,11 +231,34 @@ impl SimError {
             msg.clone()
         };
 
-        Diagnostic::new(level, code, clean_msg)
+        let mut diag = Diagnostic::new(level, code, clean_msg);
+
+        // Try to reconstruct source snippet from flat string format like "file:line:col: message"
+        if let (Some(file), Some(line), Some(col)) = Self::extract_location(&msg) {
+            // Try to extract the actual source line from the message
+            // The message might be something like "cpu_top.sv:182:17: interface is null"
+            // Extract the actual error message after the location prefix
+            let parts: Vec<&str> = msg.splitn(4, ':').collect();
+            let error_msg = if parts.len() >= 4 {
+                parts[3..].join(":").trim().to_string()
+            } else {
+                msg.clone()
+            };
+
+            let snippet = SourceSnippet::new(file, line, col, error_msg);
+            diag = diag.with_source_snippet(snippet);
+        }
+
+        diag
     }
 
     /// Format error dengan konteks lengkap seperti compiler profesional.
     pub fn format_with_context(&self, ctx: &ErrorContext) -> String {
+        // If we already have a structured diagnostic, use its formatted output
+        if let SimError::Diagnostic(diag) = self {
+            return format_diagnostic(diag);
+        }
+
         let msg = self.to_string();
         let kind = match self {
             SimError::Parse(_) => "error",
@@ -208,6 +268,7 @@ impl SimError {
             SimError::Waveform(_) => "error",
             SimError::Debugger(_) => "error",
             SimError::Io(_, _) => "error",
+            SimError::Diagnostic(_) => unreachable!(), // handled above
         };
 
         let code = self.error_code();
@@ -258,6 +319,7 @@ impl std::fmt::Display for SimError {
             SimError::Waveform(msg) => write!(f, "{}", msg),
             SimError::Debugger(msg) => write!(f, "{}", msg),
             SimError::Io(kind, msg) => write!(f, "I/O error ({}): {}", kind, msg),
+            SimError::Diagnostic(diag) => write!(f, "{}[{}]: {}", diag.level, diag.code, diag.message),
         }
     }
 }
