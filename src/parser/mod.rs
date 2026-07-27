@@ -27,6 +27,7 @@ pub struct Parser {
     package_tdefs: std::collections::HashMap<Symbol, Vec<Symbol>>,
     type_param_names: Vec<Symbol>,
     file_line_map: Vec<(usize, String)>,
+    recursion_depth: usize,
 }
 
 impl Parser {
@@ -58,6 +59,7 @@ impl Parser {
             package_tdefs: std::collections::HashMap::new(),
             type_param_names: Vec::new(),
             file_line_map: Vec::new(),
+            recursion_depth: 0,
         }
     }
 
@@ -86,6 +88,19 @@ impl Parser {
             cumulative_line
         };
         (best_file, file_relative)
+    }
+
+    fn push_depth(&mut self) -> Result<(), SimError> {
+        self.recursion_depth += 1;
+        if self.recursion_depth > 4096 {
+            self.recursion_depth = 0;
+            return Err(self.err("parser recursion depth exceeded (possible infinite recursion)"));
+        }
+        Ok(())
+    }
+
+    fn pop_depth(&mut self) {
+        self.recursion_depth = self.recursion_depth.saturating_sub(1);
     }
 
     fn peek(&self) -> &Token {

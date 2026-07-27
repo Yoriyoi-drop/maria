@@ -169,7 +169,7 @@ impl CompileSession {
 
                 // ── Slow path: process file ──
                 let mmap = MmapFile::open(path)
-                    .map_err(|e| SimError::Io(e))?;
+                    .map_err(SimError::from)?;
                 let content = mmap.as_str().to_string();
 
                 cache.register_file(path, content.as_bytes());

@@ -8,6 +8,6 @@ pub mod emitter;
 pub mod recovery;
 
 pub use codes::{all_codes, lookup_code};
-pub use diagnostic::{DiagCode, DiagLevel, DiagNote, DiagSink, DiagSpan, Diagnostic};
+pub use diagnostic::{DiagCode, DiagLevel, DiagNote, DiagSink, DiagSpan, Diagnostic, RuntimeContext, SourceSnippet};
 pub use emitter::{format_diagnostic, TerminalEmitter};
 pub use recovery::ParserRecovery;

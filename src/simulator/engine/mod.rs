@@ -8,6 +8,8 @@ pub mod eval;
 pub mod uvm;
 pub mod sequence;
 
+use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, RuntimeContext, SourceSnippet};
+use crate::diagnostics::DiagSink;
 use crate::ir::*;
 use crate::scheduler::clock_domain::ClockDomainAnalysis;
 use crate::scheduler::SimulationDag;
@@ -134,6 +136,12 @@ pub struct SimulationEngine {
     pub clock_analysis: Option<ClockDomainAnalysis>,
     /// Enable cycle-based simulation fusion
     pub use_cycle_fusion: bool,
+    /// Diagnostic collector for structured runtime diagnostics
+    pub diag_sink: DiagSink,
+    /// Current delta cycle count (for runtime context)
+    pub current_delta: u64,
+    /// Current process name (for runtime context)
+    pub current_process_name: Option<String>,
 }
 
 // ============================================================================

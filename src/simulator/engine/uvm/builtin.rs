@@ -1,4 +1,5 @@
 use super::super::SimulationEngine;
+use crate::diagnostics::DiagCode;
 use crate::error::SimError;
 use crate::ir::*;
 use crate::Symbol;
@@ -16,7 +17,7 @@ impl SimulationEngine {
             "new" => Ok(LogicVec::from_u64(1, 1)),
             "put" => {
                 if args.is_empty() {
-                    return Err(SimError::runtime("mailbox::put expects 1 argument"));
+                    return Err(self.diag_error(DiagCode::DpiError, "mailbox::put expects 1 argument"));
                 }
                 self.mailbox_queues
                     .entry(obj_id)
@@ -25,20 +26,22 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get" => {
+                let err = SimError::with_diag(DiagCode::NullHandle, "mailbox not initialized");
                 let q = self
                     .mailbox_queues
                     .get_mut(&obj_id)
-                    .ok_or_else(|| SimError::runtime("mailbox not initialized"))?;
+                    .ok_or_else(|| err.clone())?;
                 if q.is_empty() {
                     return Ok(LogicVec::default());
                 }
                 Ok(q.remove(0).unwrap_or(LogicVec::new(1)))
             }
             "try_get" => {
+                let err = SimError::with_diag(DiagCode::NullHandle, "mailbox not initialized");
                 let q = self
                     .mailbox_queues
                     .get_mut(&obj_id)
-                    .ok_or_else(|| SimError::runtime("mailbox not initialized"))?;
+                    .ok_or_else(|| err.clone())?;
                 if q.is_empty() {
                     return Ok(LogicVec::from_u64(0, 1));
                 }
@@ -47,7 +50,7 @@ impl SimulationEngine {
             }
             "try_put" => {
                 if args.is_empty() {
-                    return Err(SimError::runtime("mailbox::try_put expects 1 argument"));
+                    return Err(self.diag_error(DiagCode::DpiError, "mailbox::try_put expects 1 argument"));
                 }
                 self.mailbox_queues
                     .entry(obj_id)
@@ -56,13 +59,14 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "num" => {
+                let err = SimError::with_diag(DiagCode::NullHandle, "mailbox not initialized");
                 let q = self
                     .mailbox_queues
                     .get(&obj_id)
-                    .ok_or_else(|| SimError::runtime("mailbox not initialized"))?;
+                    .ok_or_else(|| err.clone())?;
                 Ok(LogicVec::from_u64(q.len() as u64, 32))
             }
-            _ => Err(SimError::runtime(format!(
+            _ => Err(self.diag_error(DiagCode::NotImplemented, format!(
                 "unknown mailbox method: {}",
                 method
             ))),
@@ -91,12 +95,13 @@ impl SimulationEngine {
                 } else {
                     1
                 };
+                let err = SimError::with_diag(DiagCode::NullHandle, "semaphore not initialized");
                 let c = self
                     .semaphore_counts
                     .get_mut(&obj_id)
-                    .ok_or_else(|| SimError::runtime("semaphore not initialized"))?;
+                    .ok_or_else(|| err.clone())?;
                 if *c < key_count {
-                    return Err(SimError::runtime("semaphore::get: insufficient keys"));
+                    return Err(self.diag_error(DiagCode::MemoryOutOfBounds, "semaphore::get: insufficient keys"));
                 }
                 *c -= key_count;
                 Ok(LogicVec::from_u64(*c as u64, 32))
@@ -107,10 +112,11 @@ impl SimulationEngine {
                 } else {
                     1
                 };
+                let err = SimError::with_diag(DiagCode::NullHandle, "semaphore not initialized");
                 let c = self
                     .semaphore_counts
                     .get_mut(&obj_id)
-                    .ok_or_else(|| SimError::runtime("semaphore not initialized"))?;
+                    .ok_or_else(|| err.clone())?;
                 *c += key_count;
                 Ok(LogicVec::from_u64(*c as u64, 32))
             }
@@ -123,7 +129,7 @@ impl SimulationEngine {
                 let c = self
                     .semaphore_counts
                     .get_mut(&obj_id)
-                    .ok_or_else(|| SimError::runtime("semaphore not initialized"))?;
+                    .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, "semaphore not initialized"))?;
                 if *c >= key_count {
                     *c -= key_count;
                     Ok(LogicVec::from_u64(1, 1))
@@ -131,7 +137,7 @@ impl SimulationEngine {
                     Ok(LogicVec::from_u64(0, 1))
                 }
             }
-            _ => Err(SimError::runtime(format!(
+            _ => Err(self.diag_error(DiagCode::NotImplemented, format!(
                 "unknown semaphore method: {}",
                 method
             ))),
@@ -191,7 +197,7 @@ impl SimulationEngine {
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
-            _ => Err(SimError::runtime(format!(
+            _ => Err(self.diag_error(DiagCode::NotImplemented, format!(
                 "unknown process method: {}",
                 method
             ))),
@@ -218,7 +224,7 @@ impl SimulationEngine {
                 let data = self
                     .uvm_object_data
                     .get(&obj_id)
-                    .ok_or_else(|| SimError::runtime("uvm_object not initialized"))?;
+                    .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, "uvm_object not initialized"))?;
                 Ok(string_to_logicvec(&data.name))
             }
             "set_name" => {
@@ -244,7 +250,7 @@ impl SimulationEngine {
                 let data = self
                     .uvm_object_data
                     .get(&obj_id)
-                    .ok_or_else(|| SimError::runtime("uvm_object not initialized"))?;
+                    .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, "uvm_object not initialized"))?;
                 let class_name = self
                     .state
                     .get_object(obj_id)
@@ -290,7 +296,7 @@ impl SimulationEngine {
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
-            _ => Err(SimError::runtime(format!(
+            _ => Err(self.diag_error(DiagCode::NotImplemented, format!(
                 "uvm_object::{} not implemented",
                 method
             ))),
@@ -647,7 +653,7 @@ impl SimulationEngine {
                 let data = self
                     .uvm_sequencer_data
                     .get_mut(&obj_id)
-                    .ok_or_else(|| SimError::runtime("sequencer not initialized"))?;
+                    .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, "sequencer not initialized"))?;
                 let item = data.item_queue.first().copied().unwrap_or(0);
                 data.current_item = data.item_queue.first().copied();
                 Ok(LogicVec::from_u64(item as u64, 64))
@@ -725,7 +731,7 @@ impl SimulationEngine {
                 let data = self
                     .uvm_driver_data
                     .get(&obj_id)
-                    .ok_or_else(|| SimError::runtime("driver not initialized"))?;
+                    .ok_or_else(|| self.diag_error(DiagCode::NullHandle, "driver not initialized"))?;
                 let seqr_id = data.sequencer_id.unwrap_or(0);
                 if seqr_id != 0 {
                     self.execute_uvm_sequencer_method(seqr_id, "item_done", args)
@@ -881,7 +887,7 @@ impl SimulationEngine {
     ) -> Result<LogicVec, SimError> {
         let obj_id = self
             .current_this
-            .ok_or_else(|| SimError::runtime("'super' used outside class method"))?;
+            .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, "'super' used outside class method"))?;
         let class_name = self
             .state
             .get_object(obj_id)
@@ -893,7 +899,7 @@ impl SimulationEngine {
             .get(&class_name)
             .and_then(|c| c.extends.clone())
             .ok_or_else(|| {
-                SimError::runtime(format!(
+                self.diag_error(DiagCode::DpiError, format!(
                     "class '{}' has no parent for super call",
                     class_name
                 ))

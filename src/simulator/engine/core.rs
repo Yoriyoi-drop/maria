@@ -1,4 +1,5 @@
 use super::SimulationEngine;
+use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, RuntimeContext};
 use crate::error::SimError;
 use crate::ir::*;
 use crate::scheduler::clock_domain::ClockDomain;
@@ -106,7 +107,57 @@ impl SimulationEngine {
             use_dag_parallel: false,
             clock_analysis: None,
             use_cycle_fusion: false,
+            diag_sink: crate::diagnostics::DiagSink::new(),
+            current_delta: 0,
+            current_process_name: None,
         }
+    }
+
+    /// Buat RuntimeContext dari state engine saat ini.
+    pub fn runtime_context(&self) -> RuntimeContext {
+        let mut ctx = RuntimeContext::new()
+            .with_time(format!("{} ns", self.state.time))
+            .with_delta(self.current_delta);
+        if let Some(ref pname) = self.current_process_name {
+            ctx = ctx.with_process(pname.clone());
+        }
+        ctx
+    }
+
+    /// Emit diagnostic runtime ke DiagSink.
+    pub fn emit_diag(&self, level: DiagLevel, code: DiagCode, message: impl Into<String>) {
+        let msg: String = message.into();
+        let diag = Diagnostic::new(level, code, msg)
+            .with_runtime_context(self.runtime_context());
+        self.diag_sink.push(diag);
+    }
+
+    /// Emit warning diagnostic ke DiagSink.
+    pub fn emit_warning(&self, code: DiagCode, message: impl Into<String>) {
+        self.emit_diag(DiagLevel::Warning, code, message);
+    }
+
+    /// Emit error diagnostic ke DiagSink dan return SimError.
+    pub fn diag_error(&self, code: DiagCode, message: impl Into<String>) -> SimError {
+        let msg: String = message.into();
+        let diag = Diagnostic::new(DiagLevel::Error, code, msg.clone())
+            .with_runtime_context(self.runtime_context());
+        self.diag_sink.push(diag);
+        SimError::runtime(format!("[{}] {}", code.as_str(), msg))
+    }
+
+    /// Emit fatal diagnostic ke DiagSink dan return SimError.
+    pub fn diag_fatal(&self, code: DiagCode, message: impl Into<String>) -> SimError {
+        let msg: String = message.into();
+        let diag = Diagnostic::new(DiagLevel::Fatal, code, msg.clone())
+            .with_runtime_context(self.runtime_context());
+        self.diag_sink.push(diag);
+        SimError::runtime(format!("[{}] {}", code.as_str(), msg))
+    }
+
+    /// Flush diagnostics from DiagSink and return them.
+    pub fn flush_diagnostics(&self) -> Vec<Diagnostic> {
+        self.diag_sink.diagnostics()
     }
 
     pub fn set_vcd(&mut self, vcd: VcdWriter) {
@@ -390,7 +441,8 @@ impl SimulationEngine {
                 }
 
                 if delta_count > 20_000_000 {
-                    return Err(SimError::runtime(
+                    return Err(SimError::with_diag(
+                        DiagCode::InfiniteDelta,
                         "simulation exceeded max delta cycles per time step (20M)",
                     ));
                 }

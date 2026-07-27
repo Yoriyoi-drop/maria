@@ -1,5 +1,6 @@
 use super::super::SimulationEngine;
 use crate::error::SimError;
+use crate::diagnostics::DiagCode;
 use crate::ir::*;
 use crate::ast::*;
 use crate::Symbol;
@@ -18,10 +19,10 @@ impl SimulationEngine {
             .map(|o| o.class_name.clone())
             .unwrap_or_default();
         if class_name.is_empty() {
-            return Err(SimError::runtime(format!(
-                "cannot call method '{}' on object with unknown class",
-                method
-            )));
+            return Err(SimError::with_diag(
+                DiagCode::DpiError,
+                format!("cannot call method '{}' on object with unknown class", method),
+            ));
         }
         if class_name == "__mailbox" {
             return self.execute_mailbox_method(obj_id, method, args);
@@ -136,7 +137,7 @@ impl SimulationEngine {
             .design
             .classes
             .get(class_name)
-            .ok_or_else(|| format!("class '{}' not found", class_name))?
+            .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, format!("class '{}' not found", class_name)))?
             .clone();
         if class_def.rand_fields.is_empty() {
             return Ok(LogicVec::from_u64(1, 1));
@@ -224,10 +225,10 @@ impl SimulationEngine {
         }
 
         self.current_this = old_this;
-        Err(SimError::runtime(format!(
-            "randomize failed: could not satisfy all constraints after {} attempts",
-            max_attempts
-        )))
+        Err(SimError::with_diag(
+            DiagCode::InternalError,
+            format!("randomize failed: could not satisfy all constraints after {} attempts", max_attempts),
+        ))
     }
 
     pub(crate) fn execute_randomize_with(
@@ -240,7 +241,7 @@ impl SimulationEngine {
             .design
             .classes
             .get(class_name)
-            .ok_or_else(|| format!("class '{}' not found", class_name))?
+            .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, format!("class '{}' not found", class_name)))?
             .clone();
         if class_def.rand_fields.is_empty() {
             return Ok(LogicVec::from_u64(1, 1));
@@ -334,10 +335,10 @@ impl SimulationEngine {
         }
 
         self.current_this = old_this;
-        Err(SimError::runtime(format!(
-            "randomize with failed: could not satisfy constraints after {} attempts",
-            max_attempts
-        )))
+        Err(SimError::with_diag(
+            DiagCode::InternalError,
+            format!("randomize with failed: could not satisfy constraints after {} attempts", max_attempts),
+        ))
     }
 
 }

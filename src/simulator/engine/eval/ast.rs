@@ -1,5 +1,6 @@
 use super::super::SimulationEngine;
 use crate::error::SimError;
+use crate::diagnostics::DiagCode;
 use crate::ir::*;
 use crate::ast::*;
 use crate::Symbol;
@@ -14,13 +15,13 @@ impl SimulationEngine {
             Expr::Value(v) => match v {
                 Value::Decimal(i) => Ok(LogicVec::from_u64(*i as u64, 32)),
                 Value::Binary { bits, .. } => {
-                    LogicVec::from_bin(bits).map_err(|e| SimError::runtime(e))
+                    LogicVec::from_bin(bits).map_err(|e| SimError::with_diag(DiagCode::DpiError, e))
                 }
                 Value::Hex { bits, .. } => {
-                    LogicVec::from_hex(bits).map_err(|e| SimError::runtime(e))
+                    LogicVec::from_hex(bits).map_err(|e| SimError::with_diag(DiagCode::DpiError, e))
                 }
                 Value::Octal { bits, .. } => {
-                    LogicVec::from_hex(bits).map_err(|e| SimError::runtime(e))
+                    LogicVec::from_hex(bits).map_err(|e| SimError::with_diag(DiagCode::DpiError, e))
                 }
                 Value::Real(r) => Ok(LogicVec::from_u64(r.to_bits(), 64)),
             },
@@ -29,7 +30,7 @@ impl SimulationEngine {
                     if let Some(obj_id) = self.current_this {
                         return Ok(LogicVec::from_u64(obj_id as u64, 64));
                     } else {
-                        return Err(SimError::runtime("'this' used outside of class method"));
+                        return Err(SimError::with_diag(DiagCode::NullHandle, "'this' used outside of class method"));
                     }
                 }
                 if let Some(local) = self.get_local(name.as_str()) {
@@ -49,10 +50,10 @@ impl SimulationEngine {
                     .current_this
                     .map(|id| format!("obj_id={}", id))
                     .unwrap_or_else(|| "no current_this".to_string());
-                Err(SimError::runtime(format!(
-                    "cannot resolve identifier '{}' in method context ({})",
-                    name, ctx
-                )))
+                Err(SimError::with_diag(
+                    DiagCode::NullHandle,
+                    format!("cannot resolve identifier '{}' in method context ({})", name, ctx),
+                ))
             }
             Expr::BinaryOp { op, lhs, rhs } => {
                 let lval = self.evaluate_ast_expr(lhs)?;
@@ -341,10 +342,10 @@ impl SimulationEngine {
                         return Ok(LogicVec::from_u64(result, 32));
                     }
                 }
-                Err(SimError::runtime(format!(
-                    "unknown function '{}' in method context",
-                    name
-                )))
+                Err(SimError::with_diag(
+                    DiagCode::NotImplemented,
+                    format!("unknown function '{}' in method context", name),
+                ))
             }
             Expr::MethodCall {
                 obj,
@@ -381,7 +382,7 @@ impl SimulationEngine {
                 let obj_data = self
                     .state
                     .get_object(obj_id)
-                    .ok_or_else(|| format!("object {} not found", obj_id))?;
+                    .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, format!("object {} not found", obj_id)))?;
                 Ok(obj_data
                     .fields
                     .get(field)
@@ -449,7 +450,7 @@ impl SimulationEngine {
                 } else if w == 0 {
                     Ok(LogicVec::from_u64(0, 1))
                 } else {
-                    Err(SimError::runtime(format!("part-select out of range")))
+                    Err(SimError::with_diag(DiagCode::MemoryOutOfBounds, "part-select out of range"))
                 }
             }
             Expr::Paren(inner) => self.evaluate_ast_expr(inner),
@@ -501,7 +502,7 @@ impl SimulationEngine {
                     let ss_val = self.evaluate_ast_expr(ss_expr)?;
                     let n = ss_val.to_u64() as usize;
                     if n == 0 {
-                        return Err(SimError::runtime("streaming slice size must be > 0"));
+                        return Err(SimError::with_diag(DiagCode::MemoryOutOfBounds, "streaming slice size must be > 0"));
                     }
                     n
                 } else {
@@ -595,10 +596,10 @@ impl SimulationEngine {
                 };
                 Ok(val.resize(cast_width))
             }
-            Expr::ScopedIdent { package, item } => Err(SimError::runtime(format!(
-                "scoped identifier '{}.{}' not resolved at runtime",
-                package, item
-            ))),
+            Expr::ScopedIdent { package, item } => Err(SimError::with_diag(
+                DiagCode::DpiError,
+                format!("scoped identifier '{}.{}' not resolved at runtime", package, item),
+            )),
         }
     }
 
@@ -646,10 +647,10 @@ impl SimulationEngine {
                             obj.fields.insert(field.clone(), val);
                             Ok(())
                         } else {
-                            Err(SimError::runtime(format!(
-                                "object {} not found for field write",
-                                obj_id
-                            )))
+                            Err(SimError::with_diag(
+                                DiagCode::NullHandle,
+                                format!("object {} not found for field write", obj_id),
+                            ))
                         }
                     }
                     Expr::BitSelect { expr: inner, index } => {
@@ -744,10 +745,10 @@ impl SimulationEngine {
                         }
                         Ok(())
                     }
-                    _ => Err(SimError::runtime(format!(
-                        "unsupported LHS in method: {:?}",
-                        lhs
-                    ))),
+                    _ => Err(SimError::with_diag(
+                        DiagCode::NotImplemented,
+                        format!("unsupported LHS in method: {:?}", lhs),
+                    )),
                 }
             }
             Stmt::NonBlockingAssign { lhs, rhs, delay: _ } => {
@@ -761,10 +762,10 @@ impl SimulationEngine {
                             obj.fields.insert(field.clone(), val);
                             Ok(())
                         } else {
-                            Err(SimError::runtime(format!(
-                                "object {} not found for field write",
-                                obj_id
-                            )))
+                            Err(SimError::with_diag(
+                                DiagCode::NullHandle,
+                                format!("object {} not found for field write", obj_id),
+                            ))
                         }
                     }
                     Expr::BitSelect { expr: inner, index } => {
@@ -859,10 +860,10 @@ impl SimulationEngine {
                         }
                         Ok(())
                     }
-                    _ => Err(SimError::runtime(format!(
-                        "unsupported LHS in method: {:?}",
-                        lhs
-                    ))),
+                    _ => Err(SimError::with_diag(
+                        DiagCode::NotImplemented,
+                        format!("unsupported LHS in method: {:?}", lhs),
+                    )),
                 }
             }
             Stmt::IfElse {
@@ -1102,22 +1103,22 @@ impl SimulationEngine {
                             obj.fields.insert(field.clone(), val);
                             Ok(())
                         } else {
-                            Err(SimError::runtime(format!(
-                                "object {} not found for field write",
-                                obj_id
-                            )))
+                            Err(SimError::with_diag(
+                                DiagCode::NullHandle,
+                                format!("object {} not found for field write", obj_id),
+                            ))
                         }
                     }
-                    _ => Err(SimError::runtime(format!(
-                        "unsupported LHS in StmtAssign: {:?}",
-                        lhs
-                    ))),
+                    _ => Err(SimError::with_diag(
+                        DiagCode::NotImplemented,
+                        format!("unsupported LHS in StmtAssign: {:?}", lhs),
+                    )),
                 }
             }
-            _ => Err(SimError::runtime(format!(
-                "unsupported statement in method context: {:?}",
-                stmt
-            ))),
+            _ => Err(SimError::with_diag(
+                DiagCode::NotImplemented,
+                format!("unsupported statement in method context: {:?}", stmt),
+            )),
         }
     }
 

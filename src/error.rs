@@ -1,4 +1,4 @@
-use thiserror::Error;
+use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic};
 
 /// Error context for rich error reporting
 #[derive(Debug, Clone)]
@@ -47,79 +47,15 @@ impl ErrorContext {
     }
 }
 
-static ERROR_CODES: &[(&str, &str)] = &[
-    ("E1001", "Unexpected token"),
-    ("E1002", "Expected token"),
-    ("E1003", "Unknown type"),
-    ("E1004", "Undefined signal"),
-    ("E1005", "Module not found"),
-    ("E1006", "Invalid syntax"),
-    ("E1007", "Expected ']'"),
-    ("E1008", "Range expression not supported"),
-    ("E1009", "Invalid assignment"),
-    ("E1010", "Circular dependency"),
-    ("E9001", "Runtime error"),
-    ("E9002", "Out of bounds"),
-    ("E9003", "Type mismatch"),
-];
-
-fn get_error_code(msg: &str) -> &'static str {
-    let msg_lower = msg.to_lowercase();
-
-    // Pattern-based matching
-    if msg_lower.contains("expected ']'") || msg_lower.contains("expected rbr") {
-        return "E1007";
-    }
-    if msg_lower.contains("expected") {
-        return "E1002";
-    }
-    if msg_lower.contains("unknown type") || msg_lower.contains("not defined") {
-        return "E1003";
-    }
-    if msg_lower.contains("not found") || msg_lower.contains("undefined") {
-        return "E1004";
-    }
-    if msg_lower.contains("module") && msg_lower.contains("not found") {
-        return "E1005";
-    }
-    if msg_lower.contains("range") {
-        return "E1008";
-    }
-    if msg_lower.contains("out of bounds") {
-        return "E9002";
-    }
-    if msg_lower.contains("type mismatch") {
-        return "E9003";
-    }
-    if msg_lower.contains("runtime") {
-        return "E9001";
-    }
-
-    // Fallback to table-based matching
-    for (code, desc) in ERROR_CODES {
-        if msg_lower.contains(&desc.to_lowercase()) {
-            return code;
-        }
-    }
-    "E0000"
-}
-
-#[derive(Error, Debug)]
+#[derive(Debug, Clone)]
 pub enum SimError {
-    #[error("{0}")]
     Parse(String),
-    #[error("{0}")]
     Elaborate(String),
-    #[error("{0}")]
     Runtime(String),
-    #[error("{0}")]
     Preprocessor(String),
-    #[error("{0}")]
     Waveform(String),
-    #[error("{0}")]
     Debugger(String),
-    #[error("{0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::ErrorKind, String),
 }
 
 impl SimError {
@@ -150,7 +86,118 @@ impl SimError {
         SimError::Debugger(msg.into())
     }
 
-    /// Format error dengan konteks lengkap seperti compiler profesional
+    /// Buat runtime error dengan diagnostic penuh (error code, konteks, dll).
+    pub fn with_diag(code: DiagCode, message: impl Into<String>) -> Self {
+        Self::Runtime(format!("[{}] {}", code.as_str(), message.into()))
+    }
+
+    /// Buat runtime error dari Diagnostic struct.
+    pub fn from_diagnostic(diag: &Diagnostic) -> Self {
+        let mut msg = format!("[{}] {}", diag.code.as_str(), diag.message);
+        if let Some(expl) = &diag.explanation {
+            msg.push_str(&format!("\n  Explanation: {}", expl));
+        }
+        if let Some(sugg) = &diag.suggestion {
+            msg.push_str(&format!("\n  Help: {}", sugg));
+        }
+        if let Some(ctx) = &diag.runtime_context {
+            let ctx_str = ctx.format();
+            if !ctx_str.is_empty() {
+                msg.push_str(&format!("\n  {}", ctx_str));
+            }
+        }
+        Self::Runtime(msg)
+    }
+
+    /// Ekstrak error code dari message format "[RT0001] message"
+    fn parse_error_code(msg: &str) -> Option<&'static str> {
+        if msg.starts_with('[') {
+            if let Some(end) = msg.find(']') {
+                let code_str = &msg[1..end];
+                if let Some(code) = crate::diagnostics::codes::lookup_code(code_str) {
+                    return Some(code.as_str());
+                }
+            }
+        }
+        None
+    }
+
+    /// Dapatkan error code yang sesuai.
+    pub fn error_code(&self) -> &'static str {
+        let msg = self.to_string();
+        
+        // Coba parse dari format "[RT0001] message"
+        if let Some(code) = Self::parse_error_code(&msg) {
+            return code;
+        }
+
+        match self {
+            SimError::Parse(_) => {
+                if msg.contains("unexpected token") || msg.contains("Unexpected") {
+                    "E1001"
+                } else if msg.contains("expected") && msg.contains("';'") {
+                    "E1003"
+                } else if msg.contains("expected") {
+                    "E1002"
+                } else if msg.contains("unclosed") {
+                    "E1004"
+                } else {
+                    "E1005"
+                }
+            }
+            SimError::Elaborate(_) => {
+                if msg.contains("not found") || msg.contains("module") {
+                    "E3001"
+                } else if msg.contains("circular") {
+                    "E3002"
+                } else if msg.contains("parameter") || msg.contains("param") {
+                    "E3003"
+                } else {
+                    "E3004"
+                }
+            }
+            SimError::Runtime(_) => "E9001",
+            SimError::Preprocessor(_) => "E0001",
+            SimError::Waveform(_) => "E0002",
+            SimError::Debugger(_) => "E0003",
+            SimError::Io(_, _) => "E0000",
+        }
+    }
+
+    /// Convert ke Diagnostic struct untuk formatting penuh.
+    /// Jika message mengandung "[CODE] ...", extract code dan message terpisah.
+    pub fn to_diagnostic(&self) -> Diagnostic {
+        let msg = self.to_string();
+        let level = match self {
+            SimError::Parse(_) | SimError::Elaborate(_) | SimError::Runtime(_) => DiagLevel::Error,
+            SimError::Preprocessor(_) => DiagLevel::Warning,
+            SimError::Waveform(_) => DiagLevel::Error,
+            SimError::Debugger(_) => DiagLevel::Error,
+            SimError::Io(_, _) => DiagLevel::Error,
+        };
+
+        let code_str = self.error_code();
+        let code = crate::diagnostics::codes::lookup_code(code_str).unwrap_or(DiagCode::SimulationError);
+
+        // Jika ada format "[CODE] message", gunakan message tanpa prefix [CODE]
+        let clean_msg = if msg.starts_with('[') {
+            if let Some(end) = msg.find(']') {
+                if end + 2 < msg.len() {
+                    msg[end + 2..].to_string()  // Skip "] "
+                } else {
+                    msg.clone()
+                }
+            } else {
+                msg.clone()
+            }
+        } else {
+            msg.clone()
+        };
+
+        Diagnostic::new(level, code, clean_msg)
+    }
+
+    /// Format error dengan konteks lengkap seperti compiler profesional.
     pub fn format_with_context(&self, ctx: &ErrorContext) -> String {
         let msg = self.to_string();
         let kind = match self {
@@ -160,12 +207,12 @@ impl SimError {
             SimError::Preprocessor(_) => "warning",
             SimError::Waveform(_) => "error",
             SimError::Debugger(_) => "error",
-            SimError::Io(_) => "error",
+            SimError::Io(_, _) => "error",
         };
 
-        let code = get_error_code(&msg);
+        let code = self.error_code();
 
-        let mut output = format!("{}: {}: {}\n", kind, code, msg);
+        let mut output = format!("{}[{}]: {}\n", kind, code, msg);
 
         if let Some(file) = &ctx.file {
             if let (Some(line), Some(col)) = (ctx.line, ctx.col) {
@@ -198,6 +245,28 @@ impl SimError {
         }
 
         output
+    }
+}
+
+impl std::fmt::Display for SimError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SimError::Parse(msg) => write!(f, "{}", msg),
+            SimError::Elaborate(msg) => write!(f, "{}", msg),
+            SimError::Runtime(msg) => write!(f, "{}", msg),
+            SimError::Preprocessor(msg) => write!(f, "{}", msg),
+            SimError::Waveform(msg) => write!(f, "{}", msg),
+            SimError::Debugger(msg) => write!(f, "{}", msg),
+            SimError::Io(kind, msg) => write!(f, "I/O error ({}): {}", kind, msg),
+        }
+    }
+}
+
+impl std::error::Error for SimError {}
+
+impl From<std::io::Error> for SimError {
+    fn from(e: std::io::Error) -> Self {
+        SimError::Io(e.kind(), e.to_string())
     }
 }
 

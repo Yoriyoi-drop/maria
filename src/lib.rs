@@ -203,10 +203,26 @@ pub fn run_simulation(ir_design: ir::IrDesign, max_time: u64) -> Result<(), SimE
     let fst_path = format!("{}.fst", design_name);
     match waveform::FstWaveWriter::new(&fst_path, &engine.design) {
         Ok(fst) => engine.set_fst(fst),
-        Err(e) => eprintln!("FST: cannot create '{}': {}", fst_path, e),
+        Err(e) => {
+            let diag = diagnostics::Diagnostic::warning(
+                diagnostics::DiagCode::WaveformError,
+                format!("FST: cannot create '{}': {}", fst_path, e),
+            );
+            let mut emitter = diagnostics::TerminalEmitter::new().with_simple_mode(true);
+            let _ = emitter.emit(&diag);
+        }
     }
 
     engine.run()?;
+
+    // Flush any runtime diagnostics
+    let diagnostics = engine.flush_diagnostics();
+    if !diagnostics.is_empty() {
+        let mut emitter = diagnostics::TerminalEmitter::new().with_simple_mode(true);
+        for diag in &diagnostics {
+            let _ = emitter.emit(diag);
+        }
+    }
 
     println!("Simulation completed at time {}", engine.state.time);
     println!("VCD waveform written to '{}'", vcd_path);

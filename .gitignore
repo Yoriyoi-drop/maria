@@ -9,3 +9,4 @@
 /gui/node_modules/
 /gui/dist/
 /src-tauri/target/
+/graphify-out/

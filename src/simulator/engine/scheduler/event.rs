@@ -1,5 +1,6 @@
 use super::super::SimulationEngine;
 use crate::error::SimError;
+use crate::diagnostics::DiagCode;
 use crate::ir::*;
 use crate::simulator::types::*;
 use crate::simulator::parallel;
@@ -207,7 +208,7 @@ impl SimulationEngine {
                                 // Apply writes from parallel eval
                                 Ok(writes)
                             }
-                            Err(e) => Err(SimError::runtime(format!("parallel eval error: {}", e))),
+                            Err(e) => Err(SimError::with_diag(DiagCode::InternalError, format!("parallel eval error: {}", e))),
                         }
                     } else {
                         Ok(Vec::new())

@@ -44,6 +44,9 @@ impl Debugger {
         let watchpoints = self.engine.watchpoints.clone();
         let snapshot_interval = self.engine.snapshot_interval;
 
+        // Preserve diag_sink across reset so diagnostics are not lost
+        let diag_sink = std::mem::replace(&mut self.engine.diag_sink, crate::diagnostics::DiagSink::new());
+
         self.engine = SimulationEngine::new(design, max_time);
         self.engine.debug_mode = debug_mode;
         self.engine.breakpoints = breakpoints;
@@ -51,6 +54,9 @@ impl Debugger {
         self.engine.snapshot_interval = snapshot_interval;
         self.engine.paused = false;
         self.engine.step_mode = StepMode::Running;
+
+        // Restore diagnostics sink
+        self.engine.diag_sink = diag_sink;
     }
 
     pub fn add_breakpoint(&mut self, bp: Breakpoint) {

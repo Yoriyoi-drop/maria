@@ -6,7 +6,7 @@ use maria::frontend::CompileSession;
 use maria::SessionConfig;
 use maria::debugger::Debugger;
 use maria::elaboration::Elaborator;
-use maria::error::{ErrorContext, SimError};
+use maria::error::SimError;
 use maria::ir::LogicVec;
 use maria::parser::lexer::Lexer;
 use maria::parser::Parser;
@@ -196,8 +196,10 @@ fn main() {
 
     let result = run(cli);
     if let Err(e) = result {
-        let ctx = ErrorContext::new();
-        eprint!("{}", e.format_with_context(&ctx));
+        // Use TerminalEmitter for pretty diagnostic output
+        let mut emitter = maria::diagnostics::TerminalEmitter::new();
+        let diag = e.to_diagnostic();
+        let _ = emitter.emit(&diag);
         process::exit(1);
     }
 }

@@ -1,5 +1,6 @@
 use super::super::SimulationEngine;
 use crate::error::SimError;
+use crate::diagnostics::DiagCode;
 use crate::ir::*;
 use crate::ast::*;
 use crate::Symbol;
@@ -144,10 +145,10 @@ impl SimulationEngine {
                 break;
             }
         }
-        Err(SimError::runtime(format!(
-            "method '{}' not found in class '{}' or its parents",
-            method, class_name
-        )))
+        Err(SimError::with_diag(
+            DiagCode::DpiError,
+            format!("method '{}' not found in class '{}' or its parents", method, class_name),
+        ))
     }
 }
 impl SimulationEngine {
@@ -271,10 +272,10 @@ impl SimulationEngine {
                         0
                     };
                     if idx >= count {
-                        return Err(SimError::runtime(format!(
-                            "delete index {} out of range (size {})",
-                            idx, count
-                        )));
+                        return Err(SimError::with_diag(
+                            DiagCode::MemoryOutOfBounds,
+                            format!("delete index {} out of range (size {})", idx, count),
+                        ));
                     }
                     let before = lv.bits[..idx * elem_width].to_vec();
                     let after = lv.bits[(idx + 1) * elem_width..].to_vec();
@@ -296,7 +297,7 @@ impl SimulationEngine {
                 let lv = self.state.read_signal(sig_id);
                 let elem_width = sig.elem_width;
                 if lv.width < elem_width {
-                    return Err(SimError::runtime("pop_front on empty queue"));
+                    return Err(SimError::with_diag(DiagCode::MemoryOutOfBounds, "pop_front on empty queue"));
                 }
                 let mut bits = Vec::with_capacity(elem_width);
                 for i in 0..elem_width {
@@ -317,7 +318,7 @@ impl SimulationEngine {
                 let lv = self.state.read_signal(sig_id);
                 let elem_width = sig.elem_width;
                 if lv.width < elem_width {
-                    return Err(SimError::runtime("pop_back on empty queue"));
+                    return Err(SimError::with_diag(DiagCode::MemoryOutOfBounds, "pop_back on empty queue"));
                 }
                 let start = lv.width - elem_width;
                 let mut bits = Vec::with_capacity(elem_width);
@@ -339,7 +340,7 @@ impl SimulationEngine {
                 let arg_val = if let Some(a) = args.first() {
                     self.evaluate_expr(a)?
                 } else {
-                    return Err(SimError::runtime("push_front expects 1 argument"));
+                    return Err(SimError::with_diag(DiagCode::DpiError, "push_front expects 1 argument"));
                 };
                 let elem_width = sig.elem_width;
                 let padded = if arg_val.width >= elem_width {
@@ -368,7 +369,7 @@ impl SimulationEngine {
             "exists" => {
                 let index_expr = args
                     .first()
-                    .ok_or_else(|| SimError::runtime("exists expects 1 argument"))?;
+                    .ok_or_else(|| SimError::with_diag(DiagCode::DpiError, "exists expects 1 argument"))?;
                 let idx_val = self.evaluate_expr(index_expr)?;
                 let idx = idx_val.to_u64() as usize;
                 let lv = self.state.read_signal(sig_id);
@@ -384,7 +385,7 @@ impl SimulationEngine {
                 let arg_val = if let Some(a) = args.first() {
                     self.evaluate_expr(a)?
                 } else {
-                    return Err(SimError::runtime("push_back expects 1 argument"));
+                    return Err(SimError::with_diag(DiagCode::DpiError, "push_back expects 1 argument"));
                 };
                 let elem_width = sig.elem_width;
                 let padded = if arg_val.width >= elem_width {
@@ -409,9 +410,7 @@ impl SimulationEngine {
             }
             "insert" => {
                 if args.len() < 2 {
-                    return Err(SimError::runtime(
-                        "insert expects 2 arguments (index, value)",
-                    ));
+                    return Err(SimError::with_diag(DiagCode::DpiError, "insert expects 2 arguments (index, value)"));
                 }
                 let idx_val = self.evaluate_expr(&args[0])?;
                 let idx = idx_val.to_u64() as usize;
@@ -936,10 +935,10 @@ impl SimulationEngine {
                 }
                 Ok(LogicVec::new(0))
             }
-            _ => Err(SimError::runtime(format!(
-                "unknown array/queue method: {}",
-                method
-            ))),
+            _ => Err(SimError::with_diag(
+                DiagCode::NotImplemented,
+                format!("unknown array/queue method: {}", method),
+            )),
         }
     }
 

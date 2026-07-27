@@ -11,7 +11,7 @@ impl SimulationEngine {
         if let Some(id) = self.signal_id_from_lvalue(lvalue) {
             if let Some(sig) = self.design.top.signals.get(id) {
                 if sig.is_const {
-                    return Err(SimError::runtime(format!(
+                    return Err(self.diag_error(crate::diagnostics::DiagCode::DpiError, format!(
                         "cannot write to const signal '{}'",
                         sig.name
                     )));
@@ -228,13 +228,13 @@ impl SimulationEngine {
                     obj_data.fields.insert(field.clone(), val);
                     Ok(())
                 } else {
-                    Err(SimError::runtime(format!(
+                    Err(self.diag_error(crate::diagnostics::DiagCode::NullHandle, format!(
                         "object {} not found for field '{}'",
                         obj_id, field
                     )))
                 }
             }
-            _ => Err(SimError::runtime(format!(
+            _ => Err(self.diag_error(crate::diagnostics::DiagCode::NotImplemented, format!(
                 "unsupported lvalue type in task method: {:?}",
                 lhs
             ))),
@@ -269,7 +269,7 @@ impl SimulationEngine {
                 return Ok(());
             }
         }
-        Err(SimError::runtime(format!(
+        Err(self.diag_error(crate::diagnostics::DiagCode::NullHandle, format!(
             "cannot resolve '{}' in method context (not a local or field)",
             name
         )))

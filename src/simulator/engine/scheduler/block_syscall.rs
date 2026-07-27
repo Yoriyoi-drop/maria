@@ -12,6 +12,8 @@ use crate::ir::*;
 use rand::Rng;
 use rand::SeedableRng;
 use std::io::Write;
+use crate::diagnostics::DiagCode;
+
 
 impl SimulationEngine {
     /// Handle a SysCall statement during block evaluation (with delay/fork context).
@@ -63,20 +65,20 @@ impl SimulationEngine {
             self.monitor_last_values = Some(vals);
         } else if name == "readmemh" {
             let file = ir_args.first().ok_or_else(|| {
-                SimError::runtime("$readmemh requires at least a filename argument")
+                self.diag_error(DiagCode::DpiError, "$readmemh requires at least a filename argument")
             })?;
             let file_str = if let IrExpr::String(s) = file {
                 s.clone()
             } else {
-                return Err(SimError::runtime("$readmemh first argument must be a string (filename)"));
+                return Err(self.diag_error(DiagCode::DpiError, "$readmemh first argument must be a string (filename)"));
             };
             let sig_id = ir_args.get(1).and_then(|a| {
                 if let IrExpr::Signal(id, _) = a { Some(*id) } else { None }
             }).ok_or_else(|| {
-                SimError::runtime("$readmemh requires a signal/memory argument")
+                self.diag_error(DiagCode::DpiError, "$readmemh requires a signal/memory argument")
             })?;
             let sig_info = self.design.top.signals.get(sig_id).ok_or_else(|| {
-                SimError::runtime("$readmemh: signal not found")
+                self.diag_error(DiagCode::DpiError, "$readmemh: signal not found")
             })?;
             let elem_w = sig_info.elem_width.max(1);
             let max_words = sig_info.width / elem_w;
@@ -92,20 +94,20 @@ impl SimulationEngine {
             self.state.write_signal(sig_id, packed);
         } else if name == "readmemb" {
             let file = ir_args.first().ok_or_else(|| {
-                SimError::runtime("$readmemb requires at least a filename argument")
+                self.diag_error(DiagCode::DpiError, "$readmemb requires at least a filename argument")
             })?;
             let file_str = if let IrExpr::String(s) = file {
                 s.clone()
             } else {
-                return Err(SimError::runtime("$readmemb first argument must be a string (filename)"));
+                return Err(self.diag_error(DiagCode::DpiError, "$readmemb first argument must be a string (filename)"));
             };
             let sig_id = ir_args.get(1).and_then(|a| {
                 if let IrExpr::Signal(id, _) = a { Some(*id) } else { None }
             }).ok_or_else(|| {
-                SimError::runtime("$readmemb requires a signal/memory argument")
+                self.diag_error(DiagCode::DpiError, "$readmemb requires a signal/memory argument")
             })?;
             let sig_info = self.design.top.signals.get(sig_id).ok_or_else(|| {
-                SimError::runtime("$readmemb: signal not found")
+                self.diag_error(DiagCode::DpiError, "$readmemb: signal not found")
             })?;
             let elem_w = sig_info.elem_width.max(1);
             let max_words = sig_info.width / elem_w;

@@ -50,7 +50,7 @@ impl SimulationEngine {
         self.expr_recursion_depth += 1;
         if self.expr_recursion_depth > 4096 {
             self.expr_recursion_depth = 0;
-            return Err(SimError::runtime("expression recursion depth exceeded (possible infinite recursion in expression evaluation)"));
+            return Err(self.diag_error(crate::diagnostics::DiagCode::InternalError, "expression recursion depth exceeded (possible infinite recursion in expression evaluation)"));
         }
         let result = self.evaluate_expr_impl(expr);
         self.expr_recursion_depth = self.expr_recursion_depth.saturating_sub(1);
@@ -98,7 +98,7 @@ impl SimulationEngine {
                     (*msb, *lsb)
                 };
                 if end >= val.width {
-                    return Err(SimError::runtime(format!(
+                    return Err(self.diag_error(crate::diagnostics::DiagCode::MemoryOutOfBounds, format!(
                         "range select out of bounds: {}:{} on width {}",
                         msb, lsb, val.width
                     )));
@@ -368,7 +368,7 @@ impl SimulationEngine {
                                 Ok(val)
                             }
                         } else {
-                            Err(SimError::runtime("$signed expects 1 argument"))
+                            Err(self.diag_error(crate::diagnostics::DiagCode::DpiError, "$signed expects 1 argument"))
                         }
                     }
                     "$unsigned" => {
@@ -377,7 +377,7 @@ impl SimulationEngine {
                             // Unsigned: zero-extend (already the default)
                             Ok(val)
                         } else {
-                            Err(SimError::runtime("$unsigned expects 1 argument"))
+                            Err(self.diag_error(crate::diagnostics::DiagCode::DpiError, "$unsigned expects 1 argument"))
                         }
                     }
                     "$countones" => {
@@ -387,7 +387,7 @@ impl SimulationEngine {
                                 val.bits.iter().filter(|b| **b == LogicVal::One).count() as u64;
                             Ok(LogicVec::from_u64(count, 32))
                         } else {
-                            Err(SimError::runtime("$countones expects 1 argument"))
+                            Err(self.diag_error(crate::diagnostics::DiagCode::DpiError, "$countones expects 1 argument"))
                         }
                     }
                     "$onehot" => {
@@ -397,7 +397,7 @@ impl SimulationEngine {
                             let is_onehot = ones == 1;
                             Ok(LogicVec::from_u64(if is_onehot { 1 } else { 0 }, 1))
                         } else {
-                            Err(SimError::runtime("$onehot expects 1 argument"))
+                            Err(self.diag_error(crate::diagnostics::DiagCode::DpiError, "$onehot expects 1 argument"))
                         }
                     }
                     "$isunknown" => {
@@ -409,7 +409,7 @@ impl SimulationEngine {
                                 .any(|b| *b == LogicVal::X || *b == LogicVal::Z);
                             Ok(LogicVec::from_u64(if has_x_or_z { 1 } else { 0 }, 1))
                         } else {
-                            Err(SimError::runtime("$isunknown expects 1 argument"))
+                            Err(self.diag_error(crate::diagnostics::DiagCode::DpiError, "$isunknown expects 1 argument"))
                         }
                     }
                     "$fopen" => {
@@ -1202,7 +1202,7 @@ impl SimulationEngine {
                 if let Some(obj_id) = self.current_this {
                     Ok(LogicVec::from_u64(obj_id as u64, 64))
                 } else {
-                    Err(SimError::runtime("'this' used outside of class method"))
+                    Err(self.diag_error(crate::diagnostics::DiagCode::NullHandle, "'this' used outside of class method"))
                 }
             }
             IrExpr::MethodCall {
@@ -1408,7 +1408,7 @@ impl SimulationEngine {
                     vals.iter().flat_map(|v| v.bits.iter().copied()).collect();
                 let slen = slice_size.unwrap_or(1);
                 if slen == 0 {
-                    return Err(SimError::runtime("streaming slice size must be > 0"));
+                    return Err(self.diag_error(crate::diagnostics::DiagCode::MemoryOutOfBounds, "streaming slice size must be > 0"));
                 }
                 let mut result = Vec::new();
                 if op == ">>" {
@@ -1537,7 +1537,7 @@ impl SimulationEngine {
                     .copied()
                     .unwrap_or(0);
                 if depth >= self.max_recursion_depth {
-                    return Err(SimError::runtime(format!(
+                    return Err(self.diag_error(crate::diagnostics::DiagCode::InternalError, format!(
                         "recursion depth exceeded for function '{}' (max {})",
                         name, self.max_recursion_depth
                     )));
@@ -1551,7 +1551,7 @@ impl SimulationEngine {
                     .get(name.as_str())
                     .cloned()
                     .ok_or_else(|| {
-                        SimError::runtime(format!("function '{}' not found for runtime call", name))
+                        self.diag_error(crate::diagnostics::DiagCode::DpiError, format!("function '{}' not found for runtime call", name))
                     })?;
 
                 // Compute return width from function declaration

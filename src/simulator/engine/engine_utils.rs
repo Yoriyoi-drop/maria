@@ -15,6 +15,7 @@
 //!   - edge_matches_abbrev() — pencocokan edge transition untuk UDP
 //! ──────────────────────────────────────────────────────────────────────────────
 
+use crate::diagnostics::DiagCode;
 use crate::error::SimError;
 use crate::ir::{LogicVal, LogicVec};
 use crate::simulator::util::logicvec_to_string;
@@ -27,7 +28,7 @@ pub(crate) fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -
         "len" => Ok(LogicVec::from_u64(s.len() as u64, 32)),
         "substr" => {
             if args.len() != 2 {
-                return Err(SimError::runtime(format!(
+                return Err(SimError::with_diag(DiagCode::DpiError, format!(
                     "substr expects 2 arguments, got {}",
                     args.len()
                 )));
@@ -35,7 +36,7 @@ pub(crate) fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -
             let i = args[0].to_u64() as usize;
             let j = args[1].to_u64() as usize;
             if i > j || j >= s.len() {
-                return Err(SimError::runtime(format!(
+                return Err(SimError::with_diag(DiagCode::MemoryOutOfBounds, format!(
                     "substr({}, {}) out of range for string of len {}",
                     i, j, s.len()
                 )));
@@ -97,7 +98,7 @@ pub(crate) fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -
         }
         "compare" | "icompare" => {
             if args.len() < 1 {
-                return Err(SimError::runtime(format!("{} expects 1 argument", method)));
+                return Err(SimError::with_diag(DiagCode::DpiError, format!("{} expects 1 argument", method)));
             }
             let other_val = &args[0];
             let other = logicvec_to_string(other_val);
@@ -113,7 +114,7 @@ pub(crate) fn evaluate_string_method(s: &str, method: &str, args: &[LogicVec]) -
             };
             Ok(LogicVec::from_u64(result as u64, 32))
         }
-        _ => Err(SimError::runtime(format!("unknown string method: {}", method))),
+        _ => Err(SimError::with_diag(DiagCode::NotImplemented, format!("unknown string method: {}", method))),
     }
 }
 
