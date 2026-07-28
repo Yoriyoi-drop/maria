@@ -66,7 +66,8 @@ impl Parser {
             let stmts = match self.parse_stmt() {
                 Ok(s) => vec![s],
                 Err(e) => {
-                    eprintln!("warning: skipping statement: {}", e);
+                    let diag = e.to_diagnostic();
+                    self.errors.push(diag);
                     self.skip_to_stmt_boundary();
                     vec![]
                 }

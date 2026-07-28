@@ -13,7 +13,7 @@ pub mod decl;
 pub mod instance;
 pub mod proc;
 use crate::ast::*;
-use crate::diagnostics::diagnostic::{DiagCode, Diagnostic, SourceSnippet};
+use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, SourceSnippet};
 use crate::error::{ErrorContext, SimError};
 use crate::intern::Symbol;
 use crate::parser::lexer::*;
@@ -171,6 +171,18 @@ impl Parser {
                 display_file, display_line, col, msg_str
             ))
         }
+    }
+
+    fn push_warning_at(&mut self, msg: impl Into<String>, line: usize, col: usize) {
+        let msg: String = msg.into();
+        let mut diag = Diagnostic::new(DiagLevel::Warning, DiagCode::InvalidSyntax, msg)
+            .with_code_context();
+        if line > 0 && line <= self.source_lines.len() {
+            let source_line = &self.source_lines[line - 1];
+            let snippet = SourceSnippet::new(&self.source_file, line, col, source_line.trim_end());
+            diag = diag.with_source_snippet(snippet);
+        }
+        self.errors.push(diag);
     }
 
     fn peek_ahead(&self, n: usize) -> &Token {
@@ -419,14 +431,9 @@ impl Parser {
                     let _ = self.skip_balanced_paren_light();
                 }
             } else {
-                // Gracefully skip unknown top-level constructs
-                eprintln!(
-                    "warning: skipping top-level construct at line {} in {}: {}",
-                    self.peek_line(),
-                    self.source_file,
-                    self.peek()
-                );
-                // Try to advance past the unknown construct
+                let line = self.peek_line();
+                let col = self.peek_col();
+                self.push_warning_at(format!("skipping top-level construct: {}", self.peek()), line, col);
                 self.advance();
             }
         }
@@ -635,14 +642,10 @@ impl Parser {
                         let _ = self.skip_until_semi_or_end();
                     } else {
                         let line = self.peek_line();
+                        let col = self.peek_col();
                         let tok = self.peek().clone();
                         self.advance();
-                        eprintln!(
-                            "warning: skipping top-level construct at line {} in {}: {}",
-                            line,
-                            self.source_file,
-                            tok
-                        );
+                        self.push_warning_at(format!("skipping top-level construct: {}", tok), line, col);
                     }
                     false
                 }
@@ -900,15 +903,10 @@ impl Parser {
                         names,
                     })))
                 } else {
-                    // Not recognized — skip silently
                     let line = self.peek_line();
+                    let col = self.peek_col();
                     let tok = self.peek().clone();
-                    eprintln!(
-                        "warning: skipping unknown construct at line {} in {}: {}",
-                        line,
-                        self.source_file,
-                        tok
-                    );
+                    self.push_warning_at(format!("skipping unknown construct: {}", tok), line, col);
                     self.skip_until_semi_or_end()?;
                     Ok(None)
                 }

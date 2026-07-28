@@ -94,7 +94,8 @@ impl Parser {
                             }
                         }
                         Err(e) => {
-                            eprintln!("warning: skipping module item: {}", e);
+                            let diag = e.to_diagnostic();
+                            self.errors.push(diag);
                             self.skip_until_semi_or_end()?;
                         }
                     }

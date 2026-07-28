@@ -17,6 +17,8 @@ use crate::ast::types::const_eval_simple;
 const MAX_GENERATED_ITEMS: usize = 1_000_000;
 use crate::ast::types::const_eval_with_params;
 use crate::ast::*;
+use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic};
+use crate::diagnostics::DiagSink;
 use crate::intern::Symbol;
 
 use super::loop_unroll::{substitute_loop_var_in_expr, substitute_loop_var_in_stmt};
@@ -25,12 +27,13 @@ use super::loop_unroll::{substitute_loop_var_in_expr, substitute_loop_var_in_stm
 pub fn expand_all_generates(
     module: &mut Module,
     param_vals: &HashMap<Symbol, i64>,
+    diag_sink: &DiagSink,
 ) -> Result<(), String> {
     let mut i = 0;
     let mut total_items = 0usize;
     while i < module.items.len() {
         if let ModuleItem::Generate(gen) = &module.items[i] {
-            let expanded = expand_generate_block(gen, param_vals)?;
+            let expanded = expand_generate_block(gen, param_vals, diag_sink)?;
             total_items += expanded.len();
             if total_items > MAX_GENERATED_ITEMS {
                 return Err(format!(
@@ -74,6 +77,7 @@ pub fn extract_generate_step(step: &Option<Stmt>, param_vals: &HashMap<Symbol, i
 pub fn expand_generate_block(
     gen: &GenerateBlock,
     param_vals: &HashMap<Symbol, i64>,
+    diag_sink: &DiagSink,
 ) -> Result<Vec<ModuleItem>, String> {
     let mut result = Vec::new();
     for item in &gen.items {
@@ -92,7 +96,7 @@ pub fn expand_generate_block(
                         }
                     }
                     Err(_) => {
-                        eprintln!("  ** WARNING: non-constant condition in generate if, taking true branch");
+                        diag_sink.push(Diagnostic::new(DiagLevel::Warning, DiagCode::NotImplemented, "non-constant condition in generate if, taking true branch"));
                         for item in true_items {
                             result.push(item.clone());
                         }
@@ -179,7 +183,7 @@ pub fn expand_generate_block(
                 let case_val = match const_eval_with_params(expr, param_vals) {
                     Ok(v) => v,
                     Err(_) => {
-                        eprintln!("  ** WARNING: non-constant expression in generate case, taking first case");
+                        diag_sink.push(Diagnostic::new(DiagLevel::Warning, DiagCode::NotImplemented, "non-constant expression in generate case, taking first case"));
                         if let Some(first) = items.first() {
                             for item in &first.body {
                                 result.push(item.clone());

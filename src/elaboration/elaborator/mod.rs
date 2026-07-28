@@ -175,7 +175,7 @@ impl Elaborator {
                     .items
                     .push(ModuleItem::Instance(bind.instance.clone()));
             } else {
-                eprintln!("warning: bind target '{}' not found", bind.target);
+                self.elab_warn(DiagCode::ModuleNotFound, format!("bind target '{}' not found", bind.target));
             }
         }
 
@@ -316,7 +316,7 @@ impl Elaborator {
         for i in 0..self.design.modules.len() {
             let param_vals = resolve_param_values_fn(&self.design.modules[i], &HashMap::new())?;
             if let Some(module) = self.design.modules.get_mut(i) {
-                expand_all_generates(module, &param_vals)?;
+                expand_all_generates(module, &param_vals, &self.diag_sink)?;
             }
         }
 
@@ -355,10 +355,7 @@ impl Elaborator {
                 if !reachable.contains(&m.name)
                     && top_sym.as_ref().map(|t| *t != m.name).unwrap_or(true)
                 {
-                    eprintln!(
-                        "warning: module '{}' is unreachable (not instantiated from top)",
-                        m.name
-                    );
+                    self.elab_warn(DiagCode::UnusedSignal, format!("module '{}' is unreachable (not instantiated from top)", m.name));
                 }
             }
         }
@@ -796,9 +793,19 @@ impl Elaborator {
 
     /// Emit warning diagnostic ke DiagSink (elaboration-time warnings).
     fn elab_warn(&self, code: DiagCode, message: impl Into<String>) {
+        self.elab_warn_at(code, message, 0, 0)
+    }
+
+    /// Emit warning dengan posisi source.
+    fn elab_warn_at(&self, code: DiagCode, message: impl Into<String>, line: usize, col: usize) {
         let msg: String = message.into();
-        let diag = Diagnostic::new(DiagLevel::Warning, code, msg)
+        let mut diag = Diagnostic::new(DiagLevel::Warning, code, msg)
             .with_code_context();
+        if line > 0 && line <= self.source_lines.len() {
+            let source_line = &self.source_lines[line - 1];
+            let snippet = SourceSnippet::new(&self.source_file, line, col, source_line);
+            diag = diag.with_source_snippet(snippet);
+        }
         self.diag_sink.push(diag);
     }
 
@@ -844,7 +851,7 @@ impl Elaborator {
                     return Ok(width);
                 }
                 // Type not found — warn and return default width of 32 (common SV default)
-                eprintln!("  ** WARNING: unknown type '{}' is not defined in this scope (using default width 32)", name);
+                self.elab_warn(DiagCode::UninitializedRegister, format!("unknown type '{}' is not defined in this scope (using default width 32)", name));
                 Ok(32)
             }
             DataType::Signed(inner) => self.resolve_type_width(inner),
@@ -1588,7 +1595,7 @@ impl Elaborator {
             for item in &module.items {
                 match item {
                     ModuleItem::Generate(gen) => {
-                        let expanded = expand_generate_block(gen, &effective_params)?;
+                        let expanded = expand_generate_block(gen, &effective_params, &self.diag_sink)?;
                         // Collect params from expanded generate items too
                         for ei in &expanded {
                             if let ModuleItem::Param(p) = ei {

@@ -1,3 +1,4 @@
+use crate::diagnostics::diagnostic::{DiagCode, Diagnostic};
 use crate::error::SimError;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -24,6 +25,7 @@ pub struct Preprocessor {
     include_stack: Vec<PathBuf>,
     pub quiet: bool,
     pub timescale: Option<(String, String)>, // (unit, precision)
+    pub warnings: Vec<Diagnostic>,
 }
 
 impl Preprocessor {
@@ -35,6 +37,7 @@ impl Preprocessor {
             include_stack: Vec::new(),
             quiet: false,
             timescale: None,
+            warnings: Vec::new(),
         }
     }
 
@@ -115,7 +118,7 @@ impl Preprocessor {
                             Ok(p) => p,
                             Err(e) => {
                                 if !self.quiet {
-                                    eprintln!("  ** WARNING: {}", e);
+                                    self.warnings.push(Diagnostic::warning(DiagCode::InvalidSyntax, format!("{}", e)));
                                 }
                                 i += 1;
                                 continue;
@@ -155,13 +158,13 @@ impl Preprocessor {
                                 self.include_stack.pop();
                                 if let Err(e) = inc_result {
                                     if !self.quiet {
-                                        eprintln!("  ** WARNING: {}", e);
+                                        self.warnings.push(Diagnostic::warning(DiagCode::InvalidSyntax, format!("{}", e)));
                                     }
                                 }
                             }
                             Err(e) => {
                                 if !self.quiet && self.warned_includes.insert(inc_path.clone()) {
-                                    eprintln!("  ** WARNING: {}", e);
+                                    self.warnings.push(Diagnostic::warning(DiagCode::InvalidSyntax, format!("{}", e)));
                                 }
                             }
                         }
@@ -289,11 +292,7 @@ impl Preprocessor {
                     .and_then(|d| d.file_name())
                     .map(|n| format!(" in '{}'", n.to_string_lossy()))
                     .unwrap_or_default();
-                eprintln!(
-                    "  ** WARNING: {} open `ifdef/`ifndef block(s) at end of file{} (auto-closed)",
-                    cond_stack.len(),
-                    file_hint
-                );
+                self.warnings.push(Diagnostic::warning(DiagCode::InvalidSyntax, format!("{} open `ifdef/`ifndef block(s) at end of file{} (auto-closed)", cond_stack.len(), file_hint)));
             }
             // Auto-close remaining conditionals so they don't corrupt subsequent files
             while let Some(_frame) = cond_stack.pop() {
