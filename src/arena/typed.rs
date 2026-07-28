@@ -50,6 +50,7 @@ impl<T> TypedArena<T> {
 
     /// Allocate a single value of type T.
     /// Returns a mutable reference valid for the arena's lifetime.
+    #[allow(clippy::mut_from_ref)]
     pub fn alloc(&self, value: T) -> &mut T {
         let ptr = self.arena.alloc(mem::size_of::<T>(), mem::align_of::<T>()) as *mut T;
         unsafe {
@@ -59,6 +60,7 @@ impl<T> TypedArena<T> {
     }
 
     /// Allocate an array of `count` uninitialized values.
+    #[allow(clippy::mut_from_ref)]
     pub fn alloc_slice(&self, count: usize) -> &mut [T] {
         if count == 0 {
             return &mut [];
@@ -70,6 +72,7 @@ impl<T> TypedArena<T> {
     }
 
     /// Allocate and initialize a slice from an iterator.
+    #[allow(clippy::mut_from_ref)]
     pub fn alloc_slice_from_iter(&self, iter: impl IntoIterator<Item = T>) -> &mut [T] {
         let items: Vec<T> = iter.into_iter().collect();
         let count = items.len();
@@ -86,6 +89,7 @@ impl<T> TypedArena<T> {
     }
 
     /// Allocate a slice from an existing slice by cloning.
+    #[allow(clippy::mut_from_ref)]
     pub fn alloc_slice_from_clone(&self, items: &[T]) -> &mut [T]
     where
         T: Clone,

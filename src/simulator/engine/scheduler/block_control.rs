@@ -86,11 +86,20 @@ impl SimulationEngine {
         fork_id: Option<usize>,
     ) -> Result<bool, SimError> {
         let cond_val = self.evaluate_expr(cond)?;
+        self.cover_branch_counter += 1;
+        let branch_key = Symbol::intern(&format!(
+            "{}.if_fork#{}",
+            self.current_process_name.as_deref().unwrap_or("?"),
+            self.cover_branch_counter
+        ));
         if cond_val.to_bool().unwrap_or(false) {
+            self.record_branch_hit(branch_key, "true");
             self.evaluate_block_with_delay_fork(then_stmts, fork_id)
         } else if !else_stmts.is_empty() {
+            self.record_branch_hit(branch_key, "false");
             self.evaluate_block_with_delay_fork(else_stmts, fork_id)
         } else {
+            self.record_branch_hit(branch_key, "false_no_else");
             Ok(true)
         }
     }
@@ -103,11 +112,20 @@ impl SimulationEngine {
         else_stmts: &[IrStmt],
     ) -> Result<(), SimError> {
         let cond_val = self.evaluate_expr(cond)?;
+        self.cover_branch_counter += 1;
+        let branch_key = Symbol::intern(&format!(
+            "{}.if_stmt#{}",
+            self.current_process_name.as_deref().unwrap_or("?"),
+            self.cover_branch_counter
+        ));
         if cond_val.to_bool().unwrap_or(false) {
+            self.record_branch_hit(branch_key, "true");
             self.evaluate_stmt_block(then_stmts)
         } else if !else_stmts.is_empty() {
+            self.record_branch_hit(branch_key, "false");
             self.evaluate_stmt_block(else_stmts)
         } else {
+            self.record_branch_hit(branch_key, "false_no_else");
             Ok(())
         }
     }
@@ -125,8 +143,14 @@ impl SimulationEngine {
         fork_id: Option<usize>,
     ) -> Result<bool, SimError> {
         let case_val = self.evaluate_expr(case_expr)?;
+        self.cover_branch_counter += 1;
+        let case_key = Symbol::intern(&format!(
+            "{}.case_fork#{}",
+            self.current_process_name.as_deref().unwrap_or("?"),
+            self.cover_branch_counter
+        ));
         let mut matched = false;
-        for case_item in items {
+        for (item_idx, case_item) in items.iter().enumerate() {
             let mut item_matched = false;
             for pat in &case_item.labels {
                 let pat_val = self.evaluate_expr(pat)?;
@@ -136,6 +160,7 @@ impl SimulationEngine {
                     CaseType::Normal => case_val.eq(&pat_val),
                 };
                 if eq {
+                    self.record_branch_hit(case_key, &format!("item{}_matched", item_idx));
                     if !self.evaluate_block_with_delay_fork(&case_item.body, fork_id)? {
                         return Ok(false);
                     }
@@ -152,9 +177,13 @@ impl SimulationEngine {
             }
         }
         if !matched && !default.is_empty() {
+            self.record_branch_hit(case_key, "default");
             if !self.evaluate_block_with_delay_fork(default, fork_id)? {
                 return Ok(false);
             }
+        }
+        if !matched && default.is_empty() {
+            self.record_branch_hit(case_key, "nomatch_nodefault");
         }
         Ok(true)
     }
@@ -168,8 +197,14 @@ impl SimulationEngine {
         default: &[IrStmt],
     ) -> Result<(), SimError> {
         let case_val = self.evaluate_expr(case_expr)?;
+        self.cover_branch_counter += 1;
+        let case_key = Symbol::intern(&format!(
+            "{}.case_stmt#{}",
+            self.current_process_name.as_deref().unwrap_or("?"),
+            self.cover_branch_counter
+        ));
         let mut matched = false;
-        for case_item in items {
+        for (item_idx, case_item) in items.iter().enumerate() {
             let mut item_matched = false;
             for pat in &case_item.labels {
                 let pat_val = self.evaluate_expr(pat)?;
@@ -179,6 +214,7 @@ impl SimulationEngine {
                     CaseType::Normal => case_val.eq(&pat_val),
                 };
                 if eq {
+                    self.record_branch_hit(case_key, &format!("item{}_matched", item_idx));
                     self.evaluate_stmt_block(&case_item.body)?;
                     if self.disable_pending.is_some() {
                         return Ok(());
@@ -193,7 +229,11 @@ impl SimulationEngine {
             }
         }
         if !matched && !default.is_empty() {
+            self.record_branch_hit(case_key, "default");
             self.evaluate_stmt_block(default)?;
+        }
+        if !matched && default.is_empty() {
+            self.record_branch_hit(case_key, "nomatch_nodefault");
         }
         Ok(())
     }

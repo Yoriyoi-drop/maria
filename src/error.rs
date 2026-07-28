@@ -1,8 +1,12 @@
 use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, SourceSnippet};
 use crate::diagnostics::emitter::format_diagnostic;
 
-/// Error context for rich error reporting
+/// Error context for rich error reporting.
+///
+/// ⚠️ DEPRECATED: Use `Diagnostic` with `RuntimeContext` and `SourceSnippet` instead.
+/// See `src/diagnostics/diagnostic.rs` for the modern error reporting API.
 #[derive(Debug, Clone)]
+#[deprecated(note = "Use Diagnostic with RuntimeContext and SourceSnippet instead")]
 pub struct ErrorContext {
     pub file: Option<String>,
     pub line: Option<usize>,

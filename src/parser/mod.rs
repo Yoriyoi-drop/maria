@@ -17,7 +17,6 @@ use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, SourceSnip
 use crate::error::SimError;
 use crate::intern::Symbol;
 use crate::parser::lexer::*;
-use std::time::Instant;
 
 pub struct Parser {
     tokens: Vec<(Token, usize, usize)>,
@@ -194,17 +193,11 @@ impl Parser {
         &self.tokens[idx].0
     }
 
-    #[inline(always)]
-    pub fn debug_parse_trace(&self, location: &str) {
-        eprintln!("[{}] pos={} {}:{} token={:?}", location, self.pos, self.source_file, self.peek_line(), self.peek());
-    }
-
     fn advance(&mut self) {
         self.pos += 1;
     }
 
     fn expect(&mut self, expected: Token) -> Result<(), SimError> {
-        self.debug_parse_trace("expect");
         if self.peek() == &expected {
             self.pos += 1;
             Ok(())
@@ -275,28 +268,22 @@ impl Parser {
         // First pass: collect all class names — with error recovery
         // If parsing fails, error is saved and we skip to next construct
         let saved_pos = self.pos;
-        eprintln!("DEBUG: parse_design pass1 starting, {} tokens total", self.tokens.len());
-        let mut _heartbeat = 0;
-        let mut _stuck = 0u32;
         let mut _last_pos = self.pos;
+        let mut _stuck = 0u32;
         while self.peek() != &Token::Eof {
-            _heartbeat += 1;
+            // Stuck detection: if pos hasn't changed for too many iterations, abort
             if self.pos == _last_pos {
                 _stuck += 1;
-                if _stuck > 1000000 {
-                    let tok = self.peek().clone();
+                if _stuck > 1_000_000 {
                     let line = self.peek_line();
                     let col = self.peek_col();
-                    eprintln!("DEBUG: PARSE STUCK in pass1! pos={}/{} stuck={} token={:?} line={} col={}", self.pos, self.tokens.len(), _stuck, tok, line, col);
-                    return Err(self.err("parser stuck in pass1 (no progress)"));
+                    self.push_warning_at("parser stuck (no progress) during class discovery pass — skipping".to_string(), line, col);
+                    break;
                 }
             } else {
                 _stuck = 0;
                 _last_pos = self.pos;
             }
-            if _heartbeat % 10000 == 0 { eprintln!("DEBUG: parse_design pass1 token={} pos={}/{}", _heartbeat, self.pos, self.tokens.len()); }
-             if _heartbeat % 100_000 == 0 { eprintln!("DEBUG: parse_design pass1 progress {} tokens", _heartbeat); }
-            self.debug_parse_trace("parse_design_pass1");
             if self.peek() == &Token::Class {
                 let start = self.pos;
                 self.advance(); // consume 'class'
@@ -376,7 +363,7 @@ impl Parser {
                     Ok(cg) => cg,
                     Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
                 };
-                self.class_names.push(cg.name.clone());
+                self.class_names.push(cg.name);
             } else if self.peek() == &Token::Bind {
                 // Skip bind in first pass
                 self.advance(); // consume 'bind'
@@ -472,28 +459,22 @@ impl Parser {
         classes.clear();
         // Second pass: full parse with class names known — with error recovery
         // Jika parsing modul/class gagal, error disimpan dan lanjut ke konstruk berikutnya
-        eprintln!("DEBUG: parse_design pass2 starting, {} tokens total", self.tokens.len());
-        let mut _heartbeat2 = 0;
-        let mut _stuck2 = 0u32;
-        let mut _last_pos2 = self.pos;
+        let mut _last_pos = self.pos;
+        let mut _stuck = 0u32;
         while self.peek() != &Token::Eof {
-            _heartbeat2 += 1;
-            if self.pos == _last_pos2 {
-                _stuck2 += 1;
-                if _stuck2 > 1000000 {
-                    let tok = self.peek().clone();
+            // Stuck detection: if pos hasn't changed for too many iterations, abort
+            if self.pos == _last_pos {
+                _stuck += 1;
+                if _stuck > 1_000_000 {
                     let line = self.peek_line();
                     let col = self.peek_col();
-                    eprintln!("DEBUG: PARSE STUCK in pass2! pos={}/{} stuck={} token={:?} line={} col={}", self.pos, self.tokens.len(), _stuck2, tok, line, col);
-                    return Err(self.err("parser stuck in pass2 (no progress)"));
+                    self.push_warning_at("parser stuck (no progress) during second pass — skipping".to_string(), line, col);
+                    break;
                 }
             } else {
-                _stuck2 = 0;
-                _last_pos2 = self.pos;
+                _stuck = 0;
+                _last_pos = self.pos;
             }
-if _heartbeat2 % 10000 == 0 { eprintln!("DEBUG: parse_design pass2 token={} pos={}/{}", _heartbeat2, self.pos, self.tokens.len()); }
-              if _heartbeat2 % 100_000 == 0 { eprintln!("DEBUG: parse_design pass2 progress {} tokens", _heartbeat2); }
-             self.debug_parse_trace("parse_design_pass2");
              let had_error = match self.peek() {
                 Token::Module => match self.parse_module() {
                     Ok(m) => { modules.push(m); false }
@@ -733,20 +714,29 @@ if _heartbeat2 % 10000 == 0 { eprintln!("DEBUG: parse_design pass2 token={} pos=
     }
 
     fn parse_module_item(&mut self) -> Result<Option<ModuleItem>, SimError> {
-        self.debug_parse_trace("parse_module_item");
+        self.push_depth()?;
         // Guard: if the token is `=`, skip to semi/end to avoid infinite loop
         if matches!(
             self.peek(),
             Token::BlockingAssign | Token::NonBlockingAssign
         ) {
             self.skip_until_semi_or_end()?;
+            self.pop_depth();
             return Ok(None);
         }
         // Skip (* ... *) attribute annotations before module items
         if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
             self.skip_attribute();
-            return self.parse_module_item();
+            let result = self.parse_module_item();
+            self.pop_depth();
+            return result;
         }
+        let result = self.parse_module_item_body();
+        self.pop_depth();
+        result
+    }
+
+    fn parse_module_item_body(&mut self) -> Result<Option<ModuleItem>, SimError> {
         match self.peek() {
             Token::Always | Token::AlwaysComb | Token::AlwaysFF | Token::AlwaysLatch => {
                 let always = self.parse_always()?;
@@ -867,7 +857,7 @@ if _heartbeat2 % 10000 == 0 { eprintln!("DEBUG: parse_design pass2 token={} pos=
                     let mut names = Vec::new();
                     loop {
                         if let Token::Ident(n) = self.peek() {
-                            let vname = n.clone();
+                            let vname = *n;
                             self.advance();
                             names.push(DeclVar {
                                 name: vname,
@@ -915,10 +905,7 @@ if _heartbeat2 % 10000 == 0 { eprintln!("DEBUG: parse_design pass2 token={} pos=
                     // Check if Ident + [range] is a declaration (type [msb:lsb] name) or instance
                     if self.peek_ahead(1) == &Token::LBrack {
                         let decl = self.parse_decl();
-                        match decl {
-                            Ok(decl) => return Ok(Some(ModuleItem::Decl(decl))),
-                            Err(_) => {}
-                        }
+                        if let Ok(decl) = decl { return Ok(Some(ModuleItem::Decl(decl))) }
                     }
                     let instance = self.parse_instance()?;
                     Ok(Some(ModuleItem::Instance(instance)))
@@ -970,6 +957,7 @@ if _heartbeat2 % 10000 == 0 { eprintln!("DEBUG: parse_design pass2 token={} pos=
                 } else {
                     tok_str
                 };
+                
                 self.push_warning_at(format!("skipping unknown construct: {}", summary), line, col);
                 self.skip_until_semi_or_end()?;
                 Ok(None)
@@ -1047,7 +1035,7 @@ if _heartbeat2 % 10000 == 0 { eprintln!("DEBUG: parse_design pass2 token={} pos=
                     let name = match &pk {
                         Token::Ident(s) => {
                             self.advance();
-                            s.clone()
+                            *s
                         }
                         _ => break,
                     };
@@ -1080,7 +1068,7 @@ if _heartbeat2 % 10000 == 0 { eprintln!("DEBUG: parse_design pass2 token={} pos=
                 } else {
                     Ok(Some(ModuleItem::Generate(GenerateBlock {
                         items: vec![GenerateItem::Items(
-                            params.into_iter().map(|p| ModuleItem::Param(p)).collect(),
+                            params.into_iter().map(ModuleItem::Param).collect(),
                         )],
                     })))
                 }
@@ -1140,7 +1128,7 @@ if _heartbeat2 % 10000 == 0 { eprintln!("DEBUG: parse_design pass2 token={} pos=
                     return Ok(None);
                 }
                 let td = self.parse_typedef()?;
-                self.typedef_names.push(td.name.clone());
+                self.typedef_names.push(td.name);
                 Ok(Some(ModuleItem::Typedef(td)))
             }
             Token::Import => {
@@ -1165,11 +1153,11 @@ if _heartbeat2 % 10000 == 0 { eprintln!("DEBUG: parse_design pass2 token={} pos=
                     if item == "*" {
                         for name in tdefs {
                             if !self.typedef_names.contains(name) {
-                                self.typedef_names.push(name.clone());
+                                self.typedef_names.push(*name);
                             }
                         }
                     } else if tdefs.contains(&item) && !self.typedef_names.contains(&item) {
-                        self.typedef_names.push(item.clone());
+                        self.typedef_names.push(item);
                     }
                 }
                 self.skip_semi();
@@ -1227,11 +1215,21 @@ if _heartbeat2 % 10000 == 0 { eprintln!("DEBUG: parse_design pass2 token={} pos=
     /// Penting: Function/Task ikut dilacak depth-nya agar error recovery tidak premature return
     /// saat berada di dalam body function/task.
     fn skip_to_next_top_level(&mut self) {
-        self.debug_parse_trace("skip_to_next_top_level");
         let mut depth: i32 = 0;
         // Advance past current token first to avoid infinite loop
         self.advance();
+        let mut _last_pos = self.pos;
+        let mut _stuck = 0u32;
         loop {
+            if self.pos == _last_pos {
+                _stuck += 1;
+                if _stuck > 500_000 {
+                    return; // emergency exit: stuck in skip_to_next_top_level
+                }
+            } else {
+                _stuck = 0;
+                _last_pos = self.pos;
+            }
             match self.peek() {
                 Token::Eof => return,
                 Token::Module | Token::Class | Token::Interface | Token::Package | Token::Program
@@ -1257,9 +1255,19 @@ if _heartbeat2 % 10000 == 0 { eprintln!("DEBUG: parse_design pass2 token={} pos=
     }
 
     fn skip_until_semi_or_end(&mut self) -> Result<(), SimError> {
-        self.debug_parse_trace("skip_until_semi_or_end");
         let mut depth: i32 = 0;
+        let mut _last_pos = self.pos;
+        let mut _stuck = 0u32;
         loop {
+            if self.pos == _last_pos {
+                _stuck += 1;
+                if _stuck > 500_000 {
+                    return Err(self.err("parser stuck (no progress) in skip_until_semi_or_end"));
+                }
+            } else {
+                _stuck = 0;
+                _last_pos = self.pos;
+            }
             match self.peek() {
                 Token::Semi if depth == 0 => {
                     self.advance();
@@ -1286,11 +1294,22 @@ if _heartbeat2 % 10000 == 0 { eprintln!("DEBUG: parse_design pass2 token={} pos=
     /// Skip the body of a class declaration (from 'class' token to matching 'endclass').
     /// Assumes the current token is 'class'. Used when class appears inside a module body.
     fn skip_class_body(&mut self) {
-        self.debug_parse_trace("skip_class_body");
         let mut depth = 0i32;
         self.advance(); // consume 'class'
         // Skip class header: name, #(params), extends, ';'
+        let mut _last_pos = self.pos;
+        let mut _stuck = 0u32;
         loop {
+            if self.pos == _last_pos {
+                _stuck += 1;
+                if _stuck > 500_000 {
+                    self.push_warning_at("parser stuck (no progress) skipping class body — aborting".to_string(), self.peek_line(), self.peek_col());
+                    return; // emergency exit: stuck in skip_class_body header
+                }
+            } else {
+                _stuck = 0;
+                _last_pos = self.pos;
+            }
             match self.peek() {
                 Token::Semi => { self.advance(); break; }
                 Token::Hash => {
@@ -1304,7 +1323,19 @@ if _heartbeat2 % 10000 == 0 { eprintln!("DEBUG: parse_design pass2 token={} pos=
             }
         }
         // Skip class body until matching endclass
+        let mut _last_pos2 = self.pos;
+        let mut _stuck2 = 0u32;
         loop {
+            if self.pos == _last_pos2 {
+                _stuck2 += 1;
+                if _stuck2 > 500_000 {
+                    self.push_warning_at("parser stuck (no progress) in class body — aborting".to_string(), self.peek_line(), self.peek_col());
+                    return; // emergency exit: stuck in skip_class_body body
+                }
+            } else {
+                _stuck2 = 0;
+                _last_pos2 = self.pos;
+            }
             match self.peek() {
                 Token::Eof => return,
                 Token::Class => {
@@ -1350,7 +1381,6 @@ if _heartbeat2 % 10000 == 0 { eprintln!("DEBUG: parse_design pass2 token={} pos=
     }
 
     fn skip_to_stmt_boundary(&mut self) {
-        self.debug_parse_trace("skip_to_stmt_boundary");
         loop {
             match self.peek() {
                 Token::Semi => {
@@ -1373,12 +1403,22 @@ if _heartbeat2 % 10000 == 0 { eprintln!("DEBUG: parse_design pass2 token={} pos=
     }
 
     fn skip_attribute(&mut self) {
-        self.debug_parse_trace("skip_attribute");
         // Called when peek = `(*` — caller hasn't advanced past `(` yet.
         // Advance past `(`, then track depth for nested `(*...*)`.
         let mut depth = 1u32;
         self.advance(); // consume the initial `(`
+        let mut _last_pos = self.pos;
+        let mut _stuck = 0u32;
         loop {
+            if self.pos == _last_pos {
+                _stuck += 1;
+                if _stuck > 500_000 {
+                    return; // emergency exit: stuck in skip_attribute
+                }
+            } else {
+                _stuck = 0;
+                _last_pos = self.pos;
+            }
             match self.peek() {
                 Token::Eof => return,
                 _ => {

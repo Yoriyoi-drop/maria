@@ -97,7 +97,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_expr(&mut self, min_prec: usize) -> Result<Expr, SimError> {
-        self.debug_parse_trace("parse_expr");
         let mut lhs = self.parse_primary_expr()?;
 
         loop {
@@ -277,7 +276,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_primary_expr(&mut self) -> Result<Expr, SimError> {
-        self.debug_parse_trace("parse_primary_expr");
         self.push_depth()?;
         let result = self.parse_primary_expr_impl();
         self.pop_depth();
@@ -285,7 +283,6 @@ impl Parser {
     }
 
     fn parse_primary_expr_impl(&mut self) -> Result<Expr, SimError> {
-        self.debug_parse_trace("parse_primary_expr_impl");
         let tok = self.peek().clone();
         match tok {
             Token::Dollar => {

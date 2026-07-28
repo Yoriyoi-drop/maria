@@ -15,7 +15,6 @@ use crate::parser::lexer::*;
 
 impl Parser {
     pub(crate) fn parse_clocking_block(&mut self) -> Result<ClockingBlock, SimError> {
-        self.debug_parse_trace("parse_clocking_block");
         self.advance(); // consume 'clocking'
         let name = self.expect_ident()?;
 
@@ -183,7 +182,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_specify_item(&mut self) -> Result<Option<SpecifyItem>, SimError> {
-        self.debug_parse_trace("parse_specify_item");
         // Check for $setup, $hold, $setuphold system function calls
         if self.peek() == &Token::Dollar {
             // Read the system function name
@@ -428,7 +426,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_specify_block(&mut self) -> Result<SpecifyBlock, SimError> {
-        self.debug_parse_trace("parse_specify_block");
         self.advance(); // consume 'specify'
         let mut items = Vec::new();
         loop {

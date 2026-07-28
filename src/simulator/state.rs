@@ -59,14 +59,45 @@ impl SimulationState {
     }
 
     pub fn get_object(&self, id: ObjId) -> Option<&ObjectData> {
+        if id > 0 {
+            self.check_obj_bounds(id);
+        }
         self.objects.get(id)
     }
 
     pub fn get_object_mut(&mut self, id: ObjId) -> Option<&mut ObjectData> {
+        if id > 0 {
+            self.check_obj_bounds(id);
+        }
         self.objects.get_mut(id)
     }
 
+    #[inline(always)]
+    fn check_signal_bounds(&self, id: SignalId) {
+        if id >= self.signals.len() {
+            panic!(
+                "SimulationState::signal access: signal id {} out of bounds (signals.len={}, next_signals.len={}, changed.len={})",
+                id,
+                self.signals.len(),
+                self.next_signals.len(),
+                self.changed.len()
+            );
+        }
+    }
+
+    #[inline(always)]
+    fn check_obj_bounds(&self, id: ObjId) {
+        if id >= self.objects.len() {
+            panic!(
+                "SimulationState::object access: object id {} out of bounds (objects.len={})",
+                id,
+                self.objects.len()
+            );
+        }
+    }
+
     pub fn read_signal(&self, id: SignalId) -> &LogicVec {
+        self.check_signal_bounds(id);
         if self.changed[id] {
             &self.next_signals[id]
         } else {
@@ -75,6 +106,7 @@ impl SimulationState {
     }
 
     pub fn write_signal(&mut self, id: SignalId, val: LogicVec) {
+        self.check_signal_bounds(id);
         // Compare against pending (next_signals) if already changed this delta,
         // otherwise compare against committed (signals)
         if self.changed[id] {

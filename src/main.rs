@@ -1,3 +1,6 @@
+// Allow large Result Err variant for SimError (intentional)
+#![allow(clippy::result_large_err)]
+
 use clap::Parser as ClapParser;
 use std::path::PathBuf;
 use std::process;
@@ -146,6 +149,10 @@ struct Cli {
     #[arg(short = 'q', long = "quiet")]
     quiet: bool,
 
+    /// X-propagation mode: optimistic, pessimistic, or x-anywhere
+    #[arg(long = "xprop", default_value = "pessimistic")]
+    xprop: String,
+
     /// Compile-only mode: parse + elaborate, skip simulation & VCD
     #[arg(long = "compile-only")]
     compile_only: bool,
@@ -189,6 +196,18 @@ struct Cli {
     /// Use cycle-based simulation fusion (clock-gated domain fusion)
     #[arg(long = "cycle-fusion")]
     cycle_fusion: bool,
+
+    /// Enable formal verification with Z3 (Bounded Model Checking)
+    #[arg(long = "formal")]
+    formal: bool,
+
+    /// Maximum unrolling bound for BMC (default: 20)
+    #[arg(long = "formal-bound", default_value = "20")]
+    formal_bound: u64,
+
+    /// DPI shared library to load (can be specified multiple times)
+    #[arg(long = "dpi-lib", num_args = 1)]
+    dpi_libs: Vec<String>,
 }
 
 /// Emit a list of diagnostics through TerminalEmitter.
@@ -200,6 +219,51 @@ fn emit_diags(diags: &[maria::diagnostics::diagnostic::Diagnostic]) {
     for diag in diags {
         let _ = emitter.emit(diag);
     }
+}
+
+/// Run formal verification (BMC) and print results.
+/// Returns Err if any assertion fails (counterexample found — for CI/CD integration).
+fn run_formal(ir_design: &maria::ir::IrDesign, bound: u64, quiet: bool) -> Result<(), SimError> {
+    use maria::formal::*;
+    let mut formal_cfg = FormalConfig::default();
+    formal_cfg.bound = bound;
+    let mut formal_engine = FormalEngine::new(formal_cfg);
+    let results = formal_engine.check_assertions_bmc(ir_design);
+
+    if !quiet {
+        println!("\n── Formal Verification Results (BMC bound={}) ──", bound);
+    }
+
+    let has_fail = results.iter().any(|(_, r)| matches!(r, FormalResult::Counterexample(_)));
+    let has_error = results.iter().any(|(_, r)| matches!(r, FormalResult::Error(_)));
+
+    for (name, result) in &results {
+        if quiet { continue; }
+        match result {
+            FormalResult::Pass => println!("  ✓ PASS: {}", name),
+            FormalResult::Counterexample(d) => println!("  ✗ FAIL: {} — counterexample at depth {}", name, d),
+            FormalResult::Unknown => println!("  ? UNKNOWN: {}", name),
+            FormalResult::Error(e) => println!("  ! ERROR: {} — {}", name, e),
+            FormalResult::InductiveProof => println!("  ✓ INDUCTIVE PROOF: {}", name),
+        }
+    }
+
+    if !quiet {
+        if results.is_empty() {
+            println!("  (no assertions found)");
+        }
+        println!("── End of Formal Results ({}/{} passed) ──\n",
+            results.iter().filter(|(_, r)| matches!(r, FormalResult::Pass)).count(),
+            results.len());
+    }
+
+    if has_error {
+        return Err(SimError::new(None, "formal verification encountered errors"));
+    }
+    if has_fail {
+        return Err(SimError::new(None, "formal verification FAILED — counterexample(s) found"));
+    }
+    Ok(())
 }
 
 fn main() {
@@ -305,18 +369,18 @@ fn run(cli: Cli) -> Result<(), SimError> {
     }
 
     // Combine all sources (parallel preprocessing for many files)
-    eprintln!("DEBUG: combining sources...");
+    
     let mut combined = String::new();
     let mut design_timescale = None;
 
     // Preprocess files in parallel using rayon
-    eprintln!("DEBUG: starting parallel preproc of {} files", sources.len());
+    
     let pp_for_parallel = &base_pp;
     let pp_results: Vec<Result<(String, Option<(String, String)>), String>> = sources
         .par_iter()
         .enumerate()
         .map(|(idx, path)| {
-            eprintln!("DEBUG: preprocessing [{}/{}] {}", idx + 1, sources.len(), path);
+
             let mut pp = pp_for_parallel.clone();
             match pp.preprocess_file(path) {
                 Ok(processed) => {
@@ -327,7 +391,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
             }
         })
         .collect();
-    eprintln!("DEBUG: parallel preproc done");
+
 
     for (i, path) in sources.iter().enumerate() {
         let (processed, ts) = match &pp_results[i] {
@@ -343,11 +407,10 @@ fn run(cli: Cli) -> Result<(), SimError> {
         combined.push_str(&processed);
         combined.push('\n');
     }
-    eprintln!("DEBUG: combined size = {} bytes, {} lines", combined.len(), combined.len());
+
     let mut lexer = Lexer::new(&combined);
     let mut tokens = Vec::new();
-    eprintln!("DEBUG: starting lexer...");
-    let mut token_count = 0usize;
+    
     loop {
         let (tok, line, col) = lexer.next_token();
         if cli.print_tokens {
@@ -357,20 +420,14 @@ fn run(cli: Cli) -> Result<(), SimError> {
             break;
         }
         tokens.push((tok, line, col));
-        token_count += 1;
-        if token_count % 100_000 == 0 {
-            eprintln!("DEBUG: lexer progress {} tokens", token_count);
-        }
     }
-    eprintln!("DEBUG: lexer done, {} tokens", tokens.len());
 
     if tokens.is_empty() {
         return Err(SimError::new(None, "no tokens found (empty source?)"));
     }
 
-    eprintln!("DEBUG: starting parser...");
     let first_source = sources.first().map(|s| s.as_str()).unwrap_or("<unknown>");
-    eprintln!("DEBUG: parsing combined source from {} file(s), first={}", sources.len(), first_source);
+
     let file_line_map = lexer.file_line_map.clone();
     let mut parser = Parser::new(tokens, first_source)
         .with_source_lines(&combined)
@@ -387,13 +444,16 @@ fn run(cli: Cli) -> Result<(), SimError> {
             return Err(e);
         }
     };
-    eprintln!("DEBUG: parser done, {} modules, {} errors", design.modules.len(), parser.errors.len());
+    // Emit parser diagnostics (warnings + errors) — only abort for real errors
     if !parser.errors.is_empty() {
+        let has_real_errors = parser.errors.iter().any(|d| d.is_error());
         let mut emitter = maria::diagnostics::TerminalEmitter::new();
         for diag in &parser.errors {
             let _ = emitter.emit(diag);
         }
-        return Err(maria::error::SimError::from_parse_diagnostic(parser.errors[0].clone()));
+        if has_real_errors {
+            return Err(maria::error::SimError::from_parse_diagnostic(parser.errors[0].clone()));
+        }
     }
     let ts_for_ir = design_timescale.clone();
     design.timescale = design_timescale;
@@ -491,7 +551,6 @@ fn run(cli: Cli) -> Result<(), SimError> {
         }
     }
 
-    eprintln!("DEBUG: library scanning... {} modules, {} classes, {} packages", design.modules.len(), design.classes.len(), design.packages.len());
     if design.modules.is_empty() {
         // If there are packages, interfaces, or other items but no modules, it's not fatal
         if !design.packages.is_empty()
@@ -510,12 +569,9 @@ fn run(cli: Cli) -> Result<(), SimError> {
     if !cli.quiet {
         println!("Compiling design ({} file sources)...", sources.len());
     }
-    eprintln!("DEBUG: starting elaborator...");
     let source_lines: Vec<String> = combined.lines().map(|s| s.to_string()).collect();
-    eprintln!("DEBUG: source_lines collected: {} lines", source_lines.len());
     let mut elaborator = Elaborator::with_source(design, source_lines, first_source.to_string());
     let mut ir_design = elaborator.elaborate(top_name)?;
-    eprintln!("DEBUG: elaborator done");
 
     // Flush elaboration-time diagnostics (warnings like WR0102)
     emit_diags(&elaborator.flush_diagnostics());
@@ -529,6 +585,11 @@ fn run(cli: Cli) -> Result<(), SimError> {
             ir_design.top.signals.len(),
             ir_design.top.processes.len()
         );
+    }
+
+    // ── Formal Verification (runs before simulation, skips sim) ──
+    if cli.formal {
+        return run_formal(&ir_design, cli.formal_bound, cli.quiet);
     }
 
     // ── Compile-only mode: skip simulation & VCD ──
@@ -554,11 +615,48 @@ fn run(cli: Cli) -> Result<(), SimError> {
         DebugMode::Normal
     };
 
+    // Set X-propagation mode from CLI
+    if let Some(mode) = maria::simulator::types::XPropagationMode::from_str(&cli.xprop) {
+        maria::simulator::value::set_xprop_mode(mode);
+        if !cli.quiet {
+            println!("X-propagation mode: {}", mode.as_str());
+        }
+    } else {
+        return Err(SimError::new(None, format!("invalid --xprop '{}': use optimistic, pessimistic, or x-anywhere", cli.xprop)));
+    }
+
     let mut engine = SimulationEngine::new(ir_design, cli.max_time);
     engine.debug_mode = debug_mode;
     engine.snapshot_interval = cli.snap_interval;
     engine.use_packed_eval = cli.packed;
     engine.use_dag_parallel = cli.parallel;
+
+    // Load DPI shared libraries
+    if !cli.dpi_libs.is_empty() {
+        use maria::simulator::dpi::DpiEngine;
+        use std::sync::Mutex;
+        fn get_dpi_engine() -> &'static Mutex<Option<DpiEngine>> {
+            use std::sync::OnceLock;
+            static DPI: OnceLock<Mutex<Option<DpiEngine>>> = OnceLock::new();
+            DPI.get_or_init(|| Mutex::new(Some(DpiEngine::new())))
+        }
+        if let Ok(mut guard) = get_dpi_engine().lock() {
+            if let Some(ref mut eng) = *guard {
+                for lib_path in &cli.dpi_libs {
+                    match eng.load_library(lib_path) {
+                        Ok(_) => {
+                            if !cli.quiet {
+                                println!("  DPI library loaded: {}", lib_path);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("warning: failed to load DPI library '{}': {}", lib_path, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Apply plusargs
     for pa in &cli.plusargs {
@@ -760,7 +858,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
             session.print_timing();
             println!("Modules indexed: {}", index_len);
             println!("Lazy-elaborated modules (HIR): {}", hir_count);
-            if let Some(top) = &session.config.top_module {
+            if let Some(_top) = &session.config.top_module {
                 println!("HIR query ready: session.elaborate_lazy_module(...)");
             }
         }
@@ -849,6 +947,11 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         );
     }
 
+    // ── Formal Verification (runs before simulation, skips sim) ──
+    if cli.formal {
+        return run_formal(&ir_design, cli.formal_bound, cli.quiet);
+    }
+
     if cli.compile_only {
         if !cli.quiet {
             println!("Compile-only mode: skipping simulation");
@@ -871,12 +974,49 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         DebugMode::Normal
     };
 
+    // Set X-propagation mode from CLI
+    if let Some(mode) = maria::simulator::types::XPropagationMode::from_str(&cli.xprop) {
+        maria::simulator::value::set_xprop_mode(mode);
+        if !cli.quiet {
+            println!("X-propagation mode: {}", mode.as_str());
+        }
+    } else {
+        return Err(SimError::new(None, format!("invalid --xprop '{}': use optimistic, pessimistic, or x-anywhere", cli.xprop)));
+    }
+
     let mut engine = SimulationEngine::new(ir_design, cli.max_time);
     engine.debug_mode = debug_mode;
     engine.snapshot_interval = cli.snap_interval;
     engine.use_packed_eval = cli.packed;
     engine.use_dag_parallel = cli.parallel;
     engine.use_cycle_fusion = cli.cycle_fusion;
+
+    // Load DPI shared libraries
+    if !cli.dpi_libs.is_empty() {
+        use maria::simulator::dpi::DpiEngine;
+        use std::sync::Mutex;
+        fn get_dpi_engine() -> &'static Mutex<Option<DpiEngine>> {
+            use std::sync::OnceLock;
+            static DPI: OnceLock<Mutex<Option<DpiEngine>>> = OnceLock::new();
+            DPI.get_or_init(|| Mutex::new(Some(DpiEngine::new())))
+        }
+        if let Ok(mut guard) = get_dpi_engine().lock() {
+            if let Some(ref mut eng) = *guard {
+                for lib_path in &cli.dpi_libs {
+                    match eng.load_library(lib_path) {
+                        Ok(_) => {
+                            if !cli.quiet {
+                                println!("  DPI library loaded: {}", lib_path);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("warning: failed to load DPI library '{}': {}", lib_path, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     for pa in &cli.plusargs {
         if let Some((key, val)) = pa.split_once('=') {

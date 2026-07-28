@@ -14,7 +14,6 @@ use crate::parser::lexer::*;
 
 impl Parser {
     pub(crate) fn parse_config_decl(&mut self) -> Result<ConfigDecl, SimError> {
-        self.debug_parse_trace("parse_config_decl");
         self.advance(); // consume 'config'
         let name = self.expect_ident()?;
         self.skip_semi();

@@ -24,6 +24,12 @@ impl SimulationEngine {
             if self.control_flow.is_some() {
                 return Ok(true);
             }
+            // Line coverage: record every statement execution (also covers fork path)
+            if self.coverage_enabled {
+                if let Some(pname) = self.current_process_name.clone() {
+                    self.record_line_hit(stmt, &pname);
+                }
+            }
             match stmt {
                 IrStmt::Block { stmts: inner } => {
                     if !self.evaluate_block_fork(inner, fork_id)? {
@@ -1134,6 +1140,13 @@ impl SimulationEngine {
             }
             if self.control_flow.is_some() {
                 return Ok(());
+            }
+            // Line coverage: record every statement execution
+            // Clone pname first to avoid borrow conflict with self.record_line_hit
+            if self.coverage_enabled {
+                if let Some(pname) = self.current_process_name.clone() {
+                    self.record_line_hit(stmt, &pname);
+                }
             }
             match stmt {
                 IrStmt::BlockingAssign { lhs, rhs, delay: _ } => {

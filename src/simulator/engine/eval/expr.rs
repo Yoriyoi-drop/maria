@@ -53,6 +53,58 @@ impl SimulationEngine {
             self.expr_recursion_depth = 0;
             return Err(self.diag_error(crate::diagnostics::DiagCode::InternalError, "expression recursion depth exceeded (possible infinite recursion in expression evaluation)"));
         }
+
+        // ── Expression-level JIT: try to compile + evaluate entire IrExpr tree ──
+        // Hanya untuk simple expression trees (Const/Signal/BinaryOp/UnaryOp/Cond)
+        // dengan sinyal 2-state (no X/Z) dan ≤8 unique signal references.
+        // Jika JIT gagal, fallback ke evaluate_expr_impl recursive descent.
+        //
+        // STEP 1: Pre-check — apakah expression JIT-compatible?
+        // (Gunakan collect_signal_ids sebagai pre-check murah sebelum build signal_values)
+        if self.use_jit_expression {
+            let mut sig_ids = Vec::new();
+            let is_compatible = crate::simulator::jit_eval::collect_signal_ids(expr, &mut sig_ids);
+            if is_compatible && !sig_ids.is_empty() && sig_ids.len() <= 8 {
+                // Compute result_width FIRST to avoid borrow conflict with jit_evaluator
+                let result_width = self.compute_jit_expr_width(expr);
+
+                if let Some(ref mut jit) = self.jit_evaluator {
+                    if jit.is_available() {
+                        // STEP 2: Build signal_values hanya untuk sinyal yang direferensi
+                        let n_sigs = self.state.signals.len();
+                        let mut all_clean = true;
+                        for &sid in &sig_ids {
+                            if sid < n_sigs {
+                                let sig = self.state.read_signal(sid);
+                                if sig.bits.iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z)) {
+                                    all_clean = false;
+                                    break;
+                                }
+                            } else {
+                                all_clean = false;
+                                break;
+                            }
+                        }
+
+                        if all_clean {
+                            // STEP 3: Build full signal_values array (eval_expression expects
+                            // array indexed by global signal ID)
+                            let mut signal_values: Vec<u64> = Vec::with_capacity(n_sigs);
+                            for i in 0..n_sigs {
+                                signal_values.push(self.state.read_signal(i).to_u64());
+                            }
+
+                            let jit_result = jit.eval_expression(expr, &signal_values, result_width);
+                            if let Some(result) = jit_result {
+                                self.expr_recursion_depth = self.expr_recursion_depth.saturating_sub(1);
+                                return Ok(result);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let result = self.evaluate_expr_impl(expr);
         self.expr_recursion_depth = self.expr_recursion_depth.saturating_sub(1);
         result
@@ -1085,6 +1137,10 @@ impl SimulationEngine {
                         }
                     }
                     _ => {
+                        // Try VPI registered system functions first
+                        if crate::vpi::systf::call_registered_systf(name.as_str(), true) {
+                            return Ok(LogicVec::from_u64(0, 32));
+                        }
                         eprintln!("warning: unsupported system function '{}'", name);
                         Ok(LogicVec::from_u64(0, 32))
                     }
@@ -1703,6 +1759,35 @@ impl SimulationEngine {
                 }
                 Ok(result)
             }
+        }
+    }
+
+    /// Compute the expected result width for an IrExpr tree (used by JIT expression eval).
+    /// For comparison operations (Eq, Neq, Lt, Le, Gt, Ge), returns 1.
+    /// For other operations, returns the max width of all operands/signals/constants.
+    fn compute_jit_expr_width(&self, expr: &IrExpr) -> usize {
+        match expr {
+            IrExpr::Const(lv) => lv.width,
+            IrExpr::FillLit(_) => 1,
+            IrExpr::Signal(_, w) => *w,
+            IrExpr::BinaryOp(op, lhs, rhs) => {
+                let lw = self.compute_jit_expr_width(lhs);
+                let rw = self.compute_jit_expr_width(rhs);
+                match op {
+                    BinaryIrOp::Eq | BinaryIrOp::Neq | BinaryIrOp::CaseEq | BinaryIrOp::CaseNeq
+                    | BinaryIrOp::Lt | BinaryIrOp::Le | BinaryIrOp::Gt | BinaryIrOp::Ge
+                    | BinaryIrOp::EqWild | BinaryIrOp::NeqWild => 1,
+                    _ => lw.max(rw),
+                }
+            }
+            IrExpr::UnaryOp(_, inner) => self.compute_jit_expr_width(inner),
+            IrExpr::Cond(_, t, f) => {
+                let tw = self.compute_jit_expr_width(t);
+                let fw = self.compute_jit_expr_width(f);
+                tw.max(fw)
+            }
+            IrExpr::Signed(inner) => self.compute_jit_expr_width(inner),
+            _ => 64, // Complex expression types: default to 64-bit
         }
     }
 

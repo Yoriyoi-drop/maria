@@ -164,7 +164,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_udp_declaration(&mut self) -> Result<UdpDef, SimError> {
-        self.debug_parse_trace("parse_udp_declaration");
         self.expect(Token::Primitive)?;
         let name = self.expect_ident()?;
 

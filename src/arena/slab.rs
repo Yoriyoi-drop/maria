@@ -101,6 +101,7 @@ impl<T> Slab<T> {
     }
 
     /// Get a mutable reference to the value at the given slot.
+    #[allow(clippy::mut_from_ref)]
     pub fn get_mut(&self, slot: Slot) -> Option<&mut T> {
         unsafe {
             let entries = &mut *self.entries.get();

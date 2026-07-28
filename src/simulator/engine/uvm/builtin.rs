@@ -204,6 +204,148 @@ impl SimulationEngine {
         }
     }
 
+    pub(crate) fn execute_uvm_callback_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
+        match method {
+            "new" => {
+                let name = if !args.is_empty() {
+                    logicvec_to_string(&args[0])
+                } else {
+                    String::new()
+                };
+                self.uvm_object_data.insert(obj_id, UvmObjectData {
+                    name: name.clone(),
+                });
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            _ => self.execute_uvm_object_method(obj_id, method, args),
+        }
+    }
+
+    /// Execute uvm_callbacks#add: register a callback on a component type.
+    pub(crate) fn execute_uvm_callbacks_add(
+        &mut self,
+        _obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
+        match method {
+            "add" => {
+                // uvm_callbacks#add(cb_obj, comp_type)
+                let cb_obj_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                let comp_type = args.get(1).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                let cb_name = args.get(2).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                // Store by (component_type, cb_type_name)
+                let cb_type = if let Some(obj) = self.state.get_object(cb_obj_id) {
+                    obj.class_name.to_string()
+                } else {
+                    String::new()
+                };
+                let queue_key = (comp_type, cb_type.clone());
+                let entry = self.callback_queues.entry(queue_key).or_insert_with(|| {
+                    crate::simulator::types::UvmCallbackData {
+                        cb_type_name: cb_type,
+                        callbacks: Vec::new(),
+                        enabled: true,
+                    }
+                });
+                entry.callbacks.push((cb_obj_id, cb_name));
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "delete" => {
+                let cb_obj_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                let comp_type = args.get(1).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                let cb_type = if let Some(obj) = self.state.get_object(cb_obj_id) {
+                    obj.class_name.to_string()
+                } else {
+                    String::new()
+                };
+                let queue_key = (comp_type, cb_type);
+                if let Some(entry) = self.callback_queues.get_mut(&queue_key) {
+                    entry.callbacks.retain(|(id, _)| *id != cb_obj_id);
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "display" => {
+                for ((comp_type, cb_type), data) in &self.callback_queues {
+                    println!(
+                        "UVM_CALLBACK: {} registered on {} ({} callbacks, enabled={})",
+                        cb_type,
+                        comp_type,
+                        data.callbacks.len(),
+                        data.enabled
+                    );
+                    for (cb_id, cb_name) in &data.callbacks {
+                        let name = self
+                            .uvm_object_data
+                            .get(cb_id)
+                            .map(|d| d.name.as_str())
+                            .unwrap_or("unnamed");
+                        println!("  - {} (obj_id={})", name, cb_id);
+                    }
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            _ => Ok(LogicVec::from_u64(0, 1)),
+        }
+    }
+
+    /// Invoke callbacks for a specific component type before/after method execution.
+    pub(crate) fn invoke_callbacks(
+        &mut self,
+        comp_type: &str,
+        callback_method: &str,
+        args: &[LogicVec],
+    ) -> Result<(), SimError> {
+        // Check per-component-type, then per-parent-type (UVM callback inheritance)
+        let mut visited = std::collections::HashSet::new();
+        let mut current = Some(comp_type.to_string());
+        while let Some(ct) = current {
+            if visited.contains(&ct) {
+                break;
+            }
+            visited.insert(ct.clone());
+
+            // Check all callback queue entries for this component type
+            let keys: Vec<(String, String)> = self.callback_queues.keys()
+                .filter(|(ct_key, _)| ct_key == &ct)
+                .cloned()
+                .collect();
+
+            for key in &keys {
+                if let Some(data) = self.callback_queues.get(key) {
+                    if !data.enabled {
+                        continue;
+                    }
+                    // Invoke callback_method on each registered callback object
+                    let cbs = data.callbacks.clone();
+                    for (cb_id, _) in &cbs {
+                        if self.find_method_in_hierarchy(
+                            &{
+                                self.state.get_object(*cb_id)
+                                    .map(|o| o.class_name.to_string())
+                                    .unwrap_or_default()
+                            },
+                            callback_method,
+                        ).is_ok() {
+                            self.execute_method(*cb_id, callback_method, args)?;
+                        }
+                    }
+                }
+            }
+
+            // Walk up component hierarchy for inherited callback registrations
+            current = self.design.classes.get::<str>(&ct)
+                .and_then(|c| c.extends.clone())
+                .map(|s| s.to_string());
+        }
+        Ok(())
+    }
+
     pub(crate) fn execute_uvm_object_method(
         &mut self,
         obj_id: ObjId,

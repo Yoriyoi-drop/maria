@@ -13,7 +13,6 @@ use crate::parser::lexer::*;
 
 impl Parser {
     pub(crate) fn parse_class(&mut self) -> Result<ClassDecl, SimError> {
-        self.debug_parse_trace("parse_class");
         self.advance(); // consume 'class'
         let mut type_params = Vec::new();
         if self.peek() == &Token::Hash {

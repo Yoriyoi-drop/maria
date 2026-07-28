@@ -186,7 +186,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_covergroup(&mut self) -> Result<CovergroupDecl, SimError> {
-        self.debug_parse_trace("parse_covergroup");
         self.advance();
         let name = self.expect_ident()?;
         let clocking_event = if self.peek() == &Token::At {
@@ -301,7 +300,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_dpi_import(&mut self) -> Result<DpiImport, SimError> {
-        self.debug_parse_trace("parse_dpi_import");
         self.advance();
         let is_task = if self.peek() == &Token::Task { self.advance(); true }
             else if self.peek() == &Token::Function { self.advance(); false }
@@ -366,7 +364,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_stmt(&mut self) -> Result<Stmt, SimError> {
-        self.debug_parse_trace("parse_stmt");
         self.push_depth()?;
         let result = self.parse_stmt_impl();
         self.pop_depth();
@@ -374,7 +371,6 @@ impl Parser {
     }
 
     fn parse_stmt_impl(&mut self) -> Result<Stmt, SimError> {
-        self.debug_parse_trace("parse_stmt_impl");
         if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
             self.skip_attribute();
             return self.parse_stmt();
@@ -676,7 +672,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_if_stmt(&mut self) -> Result<Stmt, SimError> {
-        self.debug_parse_trace("parse_if_stmt");
         self.advance();
         self.expect(Token::LParen)?;
         let cond = self.parse_expr(0)?;
@@ -693,7 +688,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_case_stmt(&mut self) -> Result<Stmt, SimError> {
-        self.debug_parse_trace("parse_case_stmt");
         let is_casex = self.peek() == &Token::CaseX;
         let is_casez = self.peek() == &Token::CaseZ;
         let is_case_inside = if self.peek() == &Token::Case {
@@ -735,7 +729,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_for_stmt(&mut self) -> Result<Stmt, SimError> {
-        self.debug_parse_trace("parse_for_stmt");
         self.advance();
         self.expect(Token::LParen)?;
         let init = if self.peek() != &Token::Semi {
@@ -785,7 +778,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_foreach_stmt(&mut self) -> Result<Stmt, SimError> {
-        self.debug_parse_trace("parse_foreach_stmt");
         self.advance();
         self.expect(Token::LParen)?;
         let array_var = self.expect_ident()?;
@@ -802,7 +794,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_while_stmt(&mut self) -> Result<Stmt, SimError> {
-        self.debug_parse_trace("parse_while_stmt");
         self.advance();
         self.expect(Token::LParen)?;
         let cond = self.parse_expr(0)?;
@@ -812,14 +803,12 @@ impl Parser {
     }
 
     pub(crate) fn parse_forever_stmt(&mut self) -> Result<Stmt, SimError> {
-        self.debug_parse_trace("parse_forever_stmt");
         self.advance();
         let stmts = self.parse_stmt_block()?;
         Ok(Stmt::LoopForever { stmts })
     }
 
     pub(crate) fn parse_repeat_stmt(&mut self) -> Result<Stmt, SimError> {
-        self.debug_parse_trace("parse_repeat_stmt");
         self.advance();
         self.expect(Token::LParen)?;
         let count = self.parse_expr(0)?;
@@ -829,7 +818,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_fork_join(&mut self) -> Result<Stmt, SimError> {
-        self.debug_parse_trace("parse_fork_join");
         self.advance();
         let mut processes = Vec::new();
         loop {
@@ -844,7 +832,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_syscall(&mut self) -> Result<Stmt, SimError> {
-        self.debug_parse_trace("parse_syscall");
         self.advance();
         let name_tok = self.peek().clone();
         let name = match &name_tok {

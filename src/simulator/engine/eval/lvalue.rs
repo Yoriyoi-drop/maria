@@ -18,6 +18,37 @@ impl SimulationEngine {
                 }
             }
         }
+        // ── Race detection: Write-Write check ──
+        // Cegah false positive untuk multi-driver nets yang intentional
+        if let Some(id) = self.signal_id_from_lvalue(lvalue) {
+            let is_multi_driver = self.design.top.signals.get(id)
+                .map(|s| s.multi_driver)
+                .unwrap_or(false);
+            if !is_multi_driver {
+                // Check if a DIFFERENT process already wrote this signal in this delta
+                if let Some(existing_writer) = self.signal_writers.get(&id) {
+                    if let (Some(current_pid), Some(prev_pid)) = (self.current_process_id, existing_writer) {
+                        if current_pid != *prev_pid {
+                            let sig_name = self.design.top.signals.get(id)
+                                .map(|s| s.name.as_str())
+                                .unwrap_or("<unknown>");
+                        self.emit_warning(
+                            crate::diagnostics::DiagCode::SignalContention,
+                                format!(
+                                    "race condition: signal '{}' written by multiple processes in same delta cycle",
+                                    sig_name
+                                ),
+                            );
+                        }
+                    }
+                }
+                // Track this write
+                self.signal_writers.insert(id, self.current_process_id);
+            }
+            // Track oscillation (write count)
+            *self.signal_write_count.entry(id).or_insert(0) += 1;
+        }
+
         match lvalue {
             IrLValue::Signal(id, _) => {
                 sanitize_for_2state(&self.design.top.signals, *id, &mut val);

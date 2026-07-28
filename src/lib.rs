@@ -1,3 +1,12 @@
+// Allow large Result Err variant for SimError (intentional — Diagnostic contains spans/files)
+#![allow(clippy::result_large_err)]
+
+// ── VPI (Verilog Procedural Interface) ──
+pub mod vpi;
+
+// ── Formal Verification Engine ──
+pub mod formal;
+
 // ── Core Infrastructure (Fase 0) ──
 pub mod arena;
 pub mod intern;
@@ -18,6 +27,7 @@ pub mod cache;
 pub mod diagnostics;
 pub mod frontend;
 pub mod hir;
+pub mod mir;
 pub mod plugin;
 pub mod profiling;
 pub mod scheduler;
@@ -193,13 +203,17 @@ pub fn compile_str(source: &str) -> Result<ir::IrDesign, SimError> {
             return Err(e);
         }
     };
-    // Cek accumulated parser errors (error recovery — parsing lanjut walau ada error)
+    // Cek accumulated parser diagnostics (warnings + errors)
+    // Hanya abort untuk real errors, warnings seperti "skipping construct" tetap lanjut
     if !parser.errors.is_empty() {
+        let has_real_errors = parser.errors.iter().any(|d| d.is_error());
         let mut emitter = diagnostics::TerminalEmitter::new().with_simple_mode(true);
         for diag in &parser.errors {
             let _ = emitter.emit(diag);
         }
-        return Err(SimError::from_parse_diagnostic(parser.errors[0].clone()));
+        if has_real_errors {
+            return Err(SimError::from_parse_diagnostic(parser.errors[0].clone()));
+        }
     }
     design.timescale = timescale;
 

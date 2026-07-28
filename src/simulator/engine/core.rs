@@ -2,6 +2,7 @@ use super::SimulationEngine;
 use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, RuntimeContext};
 use crate::error::SimError;
 use crate::ir::*;
+use crate::mir::*;
 use crate::scheduler::clock_domain::ClockDomain;
 use crate::simulator::parallel::ParallelConfig;
 use crate::simulator::sdf::SdfData;
@@ -64,6 +65,7 @@ impl SimulationEngine {
             uvm_config_db_data: HashMap::new(),
             sdf_timing_checks: Vec::new(),
             uvm_resource_db_data: HashMap::new(),
+            callback_queues: HashMap::new(),
             factory_type_overrides: HashMap::new(),
             root_test_obj_id: None,
             process_map: HashMap::new(),
@@ -93,6 +95,11 @@ impl SimulationEngine {
             assert_modules_off: HashSet::new(),
             coverage_options: HashMap::new(),
             coverage_enabled: true,
+            cover_line: HashMap::new(),
+            cover_toggle: HashMap::new(),
+            cover_branches: HashMap::new(),
+            cover_fsm: HashMap::new(),
+            cover_branch_counter: 0,
             coverage_model_handles: HashMap::new(),
             next_coverage_model_handle: 1,
             sequence_attempts: Vec::new(),
@@ -102,15 +109,21 @@ impl SimulationEngine {
             objection_triggered: false,
             jit_evaluator: Some(crate::simulator::JITEvaluator::new()),
             use_packed_eval: true,
+            use_jit_expression: false, // Expression-level JIT: disabled by default (opt-in for stability)
             sim_arena: crate::simulator::arena::SimulationArena::with_bump_size(4 * 1024 * 1024), // 4MB initial
             sim_dag: None,
             use_dag_parallel: false,
             clock_analysis: None,
             use_cycle_fusion: false,
+            mir_jit: crate::mir::MirJitCompiler::new(),
+            use_mir_jit: false,
             diag_sink: crate::diagnostics::DiagSink::new(),
             current_delta: 0,
             current_process_name: None,
             current_instance_path: None,
+            signal_writers: std::collections::HashMap::new(),
+            signal_write_count: std::collections::HashMap::new(),
+            delta_limit: 20_000_000,
         }
     }
 
@@ -143,22 +156,24 @@ impl SimulationEngine {
         self.emit_diag(DiagLevel::Warning, code, message);
     }
 
-    /// Emit error diagnostic ke DiagSink dan return SimError.
+    /// Emit error diagnostic ke DiagSink dan return SimError dengan full context.
     pub fn diag_error(&self, code: DiagCode, message: impl Into<String>) -> SimError {
         let msg: String = message.into();
         let diag = Diagnostic::new(DiagLevel::Error, code, msg.clone())
-            .with_runtime_context(self.runtime_context());
-        self.diag_sink.push(diag);
-        SimError::runtime(format!("[{}] {}", code.as_str(), msg))
+            .with_runtime_context(self.runtime_context())
+            .with_code_context();
+        self.diag_sink.push(diag.clone());
+        SimError::Diagnostic(diag)
     }
 
-    /// Emit fatal diagnostic ke DiagSink dan return SimError.
+    /// Emit fatal diagnostic ke DiagSink dan return SimError dengan full context.
     pub fn diag_fatal(&self, code: DiagCode, message: impl Into<String>) -> SimError {
         let msg: String = message.into();
         let diag = Diagnostic::new(DiagLevel::Fatal, code, msg.clone())
-            .with_runtime_context(self.runtime_context());
-        self.diag_sink.push(diag);
-        SimError::runtime(format!("[{}] {}", code.as_str(), msg))
+            .with_runtime_context(self.runtime_context())
+            .with_code_context();
+        self.diag_sink.push(diag.clone());
+        SimError::Diagnostic(diag)
     }
 
     /// Flush diagnostics from DiagSink and return them.
@@ -182,6 +197,14 @@ impl SimulationEngine {
         self.use_packed_eval = enabled;
     }
 
+    pub fn set_use_jit_expression(&mut self, enabled: bool) {
+        self.use_jit_expression = enabled;
+    }
+
+    pub fn set_delta_limit(&mut self, limit: u64) {
+        self.delta_limit = limit;
+    }
+
     pub fn set_use_dag_parallel(&mut self, enabled: bool) {
         self.use_dag_parallel = enabled;
     }
@@ -190,7 +213,130 @@ impl SimulationEngine {
         self.use_cycle_fusion = enabled;
     }
 
+    pub fn set_use_mir_jit(&mut self, enabled: bool) {
+        self.use_mir_jit = enabled;
+    }
+
+    /// Map Ir BinaryIrOp to MirBinOp (for MIR JIT compilation).
+    fn ir_binop_to_mir(op: &crate::ir::BinaryIrOp) -> MirBinOp {
+        match op {
+            crate::ir::BinaryIrOp::Add => MirBinOp::Add,
+            crate::ir::BinaryIrOp::Sub => MirBinOp::Sub,
+            crate::ir::BinaryIrOp::Mul => MirBinOp::Mul,
+            crate::ir::BinaryIrOp::Div => MirBinOp::Div,
+            crate::ir::BinaryIrOp::Mod => MirBinOp::Mod,
+            crate::ir::BinaryIrOp::BitAnd => MirBinOp::And,
+            crate::ir::BinaryIrOp::BitOr => MirBinOp::Or,
+            crate::ir::BinaryIrOp::BitXor => MirBinOp::Xor,
+            crate::ir::BinaryIrOp::Eq
+            | crate::ir::BinaryIrOp::CaseEq
+            | crate::ir::BinaryIrOp::EqWild => MirBinOp::Eq,
+            crate::ir::BinaryIrOp::Neq
+            | crate::ir::BinaryIrOp::CaseNeq
+            | crate::ir::BinaryIrOp::NeqWild => MirBinOp::Ne,
+            crate::ir::BinaryIrOp::Lt => MirBinOp::Lt,
+            crate::ir::BinaryIrOp::Le => MirBinOp::Le,
+            crate::ir::BinaryIrOp::Gt => MirBinOp::Gt,
+            crate::ir::BinaryIrOp::Ge => MirBinOp::Ge,
+            crate::ir::BinaryIrOp::Shl => MirBinOp::Shl,
+            crate::ir::BinaryIrOp::Shr => MirBinOp::Shr,
+            _ => MirBinOp::Add, // fallback
+        }
+    }
+
+    /// Try to evaluate a process using MIR JIT (compiled-code simulation path).
+    /// Returns Ok(true) if JIT was used, Ok(false) if fallback to interpreted needed.
+    pub fn try_evaluate_mir_jit(&mut self, pid: usize, body: &[IrStmt]) -> Result<bool, SimError> {
+        if !self.use_mir_jit {
+            return Ok(false);
+        }
+        let jit = match &mut self.mir_jit {
+            Some(jit) => jit,
+            None => return Ok(false),
+        };
+        // Simple MIR JIT path: for processes without delays, compile and execute
+        // Check if body has any delay statements — if so, fallback
+        let has_delay = body.iter().any(|s| matches!(s, IrStmt::Delay { .. }));
+        if has_delay {
+            return Ok(false);
+        }
+        // Extract signal values for the JIT call
+        let n_sigs = self.state.signals.len();
+        let mut signal_vals = vec![0u64; n_sigs.max(1)];
+        let mut out_vals = vec![0u64; n_sigs.max(1)];
+        for i in 0..n_sigs {
+            signal_vals[i] = self.state.read_signal(i).to_u64();
+        }
+        // Create a MirProcess from the IrStmt block (simplified — just Store ops for now)
+        let mir_name = Symbol::intern(&format!("jit_proc_{}", pid));
+        let mut mir_instrs = Vec::new();
+        for (reg_idx, stmt) in body.iter().enumerate() {
+            match stmt {
+                IrStmt::BlockingAssign { lhs, rhs, delay } => {
+                    if let IrLValue::Signal(sig_id, _) = lhs {
+                        // Try to evaluate the RHS as a constant
+                        if let IrExpr::Const(lv) = rhs {
+                            let val = lv.to_u64();
+                            mir_instrs.push(MirInstr::Const { dest: reg_idx, value: val, width: 64 });
+                            mir_instrs.push(MirInstr::Store { signal: *sig_id, src: reg_idx });
+                        } else if let IrExpr::BinaryOp(op, l, r) = rhs {
+                            let l_reg = reg_idx + 1;
+                            let r_reg = reg_idx + 2;
+                            if let IrExpr::Const(lv) = l.as_ref() {
+                                mir_instrs.push(MirInstr::Const { dest: l_reg, value: lv.to_u64(), width: 64 });
+                            } else if let IrExpr::Signal(id, _) = l.as_ref() {
+                                mir_instrs.push(MirInstr::Load { dest: l_reg, signal: *id });
+                            }
+                            if let IrExpr::Const(lv) = r.as_ref() {
+                                mir_instrs.push(MirInstr::Const { dest: r_reg, value: lv.to_u64(), width: 64 });
+                            } else if let IrExpr::Signal(id, _) = r.as_ref() {
+                                mir_instrs.push(MirInstr::Load { dest: r_reg, signal: *id });
+                            }
+                            let mir_op = Self::ir_binop_to_mir(op);
+                            mir_instrs.push(MirInstr::Binary { 
+                                op: mir_op, dest: reg_idx, 
+                                lhs: l_reg, rhs: r_reg, width: 64 
+                            });
+                            mir_instrs.push(MirInstr::Store { signal: *sig_id, src: reg_idx });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if mir_instrs.is_empty() {
+            return Ok(false);
+        }
+        let process = MirProcess {
+            name: mir_name,
+            sensitivity: MirSensitivity::AlwaysComb,
+            instrs: mir_instrs,
+        };
+        if let Some(compiled) = jit.compile_process(&process, n_sigs) {
+            unsafe {
+                crate::mir::MirJitCompiler::call_process(compiled.code_ptr, &signal_vals, &mut out_vals);
+            }
+            // Apply output values back to state if changed
+            for (i, &val) in out_vals.iter().enumerate() {
+                if i < n_sigs && val != signal_vals[i] {
+                    let current = self.state.read_signal(i);
+                    let new_lv = LogicVec::from_u64(val, current.width.max(1));
+                    if *current != new_lv {
+                        self.state.write_signal(i, new_lv);
+                    }
+                }
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     pub fn run(&mut self) -> Result<(), SimError> {
+        // ── VPI: Register engine for VPI callbacks ──
+        crate::vpi::set_vpi_engine(self);
+        crate::vpi::callback::dispatch_start_of_simulation();
+
         self.initialize_time_zero()?;
         self.execute_phases()?;
 
@@ -355,9 +501,12 @@ impl SimulationEngine {
                                         for re in events {
                                             if let EventKind::EvalProcess(pid) = re.event {
                                                 if pid < self.design.top.processes.len()
-                                                    && crate::scheduler::is_process_parallelizable(
-                                                        &self.design.top.processes[pid],
-                                                    )
+                                                    && {
+                                                        // Safe access with bounds check
+                                                        let process = self.design.top.processes.get(pid)
+                                                            .expect("process pid bounds check failed in DAG loop");
+                                                        crate::scheduler::is_process_parallelizable(process)
+                                                    }
                                                 {
                                                     eval_pids.push(pid);
                                                 } else {
@@ -446,16 +595,17 @@ impl SimulationEngine {
                     }
                 }
 
-                if delta_count > 20_000_000 {
+                if delta_count > self.delta_limit {
                     return Err(SimError::with_diag(
                         DiagCode::InfiniteDelta,
-                        "simulation exceeded max delta cycles per time step (20M)",
+                        format!("simulation exceeded max delta cycles per time step ({})", self.delta_limit),
                     ));
                 }
-                if delta_count > 0 && delta_count % 100_000 == 0 {
+                let report_interval = if self.delta_limit >= 100_000 { 100_000 } else { self.delta_limit / 10 }.max(1);
+                if delta_count > 0 && delta_count % report_interval == 0 {
                     eprintln!(
-                        "warning: {} delta cycles at time {} (limit 20M)",
-                        delta_count, self.state.time
+                        "warning: {} delta cycles at time {} (limit {})",
+                        delta_count, self.state.time, self.delta_limit
                     );
                 }
                 delta_count += 1;
@@ -504,6 +654,9 @@ impl SimulationEngine {
                     break;
                 }
 
+                // Race detection: reset writer tracking setiap delta baru
+                self.signal_writers.clear();
+
                 // Sched-04: Refresh preponed snapshot every delta cycle for edge detection
                 let num_sigs = self.state.signals.len();
                 let mut snap = Vec::with_capacity(num_sigs);
@@ -513,6 +666,26 @@ impl SimulationEngine {
                 self.signal_snapshot = Some(snap);
             }
 
+            // ── Delta oscillation detection ──
+            // Check if any signal toggled excessively within delta cycles
+            for (sig_id, count) in self.signal_write_count.iter() {
+                if *count > 10 {
+                    if let Some(sig) = self.design.top.signals.get(*sig_id) {
+                        self.emit_warning(
+                            DiagCode::CombinationalLoop,
+                            format!(
+                                "possible combinational loop: signal '{}' toggled {} times in delta cycles",
+                                sig.name, count
+                            ),
+                        );
+                    }
+                }
+            }
+            self.signal_write_count.clear();
+
+            // ── Coverage tracking: toggle + FSM — record from committed changes ──
+            self.record_coverage_after_commit();
+
             // ── Postponed region: $strobe, $monitor, VCD, timing checks ──
             // Postponed region events from events[t] are processed in the region loop above.
             // Standalone postponed operations execute here, once per time step.
@@ -521,6 +694,9 @@ impl SimulationEngine {
             self.dump_fst_state()?;
             self.check_monitor()?;
             self.check_timing_constraints()?;
+
+            // ── VPI: Read-Write Synch callback after all signal updates ──
+            crate::vpi::callback::dispatch_read_write_synch();
 
             // ── Debug check at start of cycle ──
             if self.debug_mode != DebugMode::Normal {
@@ -548,12 +724,23 @@ impl SimulationEngine {
 
         if !self.paused {
             self.execute_final_blocks()?;
+            // ── VPI: End of simulation callback (setelah final blocks) ──
+            crate::vpi::callback::dispatch_end_of_simulation();
+
+            self.report_full_coverage();
             self.report_coverage();
             self.check_post_simulation_warnings();
         }
 
         // ── Cleanup: deregister thread-local arena untuk cegah dangling pointer ──
         crate::simulator::arena::set_thread_arena(None);
+
+        // ── VPI Cleanup ──
+        crate::vpi::handle::clear_cstring_cache();
+        crate::vpi::handle::vpi_clear_all_objects();
+        crate::vpi::callback::clear_all_callbacks();
+        crate::vpi::systf::clear_all_systfs();
+        crate::vpi::clear_vpi_engine();
 
         Ok(())
     }
@@ -690,7 +877,8 @@ impl SimulationEngine {
         let mut body_map: HashMap<usize, Vec<IrStmt>> = HashMap::new();
         for &pid in pids {
             if pid < self.design.top.processes.len() {
-                let process = &self.design.top.processes[pid];
+                let process = self.design.top.processes.get(pid)
+                    .expect("process pid out of bounds in parallel eval body map");
                 if let Some(body) = match process {
                     Process::Combinational { body, .. }
                     | Process::CombReactive { body, .. }
@@ -738,7 +926,9 @@ impl SimulationEngine {
             .iter()
             .filter_map(|&pid| {
                 if pid < self.design.top.processes.len() {
-                    if let Process::Sequential { body, .. } = &self.design.top.processes[pid] {
+                    if let Process::Sequential { body, .. } = self.design.top.processes.get(pid)
+                        .expect("process pid out of bounds in clock domain eval")
+                    {
                         return Some((pid, body.clone()));
                     }
                 }
@@ -752,7 +942,9 @@ impl SimulationEngine {
             .iter()
             .filter_map(|&pid| {
                 if pid < self.design.top.processes.len() {
-                    match &self.design.top.processes[pid] {
+                    match self.design.top.processes.get(pid)
+                        .expect("process pid out of bounds in follower bodies")
+                    {
                         Process::Combinational { body, .. }
                         | Process::CombReactive { body, .. } => {
                             Some((pid, body.clone()))

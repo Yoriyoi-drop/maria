@@ -156,6 +156,17 @@ pub struct UvmObjectData {
     pub name: String,
 }
 
+/// UVM callback data: registered callback objects for a callback type.
+#[derive(Debug, Clone)]
+pub struct UvmCallbackData {
+    /// Callback type name (e.g., "my_callbacks")
+    pub cb_type_name: String,
+    /// Registered callback objects (ObjId → callback instance name)
+    pub callbacks: Vec<(ObjId, String)>,
+    /// Whether the callback is enabled
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct UvmComponentData {
     pub parent: Option<ObjId>,
@@ -199,4 +210,34 @@ pub struct WaitOrderState {
 pub struct ProcessInfo {
     pub status: ProcessStatus,
     pub await_continuations: Vec<Vec<IrStmt>>,
+}
+
+/// X-propagation mode for controlling how X (unknown) values propagate
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum XPropagationMode {
+    /// X is masked by deterministic values: 0 & X = 0, 1 | X = 1, X == 5 = X
+    Optimistic,
+    /// Any X input produces X output: 0 & X = X, 1 | X = X
+    Pessimistic,
+    /// X treated as potentially any value — strictest checking
+    XAnywhere,
+}
+
+impl XPropagationMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            XPropagationMode::Optimistic => "optimistic",
+            XPropagationMode::Pessimistic => "pessimistic",
+            XPropagationMode::XAnywhere => "x-anywhere",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "optimistic" | "opt" => Some(XPropagationMode::Optimistic),
+            "pessimistic" | "pess" => Some(XPropagationMode::Pessimistic),
+            "x-anywhere" | "anywhere" | "xany" => Some(XPropagationMode::XAnywhere),
+            _ => None,
+        }
+    }
 }

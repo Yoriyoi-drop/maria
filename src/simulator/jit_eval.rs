@@ -225,7 +225,7 @@ impl JITEvaluator {
 
 /// Recursively collect signal IDs from an IrExpr tree.
 /// Returns false if any unsupported variant is encountered.
-fn collect_signal_ids(expr: &IrExpr, ids: &mut Vec<usize>) -> bool {
+pub(crate) fn collect_signal_ids(expr: &IrExpr, ids: &mut Vec<usize>) -> bool {
     match expr {
         IrExpr::Const(_) | IrExpr::FillLit(_) => true,
         IrExpr::Signal(id, _) => {

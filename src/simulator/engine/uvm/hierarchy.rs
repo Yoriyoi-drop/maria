@@ -253,6 +253,38 @@ impl SimulationEngine {
         }
     }
 
+    pub(crate) fn is_uvm_callback_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_callback" {
+                return true;
+            }
+            match self.design.classes.get::<str>(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    pub(crate) fn is_uvm_callbacks_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_callbacks" {
+                return true;
+            }
+            match self.design.classes.get::<str>(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
     pub(crate) fn is_uvm_driver_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {

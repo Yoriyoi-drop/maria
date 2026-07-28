@@ -4,7 +4,7 @@ use crate::error::SimError;
 use crate::ir::*;
 use crate::simulator::util::*;
 use crate::Symbol;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::SimulationEngine;
 
@@ -43,6 +43,171 @@ fn wildcard_match(value: u64, pattern: &str) -> bool {
 }
 
 impl SimulationEngine {
+    // ─── Line Coverage ─────────────────────────────────────────────
+    
+    /// Record that a source line was executed.
+    pub(crate) fn record_line_hit(&mut self, stmt: &IrStmt, process_name: &str) {
+        if !self.coverage_enabled {
+            return;
+        }
+        let key = Symbol::intern(&format!("{}.{:?}", process_name, std::mem::discriminant(stmt)));
+        *self.cover_line.entry(key).or_insert(0) += 1;
+    }
+
+    /// Create a unique branch key for a conditional statement.
+    fn branch_key(process_name: &str, branch_type: &str, idx: usize) -> Symbol {
+        Symbol::intern(&format!("{}.{}#{}", process_name, branch_type, idx))
+    }
+
+    /// Record a branch being taken (branch coverage).
+    pub(crate) fn record_branch_hit(
+        &mut self,
+        branch_key: Symbol,
+        label: &str,
+    ) {
+        if !self.coverage_enabled {
+            return;
+        }
+        let branches = self.cover_branches.entry(branch_key).or_insert_with(HashMap::new);
+        *branches.entry(Symbol::intern(label)).or_insert(0) += 1;
+    }
+
+    // ─── Toggle Coverage ───────────────────────────────────────────
+
+    /// Record a signal toggle (transition between logic values).
+    pub(crate) fn record_toggle(&mut self, sig_id: usize, old_val: &LogicVec, new_val: &LogicVec) {
+        if !self.coverage_enabled {
+            return;
+        }
+        let toggles = self.cover_toggle.entry(sig_id).or_insert_with(HashSet::new);
+        for i in 0..old_val.width.min(new_val.width).min(64) {
+            let old_bit = old_val.bits.get(i).copied().unwrap_or(LogicVal::X);
+            let new_bit = new_val.bits.get(i).copied().unwrap_or(LogicVal::X);
+            if old_bit != new_bit {
+                toggles.insert((old_bit, new_bit));
+            }
+        }
+    }
+
+    // ─── FSM Coverage ──────────────────────────────────────────────
+
+    /// Record a signal value for FSM state analysis.
+    pub(crate) fn record_fsm_value(&mut self, sig_id: usize, val: &LogicVec) {
+        if !self.coverage_enabled {
+            return;
+        }
+        let uval = val.to_u64();
+        self.cover_fsm.entry(sig_id).or_insert_with(HashSet::new).insert(uval);
+    }
+
+    // ─── Reporting ─────────────────────────────────────────────────
+
+    /// Print line coverage report.
+    fn report_line_coverage(&self) {
+        if self.cover_line.is_empty() {
+            return;
+        }
+        eprintln!("\n=== Line Coverage ===");
+        let mut sorted: Vec<(&str, u64)> = self.cover_line
+            .iter()
+            .map(|(k, v)| (k.as_str(), *v))
+            .collect();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        for (key, hits) in sorted.iter().take(20) {
+            eprintln!("  {}: {} hits", key, hits);
+        }
+        eprintln!("  ({} total line items)", self.cover_line.len());
+    }
+
+    /// Print toggle coverage report.
+    fn report_toggle_coverage(&self) {
+        if self.cover_toggle.is_empty() {
+            return;
+        }
+        eprintln!("\n=== Toggle Coverage ===");
+        let mut total_toggle_pairs = 0usize;
+        for (sig_id, toggles) in &self.cover_toggle {
+            let sig_name = self.design.top.signals.get(*sig_id)
+                .map(|s| s.name.as_str())
+                .unwrap_or("<unknown>");
+            eprintln!("  {}: {} transitions", sig_name, toggles.len());
+            for (from, to) in toggles.iter() {
+                eprintln!("    {:?}→{:?}", from, to);
+            }
+            total_toggle_pairs += toggles.len();
+        }
+        let total_signals = self.design.top.signals.len();
+        eprintln!("  {} signals with toggles / {} total", self.cover_toggle.len(), total_signals);
+    }
+
+    /// Print branch coverage report.
+    fn report_branch_coverage(&self) {
+        if self.cover_branches.is_empty() {
+            return;
+        }
+        eprintln!("\n=== Branch Coverage ===");
+        for (key, branches) in &self.cover_branches {
+            eprintln!("  {}:", key.as_str());
+            let total: u64 = branches.values().sum();
+            for (label, count) in branches {
+                eprintln!("    {}: {} hits ({:.1}%)", label.as_str(), count, 
+                    if total > 0 { *count as f64 / total as f64 * 100.0 } else { 0.0 });
+            }
+        }
+    }
+
+    /// Print FSM coverage report.
+    fn report_fsm_coverage(&self) {
+        if self.cover_fsm.is_empty() {
+            return;
+        }
+        eprintln!("\n=== FSM Coverage ===");
+        for (sig_id, states) in &self.cover_fsm {
+            let sig_name = self.design.top.signals.get(*sig_id)
+                .map(|s| s.name.as_str())
+                .unwrap_or("<unknown>");
+            let mut sorted_states: Vec<u64> = states.iter().copied().collect();
+            sorted_states.sort();
+            eprintln!("  {}: {} states visited: {:?}", sig_name, states.len(), sorted_states);
+        }
+    }
+
+    /// Print combined coverage report.
+    pub(crate) fn report_full_coverage(&self) {
+        if !self.coverage_enabled {
+            return;
+        }
+        self.report_line_coverage();
+        self.report_toggle_coverage();
+        self.report_branch_coverage();
+        self.report_fsm_coverage();
+    }
+
+    /// Record toggle and FSM coverage after commit_changes.
+    /// Called each delta cycle from run() loop.
+    pub(crate) fn record_coverage_after_commit(&mut self) {
+        if !self.coverage_enabled {
+            return;
+        }
+        // Clone snapshot and current values to avoid double borrow of self
+        let old_vals: Vec<LogicVec> = self.signal_snapshot
+            .as_ref()
+            .map(|snap| snap.clone())
+            .unwrap_or_default();
+        let n = old_vals.len();
+        for sig_id in 0..n {
+            let old_val = &old_vals[sig_id];
+            // Read current signal value (now we can borrow self.state immutably)
+            let new_val = self.state.read_signal(sig_id).clone();
+            if old_val != &new_val {
+                // Toggle: record transition — clone values to avoid borrow conflict
+                self.record_toggle(sig_id, old_val, &new_val);
+                // FSM: record signal value as potential state
+                self.record_fsm_value(sig_id, &new_val);
+            }
+        }
+    }
+
     /// Sample a named covergroup: evaluate coverpoints, update hit counts and bins.
     pub(crate) fn sample_covergroup(&mut self, cg_name: &str) -> Result<(), SimError> {
         let cg = self

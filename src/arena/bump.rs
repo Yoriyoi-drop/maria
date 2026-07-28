@@ -162,6 +162,7 @@ impl BumpArena {
     }
 
     /// Allocate and initialize a value of type T.
+    #[allow(clippy::mut_from_ref)]
     pub fn alloc_value<T>(&self, val: T) -> &mut T {
         let ptr = self.alloc(std::mem::size_of::<T>(), std::mem::align_of::<T>()) as *mut T;
         unsafe {
@@ -171,6 +172,7 @@ impl BumpArena {
     }
 
     /// Allocate a slice of `count` uninitialized elements.
+    #[allow(clippy::mut_from_ref)]
     pub fn alloc_slice<T>(&self, count: usize) -> &mut [T] {
         if count == 0 {
             return &mut [];
@@ -182,6 +184,7 @@ impl BumpArena {
     }
 
     /// Allocate and initialize a slice from an iterator.
+    #[allow(clippy::mut_from_ref)]
     pub fn alloc_slice_from_iter<T>(&self, iter: impl IntoIterator<Item = T>) -> &mut [T] {
         let items: Vec<T> = iter.into_iter().collect();
         let count = items.len();

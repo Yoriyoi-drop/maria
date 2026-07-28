@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 
 const MAX_INCLUDE_DEPTH: usize = 64;
 
+/// Maximum macro expansion depth to prevent infinite recursion.
+const MAX_MACRO_EXPANSION_DEPTH: usize = 64;
+
 struct CondFrame {
     taking_branch: bool,
     branch_taken: bool,
@@ -39,6 +42,10 @@ impl Preprocessor {
             timescale: None,
             warnings: Vec::new(),
         }
+    }
+
+    pub fn max_macro_expansion_depth(&self) -> usize {
+        MAX_MACRO_EXPANSION_DEPTH
     }
 
     pub fn define(&mut self, name: &str, value: &str) {
@@ -439,7 +446,20 @@ impl Preprocessor {
         self.defines.contains_key(expr)
     }
 
+    /// Expand inline macros in a single line (wrapper with depth tracking).
     fn expand_inline_macros(&self, line: &str) -> String {
+        self.expand_inline_macros_depth(line, 0)
+    }
+
+    /// Expand inline macros with recursive depth tracking.
+    /// If `depth` exceeds MAX_MACRO_EXPANSION_DEPTH, returns the line as-is
+    /// to prevent infinite recursion from circular macro definitions.
+    fn expand_inline_macros_depth(&self, line: &str, depth: usize) -> String {
+        if depth >= MAX_MACRO_EXPANSION_DEPTH {
+            // Safety valve: stop expanding to prevent stack overflow
+            return line.to_string();
+        }
+
         let mut result = String::new();
         let chars: Vec<char> = line.chars().collect();
         let mut i = 0;
@@ -465,17 +485,19 @@ impl Preprocessor {
                 let name: String = chars[start..i].iter().collect();
                 if let Some(mdef) = self.defines.get(&name) {
                     if mdef.params.is_empty() {
-                        result.push_str(&mdef.value);
+                        // Recursively expand macro value (it may contain further `macro references)
+                        let expanded = self.expand_inline_macros_depth(&mdef.value, depth + 1);
+                        result.push_str(&expanded);
                     } else {
                         let args = if i < chars.len() && chars[i] == '(' {
                             let args_start = i + 1;
-                            let mut depth = 1;
+                            let mut paren_depth = 1;
                             let mut args_end = args_start;
-                            while args_end < chars.len() && depth > 0 {
+                            while args_end < chars.len() && paren_depth > 0 {
                                 if chars[args_end] == '(' {
-                                    depth += 1;
+                                    paren_depth += 1;
                                 } else if chars[args_end] == ')' {
-                                    depth -= 1;
+                                    paren_depth -= 1;
                                 }
                                 args_end += 1;
                             }
@@ -485,10 +507,18 @@ impl Preprocessor {
                         } else {
                             Vec::new()
                         };
+                        // First, expand any macros within each argument
+                        let expanded_args: Vec<String> = args
+                            .iter()
+                            .map(|arg| self.expand_inline_macros_depth(arg, depth + 1))
+                            .collect();
+                        // Substitute parameters with expanded arguments
                         let mut expanded = mdef.value.clone();
-                        for (param, arg) in mdef.params.iter().zip(args.iter()) {
+                        for (param, arg) in mdef.params.iter().zip(expanded_args.iter()) {
                             expanded = expanded.replace(param, arg);
                         }
+                        // Recursively expand the result (it may contain further `macro references)
+                        let expanded = self.expand_inline_macros_depth(&expanded, depth + 1);
                         result.push_str(&expanded);
                     }
                 } else {

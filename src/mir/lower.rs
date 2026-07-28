@@ -61,7 +61,7 @@ pub fn lower_module(hir: &HirModule) -> MirModule {
     // Lower statements into processes
     let mut instrs = Vec::new();
     for stmt in &hir.stmts {
-        lower_stmt(stmt, &mut instrs, &mut mir, false);
+        lower_stmt(stmt, &mut instrs, &mut mir);
     }
 
     if !instrs.is_empty() {
@@ -300,7 +300,7 @@ fn lower_stmt(
             // forever body; → loop { body; }
             let loop_start = generate_label(instrs);
             instrs.push(MirInstr::Label(loop_start));
-            lower_stmt(body, instrs, mir, false);
+            lower_stmt(body, instrs, mir);
             instrs.push(MirInstr::Jump { label: loop_start });
         }
 
@@ -514,7 +514,7 @@ fn lower_expr(
                     rhs: part_reg,
                     width: *width,
                 });
-                offset += part.width();
+                offset += hir_expr_width(part);
             }
             // Copy result to dest
             // If result_reg != dest, add a copy
@@ -548,7 +548,7 @@ fn lower_expr(
         HirExpr::FillLit { val, width } => {
             let fill_val = match val {
                 0 => 0u64,
-                1 => u64::MAX >> (64 - width.min(64)),
+                1 => if *width >= 64 { u64::MAX } else { (1u64 << *width) - 1 },
                 2 => 0u64, // 'x → 0 for MIR (no X-state in simple sim)
                 3 => 0u64, // 'z → 0
                 _ => 0u64,
@@ -563,6 +563,22 @@ fn lower_expr(
 }
 
 // ─── Helpers ───
+
+/// Get approximate width of a HirExpr (for concat offset computation).
+fn hir_expr_width(expr: &HirExpr) -> usize {
+    match expr {
+        HirExpr::IntLiteral(_, w) => *w,
+        HirExpr::Binary { width, .. } => *width,
+        HirExpr::Unary { width, .. } => *width,
+        HirExpr::Ternary { width, .. } => *width,
+        HirExpr::Concat { width, .. } => *width,
+        HirExpr::BitSelect { width, .. } => *width,
+        HirExpr::PartSelect { width, .. } => *width,
+        HirExpr::FillLit { width, .. } => *width,
+        HirExpr::Call { width, .. } => *width,
+        _ => 1, // default for unknown variants
+    }
+}
 
 /// Allocate a temporary register index.
 fn alloc_temp(mir: &mut MirModule) -> usize {

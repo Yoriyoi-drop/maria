@@ -36,6 +36,12 @@ thread_local = "1"
 parking_lot = "0.12"
 itertools = "0.12"
 
+# ── DPI-C FFI ──
+libloading = "0.8"
+
+# ── Formal Verification ──
+z3 = "0.20"
+
 [profile.release]
 opt-level = 3
 lto = true

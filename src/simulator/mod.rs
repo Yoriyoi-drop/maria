@@ -1,4 +1,5 @@
 pub mod arena;
+pub mod dpi;
 pub mod engine;
 pub mod jit;
 pub mod packed;

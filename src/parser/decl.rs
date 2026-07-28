@@ -39,7 +39,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_decl(&mut self) -> Result<Decl, SimError> {
-        self.debug_parse_trace("parse_decl");
         let is_const = self.peek() == &Token::Const;
         if is_const {
             self.advance(); // consume 'const'
@@ -255,7 +254,6 @@ impl Parser {
         decl_expr_range: Option<ExprRange>,
         extra_packed_dims: Vec<(ExprRange, Option<Range>)>,
     ) -> Result<Vec<DeclVar>, SimError> {
-        self.debug_parse_trace("parse_decl_names");
         let mut names = Vec::new();
         loop {
             let name_tok = self.peek().clone();
@@ -464,7 +462,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_enum_members(&mut self) -> Result<Vec<(Symbol, Option<Expr>)>, SimError> {
-        self.debug_parse_trace("parse_enum_members");
         self.expect(Token::LBrace)?;
         let mut members = Vec::new();
         loop {
@@ -495,7 +492,13 @@ impl Parser {
     }
 
     pub(crate) fn parse_struct_body(&mut self) -> Result<Vec<StructMember>, SimError> {
-        self.debug_parse_trace("parse_struct_body");
+        self.push_depth()?;
+        let result = self.parse_struct_body_impl();
+        self.pop_depth();
+        result
+    }
+
+    fn parse_struct_body_impl(&mut self) -> Result<Vec<StructMember>, SimError> {
         self.expect(Token::LBrace)?;
         let mut members = Vec::new();
         loop {
@@ -631,7 +634,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_typedef(&mut self) -> Result<TypedefDecl, SimError> {
-        self.debug_parse_trace("parse_typedef");
         self.advance(); // consume typedef
         let (name, dtype, range) = match self.peek() {
             Token::Enum => {
@@ -909,7 +911,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_type_expr(&mut self) -> Result<DataType, SimError> {
-        self.debug_parse_trace("parse_type_expr");
         let dt = match self.peek() {
             Token::Bit => DataType::Bit,
             Token::Logic => DataType::Logic,
@@ -939,7 +940,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_param_list(&mut self, params: &mut Vec<ParamDecl>) -> Result<(), SimError> {
-        self.debug_parse_trace("parse_param_list");
         let mut is_localparam = false;
         loop {
             match self.peek() {
@@ -1099,7 +1099,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_range(&mut self) -> Result<Option<ExprRange>, SimError> {
-        self.debug_parse_trace("parse_range");
         self.expect(Token::LBrack)?;
         let msb = self.parse_expr(0)?;
         self.expect(Token::Colon)?;

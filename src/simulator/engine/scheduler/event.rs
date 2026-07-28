@@ -48,10 +48,18 @@ impl SimulationEngine {
                         }
                     }
                     Process::Combinational { body, .. } => {
-                        self.evaluate_stmt_block(body)?;
+                        // Try MIR JIT for compiled-code execution path
+                        // If use_mir_jit is false, always fall back to interpreted
+                        if !self.use_mir_jit || !self.try_evaluate_mir_jit(pid, body)? {
+                            self.evaluate_stmt_block(body)?;
+                        }
                     }
                     Process::CombReactive { body, .. } => {
-                        self.evaluate_stmt_block(body)?;
+                        // Try MIR JIT for compiled-code execution path
+                        // If use_mir_jit is false, always fall back to interpreted
+                        if !self.use_mir_jit || !self.try_evaluate_mir_jit(pid, body)? {
+                            self.evaluate_stmt_block(body)?;
+                        }
                     }
                     _ => {}
                 }

@@ -87,7 +87,7 @@ pub struct MirProcess {
     pub instrs: Vec<MirInstr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MirSensitivity {
     AlwaysComb,
     AlwaysClk { signal: usize, edge: MirEdge },

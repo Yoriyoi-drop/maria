@@ -12,7 +12,6 @@ use crate::parser::util::*;
 
 impl Parser {
     pub(crate) fn parse_module(&mut self) -> Result<Module, SimError> {
-        self.debug_parse_trace("parse_module");
         self.advance(); // consume 'module', 'interface', or 'program'
         self.typedef_names.clear();
 
@@ -25,7 +24,7 @@ impl Parser {
         let name = match &name_tok {
             Token::Ident(s) => {
                 self.advance();
-                s.clone()
+                *s
             }
             _ => {
                 return Err(self.err("expected module name"))
@@ -51,7 +50,7 @@ impl Parser {
             self.skip_semi();
             items.push(ModuleItem::Import {
                 package: pkg,
-                item: item.clone(),
+                item: item,
             });
         }
 
@@ -71,9 +70,24 @@ impl Parser {
         }
         self.skip_semi();
 
-        let mut _heartbeat = 0;
+        let mut _last_pos = self.pos;
+        let mut _stuck = 0u32;
         loop {
-            _heartbeat += 1; if _heartbeat % 5000 == 0 { eprintln!("DEBUG: parse_module '{}' iter={} pos={}/{}", name, _heartbeat, self.pos, self.tokens.len()); }
+            // Stuck detection: if pos hasn't changed for too many iterations, abort
+            if self.pos == _last_pos {
+                _stuck += 1;
+                if _stuck > 1_000_000 {
+                    let line = self.peek_line();
+                    let col = self.peek_col();
+                    let tok_str = format!("{}", self.peek());
+                    let summary = if tok_str.len() > 40 { format!("{}...", &tok_str[..40]) } else { tok_str };
+                    self.push_warning_at(format!("parser stuck in module body at token: {}", summary), line, col);
+                    return Err(self.err("parser stuck (no progress) in module body"));
+                }
+            } else {
+                _stuck = 0;
+                _last_pos = self.pos;
+            }
             match self.peek() {
                 Token::Endmodule | Token::EndInterface | Token::EndProgram | Token::Eof => break,
                 _ => {
@@ -82,7 +96,7 @@ impl Parser {
                     match result {
                         Ok(Some(item)) => {
                             if let ModuleItem::Covergroup(ref cg) = item {
-                                self.class_names.push(cg.name.clone());
+                                self.class_names.push(cg.name);
                             }
                             match item {
                                 ModuleItem::Decl(d) => decls.push(d),
@@ -134,7 +148,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_interface_fast(&mut self) -> Result<(), SimError> {
-        self.debug_parse_trace("parse_interface_fast");
         self.advance(); // consume 'interface'
         match self.peek() {
             Token::Ident(_) => {
@@ -153,16 +166,10 @@ impl Parser {
                     match self.peek() {
                         Token::ModPort => {
                             self.advance(); // consume 'modport'
-                            loop {
-                                match self.peek() {
-                                    Token::Ident(_) => {
-                                        self.advance();
-                                    }
-                                    _ => {}
-                                }
-                                self.skip_until_semi_or_end()?;
-                                break;
+                            if let Token::Ident(_) = self.peek() {
+                                self.advance();
                             }
+                            self.skip_until_semi_or_end()?;
                         }
                         Token::Param
                         | Token::Parameter
@@ -188,7 +195,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_program_fast(&mut self) -> Result<(), SimError> {
-        self.debug_parse_trace("parse_program_fast");
         self.advance(); // consume 'program'
         if let Token::Ident(_) = self.peek() {
             self.advance();
@@ -242,13 +248,12 @@ impl Parser {
     }
 
     pub(crate) fn parse_interface(&mut self) -> Result<Interface, SimError> {
-        self.debug_parse_trace("parse_interface");
         self.advance(); // consume 'interface'
         self.typedef_names.clear();
 
         let name = match self.peek() {
             Token::Ident(s) => {
-                let n = s.clone();
+                let n = *s;
                 self.advance();
                 n
             }
@@ -305,11 +310,10 @@ impl Parser {
     }
 
     pub(crate) fn parse_modport(&mut self) -> Result<Modport, SimError> {
-        self.debug_parse_trace("parse_modport");
         self.advance(); // consume 'modport'
         let name = match self.peek() {
             Token::Ident(s) => {
-                let n = s.clone();
+                let n = *s;
                 self.advance();
                 n
             }
@@ -341,7 +345,7 @@ impl Parser {
             loop {
                 let sig_name = match self.peek() {
                     Token::Ident(s) => {
-                        let n = s.clone();
+                        let n = *s;
                         self.advance();
                         n
                     }
@@ -351,7 +355,7 @@ impl Parser {
                 };
                 items.push(ModportItem {
                     name: sig_name,
-                    direction: dir.clone(),
+                    direction: dir,
                 });
                 match self.peek() {
                     Token::Comma => {
@@ -378,7 +382,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_port_list(&mut self, ports: &mut Vec<Port>) -> Result<(), SimError> {
-        self.debug_parse_trace("parse_port_list");
         loop {
             if self.peek() == &Token::RParen || self.peek() == &Token::Eof {
                 break;
@@ -494,7 +497,7 @@ impl Parser {
                                 }
                                 ports.push(Port {
                                     name: *name,
-                                    direction: dir.clone(),
+                                    direction: dir,
                                     range: range.clone(),
                                     expr_range: expr_range.clone(),
                                     dtype_name: dtype_name.as_ref().map(|s| Symbol::intern(s)),
@@ -532,7 +535,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_instance(&mut self) -> Result<ModuleInstance, SimError> {
-        self.debug_parse_trace("parse_instance");
         let name_tok = self.peek().clone();
         let module_name = match &name_tok {
             Token::Ident(s) => {
@@ -682,7 +684,6 @@ impl Parser {
     }
 
     pub(crate) fn parse_gate_primitive(&mut self) -> Result<GatePrimitive, SimError> {
-        self.debug_parse_trace("parse_gate_primitive");
         let gate_type = match self.peek() {
             Token::And => {
                 self.advance();

@@ -735,8 +735,16 @@ impl SimulationEngine {
                         // $test$plusargs in statement context — return value ignored
                     } else if name == "coverage_merge" {
                         // Stub
-                    } else {
-            eprintln!("warning: unknown system call '{}' ignored", name);
+        } else {
+            // Try VPI registered system task/function (names need $ prefix)
+            let vpi_name = format!("${}", name);
+            if crate::vpi::systf::call_registered_systf(&vpi_name, false)
+                || crate::vpi::systf::call_registered_systf(&vpi_name, true)
+            {
+                // Handled by VPI
+            } else {
+                eprintln!("warning: unknown system call '{}' ignored", name);
+            }
         }
         Ok(true)
     }
@@ -1335,8 +1343,14 @@ impl SimulationEngine {
                         // $test$plusargs in statement context — return value ignored
                     } else if name == "coverage_merge" {
                         // Stub
-                    } else {
-            eprintln!("warning: unknown system call '{}' ignored", name);
+        } else {
+            // Try VPI registered system task/function (names need $ prefix)
+            let vpi_name = format!("${}", name);
+            if !crate::vpi::systf::call_registered_systf(&vpi_name, false)
+                && !crate::vpi::systf::call_registered_systf(&vpi_name, true)
+            {
+                eprintln!("warning: unknown system call '{}' ignored", name);
+            }
         }
         Ok(())
     }

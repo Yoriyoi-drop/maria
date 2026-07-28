@@ -9,6 +9,7 @@
 //! - Compile → native function pointer → call dari simulator
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use cranelift::prelude::*;
@@ -81,6 +82,8 @@ pub struct CraneliftEngine {
     /// Total cache hits
     cache_hits: Mutex<u64>,
     cache_misses: Mutex<u64>,
+    /// Persistent cache file path (for saving/loading compiled function metadata)
+    cache_path: Option<PathBuf>,
 }
 
 impl CraneliftEngine {
@@ -93,14 +96,17 @@ impl CraneliftEngine {
         let module = JITModule::new(builder);
         let ctx = FunctionBuilderContext::new();
 
-        Some(CraneliftEngine {
+        let mut engine = CraneliftEngine {
             module,
             ctx,
             cache: Mutex::new(HashMap::new()),
             compiled_count: Mutex::new(0),
             cache_hits: Mutex::new(0),
             cache_misses: Mutex::new(0),
-        })
+            cache_path: None,
+        };
+
+        Some(engine)
     }
 
     /// Compile a binary operation to native code.
@@ -350,6 +356,12 @@ impl CraneliftEngine {
     fn cache_get(&self, hash: u64) -> Option<CraneliftCompiledFn> {
         let cache = self.cache.lock().unwrap();
         if let Some(entry) = cache.get(&hash) {
+            // Check if this is a placeholder from load_cache (null code_ptr)
+            // If so, treat as miss to trigger re-JIT
+            if entry.code_ptr.is_null() {
+                *self.cache_misses.lock().unwrap() += 1;
+                return None;
+            }
             let mut entry = entry.clone();
             entry.hit_count += 1;
             *self.cache_hits.lock().unwrap() += 1;
@@ -362,6 +374,8 @@ impl CraneliftEngine {
 
     fn cache_insert(&self, hash: u64, compiled: CraneliftCompiledFn) {
         self.cache.lock().unwrap().insert(hash, compiled);
+        // Auto-save after inserting new compiled function
+        self.save_cache();
     }
 
     // ─── Expression-level JIT ───
@@ -671,6 +685,101 @@ impl CraneliftEngine {
         }
     }
 
+    // ─── Persistent Cache ───
+
+    /// Set persistent cache file path. The cache saves compiled function metadata
+    /// so that on next startup, functions can be pre-compiled.
+    pub fn set_cache_path(&mut self, path: &str) {
+        self.cache_path = Some(PathBuf::from(path));
+        self.load_cache();
+    }
+
+    /// Save cache metadata to disk using a simple line-based format.
+    /// Format: each line is "hash|name|arg_count|width"
+    /// Native code pointers are ephemeral (process-lifetime), so we save
+    /// metadata to reconstruct the cache on next startup.
+    pub fn save_cache(&self) -> bool {
+        let path = match &self.cache_path {
+            Some(p) => p,
+            None => return false,
+        };
+
+        let cache = self.cache.lock().unwrap();
+        let mut output = String::new();
+        for (hash, entry) in cache.iter() {
+            output.push_str(&format!("{}|{}|{}|{}\n", hash, entry.name, entry.arg_count, entry.width));
+        }
+        drop(cache);
+
+        match std::fs::write(path, &output) {
+            Ok(_) => {
+                eprintln!("JIT cache saved: {} entries to {}", output.lines().count(), path.display());
+                true
+            }
+            Err(e) => {
+                eprintln!("JIT cache write error: {}", e);
+                false
+            }
+        }
+    }
+
+    /// Load cache metadata from disk and pre-populate the in-memory cache.
+    pub fn load_cache(&self) -> bool {
+        let path = match &self.cache_path {
+            Some(p) => p,
+            None => return false,
+        };
+
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return false, // No cache file yet
+        };
+
+        let mut loaded_count = 0usize;
+        let mut cache = self.cache.lock().unwrap();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() < 4 {
+                continue;
+            }
+            let hash: u64 = match parts[0].parse() {
+                Ok(h) => h,
+                Err(_) => continue,
+            };
+            let name = parts[1].to_string();
+            let arg_count: usize = match parts[2].parse() {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let width: usize = match parts[3].parse() {
+                Ok(w) => w,
+                Err(_) => continue,
+            };
+
+            if !cache.contains_key(&hash) {
+                let placeholder = CraneliftCompiledFn {
+                    name,
+                    code_ptr: std::ptr::null(),
+                    arg_count,
+                    width,
+                    hit_count: 0,
+                };
+                cache.insert(hash, placeholder);
+                loaded_count += 1;
+            }
+        }
+        drop(cache);
+
+        if loaded_count > 0 {
+            eprintln!("JIT cache loaded: {} entries from {}", loaded_count, path.display());
+        }
+        true
+    }
+
     // ─── Statistics ───
 
     pub fn compiled_count(&self) -> usize {
@@ -686,6 +795,11 @@ impl CraneliftEngine {
         } else {
             hits as f64 / total as f64
         }
+    }
+
+    /// Get cache path.
+    pub fn cache_path(&self) -> Option<&std::path::Path> {
+        self.cache_path.as_deref()
     }
 }
 

@@ -86,6 +86,8 @@ pub struct SimulationEngine {
     pub uvm_config_db_data: HashMap<(String, String), LogicVec>,
     pub sdf_timing_checks: Vec<TimingCheck>,
     pub uvm_resource_db_data: HashMap<(String, String), LogicVec>,
+    /// UVM callback queues: (component_type, cb_type) → registered callbacks
+    pub callback_queues: HashMap<(String, String), crate::simulator::types::UvmCallbackData>,
     pub factory_type_overrides: HashMap<String, String>,
     pub root_test_obj_id: Option<ObjId>,
     pub process_map: HashMap<ObjId, ProcessInfo>,
@@ -115,6 +117,11 @@ pub struct SimulationEngine {
     pub assert_modules_off: HashSet<Symbol>,
     pub coverage_options: HashMap<String, String>,
     pub coverage_enabled: bool,
+    pub cover_line: HashMap<Symbol, u64>,
+    pub cover_toggle: HashMap<usize, HashSet<(LogicVal, LogicVal)>>,
+    pub cover_branches: HashMap<Symbol, HashMap<Symbol, u64>>,
+    pub cover_fsm: HashMap<usize, HashSet<u64>>,
+    pub cover_branch_counter: u64,
     pub coverage_model_handles: HashMap<usize, Symbol>,
     pub next_coverage_model_handle: usize,
     pub sequence_attempts: Vec<SequenceAttempt>,
@@ -126,6 +133,8 @@ pub struct SimulationEngine {
     pub jit_evaluator: Option<crate::simulator::JITEvaluator>,
     /// Use packed 4-state bitmask eval (SIMD-ready) for bitwise operations
     pub use_packed_eval: bool,
+    /// Use expression-level JIT compilation (compiles entire IrExpr tree at once)
+    pub use_jit_expression: bool,
     /// Zero-deallocation arena for temporary allocations during simulation
     pub sim_arena: SimulationArena,
     /// DAG-parallel process evaluator (built lazily)
@@ -136,6 +145,10 @@ pub struct SimulationEngine {
     pub clock_analysis: Option<ClockDomainAnalysis>,
     /// Enable cycle-based simulation fusion
     pub use_cycle_fusion: bool,
+    /// MIR JIT compiler for compiled-code simulation path
+    pub mir_jit: Option<crate::mir::MirJitCompiler>,
+    /// Enable MIR JIT for combinational process evaluation
+    pub use_mir_jit: bool,
     /// Diagnostic collector for structured runtime diagnostics
     pub diag_sink: DiagSink,
     /// Current delta cycle count (for runtime context)
@@ -144,6 +157,12 @@ pub struct SimulationEngine {
     pub current_process_name: Option<String>,
     /// Current instance path (for runtime context), e.g. "soc.cpu0.fetch"
     pub current_instance_path: Option<String>,
+    /// Race detection: tracks which process (ObjId) last wrote each signal in current delta
+    pub signal_writers: std::collections::HashMap<SignalId, Option<ObjId>>,
+    /// Race detection: write count per signal per time step (for oscillation detection)
+    pub signal_write_count: std::collections::HashMap<SignalId, u32>,
+    /// Max delta cycles per time step before abort (configurable for testing)
+    pub delta_limit: u64,
 }
 
 // ============================================================================

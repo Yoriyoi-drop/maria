@@ -260,20 +260,25 @@ impl SimulationEngine {
         return_width: usize,
     ) -> Result<LogicVec, SimError> {
         // Check if we have a matching DPI import
-        let dpi = self
+        // Clone immediately to avoid borrow conflicts with self.call_
+        let dpi_info = self
             .design
             .dpi_imports
             .iter()
             .find(|d| d.name == name)
-            .ok_or_else(|| format!("DPI function '{}' not found in imports", name))?;
-        if dpi.is_task {
+            .cloned();
+        let is_task = dpi_info.as_ref().map(|d| d.is_task).unwrap_or(false);
+        
+        if is_task {
             return Ok(LogicVec::new(0));
         }
+        
         let arg_vals: Vec<LogicVec> = args
             .iter()
             .map(|a| self.evaluate_expr(a))
             .collect::<Result<_, _>>()?;
-        // Known DPI functions
+        
+        // Known built-in DPI functions (work without external libraries)
         match name {
             "svBitToInt" | "svToInt" => {
                 if let Some(val) = arg_vals.first() {
@@ -315,10 +320,61 @@ impl SimulationEngine {
             }
             "$value$plusargs" | "svValuePlusArgs" => Ok(LogicVec::from_u64(0, return_width)),
             _ => {
+                // Try to resolve via DPI engine (dynamic library loading)
+                if dpi_info.is_some() {
+                    return self.call_dpi_function(name, &arg_vals, return_width, is_task);
+                }
                 // Unknown DPI — return 0
+                eprintln!("warning: DPI function '{}' not found in imports, returning 0", name);
                 Ok(LogicVec::from_u64(0, return_width))
             }
         }
+    }
+
+    /// Call a DPI function via the DPI engine (dynamic library resolution).
+    fn call_dpi_function(
+        &mut self,
+        name: &str,
+        arg_vals: &[LogicVec],
+        return_width: usize,
+        _is_task: bool,
+    ) -> Result<LogicVec, SimError> {
+        use crate::simulator::dpi::*;
+        use std::sync::Mutex;
+
+        // Global DPI engine (lazy initialized)
+        fn dpi_engine() -> &'static Mutex<Option<DpiEngine>> {
+            use std::sync::OnceLock;
+            static ENGINE: OnceLock<Mutex<Option<DpiEngine>>> = OnceLock::new();
+            ENGINE.get_or_init(|| Mutex::new(Some(DpiEngine::new())))
+        }
+
+        // Find matching IrDpiImport and register library
+        // Clone the info first to avoid borrow conflicts
+        let dpi_info = self.design.dpi_imports.iter()
+            .find(|d| d.name.as_str() == name)
+            .cloned();
+
+        if let Some(ref info) = dpi_info {
+            let mut engine_guard = dpi_engine().lock().unwrap();
+            if let Some(ref mut engine) = *engine_guard {
+                // Try to resolve and call the function
+                match engine.resolve_function(info) {
+                    Ok(()) => {
+                        // Create scope from instance path (cloned to avoid borrow)
+                        let scope_path = self.current_instance_path.clone().unwrap_or_default();
+                        let scope = crate::simulator::dpi::current_scope_from_path(&scope_path);
+                        return engine.call_function(name, arg_vals, &scope);
+                    }
+                    Err(e) => {
+                        eprintln!("warning: DPI '{}' not found in loaded libraries: {}", name, e);
+                    }
+                }
+            }
+        }
+
+        // Fallback
+        Ok(LogicVec::from_u64(0, return_width.max(1)))
     }
 
 
