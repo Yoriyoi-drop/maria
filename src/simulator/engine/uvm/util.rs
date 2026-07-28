@@ -89,7 +89,7 @@ impl SimulationEngine {
 
     pub(crate) fn get_field_elem_width(&self, expr: &Expr) -> Option<usize> {
         match expr {
-            Expr::Ident(name) => {
+            Expr::Ident { name, .. } => {
                 if let Some(obj_id) = self.current_this {
                     if let Some(obj) = self.state.get_object(obj_id) {
                         if let Some(cls) = self.design.classes.get(&obj.class_name) {
@@ -104,7 +104,7 @@ impl SimulationEngine {
                 None
             }
             Expr::MemberAccess { obj, field } => {
-                if let Expr::Ident(s) = obj.as_ref() {
+                if let Expr::Ident { name: s, .. } = obj.as_ref() {
                     if s == "this" {
                         if let Some(obj_id) = self.current_this {
                             if let Some(obj) = self.state.get_object(obj_id) {

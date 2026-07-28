@@ -629,7 +629,7 @@ fn inline_funcs_in_stmt(
                         temp_signals.push((temp_arg_name.clone(), port_width));
                         rename_map.insert(port.name, Symbol::intern(&temp_arg_name));
                         preamble.push(Stmt::BlockingAssign {
-                            lhs: Expr::Ident(Symbol::intern(&temp_arg_name)),
+                            lhs: Expr::Ident { name: Symbol::intern(&temp_arg_name), line: 0, col: 0 },
                             rhs: arg,
                             delay: None,
                         });
@@ -1568,7 +1568,7 @@ fn replace_func_calls_in_expr(
                     temp_signals.push((temp_arg_name.clone(), port_width));
                     rename_map.insert(port.name, Symbol::intern(&temp_arg_name));
                     preamble.push(Stmt::BlockingAssign {
-                        lhs: Expr::Ident(Symbol::intern(&temp_arg_name)),
+                        lhs: Expr::Ident { name: Symbol::intern(&temp_arg_name), line: 0, col: 0 },
                         rhs: arg,
                         delay: None,
                     });
@@ -1622,7 +1622,7 @@ fn replace_func_calls_in_expr(
                     if let Some(ref rn) = ret_name {
                         if let Stmt::Return(Some(expr)) = &renamed {
                             renamed = Stmt::BlockingAssign {
-                                lhs: Expr::Ident(Symbol::intern(&rn)),
+                                lhs: Expr::Ident { name: Symbol::intern(&rn), line: 0, col: 0 },
                                 rhs: *expr.clone(),
                                 delay: None,
                             };
@@ -1645,17 +1645,17 @@ fn replace_func_calls_in_expr(
                                 direction: None,
                             });
                     let temp_arg_name = format!("__func_{}_{}_{}_{}", prefix, name, c, port.name);
-                    if let Expr::Ident(_) = &orig_arg {
+                    if let Expr::Ident { .. } = &orig_arg {
                         preamble.push(Stmt::BlockingAssign {
                             lhs: orig_arg,
-                            rhs: Expr::Ident(Symbol::intern(&temp_arg_name)),
+                            rhs: Expr::Ident { name: Symbol::intern(&temp_arg_name), line: 0, col: 0 },
                             delay: None,
                         });
                     }
                 }
 
                 if let Some(rn) = ret_name {
-                    Expr::Ident(Symbol::intern(&rn))
+                    Expr::Ident { name: Symbol::intern(&rn), line: 0, col: 0 }
                 } else {
                     Expr::Value(Value::Decimal(0))
                 }

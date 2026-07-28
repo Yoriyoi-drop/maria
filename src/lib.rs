@@ -203,7 +203,8 @@ pub fn compile_str(source: &str) -> Result<ir::IrDesign, SimError> {
     }
     design.timescale = timescale;
 
-    let mut elaborator = elaboration::Elaborator::new(design);
+    let source_lines: Vec<String> = preprocessed.lines().map(|s| s.to_string()).collect();
+    let mut elaborator = elaboration::Elaborator::with_source(design, source_lines, first_source);
     let ir_design = elaborator.elaborate(None)?;
 
     // Flush elaboration-time diagnostics (warnings like WR0102)

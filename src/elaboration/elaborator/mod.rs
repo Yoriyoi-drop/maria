@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::util::*;
 use crate::ast::types::const_eval_with_params;
 use crate::ast::*;
-use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, DiagSink};
+use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, DiagSink, RuntimeContext, SourceSnippet};
 use crate::error::SimError;
 use crate::intern::Symbol;
 pub mod ext;
@@ -40,10 +40,17 @@ pub struct Elaborator {
     pub package_symbols: HashMap<Symbol, HashMap<Symbol, PackageItem>>,
     pub specialized_classes: std::cell::RefCell<Vec<ClassDecl>>,
     pub diag_sink: DiagSink,
+    pub source_lines: Vec<String>,
+    pub source_file: String,
+    pub current_module: Option<Symbol>,
 }
 
 impl Elaborator {
     pub fn new(design: Design) -> Self {
+        Self::with_source(design, Vec::new(), String::new())
+    }
+
+    pub fn with_source(design: Design, source_lines: Vec<String>, source_file: String) -> Self {
         let mut package_symbols: HashMap<Symbol, HashMap<Symbol, PackageItem>> = HashMap::new();
         // First pass: collect directly declared items
         for pkg in &design.packages {
@@ -148,6 +155,9 @@ impl Elaborator {
             package_symbols,
             specialized_classes: std::cell::RefCell::new(Vec::new()),
             diag_sink: DiagSink::new(),
+            source_lines,
+            source_file,
+            current_module: None,
         }
     }
 
@@ -763,15 +773,32 @@ impl Elaborator {
 
     /// Buat structured diagnostic untuk elaboration error dengan error code tepat.
     fn elab_diag(&self, code: DiagCode, message: impl Into<String>) -> SimError {
+        self.elab_diag_at(code, message, 0, 0)
+    }
+
+    /// Buat error diagnostic dengan posisi source.
+    fn elab_diag_at(&self, code: DiagCode, message: impl Into<String>, line: usize, col: usize) -> SimError {
         let msg: String = message.into();
-        let diag = Diagnostic::new(DiagLevel::Error, code, msg.clone());
+        let mut diag = Diagnostic::new(DiagLevel::Error, code, msg)
+            .with_code_context();
+        if line > 0 && line <= self.source_lines.len() {
+            let source_line = &self.source_lines[line - 1];
+            let snippet = SourceSnippet::new(&self.source_file, line, col, source_line);
+            diag = diag.with_source_snippet(snippet);
+        }
+        if let Some(ref mod_name) = self.current_module {
+            let ctx = RuntimeContext::new()
+                .with_module(mod_name.as_str());
+            diag = diag.with_runtime_context(ctx);
+        }
         SimError::from_elab_diagnostic(diag)
     }
 
     /// Emit warning diagnostic ke DiagSink (elaboration-time warnings).
     fn elab_warn(&self, code: DiagCode, message: impl Into<String>) {
         let msg: String = message.into();
-        let diag = Diagnostic::new(DiagLevel::Warning, code, msg);
+        let diag = Diagnostic::new(DiagLevel::Warning, code, msg)
+            .with_code_context();
         self.diag_sink.push(diag);
     }
 
@@ -876,6 +903,7 @@ impl Elaborator {
         module: &Module,
         known_modules: &[Symbol],
     ) -> Result<IrModule, SimError> {
+        self.current_module = Some(module.name);
         let param_vals = self.resolve_param_values(module, &HashMap::new())?;
         self.elaborate_module_with_params(module, known_modules, &param_vals)
     }
@@ -1867,7 +1895,7 @@ impl Elaborator {
                     let mut sig_ids = Vec::new();
                     for port in &gate.ports {
                         let sid = match port {
-                            Expr::Ident(name) => {
+                            Expr::Ident { name, .. } => {
                                 signal_map.get(name).copied().ok_or_else(|| {
                                     self.elab_diag(DiagCode::ModuleNotFound, format!(
                                         "signal '{}' not found for gate",
@@ -1929,7 +1957,7 @@ impl Elaborator {
             for var in &decl.names {
                 if let Some(init_expr) = &var.expr {
                     let lhs = self.elaborate_lvalue(
-                        &Expr::Ident(var.name.clone()),
+                        &Expr::Ident { name: var.name.clone(), line: 0, col: 0 },
                         &signal_map,
                         &signals,
                     )?;

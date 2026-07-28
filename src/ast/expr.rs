@@ -4,7 +4,11 @@ use crate::intern::Symbol;
 pub enum Expr {
     Value(Value),
     FillLit(crate::ir::LogicVal),
-    Ident(Symbol),
+    Ident {
+        name: Symbol,
+        line: usize,
+        col: usize,
+    },
     FuncCall {
         name: Symbol,
         args: Vec<Expr>,

@@ -25,7 +25,7 @@ pub fn compute_expr_width(
     package_symbols: &HashMap<Symbol, HashMap<Symbol, PackageItem>>,
 ) -> Result<usize, String> {
     match expr {
-        Expr::Ident(name) => {
+        Expr::Ident { name, .. } => {
             if let Some(sig_id) = signal_map.get(name) {
                 let info = &signals[*sig_id];
                 Ok(info.width
@@ -148,7 +148,7 @@ pub fn compute_expr_width(
             Ok(const_eval_with_params(width, param_vals).unwrap_or(1) as usize)
         }
         Expr::MemberAccess { obj, field } => {
-            if let Expr::Ident(name) = obj.as_ref() {
+            if let Expr::Ident { name, .. } = obj.as_ref() {
                 if let Some(&sig_id) = signal_map.get(name) {
                     if !signals[sig_id].struct_fields.is_empty() {
                         if let Some(f) = signals[sig_id]

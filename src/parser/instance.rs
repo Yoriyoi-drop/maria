@@ -636,7 +636,7 @@ impl Parser {
                         } else {
                             port_conns.push(PortConnection::Named {
                                 port: port_name,
-                                expr: Expr::Ident(port_name),
+                                expr: Expr::Ident { name: port_name, line: 0, col: 0 },
                             });
                         }
                     } else {

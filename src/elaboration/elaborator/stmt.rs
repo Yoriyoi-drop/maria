@@ -129,7 +129,7 @@ impl Elaborator {
                 let mut ir_rhs = if is_vif_lhs {
                     // For vif binding, RHS might be an instance name (not a signal)
                     match rhs {
-                        Expr::Ident(name) if !signal_map.contains_key(name) => {
+                        Expr::Ident { name, .. } if !signal_map.contains_key(name) => {
                             // Vif binding: store instance name for runtime resolution
                             IrExpr::VifBinding {
                                 instance_name: name.clone(),
@@ -175,7 +175,7 @@ impl Elaborator {
                 };
                 let mut ir_rhs = if ir_is_vif {
                     match rhs {
-                        Expr::Ident(name) if !signal_map.contains_key(name) => IrExpr::VifBinding {
+                        Expr::Ident { name, .. } if !signal_map.contains_key(name) => IrExpr::VifBinding {
                             instance_name: name.clone(),
                         },
                         _ => self.elaborate_expr(rhs, signal_map, signals)?,
@@ -1016,10 +1016,10 @@ impl Elaborator {
         signals: &[SignalInfo],
     ) -> Result<IrLValue, SimError> {
         match expr {
-            Expr::Ident(name) => {
+            Expr::Ident { name, line, col } => {
                 let sig_id = signal_map
                     .get(name)
-                    .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, format!("signal '{}' not found", name)))?;
+                    .ok_or_else(|| self.elab_diag_at(DiagCode::UndefinedSignal, format!("signal '{}' not found", name), *line, *col))?;
                 Ok(IrLValue::Signal(*sig_id, 0))
             }
             Expr::RangeSelect {

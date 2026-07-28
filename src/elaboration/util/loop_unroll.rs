@@ -32,7 +32,7 @@ where
 {
     let (var_name, init_val) = match init {
         Some(Stmt::BlockingAssign {
-            lhs: Expr::Ident(name),
+            lhs: Expr::Ident { name, .. },
             rhs,
             ..
         }) => (*name, const_eval_with_params(rhs, params)?),
@@ -41,7 +41,7 @@ where
 
     let step_fn: Box<dyn Fn(i64) -> Result<i64, String>> = match step {
         Some(Stmt::BlockingAssign {
-            lhs: Expr::Ident(n),
+            lhs: Expr::Ident { name: n, .. },
             rhs,
             ..
         }) if *n == var_name => match rhs {
@@ -50,14 +50,14 @@ where
                 lhs,
                 rhs,
             } => {
-                if let Expr::Ident(n2) = lhs.as_ref() {
+                if let Expr::Ident { name: n2, .. } = lhs.as_ref() {
                     if n2 == &var_name {
                         let inc = const_eval_with_params(rhs, params)?;
                         Box::new(move |v| Ok(v + inc))
                     } else {
                         return Ok(None);
                     }
-                } else if let Expr::Ident(n2) = rhs.as_ref() {
+                } else if let Expr::Ident { name: n2, .. } = rhs.as_ref() {
                     if n2 == &var_name {
                         let inc = const_eval_with_params(lhs, params)?;
                         Box::new(move |v| Ok(v + inc))
@@ -79,7 +79,7 @@ where
             lhs,
             rhs,
         }) => match lhs.as_ref() {
-            Expr::Ident(n) if *n == var_name => const_eval_with_params(rhs, params)?,
+            Expr::Ident { name: n, .. } if *n == var_name => const_eval_with_params(rhs, params)?,
             _ => return Ok(None),
         },
         _ => return Ok(None),
@@ -350,10 +350,10 @@ pub fn substitute_sensitivity_event(
 /// Substitusi loop variable di expression AST.
 pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> Expr {
     match expr {
-        Expr::Ident(name) if name == var_name => {
+        Expr::Ident { name, .. } if name == var_name => {
             Expr::Value(crate::ast::expr::Value::Decimal(value))
         }
-        Expr::Ident(_) => expr.clone(),
+        Expr::Ident { .. } => expr.clone(),
         Expr::Value(_) | Expr::String(_) | Expr::Null => expr.clone(),
         Expr::RangeSelect {
             expr: inner,

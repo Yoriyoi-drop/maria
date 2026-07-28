@@ -233,7 +233,7 @@ pub fn resolve_expr_signal(
     signal_map: &HashMap<Symbol, SignalId>,
 ) -> Option<SignalId> {
     match expr {
-        Expr::Ident(name) => signal_map.get(name).copied(),
+        Expr::Ident { name, .. } => signal_map.get(name).copied(),
         Expr::MethodCall { .. } => None,
         Expr::MemberAccess { .. } => None,
         _ => None,
@@ -261,7 +261,7 @@ pub fn detect_sync_reset(body: &[IrStmt]) -> Option<ResetInfo> {
 /// Kumpulkan sensitivity list dari expression AST (untuk always_comb).
 pub fn collect_sensitivity(expr: &Expr, signal_map: &HashMap<Symbol, SignalId>) -> Vec<SignalId> {
     match expr {
-        Expr::Ident(name) => signal_map.get(name).map(|&id| vec![id]).unwrap_or_default(),
+        Expr::Ident { name, .. } => signal_map.get(name).map(|&id| vec![id]).unwrap_or_default(),
         Expr::BinaryOp { lhs, rhs, .. } => {
             let mut v = collect_sensitivity(lhs, signal_map);
             v.extend(collect_sensitivity(rhs, signal_map));

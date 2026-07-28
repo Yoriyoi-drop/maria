@@ -13,7 +13,7 @@ use crate::ir::*;
 impl Elaborator {
     pub(crate) fn build_hier_name(obj: &Expr, field: &str) -> String {
         match obj {
-            Expr::Ident(prefix) => format!("{}.{}", prefix, field),
+            Expr::Ident { name: prefix, .. } => format!("{}.{}", prefix, field),
             Expr::MemberAccess {
                 obj: inner,
                 field: inner_field,
@@ -31,7 +31,7 @@ impl Elaborator {
         signals: &[SignalInfo],
     ) -> Result<IrExpr, SimError> {
         match expr {
-            Expr::Ident(name) if name == "this" => Ok(IrExpr::This),
+            Expr::Ident { name, .. } if name == "this" => Ok(IrExpr::This),
             Expr::Value(v) => {
                 let lv = value_to_logicvec(v);
                 let is_signed = matches!(
@@ -54,7 +54,7 @@ impl Elaborator {
                 }
             }
             Expr::FillLit(val) => Ok(IrExpr::FillLit(*val)),
-            Expr::Ident(name) => {
+            Expr::Ident { name, line, col } => {
                 if name.starts_with("$") {
                     return Ok(IrExpr::SysFunc {
                         name: name.clone(),
@@ -67,7 +67,7 @@ impl Elaborator {
                 }
                 let sig_id = signal_map
                     .get(name)
-                    .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, format!("signal '{}' not found", name)))?;
+                    .ok_or_else(|| self.elab_diag_at(DiagCode::UndefinedSignal, format!("signal '{}' not found", name), *line, *col))?;
                 Ok(IrExpr::Signal(*sig_id, 0))
             }
             Expr::ScopedIdent { package, item } => {
@@ -918,8 +918,8 @@ impl Elaborator {
 
     fn substitute_ident_in_expr(expr: Expr, target: &str, replacement: Expr) -> Expr {
         match expr {
-            Expr::Ident(ref name) if name == target => replacement,
-            Expr::Ident(_) => expr,
+            Expr::Ident { name: ref name, .. } if name == target => replacement,
+            Expr::Ident { .. } => expr,
             Expr::Value(_) | Expr::String(_) | Expr::Null | Expr::FillLit(_) => expr,
             Expr::BinaryOp { op, lhs, rhs } => Expr::BinaryOp {
                 op,
@@ -1022,7 +1022,7 @@ impl Elaborator {
             Expr::ScopedIdent { package, item } => {
                 if package == target {
                     match &replacement {
-                        Expr::Ident(name) => Expr::ScopedIdent {
+                        Expr::Ident { name, .. } => Expr::ScopedIdent {
                             package: name.clone(),
                             item,
                         },
@@ -1143,9 +1143,9 @@ impl Elaborator {
         signal_map: &HashMap<Symbol, SignalId>,
     ) -> Result<SignalId, SimError> {
         match expr {
-            Expr::Ident(name) => signal_map
+            Expr::Ident { name, line, col } => signal_map
                 .get(name)
-                .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, format!("signal '{}' not found", name)))
+                .ok_or_else(|| self.elab_diag_at(DiagCode::UndefinedSignal, format!("signal '{}' not found", name), *line, *col))
                 .copied(),
             Expr::MethodCall { .. } => Err(self.elab_diag(DiagCode::ModuleNotFound,
                 "method calls cannot resolve to a signal",

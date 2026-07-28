@@ -807,7 +807,7 @@ impl Parser {
                     let init_expr = self.parse_expr(0)?;
                     self.expect(Token::Semi)?;
                     Some(Stmt::BlockingAssign {
-                        lhs: Expr::Ident(var),
+                        lhs: Expr::Ident { name: var, line: 0, col: 0 },
                         rhs: init_expr,
                         delay: None,
                     })

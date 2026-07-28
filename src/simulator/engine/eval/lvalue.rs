@@ -223,7 +223,7 @@ impl SimulationEngine {
 
     pub(crate) fn write_ast_lvalue(&mut self, lhs: &crate::ast::Expr, val: LogicVec) -> Result<(), SimError> {
         match lhs {
-            crate::ast::Expr::Ident(name) => self.write_local_or_field(name.as_str(), val),
+            crate::ast::Expr::Ident { name, .. } => self.write_local_or_field(name.as_str(), val),
             crate::ast::Expr::MemberAccess { obj, field } => {
                 let obj_val = self.evaluate_ast_expr(obj)?;
                 let obj_id = obj_val.to_u64() as ObjId;
@@ -246,7 +246,7 @@ impl SimulationEngine {
 
     pub(crate) fn ast_lvalue_to_ir(&self, lhs: &crate::ast::Expr) -> Option<IrLValue> {
         match lhs {
-            crate::ast::Expr::Ident(name) => {
+            crate::ast::Expr::Ident { name, .. } => {
                 let sig_id = self.find_signal(name.as_str())?;
                 Some(IrLValue::Signal(sig_id, 0))
             }
@@ -256,7 +256,7 @@ impl SimulationEngine {
 
     pub(crate) fn find_ast_signal_id(&self, expr: &crate::ast::Expr) -> Option<SignalId> {
         match expr {
-            crate::ast::Expr::Ident(name) => self.find_signal(name.as_str()),
+            crate::ast::Expr::Ident { name, .. } => self.find_signal(name.as_str()),
             _ => None,
         }
     }

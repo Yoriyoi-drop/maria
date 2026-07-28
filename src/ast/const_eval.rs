@@ -29,7 +29,7 @@ pub fn const_eval_simple(expr: &Expr) -> Result<i64, String> {
             i64::from_str_radix(&bits.replace('x', "0").replace('z', "0"), 8)
                 .map_err(|_| "bad octal".to_string())
         }
-        Expr::Ident(ref s) if s == "1" => Ok(1),
+        Expr::Ident { name: ref s, .. } if s == "1" => Ok(1),
         Expr::MethodCall { .. } => Err("method calls are not simple constants".to_string()),
         Expr::MemberAccess { .. } => Err("member access is not a simple constant".to_string()),
         _ => Err("not a simple constant".to_string()),
@@ -55,7 +55,7 @@ pub fn const_eval_with_params(
                 .map_err(|_| "bad octal".to_string())
         }
         Expr::String(s) => Ok(string_to_i64(s)),
-        Expr::Ident(name) => {
+        Expr::Ident { name, .. } => {
             if let Some(&val) = param_vals.get(name.as_str()) {
                 Ok(val)
             } else if name == "1" {

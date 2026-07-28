@@ -25,7 +25,7 @@ impl SimulationEngine {
                 }
                 Value::Real(r) => Ok(LogicVec::from_u64(r.to_bits(), 64)),
             },
-            Expr::Ident(name) => {
+            Expr::Ident { name, .. } => {
                 if name == "this" {
                     if let Some(obj_id) = self.current_this {
                         return Ok(LogicVec::from_u64(obj_id as u64, 64));
@@ -228,7 +228,7 @@ impl SimulationEngine {
                 if let Some(val) = stored {
                     if let Some(last_arg) = args.get(3) {
                         match last_arg {
-                            Expr::Ident(var) => {
+                            Expr::Ident { name: var, .. } => {
                                 self.write_local_or_field(var.as_str(), val.clone())?;
                             }
                             Expr::MemberAccess { obj, field } => {
@@ -289,7 +289,7 @@ impl SimulationEngine {
                 if let Some(val) = stored {
                     if let Some(last_arg) = args.get(2) {
                         match last_arg {
-                            Expr::Ident(var) => {
+                            Expr::Ident { name: var, .. } => {
                                 self.write_local_or_field(var.as_str(), val.clone())?;
                             }
                             Expr::MemberAccess { obj, field } => {
@@ -353,7 +353,7 @@ impl SimulationEngine {
                 args,
                 with_clause: _,
             } => {
-                if let Expr::Ident(s) = obj.as_ref() {
+                if let Expr::Ident { name: s, .. } = obj.as_ref() {
                     if s == "super" {
                         let arg_vals: Vec<LogicVec> = args
                             .iter()
@@ -616,7 +616,7 @@ impl SimulationEngine {
 
     fn build_hier_name(obj: &Expr, field: &str) -> String {
         match obj {
-            Expr::Ident(prefix) => format!("{}.{}", prefix, field),
+            Expr::Ident { name: prefix, .. } => format!("{}.{}", prefix, field),
             Expr::MemberAccess {
                 obj: inner,
                 field: inner_field,
@@ -639,7 +639,7 @@ impl SimulationEngine {
             Stmt::BlockingAssign { lhs, rhs, delay: _ } => {
                 let val = self.evaluate_ast_expr(rhs)?;
                 match lhs {
-                    Expr::Ident(name) => self.write_local_or_field(name.as_str(), val),
+                    Expr::Ident { name, .. } => self.write_local_or_field(name.as_str(), val),
                     Expr::MemberAccess { obj, field } => {
                         let obj_val = self.evaluate_ast_expr(obj)?;
                         let obj_id = obj_val.to_u64() as ObjId;
@@ -670,7 +670,7 @@ impl SimulationEngine {
                                 bits,
                             };
                             match inner.as_ref() {
-                                Expr::Ident(name) => {
+                                Expr::Ident { name, .. } => {
                                     self.write_local_or_field(name.as_str(), new_val)?;
                                 }
                                 Expr::MemberAccess { obj, field } => {
@@ -693,7 +693,7 @@ impl SimulationEngine {
                             let width = bits.len();
                             let new_val = LogicVec { width, bits };
                             match inner.as_ref() {
-                                Expr::Ident(name) => {
+                                Expr::Ident { name, .. } => {
                                     self.write_local_or_field(name.as_str(), new_val)?;
                                 }
                                 Expr::MemberAccess { obj, field } => {
@@ -731,7 +731,7 @@ impl SimulationEngine {
                             bits,
                         };
                         match inner.as_ref() {
-                            Expr::Ident(name) => {
+                            Expr::Ident { name, .. } => {
                                 self.write_local_or_field(name.as_str(), new_val)?;
                             }
                             Expr::MemberAccess { obj, field } => {
@@ -754,7 +754,7 @@ impl SimulationEngine {
             Stmt::NonBlockingAssign { lhs, rhs, delay: _ } => {
                 let val = self.evaluate_ast_expr(rhs)?;
                 match lhs {
-                    Expr::Ident(name) => self.write_local_or_field(name.as_str(), val),
+                    Expr::Ident { name, .. } => self.write_local_or_field(name.as_str(), val),
                     Expr::MemberAccess { obj, field } => {
                         let obj_val = self.evaluate_ast_expr(obj)?;
                         let obj_id = obj_val.to_u64() as ObjId;
@@ -785,7 +785,7 @@ impl SimulationEngine {
                                 bits: bits.clone(),
                             };
                             match inner.as_ref() {
-                                Expr::Ident(name) => {
+                                Expr::Ident { name, .. } => {
                                     self.write_local_or_field(name.as_str(), new_val)?;
                                 }
                                 Expr::MemberAccess { obj, field } => {
@@ -808,7 +808,7 @@ impl SimulationEngine {
                             let width = bits.len();
                             let new_val = LogicVec { width, bits };
                             match inner.as_ref() {
-                                Expr::Ident(name) => {
+                                Expr::Ident { name, .. } => {
                                     self.write_local_or_field(name.as_str(), new_val)?;
                                 }
                                 Expr::MemberAccess { obj, field } => {
@@ -846,7 +846,7 @@ impl SimulationEngine {
                             bits,
                         };
                         match inner.as_ref() {
-                            Expr::Ident(name) => {
+                            Expr::Ident { name, .. } => {
                                 self.write_local_or_field(name.as_str(), new_val)?;
                             }
                             Expr::MemberAccess { obj, field } => {
@@ -1095,7 +1095,7 @@ impl SimulationEngine {
             Stmt::StmtAssign { lhs, rhs } => {
                 let val = self.evaluate_ast_expr(rhs)?;
                 match lhs {
-                    Expr::Ident(name) => self.write_local_or_field(name.as_str(), val),
+                    Expr::Ident { name, .. } => self.write_local_or_field(name.as_str(), val),
                     Expr::MemberAccess { obj, field } => {
                         let obj_val = self.evaluate_ast_expr(obj)?;
                         let obj_id = obj_val.to_u64() as ObjId;

@@ -4,7 +4,7 @@ use crate::ast::*;
 pub fn is_valid_lvalue(expr: &Expr) -> bool {
     matches!(
         expr,
-        Expr::Ident(_)
+        Expr::Ident { .. }
             | Expr::RangeSelect { .. }
             | Expr::BitSelect { .. }
             | Expr::PartSelect { .. }

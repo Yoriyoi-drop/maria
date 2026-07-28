@@ -310,10 +310,12 @@ impl Parser {
                     self.expect(Token::RParen)?;
                     Ok(Expr::FuncCall { name: Symbol::intern(&full_name), args })
                 } else {
-                    Ok(Expr::Ident(Symbol::intern(&full_name)))
+                    Ok(Expr::Ident { name: Symbol::intern(&full_name), line: 0, col: 0 })
                 }
             }
             Token::Ident(name) => {
+                let line = self.peek_line();
+                let col = self.peek_col();
                 self.advance();
                 // pkg::item resolution
                 if self.peek() == &Token::Scope {
@@ -370,7 +372,7 @@ impl Parser {
                         }
                         return Ok(Expr::ScopedIdent { package: class_prefix, item });
                     }
-                    return Ok(Expr::Ident(class_prefix));
+                    return Ok(Expr::Ident { name: class_prefix, line: 0, col: 0 });
                 }
                 // Type cast: type_name'(expr)
                 if self.peek() == &Token::Quote {
@@ -392,7 +394,7 @@ impl Parser {
                     self.expect(Token::RParen)?;
                     Ok(Expr::FuncCall { name: *name, args })
                 } else {
-                    Ok(Expr::Ident(*name))
+                    Ok(Expr::Ident { name: *name, line, col })
                 }
             }
             Token::Number { value, base, width, is_signed } => {
@@ -414,7 +416,7 @@ impl Parser {
                     }
                 } else {
                     if let Ok(n) = value.as_str().parse::<i64>() { Expr::Value(Value::Decimal(n)) }
-                    else { Expr::Ident(*value) }
+                    else { Expr::Ident { name: *value, line: 0, col: 0 } }
                 };
                 Ok(val)
             }
@@ -441,7 +443,7 @@ impl Parser {
                     Ok(Expr::FuncCall { name: Symbol::intern("new"), args })
                 }
             }
-            Token::This => { self.advance(); Ok(Expr::Ident(Symbol::intern("this"))) }
+            Token::This => { self.advance(); Ok(Expr::Ident { name: Symbol::intern("this"), line: 0, col: 0 }) }
             Token::Null => { self.advance(); Ok(Expr::Null) }
             Token::Plus | Token::Minus | Token::Tilde | Token::Amp | Token::Pipe | Token::Caret
             | Token::TildeAmp | Token::TildePipe | Token::CaretTilde => {
@@ -491,9 +493,9 @@ impl Parser {
             }
             Token::LParen => { self.advance(); let expr = self.parse_expr(0)?; self.expect(Token::RParen)?; Ok(Expr::Paren(Box::new(expr))) }
             Token::FillLit(val) => { self.advance(); Ok(Expr::FillLit(*val)) }
-            Token::Auto => { self.advance(); Ok(Expr::Ident(Symbol::intern("automatic"))) }
-            Token::String => { self.advance(); Ok(Expr::Ident(Symbol::intern("string"))) }
-            Token::Class | Token::EndClass => { self.advance(); Ok(Expr::Ident(Symbol::intern("class"))) }
+            Token::Auto => { self.advance(); Ok(Expr::Ident { name: Symbol::intern("automatic"), line: 0, col: 0 }) }
+            Token::String => { self.advance(); Ok(Expr::Ident { name: Symbol::intern("string"), line: 0, col: 0 }) }
+            Token::Class | Token::EndClass => { self.advance(); Ok(Expr::Ident { name: Symbol::intern("class"), line: 0, col: 0 }) }
             Token::Quote => {
                 self.advance();
                 if self.peek() == &Token::LBrace {
@@ -526,7 +528,7 @@ impl Parser {
                     self.advance(); self.expect(Token::LParen)?;
                     let expr = self.parse_expr(0)?; self.expect(Token::RParen)?;
                     Ok(Expr::Cast { dtype: Symbol::intern(type_name), expr: Box::new(expr) })
-                } else { Ok(Expr::Ident(Symbol::intern(type_name))) }
+                } else { Ok(Expr::Ident { name: Symbol::intern(type_name), line: 0, col: 0 }) }
             }
             _ => Err(self.err(format!("expected expression, found {}", tok))),
         }

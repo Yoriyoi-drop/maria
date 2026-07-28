@@ -26,7 +26,7 @@ impl SimulationEngine {
                 } => {
                     // _ref_event is parsed but runtime edge detection is simplified
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
-                    if let Expr::Ident(data_sig) = data {
+                    if let Expr::Ident { name: data_sig, .. } = data {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
@@ -44,7 +44,7 @@ impl SimulationEngine {
                     limit,
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
-                    if let Expr::Ident(data_sig) = data {
+                    if let Expr::Ident { name: data_sig, .. } = data {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
@@ -64,7 +64,7 @@ impl SimulationEngine {
                 } => {
                     let setup_val = const_eval_simple(setup_limit).unwrap_or(0) as u64;
                     let hold_val = const_eval_simple(hold_limit).unwrap_or(0) as u64;
-                    if let Expr::Ident(data_sig) = data {
+                    if let Expr::Ident { name: data_sig, .. } = data {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
@@ -86,7 +86,7 @@ impl SimulationEngine {
                     limit,
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
-                    if let Expr::Ident(data_sig) = data {
+                    if let Expr::Ident { name: data_sig, .. } = data {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
@@ -103,7 +103,7 @@ impl SimulationEngine {
                     limit,
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
-                    if let Expr::Ident(data_sig) = data {
+                    if let Expr::Ident { name: data_sig, .. } = data {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
@@ -122,7 +122,7 @@ impl SimulationEngine {
                 } => {
                     let recov_val = const_eval_simple(recovery_limit).unwrap_or(0) as u64;
                     let remov_val = const_eval_simple(removal_limit).unwrap_or(0) as u64;
-                    if let Expr::Ident(data_sig) = data {
+                    if let Expr::Ident { name: data_sig, .. } = data {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
@@ -138,7 +138,7 @@ impl SimulationEngine {
                 }
                 SpecifyItem::PeriodCheck { ref_event, limit } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
-                    if let Expr::Ident(ref_sig) = ref_event {
+                    if let Expr::Ident { name: ref_sig, .. } = ref_event {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
@@ -155,7 +155,7 @@ impl SimulationEngine {
                     threshold: _threshold,
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
-                    if let Expr::Ident(ref_sig) = ref_event {
+                    if let Expr::Ident { name: ref_sig, .. } = ref_event {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
@@ -172,10 +172,10 @@ impl SimulationEngine {
                     limit,
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
-                    if let Expr::Ident(data_sig) = data {
+                    if let Expr::Ident { name: data_sig, .. } = data {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&data_change) = self.signal_last_change.get(sid) {
-                                if let Expr::Ident(ref_sig) = &ref_event {
+                                if let Expr::Ident { name: ref_sig, .. } = &ref_event {
                                     if let Some((_, rsid)) =
                                         signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str())
                                     {
@@ -203,10 +203,10 @@ impl SimulationEngine {
                     threshold: _threshold,
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
-                    if let Expr::Ident(data_sig) = data {
+                    if let Expr::Ident { name: data_sig, .. } = data {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&data_change) = self.signal_last_change.get(sid) {
-                                if let Expr::Ident(ref_sig) = &ref_event {
+                                if let Expr::Ident { name: ref_sig, .. } = &ref_event {
                                     if let Some((_, rsid)) =
                                         signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str())
                                     {
@@ -235,7 +235,7 @@ impl SimulationEngine {
                 } => {
                     let start_val = const_eval_simple(start_limit).unwrap_or(0) as u64;
                     let end_val = const_eval_simple(end_limit).unwrap_or(0) as u64;
-                    if let Expr::Ident(data_sig) = data {
+                    if let Expr::Ident { name: data_sig, .. } = data {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;

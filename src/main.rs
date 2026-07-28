@@ -493,7 +493,8 @@ fn run(cli: Cli) -> Result<(), SimError> {
     if !cli.quiet {
         println!("Compiling design ({} file sources)...", sources.len());
     }
-    let mut elaborator = Elaborator::new(design);
+    let source_lines: Vec<String> = combined.lines().map(|s| s.to_string()).collect();
+    let mut elaborator = Elaborator::with_source(design, source_lines, first_source.to_string());
     let mut ir_design = elaborator.elaborate(top_name)?;
 
     // Flush elaboration-time diagnostics (warnings like WR0102)

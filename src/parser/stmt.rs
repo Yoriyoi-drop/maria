@@ -34,7 +34,7 @@ use crate::parser::lexer::*;
 fn is_valid_lvalue(expr: &Expr) -> bool {
     matches!(
         expr,
-        Expr::Ident(_)
+        Expr::Ident { .. }
             | Expr::BitSelect { .. }
             | Expr::RangeSelect { .. }
             | Expr::PartSelect { .. }
@@ -469,7 +469,7 @@ impl Parser {
                 self.advance();
                 let expr = self.parse_expr(0)?;
                 self.skip_semi();
-                if let Expr::Ident(_) = &expr {
+                if let Expr::Ident { .. } = &expr {
                     Ok(Stmt::Release { expr })
                 } else { Err(SimError::parse("expected signal name after release")) }
             }
@@ -737,7 +737,7 @@ impl Parser {
                 if self.peek() == &Token::Unsigned { self.advance(); }
                 let var = self.expect_ident()?;
                 let init_val = if self.peek() == &Token::BlockingAssign { self.advance(); Some(self.parse_expr(0)?) } else { None };
-                let stmt = if let Some(val) = init_val { Stmt::BlockingAssign { lhs: Expr::Ident(var), rhs: val, delay: None } } else { Stmt::Null };
+                let stmt = if let Some(val) = init_val { Stmt::BlockingAssign { lhs: Expr::Ident { name: var, line: 0, col: 0 }, rhs: val, delay: None } } else { Stmt::Null };
                 Some(Box::new(stmt))
             } else {
                 let expr = self.parse_expr(0)?;
@@ -755,13 +755,13 @@ impl Parser {
             let expr = self.parse_expr(0)?;
             if self.peek() == &Token::Increment {
                 self.advance();
-                if let Expr::Ident(var) = expr {
-                    Some(Box::new(Stmt::BlockingAssign { lhs: Expr::Ident(var), rhs: Expr::BinaryOp { op: BinaryOp::Add, lhs: Box::new(Expr::Ident(var)), rhs: Box::new(Expr::Value(Value::Decimal(1))) }, delay: None }))
+                if let Expr::Ident { name: var, .. } = expr {
+                    Some(Box::new(Stmt::BlockingAssign { lhs: Expr::Ident { name: var, line: 0, col: 0 }, rhs: Expr::BinaryOp { op: BinaryOp::Add, lhs: Box::new(Expr::Ident { name: var, line: 0, col: 0 }), rhs: Box::new(Expr::Value(Value::Decimal(1))) }, delay: None }))
                 } else { None }
             } else if self.peek() == &Token::Decrement {
                 self.advance();
-                if let Expr::Ident(var) = expr {
-                    Some(Box::new(Stmt::BlockingAssign { lhs: Expr::Ident(var), rhs: Expr::BinaryOp { op: BinaryOp::Sub, lhs: Box::new(Expr::Ident(var)), rhs: Box::new(Expr::Value(Value::Decimal(1))) }, delay: None }))
+                if let Expr::Ident { name: var, .. } = expr {
+                    Some(Box::new(Stmt::BlockingAssign { lhs: Expr::Ident { name: var, line: 0, col: 0 }, rhs: Expr::BinaryOp { op: BinaryOp::Sub, lhs: Box::new(Expr::Ident { name: var, line: 0, col: 0 }), rhs: Box::new(Expr::Value(Value::Decimal(1))) }, delay: None }))
                 } else { None }
             } else {
                 let step_stmt = match self.peek() {

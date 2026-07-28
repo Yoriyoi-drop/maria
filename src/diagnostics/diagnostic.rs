@@ -413,6 +413,52 @@ impl DiagCode {
         }
     }
 
+    /// Dapatkan penjelasan panjang tentang penyebab error.
+    pub fn explanation(&self) -> &'static str {
+        match self {
+            DiagCode::UndefinedSignal =>
+                "A signal name was referenced but has not been declared in the current scope.",
+            DiagCode::ModuleNotFound =>
+                "A module, interface, or package name could not be found in the design hierarchy.",
+            DiagCode::ParamMismatch =>
+                "A parameter value does not match its declaration type or range constraints.",
+            DiagCode::TypeMismatch =>
+                "An expression's type does not match the expected type for this context.",
+            DiagCode::WidthMismatch =>
+                "The bit width of an expression does not match the expected width.",
+            DiagCode::NullHandle =>
+                "An object handle was used (method call or member access) but the handle is null.",
+            DiagCode::NullInterface =>
+                "A virtual interface was used before being connected to a physical interface.",
+            DiagCode::MemoryOutOfBounds =>
+                "A memory access attempted to read or write beyond the declared array bounds.",
+            DiagCode::NotImplemented =>
+                "A SystemVerilog feature used in the design is not yet implemented.",
+            _ => self.description(),
+        }
+    }
+
+    /// Dapatkan saran perbaikan untuk error ini.
+    pub fn help(&self) -> &'static str {
+        match self {
+            DiagCode::UndefinedSignal =>
+                "Declare the signal before using it, or check for typos in the signal name.",
+            DiagCode::ModuleNotFound =>
+                "Check that the module/package name is spelled correctly and that all source files are included.",
+            DiagCode::ParamMismatch =>
+                "Verify parameter values match the declared types and ranges in the module definition.",
+            DiagCode::TypeMismatch =>
+                "Use a type conversion or change the expression type to match the expected type.",
+            DiagCode::NullHandle =>
+                "Initialize the object handle with 'new()' before accessing its members.",
+            DiagCode::NullInterface =>
+                "Connect the virtual interface to a physical interface instance before simulation.",
+            DiagCode::NotImplemented =>
+                "Consider using an alternative coding style or wait for the feature to be implemented.",
+            _ => "Review the code at the indicated location and fix the reported issue.",
+        }
+    }
+
     /// Dapatkan kategori kode error.
     pub fn category(&self) -> &'static str {
         match self {
@@ -710,6 +756,7 @@ impl SourceSnippet {
 /// - Explanation
 /// - Help/suggestion
 /// - Notes tambahan
+/// - Example code
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub level: DiagLevel,
@@ -726,6 +773,8 @@ pub struct Diagnostic {
     pub runtime_context: Option<RuntimeContext>,
     /// Source snippet dengan pointer.
     pub source_snippet: Option<SourceSnippet>,
+    /// Contoh kode perbaikan (ditampilkan setelah Help).
+    pub example: Option<Cow<'static, str>>,
 }
 
 impl Diagnostic {
@@ -741,6 +790,7 @@ impl Diagnostic {
             suggestion: None,
             runtime_context: None,
             source_snippet: None,
+            example: None,
         }
     }
 
@@ -808,6 +858,29 @@ impl Diagnostic {
         self
     }
 
+    /// Buat diagnostic dengan explanation + help dari DiagCode yang sesuai.
+    pub fn with_code_context(mut self) -> Self {
+        if self.explanation.is_none() {
+            let expl = self.code.explanation();
+            if !expl.is_empty() {
+                self.explanation = Some(Cow::Borrowed(expl));
+            }
+        }
+        if self.suggestion.is_none() {
+            let hlp = self.code.help();
+            if !hlp.is_empty() {
+                self.suggestion = Some(Cow::Borrowed(hlp));
+            }
+        }
+        self
+    }
+
+    /// Tambahkan contoh kode perbaikan (ditampilkan sebagai "Example" setelah Help).
+    pub fn with_example(mut self, example: impl Into<Cow<'static, str>>) -> Self {
+        self.example = Some(example.into());
+        self
+    }
+
     pub fn is_error(&self) -> bool {
         self.level.is_error()
     }
@@ -849,6 +922,10 @@ impl fmt::Display for Diagnostic {
 
         if let Some(suggestion) = &self.suggestion {
             write!(f, "\n  = help: {}", suggestion)?;
+        }
+
+        if let Some(example) = &self.example {
+            write!(f, "\n\nExample\n\n{}", example)?;
         }
 
         for hint in &self.hints {

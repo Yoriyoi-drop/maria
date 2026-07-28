@@ -680,9 +680,9 @@ pub(crate) fn rename_func_decls_in_stmt(stmt: Stmt, rename_map: &HashMap<Symbol,
 
 pub(crate) fn rename_in_expr(expr: Expr, rename_map: &HashMap<Symbol, Symbol>) -> Expr {
     match expr {
-        Expr::Ident(name) => rename_map
+        Expr::Ident { name, .. } => rename_map
             .get(&name)
-            .map_or(Expr::Ident(name), |n| Expr::Ident(n.clone())),
+            .map_or(Expr::Ident { name, line: 0, col: 0 }, |n| Expr::Ident { name: n.clone(), line: 0, col: 0 }),
         Expr::BinaryOp { op, lhs, rhs } => Expr::BinaryOp {
             op,
             lhs: Box::new(rename_in_expr(*lhs, rename_map)),
