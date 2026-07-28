@@ -382,7 +382,7 @@ impl Preprocessor {
                 .find(')')
                 .map(|p| open_paren + p)
                 .unwrap_or(s.len());
-            let params_str = if open_paren + 1 <= close_paren && close_paren <= s.len() {
+            let params_str = if open_paren < close_paren && close_paren <= s.len() {
                 &s[open_paren + 1..close_paren]
             } else {
                 ""
@@ -392,7 +392,7 @@ impl Preprocessor {
                 .map(|p| p.trim().to_string())
                 .filter(|p| !p.is_empty())
                 .collect();
-            let value = if close_paren + 1 <= s.len() {
+            let value = if close_paren < s.len() {
                 s[close_paren + 1..].trim().to_string()
             } else {
                 String::new()

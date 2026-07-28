@@ -316,7 +316,8 @@ impl Elaborator {
         for i in 0..self.design.modules.len() {
             let param_vals = resolve_param_values_fn(&self.design.modules[i], &HashMap::new())?;
             if let Some(module) = self.design.modules.get_mut(i) {
-                expand_all_generates(module, &param_vals, &self.diag_sink)?;
+                expand_all_generates(module, &param_vals, &self.diag_sink)
+                    .map_err(|e| self.elab_diag(crate::diagnostics::diagnostic::DiagCode::ModuleNotFound, format!("generate expansion failed: {}", e)))?;
             }
         }
 

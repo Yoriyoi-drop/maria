@@ -14,7 +14,7 @@ pub mod instance;
 pub mod proc;
 use crate::ast::*;
 use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, SourceSnippet};
-use crate::error::{ErrorContext, SimError};
+use crate::error::SimError;
 use crate::intern::Symbol;
 use crate::parser::lexer::*;
 
@@ -911,6 +911,16 @@ impl Parser {
                     Ok(None)
                 }
             }
+            Token::Sequence => {
+                self.advance();
+                while self.peek() != &Token::EndSequence && self.peek() != &Token::Eof {
+                    self.advance();
+                }
+                if self.peek() == &Token::EndSequence {
+                    self.advance();
+                }
+                Ok(None)
+            }
             Token::For | Token::If | Token::Case | Token::CaseX | Token::CaseZ => {
                 let gen_item = self.parse_generate_item()?;
                 Ok(Some(ModuleItem::Generate(GenerateBlock {
@@ -984,7 +994,7 @@ impl Parser {
                         None
                     };
             params.push(ParamDecl {
-                name: name,
+                name,
                         dtype: dtype.clone(),
                         range: range.clone(),
                         default,

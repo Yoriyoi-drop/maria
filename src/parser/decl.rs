@@ -900,7 +900,7 @@ impl Parser {
             }
         };
         self.skip_semi();
-        Ok(TypedefDecl { name: name, dtype, range })
+        Ok(TypedefDecl { name, dtype, range })
     }
 
     pub(crate) fn parse_type_expr(&mut self) -> Result<DataType, SimError> {

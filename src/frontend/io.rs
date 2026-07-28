@@ -61,7 +61,7 @@ impl MmapFile {
 
     /// Get content as string slice (zero-copy).
     pub fn as_str(&self) -> &str {
-        unsafe { std::str::from_utf8_unchecked(&self.bytes) }
+        std::str::from_utf8(&self.bytes).unwrap_or("")
     }
 
     /// File size in bytes.

@@ -833,7 +833,7 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 let body_items = self.parse_generate_block_body()?;
                 Ok(GenerateItem::For {
-                    var: var,
+                    var,
                     init: None,
                     cond,
                     step,

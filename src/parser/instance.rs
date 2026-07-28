@@ -122,7 +122,7 @@ impl Parser {
         }
 
         Ok(Module {
-            name: name,
+            name,
             ports,
             params,
             decls,
@@ -291,7 +291,7 @@ impl Parser {
         }
 
         Ok(Interface {
-            name: name,
+            name,
             params,
             decls,
             modports,
@@ -367,7 +367,7 @@ impl Parser {
             }
         }
         self.skip_semi();
-        Ok(Modport { name: name, items })
+        Ok(Modport { name, items })
     }
 
     pub(crate) fn parse_port_list(&mut self, ports: &mut Vec<Port>) -> Result<(), SimError> {

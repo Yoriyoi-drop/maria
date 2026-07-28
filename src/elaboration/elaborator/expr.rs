@@ -918,7 +918,7 @@ impl Elaborator {
 
     fn substitute_ident_in_expr(expr: Expr, target: &str, replacement: Expr) -> Expr {
         match expr {
-            Expr::Ident { name: ref name, .. } if name == target => replacement,
+            Expr::Ident { ref name, .. } if name == target => replacement,
             Expr::Ident { .. } => expr,
             Expr::Value(_) | Expr::String(_) | Expr::Null | Expr::FillLit(_) => expr,
             Expr::BinaryOp { op, lhs, rhs } => Expr::BinaryOp {
@@ -1181,7 +1181,7 @@ impl Elaborator {
             signals,
             &self.param_vals,
             &self.package_symbols,
-        )?;
+        ).map_err(|e| self.elab_diag(crate::diagnostics::diagnostic::DiagCode::WidthMismatch, format!("width computation failed for port '{}': {}", hint_name, e)))?;
         let width = if width_val > 0 { width_val } else { 1 };
         // Create a unique implicit signal name
         let sig_name = format!("__port_{}", hint_name.replace('.', "_"));

@@ -409,8 +409,8 @@ impl Parser {
                             self.expect(Token::RParen)?;
                             self.skip_semi();
                             return Ok(Some(SpecifyItem::PathDelay {
-                                src: src,
-                                dst: dst,
+                    src,
+                    dst,
                                 rise: Some(rise),
                                 fall,
                             }));
