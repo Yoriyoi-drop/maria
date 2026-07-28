@@ -97,6 +97,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_expr(&mut self, min_prec: usize) -> Result<Expr, SimError> {
+        self.debug_parse_trace("parse_expr");
         let mut lhs = self.parse_primary_expr()?;
 
         loop {
@@ -276,6 +277,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_primary_expr(&mut self) -> Result<Expr, SimError> {
+        self.debug_parse_trace("parse_primary_expr");
         self.push_depth()?;
         let result = self.parse_primary_expr_impl();
         self.pop_depth();
@@ -283,8 +285,9 @@ impl Parser {
     }
 
     fn parse_primary_expr_impl(&mut self) -> Result<Expr, SimError> {
+        self.debug_parse_trace("parse_primary_expr_impl");
         let tok = self.peek().clone();
-        match &tok {
+        match tok {
             Token::Dollar => {
                 self.advance();
                 let name_tok = self.peek().clone();
@@ -333,7 +336,7 @@ impl Parser {
                         self.expect(Token::RParen)?;
                         return Ok(Expr::FuncCall { name: Symbol::intern(&format!("{}::{}", name, item)), args });
                     }
-                    return Ok(Expr::ScopedIdent { package: *name, item });
+                    return Ok(Expr::ScopedIdent { package: name, item });
                 }
                 // Class#(Type)::method resolution
                 if self.peek() == &Token::Hash {
@@ -348,7 +351,7 @@ impl Parser {
                     self.expect(Token::RParen)?;
                     let type_str: Vec<String> = type_specs.iter().map(|dt| dt.to_string()).collect();
                     let suffix = type_str.join(",");
-                    let class_prefix = if suffix.is_empty() { *name } else { Symbol::intern(&format!("{}#{}", name, suffix)) };
+                    let class_prefix = if suffix.is_empty() { name } else { Symbol::intern(&format!("{}#{}", name, suffix)) };
                     if self.peek() == &Token::Scope {
                         self.advance();
                         let item = self.expect_ident()?;
@@ -380,7 +383,7 @@ impl Parser {
                     self.expect(Token::LParen)?;
                     let expr = self.parse_expr(0)?;
                     self.expect(Token::RParen)?;
-                    return Ok(Expr::Cast { dtype: *name, expr: Box::new(expr) });
+                    return Ok(Expr::Cast { dtype: name, expr: Box::new(expr) });
                 }
                 if self.peek() == &Token::LParen {
                     self.advance();
@@ -392,9 +395,9 @@ impl Parser {
                         }
                     }
                     self.expect(Token::RParen)?;
-                    Ok(Expr::FuncCall { name: *name, args })
+                    Ok(Expr::FuncCall { name, args })
                 } else {
-                    Ok(Expr::Ident { name: *name, line, col })
+                    Ok(Expr::Ident { name, line, col })
                 }
             }
             Token::Number { value, base, width, is_signed } => {
@@ -408,15 +411,15 @@ impl Parser {
                 }
                 let val = if let Some(base) = base {
                     match base {
-                        2 => Expr::Value(Value::Binary { bits: value.to_string(), width: *width, is_signed: *is_signed }),
-                        8 => Expr::Value(Value::Octal { bits: value.to_string(), width: *width, is_signed: *is_signed }),
+                        2 => Expr::Value(Value::Binary { bits: value.to_string(), width, is_signed }),
+                        8 => Expr::Value(Value::Octal { bits: value.to_string(), width, is_signed }),
                         10 => Expr::Value(Value::Decimal(value.as_str().parse::<i64>().unwrap_or(0))),
-                        16 => Expr::Value(Value::Hex { bits: value.to_string(), width: *width, is_signed: *is_signed }),
+                        16 => Expr::Value(Value::Hex { bits: value.to_string(), width, is_signed }),
                         _ => Expr::Value(Value::Decimal(value.as_str().parse::<i64>().unwrap_or(0))),
                     }
                 } else {
                     if let Ok(n) = value.as_str().parse::<i64>() { Expr::Value(Value::Decimal(n)) }
-                    else { Expr::Ident { name: *value, line: 0, col: 0 } }
+                    else { Expr::Ident { name: value, line: 0, col: 0 } }
                 };
                 Ok(val)
             }
@@ -447,8 +450,9 @@ impl Parser {
             Token::Null => { self.advance(); Ok(Expr::Null) }
             Token::Plus | Token::Minus | Token::Tilde | Token::Amp | Token::Pipe | Token::Caret
             | Token::TildeAmp | Token::TildePipe | Token::CaretTilde => {
+                let saved_tok = tok.clone();
                 self.advance();
-                let op = match &tok {
+                let op = match saved_tok {
                     Token::Plus => UnaryOp::Plus, Token::Minus => UnaryOp::Minus, Token::Tilde => UnaryOp::BitNot,
                     Token::Amp => UnaryOp::ReductionAnd, Token::Pipe => UnaryOp::ReductionOr,
                     Token::Caret => UnaryOp::ReductionXor, Token::TildeAmp => UnaryOp::ReductionNand,
@@ -492,7 +496,7 @@ impl Parser {
                 else { Ok(Expr::Concat(exprs)) }
             }
             Token::LParen => { self.advance(); let expr = self.parse_expr(0)?; self.expect(Token::RParen)?; Ok(Expr::Paren(Box::new(expr))) }
-            Token::FillLit(val) => { self.advance(); Ok(Expr::FillLit(*val)) }
+            Token::FillLit(val) => { self.advance(); Ok(Expr::FillLit(val)) }
             Token::Auto => { self.advance(); Ok(Expr::Ident { name: Symbol::intern("automatic"), line: 0, col: 0 }) }
             Token::String => { self.advance(); Ok(Expr::Ident { name: Symbol::intern("string"), line: 0, col: 0 }) }
             Token::Class | Token::EndClass => { self.advance(); Ok(Expr::Ident { name: Symbol::intern("class"), line: 0, col: 0 }) }
@@ -517,7 +521,7 @@ impl Parser {
             Token::Void | Token::Int | Token::Integer | Token::Logic | Token::Bit | Token::Byte
             | Token::Shortint | Token::Longint | Token::Time | Token::Signed | Token::Real | Token::RealTime => {
                 self.advance();
-                let type_name = match &tok {
+                let type_name = match tok {
                     Token::Void => "void", Token::Int => "int", Token::Integer => "integer",
                     Token::Logic => "logic", Token::Bit => "bit", Token::Byte => "byte",
                     Token::Shortint => "shortint", Token::Longint => "longint", Token::Time => "time",
@@ -530,7 +534,7 @@ impl Parser {
                     Ok(Expr::Cast { dtype: Symbol::intern(type_name), expr: Box::new(expr) })
                 } else { Ok(Expr::Ident { name: Symbol::intern(type_name), line: 0, col: 0 }) }
             }
-            _ => Err(self.err(format!("expected expression, found {}", tok))),
+            ref other => Err(self.err(format!("expected expression, found {:?}", other))),
         }
     }
 }

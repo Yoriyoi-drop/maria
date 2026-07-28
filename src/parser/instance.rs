@@ -12,6 +12,7 @@ use crate::parser::util::*;
 
 impl Parser {
     pub(crate) fn parse_module(&mut self) -> Result<Module, SimError> {
+        self.debug_parse_trace("parse_module");
         self.advance(); // consume 'module', 'interface', or 'program'
         self.typedef_names.clear();
 
@@ -70,7 +71,9 @@ impl Parser {
         }
         self.skip_semi();
 
+        let mut _heartbeat = 0;
         loop {
+            _heartbeat += 1; if _heartbeat % 5000 == 0 { eprintln!("DEBUG: parse_module '{}' iter={} pos={}/{}", name, _heartbeat, self.pos, self.tokens.len()); }
             match self.peek() {
                 Token::Endmodule | Token::EndInterface | Token::EndProgram | Token::Eof => break,
                 _ => {
@@ -131,6 +134,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_interface_fast(&mut self) -> Result<(), SimError> {
+        self.debug_parse_trace("parse_interface_fast");
         self.advance(); // consume 'interface'
         match self.peek() {
             Token::Ident(_) => {
@@ -184,6 +188,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_program_fast(&mut self) -> Result<(), SimError> {
+        self.debug_parse_trace("parse_program_fast");
         self.advance(); // consume 'program'
         if let Token::Ident(_) = self.peek() {
             self.advance();
@@ -237,6 +242,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_interface(&mut self) -> Result<Interface, SimError> {
+        self.debug_parse_trace("parse_interface");
         self.advance(); // consume 'interface'
         self.typedef_names.clear();
 
@@ -299,6 +305,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_modport(&mut self) -> Result<Modport, SimError> {
+        self.debug_parse_trace("parse_modport");
         self.advance(); // consume 'modport'
         let name = match self.peek() {
             Token::Ident(s) => {
@@ -371,6 +378,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_port_list(&mut self, ports: &mut Vec<Port>) -> Result<(), SimError> {
+        self.debug_parse_trace("parse_port_list");
         loop {
             if self.peek() == &Token::RParen || self.peek() == &Token::Eof {
                 break;
@@ -524,6 +532,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_instance(&mut self) -> Result<ModuleInstance, SimError> {
+        self.debug_parse_trace("parse_instance");
         let name_tok = self.peek().clone();
         let module_name = match &name_tok {
             Token::Ident(s) => {
@@ -673,6 +682,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_gate_primitive(&mut self) -> Result<GatePrimitive, SimError> {
+        self.debug_parse_trace("parse_gate_primitive");
         let gate_type = match self.peek() {
             Token::And => {
                 self.advance();

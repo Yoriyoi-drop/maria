@@ -14,6 +14,7 @@ use crate::parser::lexer::*;
 
 impl Parser {
     pub(crate) fn parse_package_decl(&mut self) -> Result<PackageDecl, SimError> {
+        self.debug_parse_trace("parse_package_decl");
         self.advance(); // consume 'package'
         let name = self.expect_ident()?;
         self.skip_semi();

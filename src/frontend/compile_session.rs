@@ -208,6 +208,7 @@ impl CompileSession {
                 };
 
                 let source_name = path_str.to_string();
+                eprintln!("DEBUG: parsing file {}", source_name);
                 let mut parser = Parser::new(tokens, &source_name);
                 let design = parser
                     .parse_design()

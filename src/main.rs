@@ -305,14 +305,18 @@ fn run(cli: Cli) -> Result<(), SimError> {
     }
 
     // Combine all sources (parallel preprocessing for many files)
+    eprintln!("DEBUG: combining sources...");
     let mut combined = String::new();
     let mut design_timescale = None;
 
     // Preprocess files in parallel using rayon
+    eprintln!("DEBUG: starting parallel preproc of {} files", sources.len());
     let pp_for_parallel = &base_pp;
     let pp_results: Vec<Result<(String, Option<(String, String)>), String>> = sources
         .par_iter()
-        .map(|path| {
+        .enumerate()
+        .map(|(idx, path)| {
+            eprintln!("DEBUG: preprocessing [{}/{}] {}", idx + 1, sources.len(), path);
             let mut pp = pp_for_parallel.clone();
             match pp.preprocess_file(path) {
                 Ok(processed) => {
@@ -323,6 +327,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
             }
         })
         .collect();
+    eprintln!("DEBUG: parallel preproc done");
 
     for (i, path) in sources.iter().enumerate() {
         let (processed, ts) = match &pp_results[i] {
@@ -338,8 +343,11 @@ fn run(cli: Cli) -> Result<(), SimError> {
         combined.push_str(&processed);
         combined.push('\n');
     }
+    eprintln!("DEBUG: combined size = {} bytes, {} lines", combined.len(), combined.len());
     let mut lexer = Lexer::new(&combined);
     let mut tokens = Vec::new();
+    eprintln!("DEBUG: starting lexer...");
+    let mut token_count = 0usize;
     loop {
         let (tok, line, col) = lexer.next_token();
         if cli.print_tokens {
@@ -349,13 +357,20 @@ fn run(cli: Cli) -> Result<(), SimError> {
             break;
         }
         tokens.push((tok, line, col));
+        token_count += 1;
+        if token_count % 100_000 == 0 {
+            eprintln!("DEBUG: lexer progress {} tokens", token_count);
+        }
     }
+    eprintln!("DEBUG: lexer done, {} tokens", tokens.len());
 
     if tokens.is_empty() {
         return Err(SimError::new(None, "no tokens found (empty source?)"));
     }
 
+    eprintln!("DEBUG: starting parser...");
     let first_source = sources.first().map(|s| s.as_str()).unwrap_or("<unknown>");
+    eprintln!("DEBUG: parsing combined source from {} file(s), first={}", sources.len(), first_source);
     let file_line_map = lexer.file_line_map.clone();
     let mut parser = Parser::new(tokens, first_source)
         .with_source_lines(&combined)
@@ -372,6 +387,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
             return Err(e);
         }
     };
+    eprintln!("DEBUG: parser done, {} modules, {} errors", design.modules.len(), parser.errors.len());
     if !parser.errors.is_empty() {
         let mut emitter = maria::diagnostics::TerminalEmitter::new();
         for diag in &parser.errors {
@@ -475,6 +491,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
         }
     }
 
+    eprintln!("DEBUG: library scanning... {} modules, {} classes, {} packages", design.modules.len(), design.classes.len(), design.packages.len());
     if design.modules.is_empty() {
         // If there are packages, interfaces, or other items but no modules, it's not fatal
         if !design.packages.is_empty()
@@ -493,9 +510,12 @@ fn run(cli: Cli) -> Result<(), SimError> {
     if !cli.quiet {
         println!("Compiling design ({} file sources)...", sources.len());
     }
+    eprintln!("DEBUG: starting elaborator...");
     let source_lines: Vec<String> = combined.lines().map(|s| s.to_string()).collect();
+    eprintln!("DEBUG: source_lines collected: {} lines", source_lines.len());
     let mut elaborator = Elaborator::with_source(design, source_lines, first_source.to_string());
     let mut ir_design = elaborator.elaborate(top_name)?;
+    eprintln!("DEBUG: elaborator done");
 
     // Flush elaboration-time diagnostics (warnings like WR0102)
     emit_diags(&elaborator.flush_diagnostics());

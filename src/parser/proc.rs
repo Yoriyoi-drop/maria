@@ -12,6 +12,7 @@ use crate::parser::lexer::*;
 
 impl Parser {
     pub(crate) fn parse_always(&mut self) -> Result<AlwaysBlock, SimError> {
+        self.debug_parse_trace("parse_always");
         let kind = match self.peek() {
             Token::Always => {
                 self.advance();
@@ -49,18 +50,21 @@ impl Parser {
     }
 
     pub(crate) fn parse_initial(&mut self) -> Result<InitialBlock, SimError> {
+        self.debug_parse_trace("parse_initial");
         self.advance();
         let stmts = self.parse_stmt_block()?;
         Ok(InitialBlock { stmts })
     }
 
     pub(crate) fn parse_final(&mut self) -> Result<InitialBlock, SimError> {
+        self.debug_parse_trace("parse_final");
         self.advance();
         let stmts = self.parse_stmt_block()?;
         Ok(InitialBlock { stmts })
     }
 
     pub(crate) fn parse_sensitivity_events(&mut self) -> Result<Vec<SensitivityEvent>, SimError> {
+        self.debug_parse_trace("parse_sensitivity_events");
         let mut events = Vec::new();
         loop {
             if self.peek() == &Token::RParen {
@@ -91,6 +95,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_sensitivity_list(&mut self) -> Result<SensitivityList, SimError> {
+        self.debug_parse_trace("parse_sensitivity_list");
         // Handle @* or @(*)
         if self.peek() == &Token::Star {
             self.advance();
@@ -116,6 +121,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_assign(&mut self) -> Result<ContinuousAssign, SimError> {
+        self.debug_parse_trace("parse_assign");
         self.advance();
 
         let delay = if self.peek() == &Token::Hash {
@@ -133,6 +139,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_delay(&mut self) -> Result<Delay, SimError> {
+        self.debug_parse_trace("parse_delay");
         self.advance();
         self.expect(Token::LParen)?;
         let rise = Some(self.parse_expr(0)?);
@@ -157,6 +164,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_function(&mut self, virtual_flag: bool) -> Result<FunctionDecl, SimError> {
+        self.debug_parse_trace("parse_function");
         self.advance(); // consume 'function'
                         // Capture optional 'static' qualifier
         let is_static = if matches!(self.peek(), Token::Static) {
@@ -305,12 +313,17 @@ impl Parser {
                         });
                     }
                     self.advance();
-                } else if let Token::Ident(name) = self.peek() {                        if self.type_param_names.contains(name) {
+                } else if let Token::Ident(name) = self.peek() {
+                    if self.type_param_names.contains(name) {
                         self.advance();
                     } else if matches!(self.peek_ahead(1), Token::Ident(_) | Token::LBrack) {
                         // User-defined type name followed by port name or range
                         self.advance();
                     }
+                } else {
+                    // Unknown token in port list — advance to avoid infinite loop
+                    self.advance();
+                    continue;
                 }
                 // Skip range like [7:0]
                 let range = if self.peek() == &Token::LBrack {
@@ -500,6 +513,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_task(&mut self, virtual_flag: bool) -> Result<TaskDecl, SimError> {
+        self.debug_parse_trace("parse_task");
         self.advance(); // consume 'task'
                         // Capture optional 'static' qualifier
         let is_static = if matches!(self.peek(), Token::Static) {
@@ -563,6 +577,9 @@ impl Parser {
                         });
                     }
                     self.advance();
+                } else if !matches!(self.peek(), Token::LBrack | Token::Ident(_) | Token::Comma) {
+                    self.advance();
+                    continue;
                 }
                 let range: Option<Range> = if self.peek() == &Token::LBrack {
                     if let Ok(Some(er)) = self.parse_range() {
@@ -745,6 +762,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_generate_block(&mut self) -> Result<GenerateBlock, SimError> {
+        self.debug_parse_trace("parse_generate_block");
         self.advance(); // consume 'generate'
         let mut items = Vec::new();
         loop {
@@ -765,6 +783,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_generate_item(&mut self) -> Result<GenerateItem, SimError> {
+        self.debug_parse_trace("parse_generate_item");
         match self.peek() {
             Token::If => {
                 self.advance();
@@ -898,13 +917,14 @@ impl Parser {
                 let item = self.parse_module_item()?;
                 match item {
                     Some(mi) => Ok(GenerateItem::Items(vec![mi])),
-                    None => self.parse_generate_item(),
+                    None => return Err(self.err("expected generate item")),
                 }
             }
         }
     }
 
     pub(crate) fn parse_generate_block_body(&mut self) -> Result<Vec<ModuleItem>, SimError> {
+        self.debug_parse_trace("parse_generate_block_body");
         if self.peek() == &Token::Begin {
             self.advance();
             // Skip optional begin label
@@ -932,7 +952,9 @@ impl Parser {
                 }
                 match self.parse_module_item()? {
                     Some(mi) => items.push(mi),
-                    None => {}
+                    None => {
+                        self.skip_until_semi_or_end()?;
+                    }
                 }
             }
             Ok(items)

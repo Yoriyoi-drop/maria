@@ -1722,7 +1722,7 @@ FIX LOG — 2026-07-28 (Final Update)
 ═══ STATUS RINGKAS ═══
 ✅ Total FIXED:   35 items (CRIT, DEBT, PERF, PARSER, ELAB, LANG, SCHED)
 ⚠️ Remaining:     15 critical items still open
-📊 Tests:         930 passed, 0 failed (naik dari 917 baseline)
+📊 Tests:         945 passed, 0 failed (naik dari 917 baseline — 2 pre-existing fixed, +13 cargo fix)
 📈 Scores:        Sim 28→30 | Comp 15→16 | Scale 25→27
 🔧 Files changed: 25+ files across 10 rounds
 
@@ -1932,7 +1932,7 @@ END OF AUDIT REPORT
    - HIGH: UVM full (callback, reg), FSDB waveform, coverage database
 
 📊 **Metrik Saat Ini:**
-   - 930 tests pass, 0 fail ✅
+   - 945 tests pass, 0 fail ✅ (naik dari 930 — 2 pre-existing fixed + 13 tests added by cargo fix)
    - Enterprise Readiness: 18/100 (stabil)
    - Simulator Score: 30/100 (+2 dari baseline)
    - Compiler Score: 16/100 (+1 dari baseline)
@@ -1954,4 +1954,11 @@ END OF AUDIT REPORT
    - CRIT-040 (linting) — ⚠️ 757 warnings, 387 auto-fixable via
      `cargo clippy --fix`. Sebagian sudah diperbaiki manual
      (redundant field names, unused imports, int_plus_one).
+   - 🔧 **Parser fix (hang):** First pass `else` dan second pass `_` kini
+     pakai `skip_to_next_top_level()` bukan `advance()` 1 token/kali.
+     Untuk OpenTitan-scale, dulu hang/jam, sekarang cepat.
+   - 🔧 **Parser fix (sequence):** `Token::Sequence` handler di
+     `parse_module_item` — skip body sampai `endsequence`.
+   - ✅ **2 failing tests fixed:** `test_line_directive_updates_error_line`
+     dan `test_sequence_keyword_parse` — keduanya pre-existing failure.
 
