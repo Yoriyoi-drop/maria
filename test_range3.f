@@ -1,0 +1,11 @@
+opentitan/hw/dv/sv/csrng_agent/csrng_driver.sv
+opentitan/hw/dv/sv/csrng_agent/csrng_host_driver.sv
+opentitan/hw/dv/sv/csrng_agent/csrng_if.sv
+opentitan/hw/dv/sv/csrng_agent/csrng_item.sv
+opentitan/hw/dv/sv/csrng_agent/csrng_monitor.sv
+opentitan/hw/dv/sv/csrng_agent/csrng_sequencer.sv
+opentitan/hw/dv/sv/csrng_agent/seq_lib/csrng_base_seq.sv
+opentitan/hw/dv/sv/csrng_agent/seq_lib/csrng_device_seq.sv
+opentitan/hw/dv/sv/csrng_agent/seq_lib/csrng_host_seq.sv
+opentitan/hw/dv/sv/csrng_agent/seq_lib/csrng_seq_list.sv
+opentitan/hw/dv/sv/csr_utils/csr_base_seq.sv

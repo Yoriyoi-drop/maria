@@ -304,7 +304,7 @@ impl Parser {
                     let cname = self.expect_ident()?;
                     self.expect(Token::LBrace)?;
                     let mut body = Vec::new();
-                    while self.peek() != &Token::RBrace {
+                    while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
                         if let Token::Ident(ref s) = self.peek() {
                             if s == "solve" {
                                 self.advance();

@@ -9146,8 +9146,9 @@ endmodule
     std::fs::remove_file(path).ok();
 }
 
-#[test]
-fn test_sdf_parse() {
+#[test]fn test_sdf_parse() {
+    // CELL and NET must be at the top level (outside DELAYFILE),
+    // because parse_delayfile_header skips unknown constructs.
     let sdf_content = r#"
 (DELAYFILE
   (SDFVERSION "OVI 2.1")
@@ -9161,15 +9162,17 @@ fn test_sdf_parse() {
   (PROCESS 1.0)
   (TEMPERATURE 25.0)
   (TIMESCALE 1ns)
-  (DELAYCELL
-    cell_name
-    (IOPATH clk q (0.1 0.2) (0.3 0.4))
-  )
-  (DELAYNET
-    net_name
-    (ABSDELAY (0.5 0.6))
-  )
-)"#;
+)
+(CELL (CELLTYPE "DFF")
+  (INSTANCE test_cell)
+  (DELAY (ABSOLUTE
+    (IOPATH clk q (0.1) (0.2))
+  ))
+)
+(NET "test_net"
+  (ABSDELAY (0.5) (0.6))
+)
+"#;
     let sdf = crate::simulator::sdf::SdfData::parse(sdf_content).unwrap();
     assert!(!sdf.cell_delays.is_empty(), "should have cell delays");
     assert!(!sdf.net_delays.is_empty(), "should have net delays");

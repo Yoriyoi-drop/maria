@@ -69,17 +69,17 @@ impl Parser {
         }
         self.skip_semi();
 
-        let mut _last_pos = self.pos;
+        let mut _last_pos = self.pos.get();
         let mut _stuck = 0u32;
         let _mod_start = std::time::Instant::now();
         let mut _mod_tokens = 0u64;
         loop {
             // Progress tracking
             if _mod_tokens > 0 && _mod_tokens % 1000 == 0 {
-                eprintln!("[DBG-MODULE-BODY] {} items parsed, token {}/{}, elapsed {:?}", _mod_tokens, self.pos, self.tokens.len(), _mod_start.elapsed());
+                eprintln!("[DBG-MODULE-BODY] {} items parsed, token {}/{}, elapsed {:?}", _mod_tokens, self.pos.get(), self.tokens.len(), _mod_start.elapsed());
             }
             // Stuck detection: if pos hasn't changed for too many iterations, abort
-            if self.pos == _last_pos {
+            if self.pos.get() == _last_pos {
                 _stuck += 1;
                 if _stuck > 1_000_000 {
                     let line = self.peek_line();
@@ -91,12 +91,12 @@ impl Parser {
                 }
             } else {
                 _stuck = 0;
-                _last_pos = self.pos;
+                _last_pos = self.pos.get();
             }
             match self.peek() {
                 Token::Endmodule | Token::EndInterface | Token::EndProgram | Token::Eof => break,
                 _ => {
-                    let before = self.pos;
+                    let before = self.pos.get();
                     let result = self.parse_module_item();
                     match result {
                         Ok(Some(item)) => {
@@ -113,7 +113,7 @@ impl Parser {
                         Ok(None) => {
                             _mod_tokens += 1;
                             // If position didn't advance, skip the token to avoid infinite loop
-                            if self.pos == before {
+                            if self.pos.get() == before {
                                 self.advance();
                             }
                         }
@@ -185,7 +185,7 @@ impl Parser {
                 }
                 Token::Class => {
                     // Collect class name from inside module
-                    let start = self.pos;
+                    let start = self.pos.get();
                     self.advance(); // consume 'class'
                     if self.peek() == &Token::Hash {
                         self.advance();
@@ -196,7 +196,7 @@ impl Parser {
                     if let Token::Ident(name) = self.peek() {
                         self.class_names.insert(*name);
                     }
-                    self.pos = start;
+                    self.pos.set(start);
                     // Skip class body
                     // Re-use existing skip_class_body
                     self.skip_class_body();
@@ -357,11 +357,11 @@ impl Parser {
         let params = Vec::new();
         let mut decls = Vec::new();
         let mut modports = Vec::new();
-        let mut _last_pos = self.pos;
+        let mut _last_pos = self.pos.get();
         let mut _stuck = 0u32;
 
         loop {
-            if self.pos == _last_pos {
+            if self.pos.get() == _last_pos {
                 _stuck += 1;
                 if _stuck > 1_000_000 {
                     let line = self.peek_line();
@@ -373,7 +373,7 @@ impl Parser {
                 }
             } else {
                 _stuck = 0;
-                _last_pos = self.pos;
+                _last_pos = self.pos.get();
             }
             match self.peek() {
                 Token::EndInterface | Token::Eof => {
@@ -409,7 +409,7 @@ impl Parser {
                         self.skip_attribute();
                     }
                     _ => {
-                        let before = self.pos;
+                        let before = self.pos.get();
                         match self.parse_decl() {
                             Ok(decl) => decls.push(decl),
                             Err(_) => {
@@ -417,7 +417,7 @@ impl Parser {
                                 let _ = self.skip_until_semi_or_end();
                             }
                         }
-                        if self.pos == before {
+                        if self.pos.get() == before {
                             self.advance();
                         }
                     }
@@ -864,7 +864,7 @@ impl Parser {
         let mut drive_strength = None;
         if self.peek() == &Token::LParen && matches!(self.peek_ahead(1), Token::Ident(_)) {
             // Check if this looks like drive strength, not port list
-            let saved = self.pos;
+            let saved = self.pos.get();
             self.advance(); // consume (
             if let Token::Ident(s1) = self.peek().clone() {
                 if is_strength_keyword(s1.as_str()) {
@@ -884,7 +884,7 @@ impl Parser {
                 }
             }
             if drive_strength.is_none() {
-                self.pos = saved; // Not drive strength, restore position
+                self.pos.set(saved); // Not drive strength, restore position
             }
         }
 

@@ -185,7 +185,7 @@ impl Parser {
         // Check for $setup, $hold, $setuphold system function calls
         if self.peek() == &Token::Dollar {
             // Read the system function name
-            let saved = self.pos;
+            let saved = self.pos.get();
             self.advance(); // consume $
             if let Token::Ident(fname) = self.peek().clone() {
                 self.advance();
@@ -372,7 +372,7 @@ impl Parser {
                 }
             }
             // Not recognized, reset position
-            self.pos = saved;
+            self.pos.set(saved);
         }
 
         // specparam name = value;
@@ -387,7 +387,7 @@ impl Parser {
 
         // Simple path delay: (src => dst) = (rise, fall);
         if self.peek() == &Token::LParen {
-            let saved = self.pos;
+            let saved = self.pos.get();
             self.advance();
             if let Token::Ident(src) = self.peek().clone() {
                 self.advance();
@@ -418,7 +418,7 @@ impl Parser {
                     }
                 }
             }
-            self.pos = saved;
+            self.pos.set(saved);
         }
 
         // Skip empty lines or unrecognized items

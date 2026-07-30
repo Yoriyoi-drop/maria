@@ -209,9 +209,9 @@ pub enum SignalKind {
 pub struct IrInstance {
     pub module_name: Symbol,
     pub instance_name: Symbol,
-    pub port_map: HashMap<Symbol, SignalId>,
-    pub param_map: HashMap<Symbol, i64>,
-    pub type_param_map: HashMap<Symbol, usize>,
+    pub port_map: std::sync::Arc<std::collections::HashMap<Symbol, SignalId>>,
+    pub param_map: std::sync::Arc<std::collections::HashMap<Symbol, i64>>,
+    pub type_param_map: std::sync::Arc<std::collections::HashMap<Symbol, usize>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

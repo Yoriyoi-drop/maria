@@ -168,7 +168,7 @@ impl DesignPartitioner {
         // Detect cross-partition signals by analyzing instance port maps
         for inst in instances {
             let src_part = instance_to_partition.get(&inst.instance_name).copied().unwrap_or(0);
-            for (port_name, sig_id) in &inst.port_map {
+            for (port_name, sig_id) in inst.port_map.iter() {
                 let dst_opt = signal_to_partition.get(sig_id).copied();
                 if let Some(dst_part) = dst_opt {
                     if src_part != dst_part {
@@ -406,28 +406,28 @@ mod tests {
                     IrInstance {
                         module_name: Symbol::intern("sub_a"),
                         instance_name: Symbol::intern("u_a"),
-                        port_map: {
+                        port_map: std::sync::Arc::new({
                             let mut m = HashMap::new();
                             m.insert(Symbol::intern("clk"), 0);
                             m.insert(Symbol::intern("data"), 2);
                             m.insert(Symbol::intern("out"), 3);
                             m
-                        },
-                        param_map: HashMap::new(),
-                        type_param_map: HashMap::new(),
+                        }),
+                        param_map: std::sync::Arc::new(HashMap::new()),
+                        type_param_map: std::sync::Arc::new(HashMap::new()),
                     },
                     IrInstance {
                         module_name: Symbol::intern("sub_b"),
                         instance_name: Symbol::intern("u_b"),
-                        port_map: {
+                        port_map: std::sync::Arc::new({
                             let mut m = HashMap::new();
                             m.insert(Symbol::intern("clk"), 0);
                             m.insert(Symbol::intern("data_in"), 3);
                             m.insert(Symbol::intern("out"), 2);
                             m
-                        },
-                        param_map: HashMap::new(),
-                        type_param_map: HashMap::new(),
+                        }),
+                        param_map: std::sync::Arc::new(HashMap::new()),
+                        type_param_map: std::sync::Arc::new(HashMap::new()),
                     },
                 ],
                 inouts: vec![],
@@ -482,9 +482,9 @@ mod tests {
             instances.push(IrInstance {
                 module_name: Symbol::intern(&format!("mod_{}", i)),
                 instance_name: Symbol::intern(&format!("u_{}", i)),
-                port_map: HashMap::new(),
-                param_map: HashMap::new(),
-                type_param_map: HashMap::new(),
+                port_map: std::sync::Arc::new(HashMap::new()),
+                param_map: std::sync::Arc::new(HashMap::new()),
+                type_param_map: std::sync::Arc::new(HashMap::new()),
             });
         }
 

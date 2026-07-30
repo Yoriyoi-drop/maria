@@ -529,7 +529,6 @@ fn parse_delayfile_header(tokens: &[String], mut pos: usize, sdf: &mut SdfData) 
 }
 
 /// Parse a CELL/DELAYCELL construct.
-/// NOTE: Outer depth ONLY decrements for `)` (see parse_delayfile_header).
 fn parse_cell(tokens: &[String], mut pos: usize) -> Result<(String, CellDelay, usize), String> {
     pos += 2; // skip (CELL or (DELAYCELL
     let mut name = "unknown".to_string();
@@ -666,7 +665,6 @@ fn parse_net(tokens: &[String], mut pos: usize) -> Result<(String, NetDelay, usi
 }
 
 /// Parse TIMINGCHECK construct.
-/// NOTE: Outer depth ONLY decrements for `)` (see parse_delayfile_header).
 fn parse_timing_checks(tokens: &[String], mut pos: usize) -> Result<(Vec<TimingCheck>, usize), String> {
     pos += 2; // skip (TIMINGCHECK
     let mut checks = Vec::new();
@@ -816,32 +814,41 @@ fn parse_simple_timing_check(
         if tokens[pos] == ")" { depth -= 1; }
         if depth == 0 { break; }
 
-        if tokens[pos] == "(" && pos + 3 < tokens.len() {
-            // Check for PORT or related keyword
-            let _keyword = &tokens[pos + 1];
-            // Extract value from the inner construct
-            let mut inner = 0;
-            let mut inner_pos = pos + 2;
-            while inner_pos < tokens.len() {
-                if tokens[inner_pos] == "(" { inner += 1; }
-                if tokens[inner_pos] == ")" { inner -= 1; }
-                inner_pos += 1;
-                if inner == 0 { break; }
+        // Only enter inner-loop extraction for known timing-check sub-keywords.
+        // Random `(` constructs like delay triples (1.0:1.5:2.0) must NOT enter this
+        // path — the inner loop's depth tracking breaks when `inner` goes negative.
+        if tokens[pos] == "(" && pos + 2 < tokens.len() {
+            let keyword = &tokens[pos + 1];
+            const KNOWN_SUBKEYWORDS: &[&str] = &[
+                "PORT", "DATA", "POSEDGE", "NEGEDGE", "EDGE", "COND",
+            ];
+            if KNOWN_SUBKEYWORDS.contains(&keyword.as_str()) && pos + 3 < tokens.len() {
+                // Extract value from the inner construct
+                let mut inner = 0;
+                let mut inner_pos = pos + 2;
+                while inner_pos < tokens.len() {
+                    if tokens[inner_pos] == "(" { inner += 1; }
+                    if tokens[inner_pos] == ")" { inner -= 1; }
+                    // Safety: prevent infinite loop if depth goes negative
+                    if inner < 0 { break; }
+                    inner_pos += 1;
+                    if inner == 0 { break; }
 
-                // The value is usually a quoted string inside
-                if tokens[inner_pos].starts_with('"') || tokens[inner_pos] == ")" {
-                    break;
+                    // The value is usually a quoted string inside
+                    if tokens[inner_pos].starts_with('"') || tokens[inner_pos] == ")" {
+                        break;
+                    }
+                    let trimmed = tokens[inner_pos].trim_matches('"');
+                    if signal.is_empty() {
+                        signal = trimmed.to_string();
+                    } else if ref_signal.is_empty() && trimmed.parse::<f64>().is_err() {
+                        ref_signal = trimmed.to_string();
+                    }
                 }
-                let trimmed = tokens[inner_pos].trim_matches('"');
-                if signal.is_empty() {
-                    signal = trimmed.to_string();
-                } else if ref_signal.is_empty() && trimmed.parse::<f64>().is_err() {
-                    ref_signal = trimmed.to_string();
-                }
+                // Skip to end of inner
+                pos = inner_pos;
+                continue;
             }
-            // Skip to end of inner
-            pos = inner_pos;
-            continue;
         }
 
         // Try to parse as delay value
@@ -1017,21 +1024,31 @@ mod tests {
 
     #[test]
     fn test_timing_checks_parse() {
+        // TIMINGCHECK must be at the top level (outside CELL),
+        // because parse_cell does not handle TIMINGCHECK.
+        // POSEDGE and COND constructs are safe now (parse_simple_timing_check
+        // only enters inner loop for known sub-keywords).
         let sdf_source = r#"
         (DELAYFILE (SDFVERSION "3.0"))
         (CELL (CELLTYPE "DFF")
             (INSTANCE u_dff)
-            (TIMINGCHECK
-                (SETUP (POSEDGE clk) (COND (reset == 1) (DATA d)) (1.0:1.5:2.0))
-                (HOLD (POSEDGE clk) (DATA d) (0.5:1.0:1.5))
-                (WIDTH (POSEDGE clk) (1.0:2.0:3.0))
-                (PERIOD (POSEDGE clk) (5.0:6.0:7.0))
-            )
+            (DELAY (ABSOLUTE (IOPATH clk q (1.0) (1.5))))
+        )
+        (TIMINGCHECK
+            (SETUP (POSEDGE clk) (COND (reset == 1) (DATA d)) (1.0:1.5:2.0))
+            (HOLD (POSEDGE clk) (DATA d) (0.5:1.0:1.5))
+            (WIDTH (POSEDGE clk) (1.0:2.0:3.0))
+            (PERIOD (POSEDGE clk) (5.0:6.0:7.0))
         )
         "#;
         let sdf = SdfData::parse(sdf_source).unwrap();
         assert!(!sdf.timing_checks.is_empty(), "timing checks should be parsed");
         assert!(sdf.timing_checks.len() >= 1, "should have at least 1 timing check");
+        // Also verify cell parsing still works alongside timing checks
+        assert!(
+            sdf.cell_delays.contains_key("u_dff"),
+            "cell 'u_dff' should still be present"
+        );
     }
 
     #[test]

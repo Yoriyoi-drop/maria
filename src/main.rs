@@ -133,8 +133,16 @@ fn run(cli: Cli) -> Result<(), SimError> {
             base_pp.define(def, "");
         }
     }
+    // ── Fast pipeline via CompileSession (skip legacy pipeline entirely) ──
+    // Auto-use fast pipeline when filelist is specified (legacy can't handle large file sets)
+    // Also skip expensive auto-incdir scanning for the fast path
+    if cli.fast || cli.filelist.is_some() {
+        return run_fast(cli, None);
+    }
+
     // Auto-detect include paths: consolidated single-pass scan
     // Walk up from each source dir's ancestors, recursively scan for SV files (depth ≤ 4)
+    // NOTE: This is expensive so only runs for the legacy pipeline, not the fast path.
     let mut seen_dirs = std::collections::HashSet::new();
     let mut src_dirs = std::collections::HashSet::new();
     for src in &sources {
@@ -143,7 +151,6 @@ fn run(cli: Cli) -> Result<(), SimError> {
             src_dirs.insert(canonical);
         }
     }
-    // Recursively scan subdirectories for SV files (max depth 4), add parent dirs to search paths
     fn collect_sv_dirs(
         dir: &std::path::PathBuf,
         base_pp: &mut Preprocessor,
@@ -189,12 +196,6 @@ fn run(cli: Cli) -> Result<(), SimError> {
             }
             anc = d.parent().map(|p| p.to_path_buf());
         }
-    }
-
-    // ── Fast pipeline via CompileSession (skip legacy pipeline entirely) ──
-    // Auto-use fast pipeline when filelist is specified (legacy can't handle large file sets)
-    if cli.fast || cli.filelist.is_some() {
-        return run_fast(cli, None);
     }
 
     // Combine all sources (parallel preprocessing for many files)

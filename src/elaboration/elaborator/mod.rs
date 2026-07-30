@@ -8,6 +8,29 @@ use crate::error::SimError;
 use crate::intern::Symbol;
 pub mod ext;
 pub mod flatten;
+
+/// Format a prefix + integer counter into a Symbol without heap allocation.
+/// Uses a stack buffer and writes the decimal number directly.
+fn format_sym(prefix: &[u8], n: usize) -> Symbol {
+    let mut buf = [0u8; 32];
+    let plen = prefix.len().min(buf.len() - 1);
+    buf[..plen].copy_from_slice(&prefix[..plen]);
+    let mut i = n;
+    let mut end = buf.len();
+    loop {
+        end -= 1;
+        buf[end] = b'0' + (i % 10) as u8;
+        i /= 10;
+        if i == 0 {
+            break;
+        }
+    }
+    // Shift digits to right after prefix
+    let dlen = buf.len() - end;
+    let total = plen + dlen;
+    buf.copy_within(end..end + dlen, plen);
+    Symbol::intern(unsafe { std::str::from_utf8_unchecked(&buf[..total]) })
+}
 pub mod always;
 pub mod stmt;
 pub mod expr;
@@ -189,9 +212,13 @@ impl Elaborator {
             }
         }
 
-        // Pre-pass: import package functions/tasks into modules before inlining
+        // Pre-pass: import package functions/tasks into modules + inject $unit declarations
         let pkg_symbols = &self.package_symbols;
+        let unit_funcs = &self.design.unit_funcs;
+        let unit_tasks = &self.design.unit_tasks;
+        let unit_imports = &self.design.unit_imports;
         for module in &mut self.design.modules {
+            // Collect module-level imports
             let imports: Vec<(Symbol, Symbol)> = module
                 .items
                 .iter()
@@ -207,16 +234,17 @@ impl Elaborator {
                     }
                 })
                 .collect();
-            // Also include $unit-level imports
+            // Merge with $unit-level imports
             let all_imports: Vec<(Symbol, Symbol)> = {
                 let mut imps = imports;
-                for (pkg, item) in &self.design.unit_imports {
+                for (pkg, item) in unit_imports {
                     if !imps.iter().any(|(p, i)| p == pkg && i == item) {
                         imps.push((*pkg, *item));
                     }
                 }
                 imps
             };
+            // Process package imports
             for (package, import_item) in &all_imports {
                 if let Some(pkg_items) = pkg_symbols.get(package) {
                     let names: Vec<&str> = if *import_item == Symbol::intern("*") {
@@ -246,17 +274,16 @@ impl Elaborator {
                                         }));
                                     }
                                 }
-                                _ => {}
-                            }
-                        }
+_ => {}
+            }
+        }
+        // Resolve type parameter widths from module's param declarations and overrides
+        // moved to elaborate_module_with_params_and_type
                     }
                 }
             }
-        }
-
-        // Inject $unit function/task declarations into all modules
-        for module in &mut self.design.modules {
-            for func in &self.design.unit_funcs {
+            // Inject $unit function/task declarations
+            for func in unit_funcs {
                 if !module
                     .items
                     .iter()
@@ -265,7 +292,7 @@ impl Elaborator {
                     module.items.push(ModuleItem::Func(func.clone()));
                 }
             }
-            for task in &self.design.unit_tasks {
+            for task in unit_tasks {
                 if !module
                     .items
                     .iter()
@@ -335,8 +362,9 @@ impl Elaborator {
         let top_sym = top_module.map(|s| Symbol::intern(s));
         {
             use std::collections::{HashSet, VecDeque};
-            let all_names: HashSet<Symbol> =
-                self.design.modules.iter().map(|m| m.name).collect();
+            let module_map: HashMap<Symbol, &Module> =
+                self.design.modules.iter().map(|m| (m.name, m)).collect();
+            let all_names: HashSet<Symbol> = module_map.keys().copied().collect();
             let mut reachable: HashSet<Symbol> = HashSet::new();
             let mut queue: VecDeque<Symbol> = VecDeque::new();
             if let Some(ref top) = top_sym {
@@ -349,7 +377,7 @@ impl Elaborator {
                 reachable.insert(first.name);
             }
             while let Some(name) = queue.pop_front() {
-                if let Some(module) = self.design.modules.iter().find(|m| m.name == name) {
+                if let Some(module) = module_map.get(&name) {
                     for item in &module.items {
                         if let ModuleItem::Instance(inst) = item {
                             if all_names.contains(&inst.module_name)
@@ -380,23 +408,25 @@ impl Elaborator {
         let module_names: Vec<Symbol> =
             self.design.modules.iter().map(|m| m.name).collect();
 
-        let modules_snapshot: Vec<Module> = self.design.modules.clone();
-
-        // Phase A: Compute structural checksums for all modules
+        // Phase A: Compute structural checksums from design.modules directly (no clone needed)
         let mut struct_sigs: HashMap<Symbol, u64> = HashMap::new();
-        for module in &modules_snapshot {
+        for module in &self.design.modules {
             let sig = self.compute_module_checksum(module);
             struct_sigs.insert(module.name, sig);
         }
 
-        // Phase B: Compute topological order (leaves/children before parents)
-        let topo_order = self.compute_topo_order(&modules_snapshot, &module_names);
+        // Phase B: Compute topological order from design.modules directly
+        let topo_order = self.compute_topo_order(&self.design.modules, &module_names);
 
-        // Phase C: Compute dependency-aware signatures and elaborate/cache
+        // Phase C: Clone modules for elaboration (avoids borrow conflict with &mut self)
+        let modules_snapshot: Vec<Module> = self.design.modules.clone();
+        let snapshot_map: HashMap<Symbol, &Module> =
+            modules_snapshot.iter().map(|m| (m.name, m)).collect();
+
         let mut dep_sigs: HashMap<Symbol, u64> = HashMap::new();
 
         for &mod_name in &topo_order {
-            let module = modules_snapshot.iter().find(|m| m.name == mod_name)
+            let module = snapshot_map.get(&mod_name)
                 .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound,
                     format!("module '{}' not found in snapshot", mod_name)))?;
 
@@ -822,19 +852,45 @@ impl Elaborator {
     /// ports, params, decls, always/initial/assign bodies, function bodies, etc.
     /// Dependency instance names are also included for topological signature combining.
     fn compute_module_checksum(&self, module: &Module) -> u64 {
-        use crate::cache::checksum::{combine_checksum, compute_str_checksum};
+        use crate::cache::checksum::{combine_checksum, compute_str_checksum, compute_checksum};
 
-        // Hash the Debug representation — catches ALL AST content changes
-        let mut h = compute_str_checksum(&format!("{:?}", module));
-
-        // Also explicitly hash instance module names for dependency edge tracking
-        // (Debug formatting already includes these, but this ensures clarity)
+        // Hash structural fields instead of Debug-formatting the entire AST
+        let mut h = compute_str_checksum(module.name.as_str());
+        h = combine_checksum(h, compute_checksum(&(module.ports.len() as u64).to_le_bytes()));
+        for port in &module.ports {
+            h = combine_checksum(h, compute_str_checksum(port.name.as_str()));
+            h = combine_checksum(h, compute_checksum(&[(port.direction.clone() as u8)]));
+        }
+        for param in &module.params {
+            h = combine_checksum(h, compute_str_checksum(param.name.as_str()));
+        }
         for item in &module.items {
-            if let ModuleItem::Instance(inst) = item {
-                h = combine_checksum(h, compute_str_checksum(inst.module_name.as_str()));
+            match item {
+                ModuleItem::Instance(inst) => {
+                    h = combine_checksum(h, compute_str_checksum(inst.module_name.as_str()));
+                    h = combine_checksum(h, compute_checksum(&(inst.port_conns.len() as u64).to_le_bytes()));
+                }
+                ModuleItem::Param(p) => {
+                    h = combine_checksum(h, compute_str_checksum(p.name.as_str()));
+                }
+                ModuleItem::Decl(d) => {
+                    for v in &d.names {
+                        h = combine_checksum(h, compute_str_checksum(v.name.as_str()));
+                    }
+                }
+                ModuleItem::Func(f) => {
+                    h = combine_checksum(h, compute_str_checksum(f.name.as_str()));
+                }
+                ModuleItem::Generate(g) => {
+                    h = combine_checksum(h, compute_checksum(&(g.items.len() as u64).to_le_bytes()));
+                }
+                ModuleItem::Import { package, item } => {
+                    h = combine_checksum(h, compute_str_checksum(package.as_str()));
+                    h = combine_checksum(h, compute_str_checksum(item.as_str()));
+                }
+                _ => {}
             }
         }
-
         h
     }
 
@@ -1083,6 +1139,8 @@ impl Elaborator {
         type_param_overrides: &HashMap<Symbol, usize>,
     ) -> Result<IrModule, SimError> {
         let mut effective_params = param_vals.clone();
+        let module_idx: HashMap<Symbol, usize> =
+            self.design.modules.iter().enumerate().map(|(i, m)| (m.name, i)).collect();
 
         // Process $unit parameters (top-level param declarations)
         for param in &self.design.unit_params {
@@ -1120,94 +1178,58 @@ impl Elaborator {
             }
         }
 
-        // Process package imports: add package parameters to effective_params
+        // Process package imports: add package params + typedefs, collect in-module typedefs
         for item in &module.items {
-            if let ModuleItem::Import {
-                package,
-                item: import_item,
-            } = item
-            {
-                if let Some(pkg_items) = self.package_symbols.get(package) {
-                    let names: Vec<&str> = if import_item.as_str() == "*" {
-                        pkg_items.keys().map(|s| s.as_str()).collect()
-                    } else {
-                        vec![import_item.as_str()]
-                    };
-                    for name in names {
-                        if let Some(pkg_item) = pkg_items.get(name) {
-                            if let PackageItem::Param(p) = pkg_item {
-                                if !effective_params.contains_key(&p.name) {
-                                    if let Some(expr) = &p.default {
-                                        if let Ok(val) =
-                                            const_eval_with_params(expr, &effective_params)
-                                        {
-                                            effective_params.insert(p.name.clone(), val);
+            match item {
+                ModuleItem::Import {
+                    package,
+                    item: import_item,
+                } => {
+                    if let Some(pkg_items) = self.package_symbols.get(package) {
+                        let names: Vec<&str> = if import_item.as_str() == "*" {
+                            pkg_items.keys().map(|s| s.as_str()).collect()
+                        } else {
+                            vec![import_item.as_str()]
+                        };
+                        let mut struct_imports: Vec<(Symbol, DataType)> = Vec::new();
+                        for name in names {
+                            if let Some(pkg_item) = pkg_items.get(name) {
+                                match pkg_item {
+                                    PackageItem::Param(p) => {
+                                        if !effective_params.contains_key(&p.name) {
+                                            if let Some(expr) = &p.default {
+                                                if let Ok(val) = const_eval_with_params(expr, &effective_params) {
+                                                    effective_params.insert(p.name.clone(), val);
+                                                }
+                                            }
                                         }
                                     }
+                                    PackageItem::Typedef(td) => {
+                                        if !self.typedef_map.contains_key(&td.name) {
+                                            let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
+                                            self.typedef_map.insert(td.name, width);
+                                        }
+                                        if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. }) {
+                                            struct_imports.push((td.name, td.dtype.clone()));
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
-                    }
-                }
-                // Process module-level imports for typedefs
-                if let Some(pkg_items) = self.package_symbols.get(package) {
-                    let names: Vec<&str> = if import_item.as_str() == "*" {
-                        pkg_items.keys().map(|s| s.as_str()).collect()
-                    } else {
-                        vec![import_item.as_str()]
-                    };
-                    let mut struct_imports: Vec<(Symbol, DataType)> = Vec::new();
-                    for name in names {
-                        if let Some(pkg_item) = pkg_items.get(name) {
-                            if let PackageItem::Typedef(td) = pkg_item {
-                                if !self.typedef_map.contains_key(&td.name) {
-                                    let width =
-                                        self.resolve_typedef_width(&td.dtype, td.range.as_ref());
-                                    self.typedef_map.insert(td.name, width);
-                                }
-                                if matches!(
-                                    &td.dtype,
-                                    DataType::StructType { .. } | DataType::UnionType { .. }
-                                ) {
-                                    struct_imports.push((td.name, td.dtype.clone()));
-                                }
-                            }
+                        for (name, dtype) in struct_imports {
+                            self.store_typedef_fields(name, &dtype);
                         }
                     }
-                    for (name, dtype) in struct_imports {
-                        self.store_typedef_fields(name, &dtype);
+                }
+                ModuleItem::Typedef(td) => {
+                    let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
+                    self.typedef_map.insert(td.name.clone(), width);
+                    if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. }) {
+                        self.store_typedef_fields(td.name, &td.dtype);
                     }
                 }
-            }
-        }
-        // Resolve type parameter widths from module's param declarations and overrides
-        let mut type_param_widths: HashMap<Symbol, usize> = HashMap::new();
-        for param in &module.params {
-            if param.is_type_param {
-                let width = if let Some(w) = type_param_overrides.get(&param.name) {
-                    *w
-                } else {
-                    match &param.default {
-                        Some(_) => 8,
-                        None => 1,
-                    }
-                };
-                type_param_widths.insert(param.name.clone(), width);
-            }
-        }
-
-        // Pre-pass: collect in-module typedefs before declaration processing
-        for item in &module.items {
-            if let ModuleItem::Typedef(td) = item {
-                let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
-                self.typedef_map.insert(td.name.clone(), width);
-                // Store struct/union field info for member access
-                if matches!(
-                    &td.dtype,
-                    DataType::StructType { .. } | DataType::UnionType { .. }
-                ) {
-                    self.store_typedef_fields(td.name, &td.dtype);
-                }
+                _ => {}
             }
         }
         // Pre-pass: process $unit typedefs (top-level typedefs outside any module)
@@ -1313,6 +1335,22 @@ impl Elaborator {
             let fields = Self::compute_struct_fields(dtype);
             if !fields.is_empty() {
                 self.typedef_field_map.entry(name.clone()).or_insert(fields);
+            }
+        }
+
+        // Resolve type parameter widths from module's param declarations and overrides
+        let mut type_param_widths: HashMap<Symbol, usize> = HashMap::new();
+        for param in &module.params {
+            if param.is_type_param {
+                let width = if let Some(w) = type_param_overrides.get(&param.name) {
+                    *w
+                } else {
+                    match &param.default {
+                        Some(_) => 8,
+                        None => 1,
+                    }
+                };
+                type_param_widths.insert(param.name.clone(), width);
             }
         }
 
@@ -1763,6 +1801,7 @@ impl Elaborator {
         self.param_vals = effective_params.clone();
 
         // Process module items
+        let mut proc_counter = 0usize;
         for item in &expanded_items {
             match item {
                 ModuleItem::Always(always) => {
@@ -1776,10 +1815,9 @@ impl Elaborator {
                         &known_modules,
                         &signals,
                     )?;
-                    processes.push(Process::Initial {
-                        name: Symbol::intern(&format!("initial_{}", processes.len())),
-                        body,
-                    });
+                    let name = format_sym(b"initial_", proc_counter);
+                    proc_counter += 1;
+                    processes.push(Process::Initial { name, body });
                 }
                 ModuleItem::Final(final_block) => {
                     let body = self.elaborate_stmt_block(
@@ -1788,10 +1826,9 @@ impl Elaborator {
                         &known_modules,
                         &signals,
                     )?;
-                    processes.push(Process::Final {
-                        name: Symbol::intern(&format!("final_{}", processes.len())),
-                        body,
-                    });
+                    let name = format_sym(b"final_", proc_counter);
+                    proc_counter += 1;
+                    processes.push(Process::Final { name, body });
                 }
                 ModuleItem::Assign(assign) => {
                     // Convert to a combinational process
@@ -1804,10 +1841,11 @@ impl Elaborator {
                     }];
                     let sensitivity = collect_sensitivity(&assign.rhs, &signal_map);
                     processes.push(Process::Combinational {
-                        name: Symbol::intern(&format!("assign_{}", processes.len())),
+                        name: format_sym(b"assign_", proc_counter),
                         sensitivity,
                         body: stmts,
                     });
+                    proc_counter += 1;
                 }
                 ModuleItem::Typedef(td) => {
                     // Already collected in pre-pass; register for UserDefined resolution
@@ -1928,11 +1966,8 @@ impl Elaborator {
                         // Regular module instance
                         let mut port_map = HashMap::new();
                         // Look up target module to get port order for positional connections
-                        let target_module: Option<&Module> = self
-                            .design
-                            .modules
-                            .iter()
-                            .find(|m| m.name == inst.module_name);
+                        let target_module: Option<&Module> = module_idx.get(&inst.module_name)
+                            .and_then(|&i| self.design.modules.get(i));
                         for (i, conn) in inst.port_conns.iter().enumerate() {
                             match conn {
                                 PortConnection::Positional(expr) => {
@@ -1978,23 +2013,26 @@ impl Elaborator {
                             let msb = const_eval_with_params(&range.msb, &effective_params)?;
                             let lsb = const_eval_with_params(&range.lsb, &effective_params)?;
                             let (start, end) = if msb >= lsb { (lsb, msb) } else { (msb, lsb) };
+                            let pm = std::sync::Arc::new(port_map);
+                            let pam = std::sync::Arc::new(param_map);
+                            let tpam = std::sync::Arc::new(type_param_map);
                             for idx in start..=end {
                                 let inst_name = format!("{}[{}]", inst.instance_name, idx);
                                 sub_instances.push(IrInstance {
                                     module_name: inst.module_name.clone(),
                                     instance_name: Symbol::intern(&inst_name),
-                                    port_map: port_map.clone(),
-                                    param_map: param_map.clone(),
-                                    type_param_map: type_param_map.clone(),
+                                    port_map: pm.clone(),
+                                    param_map: pam.clone(),
+                                    type_param_map: tpam.clone(),
                                 });
                             }
                         } else {
                             sub_instances.push(IrInstance {
                                 module_name: inst.module_name.clone(),
                                 instance_name: inst.instance_name.clone(),
-                                port_map,
-                                param_map,
-                                type_param_map,
+                                port_map: std::sync::Arc::new(port_map),
+                                param_map: std::sync::Arc::new(param_map),
+                                type_param_map: std::sync::Arc::new(type_param_map),
                             });
                         }
                     }
@@ -2113,7 +2151,7 @@ impl Elaborator {
                     if decl.kind.is_net() {
                         let sensitivity = collect_sensitivity(init_expr, &signal_map);
                         processes.push(Process::Combinational {
-                            name: Symbol::intern(&format!("decl_assign_{}", processes.len())),
+                            name: format_sym(b"decl_assign_", proc_counter),
                             sensitivity,
                             body: vec![IrStmt::BlockingAssign {
                                 lhs,
@@ -2121,15 +2159,17 @@ impl Elaborator {
                                 delay: None,
                             }],
                         });
+                        proc_counter += 1;
                     } else {
                         processes.push(Process::Initial {
-                            name: Symbol::intern(&format!("decl_init_{}", processes.len())),
+                            name: format_sym(b"decl_init_", proc_counter),
                             body: vec![IrStmt::BlockingAssign {
                                 lhs,
                                 rhs,
                                 delay: None,
                             }],
                         });
+                        proc_counter += 1;
                     }
                 }
             }

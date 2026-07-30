@@ -82,12 +82,16 @@ impl Preprocessor {
         let mut output = String::new();
         let mut i = 0;
         let mut cond_stack: Vec<CondFrame> = vec![];
+        let mut emitting = true;
 
         while i < lines.len() {
             let mut raw_line = lines[i].to_string();
-            // Handle line continuation (trailing \)
-            while raw_line.trim_end().ends_with('\\') || raw_line.trim_end().ends_with("\\\r") {
-                if raw_line.trim_end().ends_with('\r') {
+            loop {
+                let te = raw_line.trim_end();
+                if !te.ends_with('\\') && !te.ends_with("\\\r") {
+                    break;
+                }
+                if te.ends_with('\r') {
                     raw_line.pop();
                 }
                 raw_line = raw_line.trim_end().to_string();
@@ -103,7 +107,7 @@ impl Preprocessor {
             let trimmed = raw_line.trim();
 
             if !trimmed.starts_with('`') {
-                if self.is_emitting(&cond_stack) {
+                if emitting {
                     let expanded = self.expand_inline_macros(&raw_line);
                     output.push_str(&expanded);
                     output.push('\n');
@@ -117,7 +121,7 @@ impl Preprocessor {
 
             match cmd {
                 "include" => {
-                    if self.is_emitting(&cond_stack) {
+                    if emitting {
                         if rest.trim().starts_with('`') {
                             // Not actually an include — misparsed due to nested backtick
                             i += 1;
@@ -184,12 +188,12 @@ impl Preprocessor {
                     }
                 }
                 "define" => {
-                    if self.is_emitting(&cond_stack) {
+                    if emitting {
                         self.parse_define(rest);
                     }
                 }
                 "undef" => {
-                    if self.is_emitting(&cond_stack) {
+                    if emitting {
                         let name = rest.trim();
                         if !name.is_empty() {
                             self.defines.remove(name);
@@ -202,6 +206,7 @@ impl Preprocessor {
                         taking_branch: defined,
                         branch_taken: defined,
                     });
+                    emitting = cond_stack.iter().all(|f| f.taking_branch);
                 }
                 "ifndef" => {
                     let defined = self.eval_ifdef_expr(rest.trim());
@@ -209,6 +214,7 @@ impl Preprocessor {
                         taking_branch: !defined,
                         branch_taken: !defined,
                     });
+                    emitting = cond_stack.iter().all(|f| f.taking_branch);
                 }
                 "elsif" => {
                     let frame = cond_stack.last_mut().ok_or_else(|| {
@@ -226,6 +232,7 @@ impl Preprocessor {
                             frame.branch_taken = true;
                         }
                     }
+                    emitting = cond_stack.iter().all(|f| f.taking_branch);
                 }
                 "else" => {
                     let frame = cond_stack.last_mut().ok_or_else(|| {
@@ -240,6 +247,7 @@ impl Preprocessor {
                         frame.taking_branch = true;
                         frame.branch_taken = true;
                     }
+                    emitting = cond_stack.iter().all(|f| f.taking_branch);
                 }
                 "endif" => {
                     cond_stack.pop().ok_or_else(|| {
@@ -248,9 +256,10 @@ impl Preprocessor {
                             i + 1
                         ))
                     })?;
+                    emitting = cond_stack.iter().all(|f| f.taking_branch);
                 }
                 "line" => {
-                    if self.is_emitting(&cond_stack) {
+                    if emitting {
                         output.push_str(&raw_line);
                         output.push('\n');
                     }
@@ -283,7 +292,7 @@ impl Preprocessor {
                 }
                 "FORMAL_KEEP" => {
                     // Yosys formal attribute — emit the rest as Verilog declaration
-                    if self.is_emitting(&cond_stack) {
+                    if emitting {
                         output.push_str(rest);
                         output.push('\n');
                     }
@@ -462,77 +471,84 @@ impl Preprocessor {
     /// to prevent infinite recursion from circular macro definitions.
     fn expand_inline_macros_depth(&self, line: &str, depth: usize) -> String {
         if depth >= MAX_MACRO_EXPANSION_DEPTH {
-            // Safety valve: stop expanding to prevent stack overflow
             return line.to_string();
         }
 
         let mut result = String::new();
-        let chars: Vec<char> = line.chars().collect();
+        let bytes = line.as_bytes();
         let mut i = 0;
-        while i < chars.len() {
-            // Skip macro expansion inside // comments
-            if chars[i] == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
-                // Push remaining chars from current position to end using chars iterator
-                while i < chars.len() {
-                    result.push(chars[i]);
-                    i += 1;
-                }
+        while i < bytes.len() {
+            if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                result.push_str(&line[i..]);
                 break;
             }
-            if chars[i] == '`'
-                && i + 1 < chars.len()
-                && (chars[i + 1].is_ascii_alphabetic() || chars[i + 1] == '_')
+            if bytes[i] == b'`'
+                && i + 1 < bytes.len()
+                && (bytes[i + 1].is_ascii_alphabetic() || bytes[i + 1] == b'_')
             {
                 i += 1;
                 let start = i;
-                while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                     i += 1;
                 }
-                let name: String = chars[start..i].iter().collect();
-                if let Some(mdef) = self.defines.get(&name) {
+                let name = &line[start..i];
+                if let Some(mdef) = self.defines.get(name) {
                     if mdef.params.is_empty() {
-                        // Recursively expand macro value (it may contain further `macro references)
                         let expanded = self.expand_inline_macros_depth(&mdef.value, depth + 1);
                         result.push_str(&expanded);
                     } else {
-                        let args = if i < chars.len() && chars[i] == '(' {
+                        let args = if i < bytes.len() && bytes[i] == b'(' {
                             let args_start = i + 1;
                             let mut paren_depth = 1;
                             let mut args_end = args_start;
-                            while args_end < chars.len() && paren_depth > 0 {
-                                if chars[args_end] == '(' {
+                            while args_end < bytes.len() && paren_depth > 0 {
+                                if bytes[args_end] == b'(' {
                                     paren_depth += 1;
-                                } else if chars[args_end] == ')' {
+                                } else if bytes[args_end] == b')' {
                                     paren_depth -= 1;
                                 }
                                 args_end += 1;
                             }
-                            let args_str: String = chars[args_start..args_end - 1].iter().collect();
+                            let args_str = &line[args_start..args_end - 1];
                             i = args_end;
-                            self.split_macro_args(&args_str, mdef.params.len())
+                            self.split_macro_args(args_str, mdef.params.len())
                         } else {
                             Vec::new()
                         };
-                        // First, expand any macros within each argument
                         let expanded_args: Vec<String> = args
                             .iter()
                             .map(|arg| self.expand_inline_macros_depth(arg, depth + 1))
                             .collect();
-                        // Substitute parameters with expanded arguments
-                        let mut expanded = mdef.value.clone();
-                        for (param, arg) in mdef.params.iter().zip(expanded_args.iter()) {
-                            expanded = expanded.replace(param, arg);
+                        // Substitute parameters with expanded arguments — single pass on bytes
+                        let mut expanded = String::with_capacity(mdef.value.len());
+                        let val_bytes = mdef.value.as_bytes();
+                        let mut pos = 0;
+                        while pos < val_bytes.len() {
+                            let mut matched = false;
+                            for (param, arg) in mdef.params.iter().zip(expanded_args.iter()) {
+                                if param.len() > 0 && pos + param.len() <= val_bytes.len()
+                                    && &val_bytes[pos..pos + param.len()] == param.as_bytes()
+                                {
+                                    expanded.push_str(arg);
+                                    pos += param.len();
+                                    matched = true;
+                                    break;
+                                }
+                            }
+                            if !matched {
+                                expanded.push(val_bytes[pos] as char);
+                                pos += 1;
+                            }
                         }
-                        // Recursively expand the result (it may contain further `macro references)
                         let expanded = self.expand_inline_macros_depth(&expanded, depth + 1);
                         result.push_str(&expanded);
                     }
                 } else {
                     result.push('`');
-                    result.push_str(&name);
+                    result.push_str(name);
                 }
             } else {
-                result.push(chars[i]);
+                result.push(bytes[i] as char);
                 i += 1;
             }
         }

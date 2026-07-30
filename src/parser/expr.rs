@@ -288,16 +288,34 @@ impl Parser {
             Token::Dollar => {
                 self.advance();
                 let name_tok = self.peek().clone();
-                let name = match &name_tok {
-                    Token::Ident(n) => { self.advance(); n.as_str().to_string() }
-                    Token::Time => { self.advance(); "time".to_string() }
-                    Token::Real => { self.advance(); "real".to_string() }
-                    Token::RealTime => { self.advance(); "realtime".to_string() }
-                    Token::Signed => { self.advance(); "signed".to_string() }
-                    Token::Unsigned => { self.advance(); "unsigned".to_string() }
+                let name_sym = match &name_tok {
+                    Token::Ident(n) => { self.advance(); *n }
+                    Token::Time => { self.advance(); Symbol::intern("time") }
+                    Token::Real => { self.advance(); Symbol::intern("real") }
+                    Token::RealTime => { self.advance(); Symbol::intern("realtime") }
+                    Token::Signed => { self.advance(); Symbol::intern("signed") }
+                    Token::Unsigned => { self.advance(); Symbol::intern("unsigned") }
                     _ => return Err(self.err("expected system function name")),
                 };
-                let full_name = format!("${}", name);
+                // SAFETY: Stack buffer 128 bytes cukup untuk semua system function SV
+                // ($display, $monitor, $urandom, dll.). Symbol.as_str() selalu valid UTF-8.
+                // Untuk nama >127 chars (sangat jarang), fallback ke format!()
+                let full_name = {
+                    let name_str = name_sym.as_str();
+                    if name_str.len() > 127 {
+                        // Nama panjang: pakai heap alloc (sangat jarang)
+                        Symbol::intern(&format!("${}", name_str))
+                    } else {
+                        let mut buf = [0u8; 128];
+                        buf[0] = b'$';
+                        let name_bytes = name_str.as_bytes();
+                        // Safe: name_bytes valid UTF-8, buf[1..] cukup untuk copy
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(name_bytes.as_ptr(), buf.as_mut_ptr().add(1), name_bytes.len());
+                            Symbol::intern(std::str::from_utf8_unchecked(&buf[..name_bytes.len() + 1]))
+                        }
+                    }
+                };
                 if self.peek() == &Token::LParen {
                     self.advance();
                     let mut args = Vec::new();
@@ -308,9 +326,9 @@ impl Parser {
                         }
                     }
                     self.expect(Token::RParen)?;
-                    Ok(Expr::FuncCall { name: Symbol::intern(&full_name), args })
+                    Ok(Expr::FuncCall { name: full_name, args })
                 } else {
-                    Ok(Expr::Ident { name: Symbol::intern(&full_name), line: 0, col: 0 })
+                    Ok(Expr::Ident { name: full_name, line: 0, col: 0 })
                 }
             }
             Token::Ident(name) => {
@@ -346,9 +364,13 @@ impl Parser {
                         if self.peek() == &Token::Comma { self.advance(); } else { break; }
                     }
                     self.expect(Token::RParen)?;
-                    let type_str: Vec<String> = type_specs.iter().map(|dt| dt.to_string()).collect();
-                    let suffix = type_str.join(",");
-                    let class_prefix = if suffix.is_empty() { name } else { Symbol::intern(&format!("{}#{}", name, suffix)) };
+                    let class_prefix = if type_specs.is_empty() {
+                        name
+                    } else {
+                        let type_strs: Vec<String> = type_specs.iter().map(|dt| dt.to_string()).collect();
+                        let suffix = type_strs.join(",");
+                        Symbol::intern(&format!("{}#{}", name, suffix))
+                    };
                     if self.peek() == &Token::Scope {
                         self.advance();
                         let item = self.expect_ident()?;
@@ -408,10 +430,10 @@ impl Parser {
                 }
                 let val = if let Some(base) = base {
                     match base {
-                        2 => Expr::Value(Value::Binary { bits: value.to_string(), width, is_signed }),
-                        8 => Expr::Value(Value::Octal { bits: value.to_string(), width, is_signed }),
+                        2 => Expr::Value(Value::Binary { bits: value.as_str().to_string(), width, is_signed }),
+                        8 => Expr::Value(Value::Octal { bits: value.as_str().to_string(), width, is_signed }),
                         10 => Expr::Value(Value::Decimal(value.as_str().parse::<i64>().unwrap_or(0))),
-                        16 => Expr::Value(Value::Hex { bits: value.to_string(), width, is_signed }),
+                        16 => Expr::Value(Value::Hex { bits: value.as_str().to_string(), width, is_signed }),
                         _ => Expr::Value(Value::Decimal(value.as_str().parse::<i64>().unwrap_or(0))),
                     }
                 } else {

@@ -691,9 +691,9 @@ impl Parser {
         let is_casex = self.peek() == &Token::CaseX;
         let is_casez = self.peek() == &Token::CaseZ;
         let is_case_inside = if self.peek() == &Token::Case {
-            let saved = self.pos; self.advance();
+            let saved = self.pos.get(); self.advance();
             let is_inside = self.peek() == &Token::Inside;
-            self.pos = saved;
+            self.pos.set(saved);
             is_inside
         } else { false };
         if is_case_inside { self.advance(); self.advance(); }

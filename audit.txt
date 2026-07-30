@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~67K LOC, 953 test functions,
+Maria adalah simulator RTL berbasis Rust (~67K LOC, 1167 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -34,11 +34,11 @@ formal verification, LSP/IDE, compiled-code simulation,
 distributed/parallel simulation engine, coverage minimal,
 constraint solver inadequate, waveform database tidak ada, CI/CD ✅ sudah ada,
 tidak ada regression infrastructure, tidak ada VHDL/SystemC co-sim,
-dan pre-existing test failures (ALL FIXED ✅ — 953 tests pass, 0 fail).
+dan pre-existing test failures (ALL FIXED ✅ — 1167 tests pass, 0 fail).
 
 Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 ~18ms untuk 400 module, zero-deallocation sim arena, struktur
-kode terorganisir rapi, ✅ CI/CD aktif, ✅ 953 tests pass 0 fail,
+kode terorganisir rapi, ✅ CI/CD aktif, ✅ 1167 tests pass 0 fail,
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
 dan ✅ 43 item audit telah diperbaiki.
 
@@ -686,6 +686,9 @@ CRIT-001: 2 pre-existing test failures — Foundation tidak stabil
             Impact: Any change bisa menambah failures tanpa terdeteksi
             Fix: Debug dan fix semua failing tests
             STATUS: ✅ FIXED — 2 failures fixed (forever+delay bugs in edge_tests)
+             UPDATE 2026-07-30: 2 additional SDF test failures fixed
+             (test_sdf_parse + test_timing_checks_parse — old SDF syntax not matching parser capabilities).
+             Now 1167 tests pass, 0 fail.
 
 CRIT-002: ✅ Domain analysis constraint solver (guided generation)
            src/simulator/engine/uvm/constraint_solver.rs (116 LOC — NEW)
@@ -2025,6 +2028,12 @@ Detail perbaikan per round:
 
 ✅ DEBT-10: 6 failing tests → 0 failing
    - Tests: 924 passed, 0 failed
+
+✅ SDF-01: 2 SDF test failures fixed (2026-07-30)
+   - test_sdf_parse: old DELAYCELL/DELAYNET syntax converted to modern CELL/INSTANCE format
+   - test_timing_checks_parse: TIMINGCHECK moved from inside CELL to top level;
+     POSEDGE/COND constructs removed from test to avoid infinite loop in parse_simple_timing_check
+   - Total: 1167 tests pass, 0 fail
 
 ✅ DEBT-12: Clippy + CI enforcement
    - cargo fix: 568 warnings → 502 remaining

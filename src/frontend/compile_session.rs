@@ -9,7 +9,7 @@
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::ast::Design;
 use std::sync::Arc;
@@ -99,23 +99,23 @@ pub struct SessionTiming {
     pub cached_files: usize,
     /// Files that were actually processed
     pub processed_files: usize,
-}
-
-fn extend_design(target: &mut Design, other: &Design) {
-    target.modules.extend(other.modules.clone());
-    target.packages.extend(other.packages.clone());
-    target.interfaces.extend(other.interfaces.clone());
-    target.classes.extend(other.classes.clone());
-    target.binds.extend(other.binds.clone());
-    target.clocking_blocks.extend(other.clocking_blocks.clone());
-    target.configs.extend(other.configs.clone());
-    target.udp_defs.extend(other.udp_defs.clone());
-    target.unit_imports.extend(other.unit_imports.clone());
-    target.unit_funcs.extend(other.unit_funcs.clone());
-    target.unit_tasks.extend(other.unit_tasks.clone());
-    target.unit_typedefs.extend(other.unit_typedefs.clone());
-    target.unit_params.extend(other.unit_params.clone());
-    target.unit_decls.extend(other.unit_decls.clone());
+}/// Merge `other` into `target` by MOVING elements (O(1) per field, no cloning).
+/// After calling, `other`'s Vec fields are empty (elements moved to `target`).
+fn extend_design_move(target: &mut Design, other: &mut Design) {
+    target.modules.append(&mut other.modules);
+    target.packages.append(&mut other.packages);
+    target.interfaces.append(&mut other.interfaces);
+    target.classes.append(&mut other.classes);
+    target.binds.append(&mut other.binds);
+    target.clocking_blocks.append(&mut other.clocking_blocks);
+    target.configs.append(&mut other.configs);
+    target.udp_defs.append(&mut other.udp_defs);
+    target.unit_imports.append(&mut other.unit_imports);
+    target.unit_funcs.append(&mut other.unit_funcs);
+    target.unit_tasks.append(&mut other.unit_tasks);
+    target.unit_typedefs.append(&mut other.unit_typedefs);
+    target.unit_params.append(&mut other.unit_params);
+    target.unit_decls.append(&mut other.unit_decls);
 }
 
 impl CompileSession {
@@ -178,14 +178,13 @@ impl CompileSession {
                 let mmap = MmapFile::open(path)
                     .map_err(SimError::from)?;
                 let cksum = mmap.checksum;
-                let content = mmap.as_str().to_string();
-
-                cache.register_file(path, content.as_bytes());
+                // Use mmap data directly without extra .to_string() copy
+                cache.register_file(path, mmap.as_bytes());
 
                 let mut pp = base_pp.clone();
                 let path_str = path.to_string_lossy();
                 let preprocessed = pp
-                    .preprocess(&content, None)
+                    .preprocess(mmap.as_str(), None)
                     .map_err(|e| SimError::new(None, format!("preprocessor {}: {}", path_str, e)))?;
 
                 let combined = format!("`line 1 \"{}\"\n{}\n", path_str, preprocessed);
@@ -215,11 +214,8 @@ impl CompileSession {
                     toks
                 };
 
-                let source_name = path_str.to_string();
-                let mut parser = Parser::new(tokens, &source_name);
-                let design = parser
-                    .parse_design()
-                    .map_err(|e| SimError::Parse(format!("{}: {}", path_str, e)))?;
+                let mut parser = Parser::new(tokens, &path_str);
+                let design = parser.parse_design()?;
 
                 Ok((path.clone(), design, cksum))
             })
@@ -254,7 +250,7 @@ impl CompileSession {
 
         // Separate file paths and designs
         let paths: Vec<PathBuf> = file_designs.iter().map(|(p, _)| p.clone()).collect();
-        let designs: Vec<Design> = file_designs.into_iter().map(|(_, d)| d).collect();
+        let mut designs: Vec<Design> = file_designs.into_iter().map(|(_, d)| d).collect();
 
         // Build module index + dependency graph + incremental tracking (with profiling)
         let index_timer_start = self.profiler.as_ref().map(|_| Instant::now());
@@ -265,10 +261,13 @@ impl CompileSession {
             }
         }
 
-        // Merge all designs (clone first to preserve designs[0] for cache update)
-        let mut merged: Design = designs[0].clone();
-        for d in &designs[1..] {
-            extend_design(&mut merged, d);
+        // Clone all designs for cache BEFORE merge (one-time O(n) cost)
+        let cache_designs: Vec<Design> = designs.iter().cloned().collect();
+
+        // Merge by moving (O(n), no cloning per iteration — eliminates O(n²) scaling)
+        let mut merged: Design = std::mem::take(&mut designs[0]);
+        for d in &mut designs[1..] {
+            extend_design_move(&mut merged, d);
         }
 
         // If lazy elaboration is enabled, store design for on-demand elaboration
@@ -316,12 +315,13 @@ impl CompileSession {
             self.merged_design = None;
         }
 
-        // Update cache for next incremental compile
+        // Update cache for next incremental compile (use cached clones — designs were consumed by merge)
+        // Store metadata fingerprints (not content checksums) for fast change detection
         self.prev_checksums.clear();
         self.prev_designs.clear();
-        for (path, design) in paths.iter().zip(designs.iter()) {
-            let cksum = file_checksums.get(path).copied().unwrap_or(0);
-            self.prev_checksums.insert(path.clone(), cksum);
+        for (path, design) in paths.iter().zip(cache_designs.iter()) {
+            let meta_fp = self.metadata_fingerprint(path);
+            self.prev_checksums.insert(path.clone(), meta_fp);
             self.prev_designs.insert(path.clone(), design.clone());
         }
 
@@ -349,22 +349,41 @@ impl CompileSession {
         self.compile()
     }
 
+    /// Compute a fast file identity hash using metadata (mtime + size).
+    /// Avoids reading file content, useful for quick change detection.
+    fn metadata_fingerprint(&self, path: &PathBuf) -> u64 {
+        std::fs::metadata(path)
+            .map(|m| {
+                let mtime = m
+                    .modified()
+                    .map(|t| {
+                        t.duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_nanos() as u64
+                    })
+                    .unwrap_or(0);
+                let len = m.len();
+                // Combine mtime and size into a simple hash
+                mtime.wrapping_mul(6364136223846793005).wrapping_add(len)
+            })
+            .unwrap_or(0)
+    }
+
     /// Detect which files have changed since the last compile.
+    /// Uses file metadata (mtime + size) instead of reading file content
+    /// to avoid unnecessary I/O for change detection.
     fn detect_changed(&self, files: &[PathBuf]) -> HashSet<PathBuf> {
-        // If no previous state, everything is "changed" but we indicate that
-        // by returning an empty set (triggers full compile).
+        // If no previous state, everything is "changed" — first-run shortcut
         if self.prev_checksums.is_empty() {
             return files.iter().cloned().collect();
         }
 
         let mut changed = HashSet::new();
         for path in files {
-            let current_checksum = compute_checksum(
-                &std::fs::read(path).unwrap_or_default()
-            );
+            let current = self.metadata_fingerprint(path);
             let prev = self.prev_checksums.get(path);
             match prev {
-                Some(cksum) if *cksum == current_checksum => {
+                Some(cksum) if *cksum == current => {
                     // File unchanged — skip
                 }
                 _ => {
@@ -898,7 +917,7 @@ mod tests {
 
     #[test]
     fn test_incremental_checksum_persistence() {
-        // Verify checksums are persisted between compiles
+        // Verify metadata fingerprints are persisted between compiles
         let config = SessionConfig {
             sources: vec!["test/counter.sv".into()],
             ..Default::default()
@@ -908,13 +927,12 @@ mod tests {
 
         let path = PathBuf::from("test/counter.sv");
         assert!(session.prev_checksums.contains_key(&path));
-        let cksum = session.prev_checksums.get(&path).copied().unwrap();
-        assert_ne!(cksum, 0, "checksum should be non-zero");
+        let fp = session.prev_checksums.get(&path).copied().unwrap();
+        assert_ne!(fp, 0, "metadata fingerprint should be non-zero");
 
-        // Re-compute and verify
-        let content = std::fs::read(&path).unwrap_or_default();
-        let expected = crate::cache::compute_checksum(&content);
-        assert_eq!(cksum, expected);
+        // Verify the metadata fingerprint matches a re-computed one
+        let recomputed = session.metadata_fingerprint(&path);
+        assert_eq!(fp, recomputed, "metadata fingerprint should be reproducible");
     }
 
     #[test]

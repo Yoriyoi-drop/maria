@@ -20,7 +20,7 @@ use crate::parser::lexer::*;
 
 pub struct Parser {
     tokens: Vec<(Token, usize, usize)>,
-    pos: usize,
+    pos: std::cell::Cell<usize>,
     source_file: String,
     source_lines: Vec<String>,
     class_names: std::collections::HashSet<Symbol>,
@@ -29,14 +29,26 @@ pub struct Parser {
     type_param_names: Vec<Symbol>,
     file_line_map: Vec<(usize, String)>,
     recursion_depth: usize,
+    /// Safety counter: total tokens consumed. Reset per `parse_design()` call.
+    /// If this exceeds MAX_PARSE_STEPS, parsing aborts to prevent infinite loops.
+    parse_steps: usize,
+    /// Safety counter: consecutive peek() calls without advance().
+    /// Catches loops that check peek() without calling advance().
+    /// Uses Cell for interior mutability (peek() takes &self).
+    peek_count: std::cell::Cell<usize>,
     pub errors: Vec<Diagnostic>,
 }
+
+/// Maximum number of token advances per `parse_design()` call.
+/// A normal file with N tokens should consume at most ~2N advances.
+/// 10M is a generous safety limit for very large files.
+const MAX_PARSE_STEPS: usize = 10_000_000;
 
 impl Parser {
     pub fn new(tokens: Vec<(Token, usize, usize)>, source_file: &str) -> Self {
         Self {
             tokens,
-            pos: 0,
+            pos: std::cell::Cell::new(0),
             source_file: source_file.to_string(),
             source_lines: Vec::new(),
             class_names: {
@@ -64,6 +76,8 @@ impl Parser {
             type_param_names: Vec::new(),
             file_line_map: Vec::new(),
             recursion_depth: 0,
+            parse_steps: 0,
+            peek_count: std::cell::Cell::new(0),
             errors: Vec::new(),
         }
     }
@@ -109,24 +123,32 @@ impl Parser {
     }
 
     fn peek(&self) -> &Token {
-        if self.pos >= self.tokens.len() {
+        let pc = self.peek_count.get() + 1;
+        self.peek_count.set(pc);
+        // Guard: if peek() called excessively without advance(), force EOF
+        // This catches infinite loops that peek() without calling advance()
+        if pc > 1_000_000 {
+            self.pos.set(self.tokens.len());
             return &Token::Eof;
         }
-        &self.tokens[self.pos].0
+        if self.pos.get() >= self.tokens.len() {
+            return &Token::Eof;
+        }
+        &self.tokens[self.pos.get()].0
     }
 
     fn peek_line(&self) -> usize {
-        if self.pos >= self.tokens.len() {
+        if self.pos.get() >= self.tokens.len() {
             return 0;
         }
-        self.tokens[self.pos].1
+        self.tokens[self.pos.get()].1
     }
 
     fn peek_col(&self) -> usize {
-        if self.pos >= self.tokens.len() {
+        if self.pos.get() >= self.tokens.len() {
             return 0;
         }
-        self.tokens[self.pos].2
+        self.tokens[self.pos.get()].2
     }
 
     fn err(&self, msg: impl Into<String>) -> SimError {
@@ -191,17 +213,23 @@ impl Parser {
         if self.tokens.is_empty() {
             return &Token::Eof;
         }
-        let idx = (self.pos + n).min(self.tokens.len() - 1);
+        let idx = (self.pos.get() + n).min(self.tokens.len() - 1);
         &self.tokens[idx].0
     }
 
     fn advance(&mut self) {
-        self.pos += 1;
+        self.pos.set(self.pos.get() + 1);
+        self.parse_steps += 1;
+        // Safety guard: if step limit exceeded, force EOF to break
+        // out of any sub-parser infinite loop (parse_class, parse_module, etc.)
+        if self.parse_steps > MAX_PARSE_STEPS {
+            self.pos.set(self.tokens.len());
+        }
     }
 
     fn expect(&mut self, expected: Token) -> Result<(), SimError> {
         if self.peek() == &expected {
-            self.pos += 1;
+            self.advance();
             Ok(())
         } else {
             Err(self.err(format!("expected {}, found {}", expected, self.peek())))
@@ -254,10 +282,10 @@ impl Parser {
         self.class_names.insert(Symbol::intern("uvm_report_object"));
         self.class_names.insert(Symbol::intern("uvm_factory"));
         self.class_names.insert(Symbol::intern("uvm_resource_db"));
-        let mut modules = Vec::new();
-        let mut classes = Vec::new();
-        let mut packages = Vec::new();
-        let mut interfaces = Vec::new();
+        let mut modules = Vec::with_capacity(64);
+        let mut classes = Vec::with_capacity(32);
+        let mut packages = Vec::with_capacity(16);
+        let mut interfaces = Vec::with_capacity(16);
         let mut unit_imports = Vec::new();
         let mut unit_funcs: Vec<FunctionDecl> = Vec::new();
         let mut unit_tasks: Vec<TaskDecl> = Vec::new();
@@ -267,16 +295,22 @@ impl Parser {
         let mut clocking_blocks = Vec::new();
         let mut configs = Vec::new();
         let mut udp_defs = Vec::new();
+        // Reset safety counters for this parse_design() call
+        self.parse_steps = 0;
         // First pass: collect all class names — with error recovery
         // If parsing fails, error is saved and we skip to next construct
-let saved_pos = self.pos;
-        let mut _last_pos = self.pos;
+let saved_pos = self.pos.get();
+        let mut _last_pos = self.pos.get();
         let mut _stuck = 0u32;
         while self.peek() != &Token::Eof {
+            // Step limit guard: prevent infinite loops
+            if self.parse_steps > MAX_PARSE_STEPS {
+                return Err(self.err("parser exceeded maximum step limit (possible infinite loop)"));
+            }
             // Stuck detection: if pos hasn't changed for too many iterations, abort
-            if self.pos == _last_pos {
+            if self.pos.get() == _last_pos {
                 _stuck += 1;
-                if _stuck > 1_000_000 {
+                if _stuck > 10_000 {
                     let line = self.peek_line();
                     let col = self.peek_col();
                     self.push_warning_at("parser stuck (no progress) during class discovery pass — skipping".to_string(), line, col);
@@ -284,7 +318,7 @@ let saved_pos = self.pos;
                 }
             } else {
                 _stuck = 0;
-                _last_pos = self.pos;
+                _last_pos = self.pos.get();
             }
             if self.peek() == &Token::Class {
                 match self.parse_class_fast() {
@@ -437,22 +471,26 @@ let saved_pos = self.pos;
             }
         }
 // First pass done in {:?} — class_names={}, typedef_names={}
-        self.pos = saved_pos;
+        self.pos.set(saved_pos);
         modules.clear();
         classes.clear();
         // Second pass: full parse with class names known — with error recovery
         // Jika parsing modul/class gagal, error disimpan dan lanjut ke konstruk berikutnya
-let mut _last_pos = self.pos;
+let mut _last_pos = self.pos.get();
         let mut _stuck = 0u32;
         let mut _n_module = 0u32;
         let mut _n_interface = 0u32;
         let mut _n_class = 0u32;
         let mut _n_package = 0u32;
         while self.peek() != &Token::Eof {
+            // Step limit guard: prevent infinite loops
+            if self.parse_steps > MAX_PARSE_STEPS {
+                return Err(self.err("parser exceeded maximum step limit (possible infinite loop)"));
+            }
             // Stuck detection: if pos hasn't changed for too many iterations, abort
-            if self.pos == _last_pos {
+            if self.pos.get() == _last_pos {
                 _stuck += 1;
-                if _stuck > 1_000_000 {
+                if _stuck > 10_000 {
                     let line = self.peek_line();
                     let col = self.peek_col();
                     self.push_warning_at("parser stuck (no progress) during second pass — skipping".to_string(), line, col);
@@ -460,7 +498,7 @@ let mut _last_pos = self.pos;
                 }
             } else {
                 _stuck = 0;
-                _last_pos = self.pos;
+                _last_pos = self.pos.get();
             }
              let had_error = match self.peek() {
                 Token::Module => {
@@ -1218,18 +1256,17 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
         let mut depth: i32 = 0;
         // Advance past current token first to avoid infinite loop
         self.advance();
-        let mut _last_pos = self.pos;
+        let mut _last_pos = self.pos.get();
         let mut _stuck = 0u32;
         loop {
-            if self.pos == _last_pos {
+            if self.pos.get() == _last_pos {
                 _stuck += 1;
-                if _stuck > 500_000 {
-// emergency exit: stuck in skip_to_next_top_level
+                if _stuck > 5_000 {
                     return; // emergency exit: stuck in skip_to_next_top_level
                 }
             } else {
                 _stuck = 0;
-                _last_pos = self.pos;
+                _last_pos = self.pos.get();
             }
             match self.peek() {
                 Token::Eof => return,
@@ -1257,17 +1294,17 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
 
     fn skip_until_semi_or_end(&mut self) -> Result<(), SimError> {
         let mut depth: i32 = 0;
-        let mut _last_pos = self.pos;
+        let mut _last_pos = self.pos.get();
         let mut _stuck = 0u32;
         loop {
-            if self.pos == _last_pos {
+            if self.pos.get() == _last_pos {
                 _stuck += 1;
-                if _stuck > 500_000 {
+                if _stuck > 5_000 {
                     return Err(self.err("parser stuck (no progress) in skip_until_semi_or_end"));
                 }
             } else {
                 _stuck = 0;
-                _last_pos = self.pos;
+                _last_pos = self.pos.get();
             }
             match self.peek() {
                 Token::Semi if depth == 0 => {
@@ -1298,18 +1335,18 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
         let mut depth = 0i32;
         self.advance(); // consume 'class'
         // Skip class header: name, #(params), extends, ';'
-        let mut _last_pos = self.pos;
+        let mut _last_pos = self.pos.get();
         let mut _stuck = 0u32;
         loop {
-            if self.pos == _last_pos {
+            if self.pos.get() == _last_pos {
                 _stuck += 1;
-                if _stuck > 500_000 {
+                if _stuck > 5_000 {
                     self.push_warning_at("parser stuck (no progress) skipping class body — aborting".to_string(), self.peek_line(), self.peek_col());
                     return; // emergency exit: stuck in skip_class_body header
                 }
             } else {
                 _stuck = 0;
-                _last_pos = self.pos;
+                _last_pos = self.pos.get();
             }
             match self.peek() {
                 Token::Semi => { self.advance(); break; }
@@ -1324,18 +1361,18 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
             }
         }
         // Skip class body until matching endclass
-        let mut _last_pos2 = self.pos;
+        let mut _last_pos2 = self.pos.get();
         let mut _stuck2 = 0u32;
         loop {
-            if self.pos == _last_pos2 {
+            if self.pos.get() == _last_pos2 {
                 _stuck2 += 1;
-                if _stuck2 > 500_000 {
+                if _stuck2 > 5_000 {
                     self.push_warning_at("parser stuck (no progress) in class body — aborting".to_string(), self.peek_line(), self.peek_col());
                     return; // emergency exit: stuck in skip_class_body body
                 }
             } else {
                 _stuck2 = 0;
-                _last_pos2 = self.pos;
+                _last_pos2 = self.pos.get();
             }
             match self.peek() {
                 Token::Eof => return,
@@ -1409,17 +1446,17 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
         // Advance past `(`, then track depth for nested `(*...*)`.
         let mut depth = 1u32;
         self.advance(); // consume the initial `(`
-        let mut _last_pos = self.pos;
+        let mut _last_pos = self.pos.get();
         let mut _stuck = 0u32;
         loop {
-            if self.pos == _last_pos {
+            if self.pos.get() == _last_pos {
                 _stuck += 1;
-                if _stuck > 500_000 {
+                if _stuck > 5_000 {
                     return; // emergency exit: stuck in skip_attribute
                 }
             } else {
                 _stuck = 0;
-                _last_pos = self.pos;
+                _last_pos = self.pos.get();
             }
             match self.peek() {
                 Token::Eof => return,

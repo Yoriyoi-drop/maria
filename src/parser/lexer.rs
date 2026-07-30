@@ -576,11 +576,11 @@ impl Lexer {
     }
 
     fn read_ident_or_keyword(&mut self) -> (Token, usize, usize) {
-        let mut s = String::new();
         let start_line = self.line;
         let start_col = self.col;
 
         if self.peek() == Some('\\') {
+            let mut s = String::new();
             self.advance(); // consume backslash
             while let Some(c) = self.peek() {
                 if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
@@ -593,15 +593,34 @@ impl Lexer {
             return (Token::Ident(sym), start_line, start_col);
         }
 
+        // Stack buffer for short idents (avoid String alloc for keywords)
+        let mut buf = [0u8; 64];
+        let mut len = 0usize;
+        let mut s = String::new();
         while let Some(c) = self.peek() {
             if c.is_ascii_alphanumeric() || c == '_' || c == '$' {
-                s.push(self.advance());
+                if len < buf.len() {
+                    buf[len] = c as u8;
+                } else {
+                    if s.is_empty() {
+                        s = String::with_capacity(len + 16);
+                        for &b in &buf {
+                            s.push(b as char);
+                        }
+                    }
+                    s.push(c);
+                }
+                len += 1;
+                self.advance();
             } else {
                 break;
             }
         }
 
-        let token = match s.as_str() {
+        let token = if s.is_empty() {
+            // Short path: all chars fit in stack buffer, no heap alloc
+            let s_slice = unsafe { std::str::from_utf8_unchecked(&buf[..len]) };
+            match s_slice {
             "module" => Token::Module,
             "endmodule" => Token::Endmodule,
             "input" => Token::Input,
@@ -758,7 +777,11 @@ impl Lexer {
             "illegal_bins" => Token::IllegalBins,
             "ignore_bins" => Token::IgnoreBins,
             "option" => Token::Option_,
-            _ => Token::Ident(Symbol::intern(&s)),
+                _ => Token::Ident(Symbol::intern(s_slice)),
+            }
+        } else {
+            // Long identifier: s already built on heap during collection
+            Token::Ident(Symbol::intern(&s))
         };
 
         (token, start_line, start_col)

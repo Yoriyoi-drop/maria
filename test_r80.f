@@ -1,0 +1,11 @@
+opentitan/hw/dv/sv/dv_base_agent/dv_base_seq.sv
+opentitan/hw/dv/sv/dv_base_agent/dv_base_sequencer.sv
+opentitan/hw/dv/sv/dv_base_agent/dv_reactive_agent_cfg.sv
+opentitan/hw/dv/sv/dv_base_agent/dv_reactive_agent.sv
+opentitan/hw/dv/sv/dv_base_agent/dv_reactive_monitor.sv
+opentitan/hw/dv/sv/dv_base_agent/dv_reactive_sequencer.sv
+opentitan/hw/dv/sv/dv_base_reg/csr_excl_item.sv
+opentitan/hw/dv/sv/dv_base_reg/dv_base_lockable_field_cov.sv
+opentitan/hw/dv/sv/dv_base_reg/dv_base_mem.sv
+opentitan/hw/dv/sv/dv_base_reg/dv_base_mubi_cov.sv
+opentitan/hw/dv/sv/dv_base_reg/dv_base_reg_block.sv

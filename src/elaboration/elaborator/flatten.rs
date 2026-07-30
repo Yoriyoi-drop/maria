@@ -73,7 +73,7 @@ impl Elaborator {
             let mut next_parent_id = top.signals.len();
 
             // Map port connections
-            for (port_name, &parent_sig) in &inst.port_map {
+            for (port_name, &parent_sig) in inst.port_map.iter() {
                 if let Some(child_sig) = child.signals.iter().position(|s| s.name == *port_name) {
                     let child_width = child.signals[child_sig].width;
                     let parent_width = top.signals[parent_sig].elem_width;
