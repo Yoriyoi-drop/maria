@@ -301,4 +301,68 @@ impl SimulationEngine {
         }
     }
 
+    pub(crate) fn is_uvm_reg_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_reg" {
+                return true;
+            }
+            match self.design.classes.get::<str>(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    pub(crate) fn is_uvm_reg_field_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_reg_field" {
+                return true;
+            }
+            match self.design.classes.get::<str>(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    pub(crate) fn is_uvm_reg_block_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_reg_block" {
+                return true;
+            }
+            match self.design.classes.get::<str>(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    pub(crate) fn is_uvm_reg_map_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_reg_map" {
+                return true;
+            }
+            match self.design.classes.get::<str>(current) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
 }

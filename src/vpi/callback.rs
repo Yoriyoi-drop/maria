@@ -100,6 +100,20 @@ pub fn clear_all_callbacks() {
     registry.clear();
 }
 
+/// Public struct to expose RegisteredCallback data for vpi_get_cb_info
+#[derive(Debug, Clone)]
+pub struct CallbackEntry {
+    pub data: t_cb_data,
+}
+
+/// Get a snapshot of the callback registry (for vpi_get_cb_info access).
+pub fn get_callback_registry() -> Vec<CallbackEntry> {
+    let registry = VPI_CALLBACKS.lock().unwrap();
+    registry.iter().map(|cb| CallbackEntry {
+        data: cb.data.clone(),
+    }).collect()
+}
+
 // ─── Callback Dispatch Points ───
 
 /// Called at the start of simulation (time 0 initialization).

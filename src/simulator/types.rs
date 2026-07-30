@@ -198,6 +198,117 @@ pub struct UvmAnalysisImpData {
     pub name: String,
 }
 
+/// UVM register field data: bit position within a register, width, access policy.
+#[derive(Debug, Clone)]
+pub struct UvmRegFieldData {
+    /// Parent register object ID
+    pub parent_reg: Option<ObjId>,
+    /// Bit position (LSB) within the register
+    pub bit_pos: usize,
+    /// Width in bits
+    pub width: usize,
+    /// Current value (mirrored)
+    pub value: LogicVec,
+    /// Desired value (next value to be written)
+    pub desired: LogicVec,
+    /// Access policy: "RO", "WO", "RW", "RC", "RS", "WRC", "WRS", "WC", "WS", "W1C", "W1S", etc.
+    pub access: String,
+    /// Whether the field has been modified since last update
+    pub modified: bool,
+    /// Whether the field is volatile
+    pub volatile: bool,
+}
+
+impl UvmRegFieldData {
+    pub fn new() -> Self {
+        UvmRegFieldData {
+            parent_reg: None,
+            bit_pos: 0,
+            width: 1,
+            value: LogicVec::new(1),
+            desired: LogicVec::new(1),
+            access: "RW".to_string(),
+            modified: false,
+            volatile: false,
+        }
+    }
+}
+
+/// UVM register data: a named register with address, width, and fields.
+#[derive(Debug, Clone)]
+pub struct UvmRegData {
+    /// Register address in the address map
+    pub address: u64,
+    /// Total width in bits (sum of field widths)
+    pub width: usize,
+    /// Current mirrored value
+    pub value: LogicVec,
+    /// Desired value (pending write)
+    pub desired: LogicVec,
+    /// List of field object IDs belonging to this register
+    pub fields: Vec<ObjId>,
+    /// Whether register has been modified since last update
+    pub modified: bool,
+    /// Parent block data
+    pub parent_block: Option<ObjId>,
+}
+
+impl UvmRegData {
+    pub fn new() -> Self {
+        UvmRegData {
+            address: 0,
+            width: 32,
+            value: LogicVec::new(32),
+            desired: LogicVec::new(32),
+            fields: Vec::new(),
+            modified: false,
+            parent_block: None,
+        }
+    }
+}
+
+/// UVM register block data: a block containing registers with an address map.
+#[derive(Debug, Clone)]
+pub struct UvmRegBlockData {
+    /// Address map: offset -> register object ID
+    pub regs_by_offset: std::collections::HashMap<u64, ObjId>,
+    /// Default register map object ID (uvm_reg_map instance)
+    pub default_map: Option<ObjId>,
+    /// Base address of the block
+    pub base_address: u64,
+}
+
+impl UvmRegBlockData {
+    pub fn new() -> Self {
+        UvmRegBlockData {
+            regs_by_offset: std::collections::HashMap::new(),
+            default_map: None,
+            base_address: 0,
+        }
+    }
+}
+
+/// UVM register map data: address decoding for a set of registers.
+#[derive(Debug, Clone)]
+pub struct UvmRegMapData {
+    /// Address map: offset -> register object ID
+    pub regs_by_offset: std::collections::HashMap<u64, ObjId>,
+    /// Base address
+    pub base_address: u64,
+    /// Address width in bits
+    pub n_bits: usize,
+}
+
+impl UvmRegMapData {
+    pub fn new() -> Self {
+        UvmRegMapData {
+            regs_by_offset: std::collections::HashMap::new(),
+            base_address: 0,
+            n_bits: 32,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WaitOrderState {
     pub events: Vec<SignalId>,
@@ -210,6 +321,16 @@ pub struct WaitOrderState {
 pub struct ProcessInfo {
     pub status: ProcessStatus,
     pub await_continuations: Vec<Vec<IrStmt>>,
+}
+
+/// Coverage types that can be selectively enabled
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CoverageType {
+    Line,
+    Toggle,
+    Branch,
+    Fsm,
+    Covergroup,
 }
 
 /// X-propagation mode for controlling how X (unknown) values propagate

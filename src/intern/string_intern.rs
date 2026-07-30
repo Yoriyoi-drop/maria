@@ -41,7 +41,7 @@ impl Symbol {
 
     /// Number of unique symbols interned so far.
     pub fn count() -> u32 {
-        table().strings.lock().len() as u32
+        table().strings.read().len() as u32
     }
 
     /// Create a symbol from a raw index (unsafe — only for deserialization).
@@ -170,17 +170,14 @@ impl PartialEq<String> for Symbol {
 /// Design:
 /// - `lookup`: DashMap for O(1) string→u32 lookup
 /// - `strings`: append-only Vec of `Box::leak`'d `&'static str` for O(1) u32→string
-/// - `next_id`: atomic counter for lock-free ID allocation
-///
-/// The `intern()` method uses DashMap's `entry()` API to atomically
-/// check-and-insert in O(1) — no linear scan, no O(n²) blowup.
+/// - RwLock permits concurrent reads without serialization
 struct StringTable {
     /// O(1) hash-based lookup — string → u32 index
     lookup: DashMap<String, u32, fxhash::FxBuildHasher>,
     /// Indexed storage — `Box::leak`'d strings for stable `&'static str` pointers.
-    /// Append-only: once pushed, a string lives forever.freebuff --continue 2026-07-21T15-24-41.556Z
-
-    strings: parking_lot::Mutex<Vec<&'static str>>,
+    /// Append-only: once pushed, a string lives forever.
+    /// RwLock: concurrent reads (as_str) don't block each other.
+    strings: parking_lot::RwLock<Vec<&'static str>>,
     // ID is derived from strings.len() under the lock — no separate counter needed.
 }
 
@@ -256,7 +253,7 @@ fn table() -> &'static StringTable {
 pub fn reset_string_table() {
     let t = table();
     t.lookup.clear();
-    let mut strings = t.strings.lock();
+    let mut strings = t.strings.write();
     strings.clear();
     let prelude = vec![
         "", "logic", "wire", "reg", "int", "integer", "bit", "byte",
@@ -281,7 +278,7 @@ impl StringTable {
     fn new() -> Self {
         StringTable {
             lookup: DashMap::with_hasher(fxhash::FxBuildHasher::default()),
-            strings: parking_lot::Mutex::new(Vec::with_capacity(10240)),
+            strings: parking_lot::RwLock::new(Vec::with_capacity(10240)),
         }
     }
 
@@ -305,7 +302,7 @@ impl StringTable {
                 // Note: `owned` is already moved into `entry()` above, so we allocate fresh.
                 let leaked: &'static str = Box::leak(Box::from(s));
                 // Use strings.len() as the ID (guaranteed to match Vec index under the lock)
-                let mut strings = self.strings.lock();
+                let mut strings = self.strings.write();
                 let id = strings.len() as u32;
                 strings.push(leaked);
                 e.insert(id);
@@ -319,7 +316,7 @@ impl StringTable {
     /// `&'static str: Copy`, so indexing the Vec returns a `&'static str` value
     /// that is not tied to the MutexGuard lifetime — safe without transmute.
     fn get(&self, id: u32) -> &'static str {
-        let strings = self.strings.lock();
+        let strings = self.strings.read();
         strings[id as usize]
     }
 }

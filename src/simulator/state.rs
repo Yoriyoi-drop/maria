@@ -1,6 +1,13 @@
 use crate::ir::{IrDesign, IrModule, LogicVec, ObjId, ObjectData, SignalId};
 use std::collections::HashMap;
 
+/// Per-signal delay information from SDF annotation.
+#[derive(Debug, Clone)]
+pub struct SignalDelay {
+    pub rise: u64, // rise delay in ps
+    pub fall: u64, // fall delay in ps
+}
+
 pub struct SimulationState {
     pub signals: Vec<LogicVec>,
     pub next_signals: Vec<LogicVec>,

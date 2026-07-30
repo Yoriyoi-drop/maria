@@ -12,6 +12,75 @@ use crate::error::SimError;
 use crate::parser::lexer::*;
 
 impl Parser {
+    /// Fast skip for first pass: collect class name + fast-skip body to endclass.
+    /// Does NOT parse members — dramatically faster for class discovery pass.
+    pub(crate) fn parse_class_fast(&mut self) -> Result<(), SimError> {
+        self.advance(); // consume 'class'
+        // Skip optional #(type T = ...) parameter list
+        if self.peek() == &Token::Hash {
+            self.advance();
+            if self.peek() == &Token::LParen {
+                let _ = self.skip_balanced_paren_light();
+            }
+        }
+        // Collect class name
+        if let Token::Ident(name) = self.peek() {
+            self.class_names.insert(*name);
+            self.advance();
+        }
+        // Skip extends clause
+        if self.peek() == &Token::Extends {
+            self.advance();
+            if matches!(self.peek(), Token::Ident(_)) {
+                self.advance(); // base class name
+            }
+            // Skip optional #(.PARAM(...)) after base class
+            if self.peek() == &Token::Hash {
+                self.advance();
+                if self.peek() == &Token::LParen {
+                    let _ = self.skip_balanced_paren_light();
+                }
+            }
+        }
+        // Skip implements clause (SV-2005)
+        if matches!(self.peek(), Token::Ident(s) if s.as_str() == "implements") {
+            self.advance();
+            loop {
+                if matches!(self.peek(), Token::Ident(_)) { self.advance(); }
+                if self.peek() == &Token::Comma { self.advance(); } else { break; }
+            }
+        }
+        self.skip_semi();
+        // Fast-skip class body until endclass
+        loop {
+            match self.peek() {
+                Token::EndClass | Token::Eof => {
+                    if self.peek() == &Token::EndClass { self.advance(); }
+                    // Skip optional ': name' after endclass
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
+                    break;
+                }
+                Token::Class => {
+                    // Nested class — skip body
+                    self.skip_class_body();
+                }
+                _ => {
+                    if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
+                        self.skip_attribute();
+                    } else {
+                        self.advance();
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn parse_class(&mut self) -> Result<ClassDecl, SimError> {
         self.advance(); // consume 'class'
         let mut type_params = Vec::new();
@@ -74,15 +143,30 @@ impl Parser {
                     break;
                 }
                 Token::Function => {
-                    members.push(ClassMember::Function(self.parse_function(false)?));
+                    match self.parse_function(false) {
+                        Ok(f) => members.push(ClassMember::Function(f)),
+                        Err(_) => { let _ = self.skip_until_semi_or_end(); }
+                    }
                 }
                 Token::Ident(s) if s == "extern" => {
                     // Extern prototype — consume until semicolon
                     self.advance(); // extern
-                    if matches!(self.peek(), Token::Ident(n) if n == "local" || n == "protected") {
-                        self.advance();
+                    // Handle 'extern local', 'extern protected', 'extern virtual', etc.
+                    loop {
+                        match self.peek() {
+                            Token::Ident(n) if n == "local" || n == "protected" || n == "virtual" => {
+                                self.advance();
+                            }
+                            _ => break,
+                        }
                     }
-                    if self.peek() == &Token::Virtual { self.advance(); }
+                    // Handle extern constraint: `extern constraint name;`
+                    if self.peek() == &Token::Constraint {
+                        self.advance(); // consume constraint
+                        let _ = self.expect_ident(); // consume name
+                        self.skip_semi();
+                        continue;
+                    }
                     if !matches!(self.peek(), Token::Function | Token::Task) {
                         continue;
                     }
@@ -102,22 +186,33 @@ impl Parser {
                     self.advance();
                     match self.peek() {
                         Token::Function => {
-                            members.push(ClassMember::Function(self.parse_function(true)?));
+                            match self.parse_function(true) {
+                                Ok(f) => members.push(ClassMember::Function(f)),
+                                Err(_) => { let _ = self.skip_until_semi_or_end(); }
+                            }
                         }
                         Token::Task => {
-                            members.push(ClassMember::Task(self.parse_task(true)?));
+                            match self.parse_task(true) {
+                                Ok(t) => members.push(ClassMember::Task(t)),
+                                Err(_) => { let _ = self.skip_until_semi_or_end(); }
+                            }
                         }
                         _ => {
-                            let mut decl = self.parse_decl()?;
-                            for n in &mut decl.names {
-                                n.is_rand = false;
+                            match self.parse_decl() {
+                                Ok(mut decl) => {
+                                    for n in &mut decl.names { n.is_rand = false; }
+                                    members.push(ClassMember::Decl(decl));
+                                }
+                                Err(_) => { let _ = self.skip_until_semi_or_end(); }
                             }
-                            members.push(ClassMember::Decl(decl));
                         }
                     }
                 }
                 Token::Task => {
-                    members.push(ClassMember::Task(self.parse_task(false)?));
+                    match self.parse_task(false) {
+                        Ok(t) => members.push(ClassMember::Task(t)),
+                        Err(_) => { let _ = self.skip_until_semi_or_end(); }
+                    }
                 }
                 Token::Input
                 | Token::Output
@@ -150,19 +245,27 @@ impl Parser {
                 | Token::TriOr
                 | Token::Supply0
                 | Token::Supply1 => {
-                    let mut decl = self.parse_decl()?;
-                    for n in &mut decl.names {
-                        n.is_rand = false;
+                    match self.parse_decl() {
+                        Ok(mut decl) => {
+                            for n in &mut decl.names {
+                                n.is_rand = false;
+                            }
+                            members.push(ClassMember::Decl(decl));
+                        }
+                        Err(_) => {
+                            let _ = self.skip_until_semi_or_end();
+                        }
                     }
-                    members.push(ClassMember::Decl(decl));
                 }
                 Token::Rand | Token::RandC => {
                     self.advance();
-                    let mut decl = self.parse_decl()?;
-                    for n in &mut decl.names {
-                        n.is_rand = true;
+                    match self.parse_decl() {
+                        Ok(mut decl) => {
+                            for n in &mut decl.names { n.is_rand = true; }
+                            members.push(ClassMember::Decl(decl));
+                        }
+                        Err(_) => { let _ = self.skip_until_semi_or_end(); }
                     }
-                    members.push(ClassMember::Decl(decl));
                 }
                 Token::Ident(name) if self.type_param_names.contains(&name) => {
                     let tp_name = name.clone();
@@ -254,6 +357,10 @@ impl Parser {
                     self.skip_class_body();
                 }
                 _ => {
+                    if self.peek() == &Token::Eof {
+                        // Hit EOF without finding endclass — abort to prevent infinite loop
+                        break;
+                    }
                     self.advance();
                 }
             }

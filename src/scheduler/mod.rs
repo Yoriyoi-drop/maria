@@ -5,6 +5,7 @@
 pub mod dag;
 pub mod incremental;
 pub mod priority;
+pub mod cdc;
 pub mod clock_domain;
 pub mod sim_dag;
 pub mod work_stealing;

@@ -485,4 +485,309 @@ mod tests {
         let result = engine.expr_to_z3_int(&div);
         assert!(result.is_none(), "Div should return None (unsupported)");
     }
+
+    // ── k-Induction Tests ──
+
+    fn test_engine_with_induction() -> FormalEngine {
+        let mut cfg = FormalConfig::default();
+        cfg.timeout = 10;
+        cfg.induction = true;
+        cfg.bound = 5;
+        let mut engine = FormalEngine::new(cfg);
+        engine.init();
+        engine
+    }
+
+    #[test]
+    fn test_induction_trivially_true() {
+        // assert(1) is always true — induction should prove it
+        let mut engine = test_engine_with_induction();
+        let cond_true = IrExpr::Const(LogicVec::from_u64(1, 1));
+        let assert_stmt = IrStmt::Assert {
+            cond: cond_true,
+            pass_stmt: vec![],
+            fail_stmt: vec![],
+            clock_event: None,
+            disable_iff: None,
+            sequence: None,
+        };
+
+        let design = IrDesign {
+            top: IrModule {
+                name: Symbol::from("test"),
+                signals: vec![],
+                inputs: vec![],
+                outputs: vec![],
+                inouts: vec![],
+                processes: vec![Process::Combinational {
+                    name: Symbol::from("always_comb"),
+                    sensitivity: vec![],
+                    body: vec![assert_stmt],
+                }],
+                sub_instances: vec![],
+            },
+            modules: HashMap::new(),
+            classes: HashMap::new(),
+            covergroups: vec![],
+            dpi_imports: vec![],
+            hier_signal_map: HashMap::new(),
+            udp_defs: vec![],
+            specify_items: vec![],
+            timescale: None,
+            module_functions: HashMap::new(),
+        };
+
+        let results = engine.check_assertions_bmc(&design);
+        assert_eq!(results.len(), 1);
+        // Trivially true assertion should get InductiveProof with induction enabled
+        assert!(
+            matches!(results[0].1, FormalResult::InductiveProof | FormalResult::Pass),
+            "assert(1) with induction should prove: got {:?}", results[0].1
+        );
+    }
+
+    #[test]
+    fn test_induction_signal_invariant() {
+        // Design with sig[0] = 5 (constant assignment)
+        // Assert: sig[0] == 5 — should always hold (inductive proof)
+        let sig_assign = IrStmt::BlockingAssign {
+            lhs: IrLValue::Signal(0, 8),
+            rhs: IrExpr::Const(LogicVec::from_u64(5, 8)),
+            delay: None,
+        };
+        let assert_cond = IrExpr::BinaryOp(
+            BinaryIrOp::Eq,
+            Box::new(IrExpr::Signal(0, 0)),
+            Box::new(IrExpr::Const(LogicVec::from_u64(5, 8))),
+        );
+        let assert_stmt = IrStmt::Assert {
+            cond: assert_cond,
+            pass_stmt: vec![],
+            fail_stmt: vec![],
+            clock_event: None,
+            disable_iff: None,
+            sequence: None,
+        };
+
+        let mut engine = test_engine_with_induction();
+        let design = IrDesign {
+            top: IrModule {
+                name: Symbol::from("test"),
+                signals: vec![
+                    SignalInfo {
+                        name: Symbol::from("sig"),
+                        width: 8,
+                        init_val: LogicVec::from_u64(5, 8),
+                        ..Default::default()
+                    },
+                ],
+                inputs: vec![0],
+                outputs: vec![],
+                inouts: vec![],
+                processes: vec![Process::Combinational {
+                    name: Symbol::from("always_comb"),
+                    sensitivity: vec![],
+                    body: vec![sig_assign, assert_stmt],
+                }],
+                sub_instances: vec![],
+            },
+            modules: HashMap::new(),
+            classes: HashMap::new(),
+            covergroups: vec![],
+            dpi_imports: vec![],
+            hier_signal_map: HashMap::new(),
+            udp_defs: vec![],
+            specify_items: vec![],
+            timescale: None,
+            module_functions: HashMap::new(),
+        };
+
+        let results = engine.check_assertions_bmc(&design);
+        assert!(!results.is_empty(), "Should have BMC result");
+        // sig[0] == 5 is an invariant — should be provable by induction
+        assert!(
+            matches!(results[0].1, FormalResult::InductiveProof | FormalResult::Pass),
+            "Signal invariant should prove: got {:?}", results[0].1
+        );
+    }
+
+    #[test]
+    fn test_z3_bvadd_simple() {
+        // Minimal Z3 test: a=0, b=a+1. Assert b < 0 (should be unsat).
+        // Then assert b = 1 (should be sat).
+        let mut engine = test_engine();
+        let solver = engine.solver.as_ref().unwrap();
+        
+        let a = z3::ast::BV::new_const("a", 8);
+        let b = z3::ast::BV::new_const("b", 8);
+        let zero = z3::ast::BV::from_u64(0, 8);
+        let one = z3::ast::BV::from_u64(1, 8);
+        
+        solver.assert(&a.eq(&zero));          // a == 0
+        solver.assert(&b.eq(&a.bvadd(&one))); // b == a + 1
+        
+        // Check: b == 1?
+        solver.push();
+        solver.assert(&b.eq(&one));
+        assert_eq!(solver.check(), z3::SatResult::Sat, "a=0, b=a+1 → b=1 should be SAT");
+        solver.pop(1);
+        
+        // Check: b < 0? (should be unsat)
+        solver.push();
+        solver.assert(&b.bvslt(&zero));
+        assert_eq!(solver.check(), z3::SatResult::Unsat, "a=0, b=a+1 → b<0 should be UNSAT");
+        solver.pop(1);
+        
+        // Check: b > 2? (should be unsat)
+        solver.push();
+        let two = z3::ast::BV::from_u64(2, 8);
+        solver.assert(&b.bvsgt(&two));
+        assert_eq!(solver.check(), z3::SatResult::Unsat, "a=0, b=a+1 → b>2 should be UNSAT");
+        solver.pop(1);
+        
+        // Check: b == 1 is forced
+        solver.push();
+        let one_bv = z3::ast::BV::from_u64(1, 8);
+        solver.assert(&b.ne(&one_bv));
+        assert_eq!(solver.check(), z3::SatResult::Unsat, "a=0, b=a+1 ¬(b=1) should be UNSAT");
+        solver.pop(1);
+    }
+
+    #[test]
+    fn test_induction_counterexample_signal_zero() {
+        // counter < 0 — fails at depth 0 (init=0, 0 < 0 is false)
+        let sig_assign = IrStmt::BlockingAssign {
+            lhs: IrLValue::Signal(0, 8),
+            rhs: IrExpr::BinaryOp(
+                BinaryIrOp::Add,
+                Box::new(IrExpr::Signal(0, 0)),
+                Box::new(IrExpr::Const(LogicVec::from_u64(1, 8))),
+            ),
+            delay: None,
+        };
+        let assert_cond = IrExpr::BinaryOp(
+            BinaryIrOp::Lt,
+            Box::new(IrExpr::Signal(0, 0)),
+            Box::new(IrExpr::Const(LogicVec::from_u64(0, 8))),
+        );
+        let assert_stmt = IrStmt::Assert {
+            cond: assert_cond,
+            pass_stmt: vec![],
+            fail_stmt: vec![],
+            clock_event: None,
+            disable_iff: None,
+            sequence: None,
+        };
+
+        let mut engine = test_engine_with_induction();
+        let design = IrDesign {
+            top: IrModule {
+                name: Symbol::from("test"),
+                signals: vec![
+                    SignalInfo {
+                        name: Symbol::from("counter"),
+                        width: 8,
+                        init_val: LogicVec::from_u64(0, 8),
+                        ..Default::default()
+                    },
+                ],
+                inputs: vec![0],
+                outputs: vec![],
+                inouts: vec![],
+                processes: vec![Process::Combinational {
+                    name: Symbol::from("always_comb"),
+                    sensitivity: vec![],
+                    body: vec![sig_assign, assert_stmt],
+                }],
+                sub_instances: vec![],
+            },
+            modules: HashMap::new(),
+            classes: HashMap::new(),
+            covergroups: vec![],
+            dpi_imports: vec![],
+            hier_signal_map: HashMap::new(),
+            udp_defs: vec![],
+            specify_items: vec![],
+            timescale: None,
+            module_functions: HashMap::new(),
+        };
+
+        let results = engine.check_assertions_bmc(&design);
+        assert!(!results.is_empty(), "Should have BMC result");
+        assert!(
+            matches!(results[0].1, FormalResult::Counterexample(d) if d == 0),
+            "counter < 0 should fail at depth 0: got {:?}", results[0].1
+        );
+    }
+
+    #[test]
+    fn test_induction_counterexample_signal_three() {
+        // counter < 3 — holds at depths 0..2, fails at depth 3
+        // This verifies that both the init constraint AND the transition
+        // relation (counter = counter + 1) work correctly.
+        // With push/pop fix, ¬P(0)=false doesn't poison depth 3 check.
+        let sig_assign = IrStmt::BlockingAssign {
+            lhs: IrLValue::Signal(0, 8),
+            rhs: IrExpr::BinaryOp(
+                BinaryIrOp::Add,
+                Box::new(IrExpr::Signal(0, 0)),
+                Box::new(IrExpr::Const(LogicVec::from_u64(1, 8))),
+            ),
+            delay: None,
+        };
+        let assert_cond = IrExpr::BinaryOp(
+            BinaryIrOp::Lt,
+            Box::new(IrExpr::Signal(0, 0)),
+            Box::new(IrExpr::Const(LogicVec::from_u64(3, 8))),
+        );
+        let assert_stmt = IrStmt::Assert {
+            cond: assert_cond,
+            pass_stmt: vec![],
+            fail_stmt: vec![],
+            clock_event: None,
+            disable_iff: None,
+            sequence: None,
+        };
+
+        let mut engine = test_engine_with_induction();
+        let design = IrDesign {
+            top: IrModule {
+                name: Symbol::from("test"),
+                signals: vec![
+                    SignalInfo {
+                        name: Symbol::from("counter"),
+                        width: 8,
+                        init_val: LogicVec::from_u64(0, 8),
+                        ..Default::default()
+                    },
+                ],
+                inputs: vec![0],
+                outputs: vec![],
+                inouts: vec![],
+                processes: vec![Process::Combinational {
+                    name: Symbol::from("always_comb"),
+                    sensitivity: vec![],
+                    body: vec![sig_assign, assert_stmt],
+                }],
+                sub_instances: vec![],
+            },
+            modules: HashMap::new(),
+            classes: HashMap::new(),
+            covergroups: vec![],
+            dpi_imports: vec![],
+            hier_signal_map: HashMap::new(),
+            udp_defs: vec![],
+            specify_items: vec![],
+            timescale: None,
+            module_functions: HashMap::new(),
+        };
+
+        let results = engine.check_assertions_bmc(&design);
+        assert!(!results.is_empty(), "Should have BMC result");
+        // counter = 0→1→2→3, so at depth 3: 3 < 3 is false → Counterexample(3)
+        assert!(
+            matches!(results[0].1, FormalResult::Counterexample(d) if d == 3),
+            "counter < 3 should fail at depth 3: got {:?}", results[0].1
+        );
+    }
 }

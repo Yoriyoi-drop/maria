@@ -107,6 +107,8 @@ impl SimulationEngine {
     pub(crate) fn dump_vcd_state(&mut self) -> Result<(), SimError> {
         if let Some(ref mut vcd) = self.vcd {
             vcd.dump_state(&self.design, &self.state.signals)?;
+            vcd.maybe_flush()
+                .map_err(|e| SimError::waveform(format!("VCD flush error: {}", e)))?;
         }
         Ok(())
     }
@@ -115,6 +117,33 @@ impl SimulationEngine {
     pub(crate) fn dump_fst_state(&mut self) -> Result<(), SimError> {
         if let Some(ref mut fst) = self.fst {
             fst.dump_state(&self.design, &self.state.signals)?;
+            fst.maybe_flush()
+                .map_err(|e| SimError::waveform(format!("FST flush error: {}", e)))?;
+        }
+        Ok(())
+    }
+
+    /// Dump current signal states to CSV.
+    pub(crate) fn dump_csv_state(&mut self) -> Result<(), SimError> {
+        if let Some(ref mut csv) = self.csv {
+            csv.dump_state(self.state.time, &self.state.signals)
+                .map_err(|e| SimError::waveform(format!("CSV dump error: {}", e)))?;
+        }
+        Ok(())
+    }
+
+    /// Record signal statistics at current time step.
+    pub(crate) fn record_signal_stats(&mut self) {
+        if let Some(ref mut stats) = self.signal_stats {
+            stats.record(self.state.time, &self.state.signals);
+        }
+    }
+
+    /// Flush and close CSV writer.
+    pub fn close_csv(&mut self) -> Result<(), SimError> {
+        if let Some(ref mut csv) = self.csv {
+            csv.close()
+                .map_err(|e| SimError::waveform(format!("CSV close error: {}", e)))?;
         }
         Ok(())
     }

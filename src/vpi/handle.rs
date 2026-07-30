@@ -137,6 +137,14 @@ pub fn vpi_handle(vpi_type: i32, ref_handle: vpiHandle) -> vpiHandle {
         (vpiReg | vpiNet, VpiObjectKind::Signal(sig_id, _)) => {
             ref_handle
         }
+        (vpiParent, VpiObjectKind::Signal(_, _)) => {
+            // Return the module containing this signal
+            super::with_vpi_engine(|engine| {
+                let name = engine.design.top.name;
+                let obj = VpiObject::new(VpiObjectKind::Module(0, name));
+                vpi_register_object(obj)
+            }).unwrap_or(vpiHandle::NULL)
+        }
         (vpiParent, _) => vpiHandle::NULL,
         _ => vpiHandle::NULL,
     }
@@ -371,6 +379,24 @@ pub fn vpi_get(property: i32, handle: vpiHandle) -> i32 {
         }
         vpiOpType => 0,
         vpiLineNo => 0,
+        vpiRegType => {
+            match &obj.kind {
+                VpiObjectKind::Signal(sig_id, _) => {
+                    super::with_vpi_engine(|engine| {
+                        engine.design.top.signals.get(*sig_id).map(|s| match s.kind {
+                            SignalKind::Reg => vpiReg,
+                            SignalKind::Logic => vpiReg,
+                            SignalKind::Wire => vpiNet,
+                            SignalKind::Input => vpiReg,
+                            SignalKind::Output => vpiReg,
+                            SignalKind::Inout => vpiReg,
+                            _ => vpiReg,
+                        }).unwrap_or(vpiReg)
+                    }).unwrap_or(vpiReg)
+                }
+                _ => vpiReg,
+            }
+        }
         vpiTimeUnit => -12, // Default ps
         vpiTimePrecision => -12,
         _ => 0,
@@ -432,7 +458,22 @@ pub fn vpi_get_str(property: i32, handle: vpiHandle) -> *mut c_char {
                 _ => String::new(),
             }
         }
-        vpiFile => String::new(),
+        vpiFile => {
+            // SignalInfo/IrModule tidak punya file_path field —
+            // gunakan module name sebagai identitas
+            match &obj.kind {
+                VpiObjectKind::Signal(sig_id, _) => {
+                    super::with_vpi_engine(|engine| {
+                        engine.design.top.signals.get(*sig_id)
+                            .map(|s| engine.design.top.name.as_str().to_string())
+                    }).flatten().unwrap_or_default()
+                }
+                VpiObjectKind::Module(_, name) => {
+                    name.as_str().to_string()
+                }
+                _ => String::new(),
+            }
+        }
         vpiStringVal => String::new(),
         _ => String::new(),
     };

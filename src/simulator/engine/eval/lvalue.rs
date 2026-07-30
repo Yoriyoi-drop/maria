@@ -96,9 +96,29 @@ impl SimulationEngine {
                 } else {
                     (*msb, *lsb)
                 };
-                for (i, b) in val.bits.iter().enumerate() {
-                    if start + i <= end {
-                        existing.bits[start + i] = *b;
+                // ══ Bounds check: pastikan range tidak melebihi signal width ══
+                if end >= existing.bits.len() {
+                    let sig_name = self.design.top.signals.get(*sig_id)
+                        .map(|s| s.name.as_str())
+                        .unwrap_or("<unknown>");
+                    self.emit_warning(
+                        crate::diagnostics::DiagCode::MemoryOutOfBounds,
+                        format!("RangeSelect out of bounds: signal '{}' [{}:{}] exceeds width {}",
+                            sig_name, msb, lsb, existing.bits.len()),
+                    );
+                    // Clamp to signal width to prevent panic
+                    let max_end = existing.bits.len().saturating_sub(1);
+                    let end = end.min(max_end);
+                    for (i, b) in val.bits.iter().enumerate() {
+                        if start + i <= end && start + i < existing.bits.len() {
+                            existing.bits[start + i] = *b;
+                        }
+                    }
+                } else {
+                    for (i, b) in val.bits.iter().enumerate() {
+                        if start + i <= end {
+                            existing.bits[start + i] = *b;
+                        }
                     }
                 }
                 self.state.write_signal(*sig_id, existing);
@@ -134,6 +154,18 @@ impl SimulationEngine {
                 let idx = key_val.to_u64() as usize;
                 let start = idx * elem_width;
                 let needed = start + elem_width;
+                // ══ Bounds check: warning untuk fixed-size array out-of-bounds ══
+                let is_dynamic = sig_info.map(|s| s.is_dynamic || s.is_queue).unwrap_or(false);
+                if needed > existing.width && !is_dynamic {
+                    let sig_name = self.design.top.signals.get(*sig_id)
+                        .map(|s| s.name.as_str())
+                        .unwrap_or("<unknown>");
+                    self.emit_warning(
+                        crate::diagnostics::DiagCode::MemoryOutOfBounds,
+                        format!("ArrayIndex out of bounds: '{}' index {} exceeds array size (needed {}b, signal width {}b)",
+                            sig_name, idx, needed, existing.width),
+                    );
+                }
                 if needed > existing.width {
                     existing.bits.resize(needed, LogicVal::X);
                     existing.width = needed;
@@ -162,10 +194,31 @@ impl SimulationEngine {
                 } else {
                     (*msb, *lsb)
                 };
-                let abs_start = base + start;
-                for (i, b) in val.bits.iter().enumerate() {
-                    if abs_start + i <= base + end {
-                        existing.bits[abs_start + i] = *b;
+                // ══ Bounds check: pastikan base+end tidak melebihi signal width ══
+                if base + end >= existing.bits.len() {
+                    let sig_name = self.design.top.signals.get(*sig_id)
+                        .map(|s| s.name.as_str())
+                        .unwrap_or("<unknown>");
+                    self.emit_warning(
+                        crate::diagnostics::DiagCode::MemoryOutOfBounds,
+                        format!("ArrayRangeSelect out of bounds: signal '{}' index {} -> abs[{}:{}] exceeds width {}",
+                            sig_name, idx, base + start, base + end, existing.bits.len()),
+                    );
+                    // Clamp to bounds to prevent panic
+                    let max_end = existing.bits.len().saturating_sub(1).saturating_sub(base);
+                    let end = end.min(max_end);
+                    let abs_start = base + start;
+                    for (i, b) in val.bits.iter().enumerate() {
+                        if abs_start + i <= base + end && abs_start + i < existing.bits.len() {
+                            existing.bits[abs_start + i] = *b;
+                        }
+                    }
+                } else {
+                    let abs_start = base + start;
+                    for (i, b) in val.bits.iter().enumerate() {
+                        if abs_start + i <= base + end {
+                            existing.bits[abs_start + i] = *b;
+                        }
                     }
                 }
                 let is_init = self.state.read_signal(*sig_id).all_x() || self.state.read_signal(*sig_id).all_z();

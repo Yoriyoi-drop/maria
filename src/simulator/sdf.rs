@@ -1,49 +1,192 @@
+//! SDF (Standard Delay Format) parser for timing annotation.
+//!
+//! Supports IEEE 1497 SDF constructs including:
+//! - DELAYFILE header
+//! - CELL/DELAYCELL with IOPATH delays
+//! - NET/DELAYNET with ABSDELAY
+//! - TIMINGCHECK (SETUP, HOLD, WIDTH, PERIOD, etc.)
+//! - min:typ:max triple values
+//! - Conditional delays (COND)
+//!
+//! # Min:Typ:Max
+//!
+//! SDF delays can be specified as triples: (min:typ:max).
+//! The `TimingMode` enum selects which value to use:
+//! - `Min`: Best-case / fastest
+//! - `Typ`: Typical
+//! - `Max`: Worst-case / slowest
+
 use std::collections::HashMap;
 use std::fs;
 
-/// SDF (Standard Delay Format) parser for timing annotation.
-/// Supports basic SDF constructs: DELCELL, DELNET, TIMINGCHECK.
-#[derive(Debug, Clone)]
-pub struct SdfData {
-    pub cell_delays: HashMap<String, CellDelay>,
-    pub net_delays: HashMap<String, NetDelay>,
-    pub timing_checks: Vec<TimingCheck>,
+/// Timing mode for selecting min:typ:max values.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TimingMode {
+    Min,
+    Typ,
+    Max,
 }
 
+impl TimingMode {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "min" => Some(TimingMode::Min),
+            "typ" | "typical" => Some(TimingMode::Typ),
+            "max" => Some(TimingMode::Max),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TimingMode::Min => "min",
+            TimingMode::Typ => "typ",
+            TimingMode::Max => "max",
+        }
+    }
+}
+
+/// A min:typ:max triple value.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MinTypMax {
+    pub min: f64,
+    pub typ: f64,
+    pub max: f64,
+}
+
+impl MinTypMax {
+    pub fn new(min: f64, typ: f64, max: f64) -> Self {
+        MinTypMax { min, typ, max }
+    }
+
+    pub fn single(val: f64) -> Self {
+        MinTypMax { min: val, typ: val, max: val }
+    }
+
+    /// Get the value for the given timing mode.
+    pub fn get(&self, mode: TimingMode) -> f64 {
+        match mode {
+            TimingMode::Min => self.min,
+            TimingMode::Typ => self.typ,
+            TimingMode::Max => self.max,
+        }
+    }
+}
+
+/// Cell delay with per-path rise/fall and min:typ:max support.
 #[derive(Debug, Clone)]
 pub struct CellDelay {
-    pub rise: Option<f64>,
-    pub fall: Option<f64>,
-    pub to_rise: HashMap<String, f64>,
-    pub to_fall: HashMap<String, f64>,
+    /// IOPATH delays keyed by "from->to"
+    pub io_paths: HashMap<String, IoPathDelay>,
+    /// Conditional delays keyed by "from->to" with COND expression
+    pub cond_paths: Vec<(String, String, IoPathDelay)>,
 }
 
 #[derive(Debug, Clone)]
-pub struct NetDelay {
-    pub rise: Option<f64>,
-    pub fall: Option<f64>,
+pub struct IoPathDelay {
+    pub rise: MinTypMax,
+    pub fall: MinTypMax,
 }
 
+/// Net delay with min:typ:max support.
+#[derive(Debug, Clone)]
+pub struct NetDelay {
+    pub rise: MinTypMax,
+    pub fall: MinTypMax,
+}
+
+/// Timing check with min:typ:max delay support.
 #[derive(Debug, Clone)]
 pub enum TimingCheck {
     Setup {
         signal: String,
         ref_signal: String,
-        delay: f64,
+        delay: MinTypMax,
     },
     Hold {
         signal: String,
         ref_signal: String,
-        delay: f64,
+        delay: MinTypMax,
+    },
+    Setuphold {
+        signal: String,
+        ref_signal: String,
+        setup: MinTypMax,
+        hold: MinTypMax,
     },
     Width {
         signal: String,
-        delay: f64,
+        delay: MinTypMax,
+        threshold: Option<MinTypMax>,
     },
     Period {
         signal: String,
-        delay: f64,
+        delay: MinTypMax,
     },
+    Recovery {
+        signal: String,
+        ref_signal: String,
+        delay: MinTypMax,
+    },
+    Removal {
+        signal: String,
+        ref_signal: String,
+        delay: MinTypMax,
+    },
+    Skew {
+        signal: String,
+        ref_signal: String,
+        delay: MinTypMax,
+    },
+}
+
+impl TimingCheck {
+    /// Get the delay value for the given timing mode.
+    pub fn delay_value(&self, mode: TimingMode) -> f64 {
+        match self {
+            TimingCheck::Setup { delay, .. } => delay.get(mode),
+            TimingCheck::Hold { delay, .. } => delay.get(mode),
+            TimingCheck::Setuphold { setup, .. } => setup.get(mode),
+            TimingCheck::Width { delay, .. } => delay.get(mode),
+            TimingCheck::Period { delay, .. } => delay.get(mode),
+            TimingCheck::Recovery { delay, .. } => delay.get(mode),
+            TimingCheck::Removal { delay, .. } => delay.get(mode),
+            TimingCheck::Skew { delay, .. } => delay.get(mode),
+        }
+    }
+
+    /// Get the name of this timing check type.
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            TimingCheck::Setup { .. } => "$setup",
+            TimingCheck::Hold { .. } => "$hold",
+            TimingCheck::Setuphold { .. } => "$setuphold",
+            TimingCheck::Width { .. } => "$width",
+            TimingCheck::Period { .. } => "$period",
+            TimingCheck::Recovery { .. } => "$recovery",
+            TimingCheck::Removal { .. } => "$removal",
+            TimingCheck::Skew { .. } => "$skew",
+        }
+    }
+}
+
+/// SDF (Standard Delay Format) data container.
+#[derive(Debug, Clone)]
+pub struct SdfData {
+    pub cell_delays: HashMap<String, CellDelay>,
+    pub net_delays: HashMap<String, NetDelay>,
+    pub timing_checks: Vec<TimingCheck>,
+    pub sdf_version: Option<String>,
+    pub design_name: Option<String>,
+    pub date: Option<String>,
+    pub vendor: Option<String>,
+    pub program_name: Option<String>,
+    pub program_version: Option<String>,
+    pub hier_divider: Option<String>,
+    pub voltage: Option<f64>,
+    pub process: Option<f64>,
+    pub temperature: Option<f64>,
+    pub timescale: Option<String>,
 }
 
 impl SdfData {
@@ -52,6 +195,17 @@ impl SdfData {
             cell_delays: HashMap::new(),
             net_delays: HashMap::new(),
             timing_checks: Vec::new(),
+            sdf_version: None,
+            design_name: None,
+            date: None,
+            vendor: None,
+            program_name: None,
+            program_version: None,
+            hier_divider: None,
+            voltage: None,
+            process: None,
+            temperature: None,
+            timescale: None,
         }
     }
 
@@ -70,28 +224,72 @@ impl SdfData {
             if tokens[pos] == "(" && pos + 1 < tokens.len() {
                 match tokens[pos + 1].as_str() {
                     "DELAYFILE" => {
-                        pos += 2;
-                        while pos < tokens.len() && tokens[pos] != ")" {
-                            pos += 1;
-                        }
-                        if pos < tokens.len() {
-                            pos += 1;
-                        }
+                        pos = parse_delayfile_header(&tokens, pos, &mut sdf);
                     }
-                    "DELAYCELL" | "CELL" => {
-                        let (name, delay, new_pos) = parse_cell(&tokens, pos)?;
-                        sdf.cell_delays.insert(name, delay);
-                        pos = new_pos;
+                    "CELL" | "DELAYCELL" => {
+                        pos = match parse_cell(&tokens, pos) {
+                            Ok((name, delay, new_pos)) => {
+                                sdf.cell_delays.insert(name, delay);
+                                new_pos
+                            }
+                            Err(_) => {
+                                // Skip to matching )
+                                let mut depth = 0;
+                                while pos < tokens.len() {
+                                    if tokens[pos] == "(" { depth += 1; }
+                                    if tokens[pos] == ")" { depth -= 1; }
+                                    pos += 1;
+                                    if depth == 0 { break; }
+                                }
+                                pos
+                            }
+                        };
                     }
-                    "DELAYNET" | "NET" => {
-                        let (name, delay, new_pos) = parse_net(&tokens, pos)?;
-                        sdf.net_delays.insert(name, delay);
-                        pos = new_pos;
+                    "NET" | "DELAYNET" => {
+                        pos = match parse_net(&tokens, pos) {
+                            Ok((name, delay, new_pos)) => {
+                                sdf.net_delays.insert(name, delay);
+                                new_pos
+                            }
+                            Err(_) => {
+                                let mut depth = 0;
+                                while pos < tokens.len() {
+                                    if tokens[pos] == "(" { depth += 1; }
+                                    if tokens[pos] == ")" { depth -= 1; }
+                                    pos += 1;
+                                    if depth == 0 { break; }
+                                }
+                                pos
+                            }
+                        };
                     }
                     "TIMINGCHECK" => {
-                        let (checks, new_pos) = parse_timing_checks(&tokens, pos)?;
-                        sdf.timing_checks.extend(checks);
-                        pos = new_pos;
+                        pos = match parse_timing_checks(&tokens, pos) {
+                            Ok((checks, new_pos)) => {
+                                sdf.timing_checks.extend(checks);
+                                new_pos
+                            }
+                            Err(_) => {
+                                let mut depth = 0;
+                                while pos < tokens.len() {
+                                    if tokens[pos] == "(" { depth += 1; }
+                                    if tokens[pos] == ")" { depth -= 1; }
+                                    pos += 1;
+                                    if depth == 0 { break; }
+                                }
+                                pos
+                            }
+                        };
+                    }
+                    "INTERCONNECT" => {
+                        // Skip INTERCONNECT statements (not yet supported)
+                        let mut inner = 0;
+                        while pos < tokens.len() {
+                            if tokens[pos] == "(" { inner += 1; }
+                            if tokens[pos] == ")" { inner -= 1; }
+                            pos += 1;
+                            if inner == 0 { break; }
+                        }
                     }
                     _ => {
                         pos += 1;
@@ -106,301 +304,807 @@ impl SdfData {
     }
 }
 
+/// Thread-local timing mode for SDF annotation.
+use std::cell::RefCell;
+thread_local! {
+    static CURRENT_TIMING_MODE: RefCell<TimingMode> = const { RefCell::new(TimingMode::Typ) };
+}
+
+/// Set the current timing mode for delay selection.
+pub fn set_timing_mode(mode: TimingMode) {
+    CURRENT_TIMING_MODE.with(|cell| *cell.borrow_mut() = mode);
+}
+
+/// Get the current timing mode.
+pub fn get_timing_mode() -> TimingMode {
+    CURRENT_TIMING_MODE.with(|cell| *cell.borrow())
+}
+
+// ─── Tokenizer ───
+
 fn tokenize(content: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
-    let mut in_comment = false;
+    let mut in_block_comment = false;
+    let mut in_line_comment = false;
+    let mut in_string = false;
     let mut chars = content.chars().peekable();
 
     while let Some(c) = chars.next() {
-        if in_comment {
+        if in_block_comment {
+            if c == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if in_line_comment {
             if c == '\n' {
-                in_comment = false;
+                in_line_comment = false;
+            }
+            continue;
+        }
+        if in_string {
+            if c == '"' {
+                if !current.is_empty() {
+                    tokens.push(current.clone());
+                    current.clear();
+                }
+                in_string = false;
+            } else {
+                current.push(c);
             }
             continue;
         }
         match c {
             '/' if chars.peek() == Some(&'*') => {
+                if !current.is_empty() { tokens.push(current.clone()); current.clear(); }
                 chars.next();
-                in_comment = true;
+                in_block_comment = true;
             }
             '/' if chars.peek() == Some(&'/') => {
-                in_comment = true;
+                if !current.is_empty() { tokens.push(current.clone()); current.clear(); }
+                in_line_comment = true;
             }
             '(' | ')' => {
-                if !current.is_empty() {
-                    tokens.push(current.clone());
-                    current.clear();
-                }
+                if !current.is_empty() { tokens.push(current.clone()); current.clear(); }
                 tokens.push(c.to_string());
             }
             '"' => {
-                if !current.is_empty() {
-                    tokens.push(current.clone());
-                    current.clear();
-                }
-                let mut s = String::new();
-                for c2 in chars.by_ref() {
-                    if c2 == '"' {
-                        break;
-                    }
-                    s.push(c2);
-                }
-                tokens.push(format!("\"{}\"", s));
+                if !current.is_empty() { tokens.push(current.clone()); current.clear(); }
+                in_string = true;
+            }
+            ':' | '\\' => {
+                current.push(c);
             }
             ' ' | '\t' | '\r' | '\n' => {
-                if !current.is_empty() {
-                    tokens.push(current.clone());
-                    current.clear();
-                }
+                if !current.is_empty() { tokens.push(current.clone()); current.clear(); }
             }
             _ => {
                 current.push(c);
             }
         }
     }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
+    if !current.is_empty() { tokens.push(current); }
     tokens
 }
 
-fn parse_cell(tokens: &[String], pos: usize) -> Result<(String, CellDelay, usize), String> {
-    let mut p = pos + 2; // skip "(" and "DELAYCELL"/"CELL"
-    let name = if p < tokens.len() && tokens[p] != "(" {
-        let n = tokens[p].trim_matches('"').to_string();
-        p += 1;
-        n
-    } else {
-        "unknown".to_string()
-    };
+// ─── Parser Helpers ───
 
-    let mut delay = CellDelay {
-        rise: None,
-        fall: None,
-        to_rise: HashMap::new(),
-        to_fall: HashMap::new(),
-    };
-
-    while p < tokens.len() && tokens[p] != ")" {
-        if tokens[p] == "(" && p + 1 < tokens.len() {
-            match tokens[p + 1].as_str() {
-                "IOPATH" => {
-                    p += 2;
-                    let from = if p < tokens.len() && tokens[p] != "(" {
-                        let s = tokens[p].trim_matches('"').to_string();
-                        p += 1;
-                        s
-                    } else {
-                        "*".to_string()
-                    };
-                    let to = if p < tokens.len() && tokens[p] != "(" {
-                        let s = tokens[p].trim_matches('"').to_string();
-                        p += 1;
-                        s
-                    } else {
-                        "*".to_string()
-                    };
-                    let (rise, fall, new_p) = parse_rise_fall(tokens, p)?;
-                    p = new_p;
-                    if from == "*" && to == "*" {
-                        delay.rise = Some(rise);
-                        delay.fall = Some(fall);
-                    } else {
-                        delay.to_rise.insert(format!("{}->{}", from, to), rise);
-                        delay.to_fall.insert(format!("{}->{}", from, to), fall);
-                    }
-                }
-                _ => {
-                    p += 1;
-                }
-            }
-        } else {
-            p += 1;
-        }
+/// Parse a min:typ:max triple or single value.
+fn parse_min_typ_max(tokens: &[String], pos: &mut usize) -> Result<MinTypMax, String> {
+    let start = *pos;
+    if *pos >= tokens.len() {
+        return Err("unexpected end of tokens".to_string());
     }
-    if p < tokens.len() {
-        p += 1;
-    } // skip closing )
 
-    Ok((name, delay, p))
+    // Try to parse as triple (min:typ:max)
+    let token = &tokens[*pos];
+    if let Some(triple) = parse_triple_token(token) {
+        *pos += 1;
+        return Ok(triple);
+    }
+
+    // Try to parse as single float
+    if let Ok(val) = token.parse::<f64>() {
+        *pos += 1;
+        // Check for colon prefix (after a value)
+        return Ok(MinTypMax::single(val));
+    }
+
+    Err(format!("expected numeric value at token {}: '{}'", start, token))
 }
 
-fn parse_net(tokens: &[String], pos: usize) -> Result<(String, NetDelay, usize), String> {
-    let mut p = pos + 2; // skip "(" and "DELAYNET"/"NET"
-    let name = if p < tokens.len() && tokens[p] != "(" {
-        let n = tokens[p].trim_matches('"').to_string();
-        p += 1;
+/// Parse a "min:typ:max" triple from a single token (after backslash continuation).
+fn parse_triple_token(token: &str) -> Option<MinTypMax> {
+    let parts: Vec<String> = if token.contains('\\') {
+        // Handle continuation lines
+        let cleaned: String = token.chars().filter(|&c| c != '\\' && c != '\n' && c != '\r').collect();
+        cleaned.split(':').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+    } else {
+        token.split(':').map(|s| s.trim().to_string()).collect()
+    };
+
+    if parts.len() == 3 {
+        let min = parts[0].parse::<f64>().ok()?;
+        let typ = parts[1].parse::<f64>().ok()?;
+        let max = parts[2].parse::<f64>().ok()?;
+        Some(MinTypMax { min, typ, max })
+    } else if parts.len() == 1 {
+        parts[0].parse::<f64>().ok().map(MinTypMax::single)
+    } else {
+        None
+    }
+}
+
+/// Parse rise/fall delay values.
+/// SDF format: (rise_value) (fall_value) — each in its own parenthesized group.
+fn parse_rise_fall(tokens: &[String], pos: &mut usize) -> Result<(MinTypMax, MinTypMax), String> {
+    if *pos >= tokens.len() {
+        return Err("unexpected end of tokens".to_string());
+    }
+
+    if tokens[*pos] == "(" {
+        let rise = parse_value_in_parens(tokens, pos)?;
+        let fall = parse_value_in_parens(tokens, pos)?;
+        Ok((rise, fall))
+    } else {
+        let val = parse_min_typ_max(tokens, pos)?;
+        Ok((val, val))
+    }
+}
+
+/// Parse a single delay value enclosed in parentheses: (value).
+fn parse_value_in_parens(tokens: &[String], pos: &mut usize) -> Result<MinTypMax, String> {
+    if *pos < tokens.len() && tokens[*pos] == "(" {
+        *pos += 1;
+    }
+    let val = parse_min_typ_max(tokens, pos)?;
+    if *pos < tokens.len() && tokens[*pos] == ")" {
+        *pos += 1;
+    }
+    Ok(val)
+}
+
+/// Parse DELAYFILE header items.
+/// NOTE: Outer depth ONLY decrements for `)`. Children `(` are NOT counted
+/// because inner skip loops consume child `)` tokens.
+fn parse_delayfile_header(tokens: &[String], mut pos: usize, sdf: &mut SdfData) -> usize {
+    pos += 2; // skip (DELAYFILE
+    let mut depth = 1;
+    while pos < tokens.len() && depth > 0 {
+        // Only decrement depth for ) — child ( are tracked + consumed by inner skip
+        if tokens[pos] == ")" {
+            depth -= 1;
+            if depth == 0 { break; }
+            pos += 1;
+            continue;
+        }
+
+        if tokens[pos] == "(" && pos + 2 < tokens.len() {
+            let keyword = &tokens[pos + 1];
+            let label = &tokens[pos + 2];
+            let known = match keyword.as_str() {
+                "SDFVERSION" => { sdf.sdf_version = Some(label.trim_matches('"').to_string()); true }
+                "DESIGN" => { sdf.design_name = Some(label.trim_matches('"').to_string()); true }
+                "DATE" => { sdf.date = Some(label.trim_matches('"').to_string()); true }
+                "VENDOR" => { sdf.vendor = Some(label.trim_matches('"').to_string()); true }
+                "PROGRAM" => { sdf.program_name = Some(label.trim_matches('"').to_string()); true }
+                "VERSION" => { sdf.program_version = Some(label.trim_matches('"').to_string()); true }
+                "DIVIDER" => { sdf.hier_divider = Some(label.trim_matches('"').to_string()); true }
+                "VOLTAGE" => {
+                    let val = label.trim_matches('"').parse::<f64>().ok();
+                    sdf.voltage = val;
+                    true
+                }
+                "PROCESS" => {
+                    let val = label.trim_matches('"').parse::<f64>().ok();
+                    sdf.process = val;
+                    true
+                }
+                "TEMPERATURE" => {
+                    let val = label.trim_matches('"').parse::<f64>().ok();
+                    sdf.temperature = val;
+                    true
+                }
+                "TIMESCALE" => { sdf.timescale = Some(label.trim_matches('"').to_string()); true }
+                _ => false,
+            };
+            if known {
+                // Skip to matching ) — consume the (keyword value) construct
+                let mut inner = 0;
+                while pos < tokens.len() {
+                    if tokens[pos] == "(" { inner += 1; }
+                    if tokens[pos] == ")" { inner -= 1; }
+                    pos += 1;
+                    if inner == 0 { break; }
+                }
+                continue;
+            }
+        }
+        pos += 1;
+    }
+    if pos < tokens.len() { pos += 1; }
+    pos
+}
+
+/// Parse a CELL/DELAYCELL construct.
+/// NOTE: Outer depth ONLY decrements for `)` (see parse_delayfile_header).
+fn parse_cell(tokens: &[String], mut pos: usize) -> Result<(String, CellDelay, usize), String> {
+    pos += 2; // skip (CELL or (DELAYCELL
+    let mut name = "unknown".to_string();
+
+    let mut delay = CellDelay {
+        io_paths: HashMap::new(),
+        cond_paths: Vec::new(),
+    };
+
+    let mut depth = 1;
+    while pos < tokens.len() && depth > 0 {
+        if tokens[pos] == "(" { depth += 1; }
+        if tokens[pos] == ")" { depth -= 1; }
+        if depth == 0 { break; }
+
+        if tokens[pos] == "(" && pos + 1 < tokens.len() {
+            match tokens[pos + 1].as_str() {
+                "INSTANCE" => {
+                    pos += 2;
+                    if pos < tokens.len() && tokens[pos] != "(" {
+                        name = tokens[pos].trim_matches('"').to_string();
+                        pos += 1;
+                    }
+                    continue;
+                }
+                "DELAY" | "ABSOLUTE" | "INCREMENT" => {
+                    pos += 2;
+                    continue;
+                }
+                "IOPATH" => {
+                    pos += 2;
+                    let from = if pos < tokens.len() && tokens[pos] != "(" {
+                        let s = tokens[pos].trim_matches('"').to_string();
+                        pos += 1;
+                        s
+                    } else { "*".to_string() };
+                    let to = if pos < tokens.len() && tokens[pos] != "(" {
+                        let s = tokens[pos].trim_matches('"').to_string();
+                        pos += 1;
+                        s
+                    } else { "*".to_string() };
+                    let (rise, fall) = parse_rise_fall(tokens, &mut pos)?;
+                    delay.io_paths.insert(format!("{}->{}", from, to), IoPathDelay { rise, fall });
+                    continue;
+                }                            "COND" => {
+                    // Parse COND: (COND <expression> <delay_spec>)
+                    // Skip (COND and the condition expression tokens
+                    pos += 2; // skip (COND
+                    let mut cond_depth = 0;
+                    // Read until we find the IOPATH (skip condition expression)
+                    while pos < tokens.len() {
+                        if tokens[pos] == "(" { cond_depth += 1; }
+                        if tokens[pos] == ")" { cond_depth -= 1; }
+                        pos += 1;
+                        if cond_depth < 0 {
+                            // Found closing of whole COND block, back up
+                            break;
+                        }
+                        if cond_depth == 1 && pos < tokens.len() && tokens[pos] == "(" && pos + 1 < tokens.len() && tokens[pos + 1] == "IOPATH" {
+                            // Found IOPATH inside COND — parse it
+                            pos += 2; // skip (IOPATH
+                            let from = if pos < tokens.len() && tokens[pos] != "(" {
+                                let s = tokens[pos].trim_matches('"').to_string();
+                                pos += 1;
+                                s
+                            } else { "*".to_string() };
+                            let to = if pos < tokens.len() && tokens[pos] != "(" {
+                                let s = tokens[pos].trim_matches('"').to_string();
+                                pos += 1;
+                                s
+                            } else { "*".to_string() };
+                            let (rise, fall) = parse_rise_fall(tokens, &mut pos)?;
+                            delay.cond_paths.push((String::new(), format!("{}->{}", from, to), IoPathDelay { rise, fall }));
+                            // Continue to find closing of COND
+                            continue;
+                        }
+                    }
+                    continue;
+                }
+                _ => {
+                    // Unknown construct — let outer depth tracking handle naturally
+                    // (no inner skip — the child ) will be seen by outer loop)
+                }
+            }
+        }
+        pos += 1;
+    }
+    if pos < tokens.len() { pos += 1; } // skip closing )
+
+    Ok((name, delay, pos))
+}
+
+/// Parse a NET/DELAYNET construct.
+fn parse_net(tokens: &[String], mut pos: usize) -> Result<(String, NetDelay, usize), String> {
+    pos += 2; // skip (NET or (DELAYNET
+    let name = if pos < tokens.len() && tokens[pos] != "(" {
+        let n = tokens[pos].trim_matches('"').to_string();
+        pos += 1;
         n
     } else {
         "unknown".to_string()
     };
 
     let mut net_delay = NetDelay {
-        rise: None,
-        fall: None,
+        rise: MinTypMax::single(0.0),
+        fall: MinTypMax::single(0.0),
     };
 
-    while p < tokens.len() && tokens[p] != ")" {
-        if tokens[p] == "(" && p + 1 < tokens.len() {
-            match tokens[p + 1].as_str() {
+    let mut depth = 1;
+    while pos < tokens.len() && depth > 0 {
+        if tokens[pos] == "(" { depth += 1; }
+        if tokens[pos] == ")" { depth -= 1; }
+        if depth == 0 { break; }
+
+        if tokens[pos] == "(" && pos + 1 < tokens.len() {
+            match tokens[pos + 1].as_str() {
                 "ABSDELAY" | "DELAY" => {
-                    p += 2;
-                    let (rise, fall, new_p) = parse_rise_fall(tokens, p)?;
-                    p = new_p;
-                    net_delay.rise = Some(rise);
-                    net_delay.fall = Some(fall);
+                    pos += 2;
+                    let (rise, fall) = parse_rise_fall(tokens, &mut pos)?;
+                    net_delay.rise = rise;
+                    net_delay.fall = fall;
+                    continue; // go back to depth check (pos is at child's ))
                 }
                 _ => {
-                    p += 1;
+                    // Unknown construct — let outer depth tracking handle naturally
                 }
             }
-        } else {
-            p += 1;
         }
+        pos += 1;
     }
-    if p < tokens.len() {
-        p += 1;
-    }
+    if pos < tokens.len() { pos += 1; }
 
-    Ok((name, net_delay, p))
+    Ok((name, net_delay, pos))
 }
 
-fn parse_rise_fall(tokens: &[String], pos: usize) -> Result<(f64, f64, usize), String> {
-    let mut p = pos;
-    let mut rise = 0.0;
-    let mut fall = 0.0;
-
-    if p < tokens.len() && tokens[p] == "(" {
-        p += 1;
-        // Parse triple: (value r_f r_f)
-        if p < tokens.len() {
-            rise = tokens[p].parse::<f64>().unwrap_or(0.0);
-            p += 1;
-        }
-        if p < tokens.len() {
-            fall = tokens[p].parse::<f64>().unwrap_or(0.0);
-            p += 1;
-        }
-        if p < tokens.len() {
-            p += 1;
-        } // skip )
-    } else if p < tokens.len() {
-        rise = tokens[p].parse::<f64>().unwrap_or(0.0);
-        fall = rise;
-        p += 1;
-    }
-
-    Ok((rise, fall, p))
-}
-
-fn parse_timing_checks(tokens: &[String], pos: usize) -> Result<(Vec<TimingCheck>, usize), String> {
-    let mut p = pos + 1; // skip "(TIMINGCHECK"
+/// Parse TIMINGCHECK construct.
+/// NOTE: Outer depth ONLY decrements for `)` (see parse_delayfile_header).
+fn parse_timing_checks(tokens: &[String], mut pos: usize) -> Result<(Vec<TimingCheck>, usize), String> {
+    pos += 2; // skip (TIMINGCHECK
     let mut checks = Vec::new();
+    let mut depth = 1;
 
-    while p < tokens.len() && tokens[p] != ")" {
-        match tokens[p].as_str() {
-            "(SETUP" | "(SETUPHOLD" => {
-                p += 1;
-                let mut sig = String::new();
-                let mut ref_sig = String::new();
-                let mut delay = 0.0;
+    while pos < tokens.len() && depth > 0 {
+        if tokens[pos] == "(" { depth += 1; }
+        if tokens[pos] == ")" { depth -= 1; }
+        if depth == 0 { break; }
 
-                while p < tokens.len() && tokens[p] != ")" {
-                    if tokens[p] == "(" {
-                        p += 1;
-                        let label = if p < tokens.len() {
-                            tokens[p].clone()
-                        } else {
-                            break;
-                        };
-                        p += 1;
-                        let value = if p < tokens.len() {
-                            tokens[p].clone()
-                        } else {
-                            break;
-                        };
-                        p += 1;
-                        if p < tokens.len() {
-                            p += 1;
-                        } // skip )
-
-                        match label.as_str() {
-                            "IOTIMING" | "NETTIMING" => {}
-                            _ => {}
+        if tokens[pos] == "(" && pos + 1 < tokens.len() {
+            match tokens[pos + 1].as_str() {
+                "SETUP" => {
+                    if let Ok((check, new_pos)) = parse_simple_timing_check(tokens, pos, TimingCheck::Setup {
+                        signal: String::new(), ref_signal: String::new(), delay: MinTypMax::single(0.0),
+                    }) {
+                        if let TimingCheck::Setup { signal, ref_signal, delay } = check {
+                            checks.push(TimingCheck::Setup { signal, ref_signal, delay });
                         }
-                        let value = value.trim_matches('"');
-                        if sig.is_empty() {
-                            sig = value.to_string();
-                        } else if ref_sig.is_empty() {
-                            ref_sig = value.to_string();
-                        } else if let Ok(d) = value.parse::<f64>() {
-                            delay = d;
-                        }
-                    } else {
-                        p += 1;
+                        pos = new_pos;
+                        continue;
                     }
                 }
-                if p < tokens.len() {
-                    p += 1;
-                } // skip )
-                checks.push(TimingCheck::Setup {
-                    signal: sig,
-                    ref_signal: ref_sig,
-                    delay,
-                });
-            }
-            "(HOLD" => {
-                p += 1;
-                let mut sig = String::new();
-                let mut ref_sig = String::new();
-                let mut delay = 0.0;
-
-                while p < tokens.len() && tokens[p] != ")" {
-                    if tokens[p] == "(" {
-                        p += 1;
-                        let _label = if p < tokens.len() {
-                            tokens[p].clone()
-                        } else {
-                            break;
-                        };
-                        p += 1;
-                        let value = if p < tokens.len() {
-                            tokens[p].clone()
-                        } else {
-                            break;
-                        };
-                        p += 1;
-                        if p < tokens.len() {
-                            p += 1;
+                "HOLD" => {
+                    if let Ok((check, new_pos)) = parse_simple_timing_check(tokens, pos, TimingCheck::Hold {
+                        signal: String::new(), ref_signal: String::new(), delay: MinTypMax::single(0.0),
+                    }) {
+                        if let TimingCheck::Hold { signal, ref_signal, delay } = check {
+                            checks.push(TimingCheck::Hold { signal, ref_signal, delay });
                         }
-
-                        let value = value.trim_matches('"');
-                        if sig.is_empty() {
-                            sig = value.to_string();
-                        } else if ref_sig.is_empty() {
-                            ref_sig = value.to_string();
-                        } else if let Ok(d) = value.parse::<f64>() {
-                            delay = d;
-                        }
-                    } else {
-                        p += 1;
+                        pos = new_pos;
+                        continue;
                     }
                 }
-                if p < tokens.len() {
-                    p += 1;
+                "SETUPHOLD" => {
+                    let mut signal = String::new();
+                    let mut ref_signal = String::new();
+                    let mut setup = MinTypMax::single(0.0);
+                    let mut hold = MinTypMax::single(0.0);
+                    let mut inner = 0;
+                    let mut p = pos + 2;
+                    while p < tokens.len() {
+                        if tokens[p] == "(" { inner += 1; }
+                        if tokens[p] == ")" { inner -= 1; }
+                        p += 1;
+                        if inner == 0 { break; }
+                        if tokens[p] == "(" && p + 3 < tokens.len() {
+                            let _label = &tokens[p + 1];
+                            // Collect signal name or delay value
+                            // Skip over inner constructs
+                            let mut skip = 0;
+                            while p < tokens.len() {
+                                if tokens[p] == "(" { skip += 1; }
+                                if tokens[p] == ")" { skip -= 1; }
+                                p += 1;
+                                if skip == 0 { break; }
+                            }
+                            continue;
+                        }
+                    }
+                    checks.push(TimingCheck::Setuphold { signal, ref_signal, setup, hold });
+                    pos = p + 1;
+                    continue;
                 }
-                checks.push(TimingCheck::Hold {
-                    signal: sig,
-                    ref_signal: ref_sig,
-                    delay,
-                });
+                "WIDTH" => {
+                    if let Ok((check, new_pos)) = parse_simple_timing_check(tokens, pos, TimingCheck::Width {
+                        signal: String::new(), delay: MinTypMax::single(0.0), threshold: None,
+                    }) {
+                        if let TimingCheck::Width { signal, delay, .. } = check {
+                            checks.push(TimingCheck::Width { signal, delay, threshold: None });
+                        }
+                        pos = new_pos;
+                        continue;
+                    }
+                }
+                "PERIOD" => {
+                    if let Ok((check, new_pos)) = parse_simple_timing_check(tokens, pos, TimingCheck::Period {
+                        signal: String::new(), delay: MinTypMax::single(0.0),
+                    }) {
+                        if let TimingCheck::Period { signal, delay } = check {
+                            checks.push(TimingCheck::Period { signal, delay });
+                        }
+                        pos = new_pos;
+                        continue;
+                    }
+                }
+                "RECOVERY" => {
+                    if let Ok((check, new_pos)) = parse_simple_timing_check(tokens, pos, TimingCheck::Recovery {
+                        signal: String::new(), ref_signal: String::new(), delay: MinTypMax::single(0.0),
+                    }) {
+                        if let TimingCheck::Recovery { signal, ref_signal, delay } = check {
+                            checks.push(TimingCheck::Recovery { signal, ref_signal, delay });
+                        }
+                        pos = new_pos;
+                        continue;
+                    }
+                }
+                "REMOVAL" => {
+                    if let Ok((check, new_pos)) = parse_simple_timing_check(tokens, pos, TimingCheck::Removal {
+                        signal: String::new(), ref_signal: String::new(), delay: MinTypMax::single(0.0),
+                    }) {
+                        if let TimingCheck::Removal { signal, ref_signal, delay } = check {
+                            checks.push(TimingCheck::Removal { signal, ref_signal, delay });
+                        }
+                        pos = new_pos;
+                        continue;
+                    }
+                }
+                "SKEW" => {
+                    if let Ok((check, new_pos)) = parse_simple_timing_check(tokens, pos, TimingCheck::Skew {
+                        signal: String::new(), ref_signal: String::new(), delay: MinTypMax::single(0.0),
+                    }) {
+                        if let TimingCheck::Skew { signal, ref_signal, delay } = check {
+                            checks.push(TimingCheck::Skew { signal, ref_signal, delay });
+                        }
+                        pos = new_pos;
+                        continue;
+                    }
+                }
+                _ => {}
             }
-            _ => {
-                p += 1;
+            // Unknown construct inside TIMINGCHECK — let outer depth handle naturally
+            continue;
+        }
+        pos += 1;
+    }
+    if pos < tokens.len() { pos += 1; }
+
+    Ok((checks, pos))
+}
+
+/// Parse a simple timing check (SETUP, HOLD, WIDTH, PERIOD, etc.)
+fn parse_simple_timing_check(
+    tokens: &[String],
+    mut pos: usize,
+    template: TimingCheck,
+) -> Result<(TimingCheck, usize), String> {
+    pos += 2; // skip (CHECKNAME
+    let mut signal = String::new();
+    let mut ref_signal = String::new();
+    let mut delay = MinTypMax::single(0.0);
+    let mut delay_found = false;
+
+    let mut depth = 1;
+    while pos < tokens.len() && depth > 0 {
+        if tokens[pos] == "(" { depth += 1; }
+        if tokens[pos] == ")" { depth -= 1; }
+        if depth == 0 { break; }
+
+        if tokens[pos] == "(" && pos + 3 < tokens.len() {
+            // Check for PORT or related keyword
+            let _keyword = &tokens[pos + 1];
+            // Extract value from the inner construct
+            let mut inner = 0;
+            let mut inner_pos = pos + 2;
+            while inner_pos < tokens.len() {
+                if tokens[inner_pos] == "(" { inner += 1; }
+                if tokens[inner_pos] == ")" { inner -= 1; }
+                inner_pos += 1;
+                if inner == 0 { break; }
+
+                // The value is usually a quoted string inside
+                if tokens[inner_pos].starts_with('"') || tokens[inner_pos] == ")" {
+                    break;
+                }
+                let trimmed = tokens[inner_pos].trim_matches('"');
+                if signal.is_empty() {
+                    signal = trimmed.to_string();
+                } else if ref_signal.is_empty() && trimmed.parse::<f64>().is_err() {
+                    ref_signal = trimmed.to_string();
+                }
+            }
+            // Skip to end of inner
+            pos = inner_pos;
+            continue;
+        }
+
+        // Try to parse as delay value
+        if !delay_found {
+            if let Some(mtm) = parse_triple_token(&tokens[pos]) {
+                delay = mtm;
+                delay_found = true;
+                pos += 1;
+                continue;
+            }
+            if let Ok(val) = tokens[pos].parse::<f64>() {
+                delay = MinTypMax::single(val);
+                delay_found = true;
+                pos += 1;
+                continue;
+            }
+            // Try as quoted string (signal name)
+            let trimmed = tokens[pos].trim_matches('"');
+            if !trimmed.is_empty() && trimmed.parse::<f64>().is_err() {
+                if signal.is_empty() {
+                    signal = trimmed.to_string();
+                } else if ref_signal.is_empty() {
+                    ref_signal = trimmed.to_string();
+                }
+                pos += 1;
+                continue;
             }
         }
+        pos += 1;
+    }
+    if pos < tokens.len() { pos += 1; }
+
+    // Reconstruct the check based on template type
+    use TimingCheck::*;
+    let check = match template {
+        Setup { .. } => Setup { signal, ref_signal, delay },
+        Hold { .. } => Hold { signal, ref_signal, delay },
+        Width { .. } => Width { signal, delay, threshold: None },
+        Period { .. } => Period { signal, delay },
+        Recovery { .. } => Recovery { signal, ref_signal, delay },
+        Removal { .. } => Removal { signal, ref_signal, delay },
+        Skew { .. } => Skew { signal, ref_signal, delay },
+        Setuphold { .. } => Setuphold { signal, ref_signal, setup: delay, hold: delay },
+    };
+
+    Ok((check, pos))
+}
+
+// ─── Tests ───
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_min_typ_max_single() {
+        let mtm = MinTypMax::single(1.5);
+        assert!((mtm.get(TimingMode::Min) - 1.5).abs() < 1e-9);
+        assert!((mtm.get(TimingMode::Typ) - 1.5).abs() < 1e-9);
+        assert!((mtm.get(TimingMode::Max) - 1.5).abs() < 1e-9);
     }
 
-    Ok((checks, p))
+    #[test]
+    fn test_min_typ_max_triple() {
+        let mtm = MinTypMax::new(1.0, 2.0, 3.0);
+        assert!((mtm.get(TimingMode::Min) - 1.0).abs() < 1e-9);
+        assert!((mtm.get(TimingMode::Typ) - 2.0).abs() < 1e-9);
+        assert!((mtm.get(TimingMode::Max) - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_timing_mode_from_str() {
+        assert_eq!(TimingMode::from_str("min"), Some(TimingMode::Min));
+        assert_eq!(TimingMode::from_str("typ"), Some(TimingMode::Typ));
+        assert_eq!(TimingMode::from_str("max"), Some(TimingMode::Max));
+        assert_eq!(TimingMode::from_str("invalid"), None);
+    }
+
+    #[test]
+    fn test_tokenize_simple() {
+        let tokens = tokenize("(DELAYFILE (SDFVERSION \"3.0\") (DESIGN \"test\"))");
+        assert!(tokens.contains(&"DELAYFILE".to_string()));
+        assert!(tokens.contains(&"SDFVERSION".to_string()));
+        assert!(tokens.contains(&"DESIGN".to_string()));
+    }
+
+    #[test]
+    fn test_sdf_header_parse() {
+        let sdf_source = r#"
+        (DELAYFILE
+            (SDFVERSION "3.0")
+            (DESIGN "top")
+            (DATE "01/01/2024")
+            (VENDOR "TestCorp")
+            (PROGRAM "TestSDF")
+            (VERSION "1.0")
+            (DIVIDER .)
+            (VOLTAGE 1.2)
+            (PROCESS "1.0")
+            (TEMPERATURE "25.0")
+            (TIMESCALE 1ns)
+        )
+        "#;
+        let sdf = SdfData::parse(sdf_source).unwrap();
+        assert_eq!(sdf.sdf_version, Some("3.0".to_string()));
+        assert_eq!(sdf.design_name, Some("top".to_string()));
+        assert_eq!(sdf.vendor, Some("TestCorp".to_string()));
+        assert!(sdf.voltage.is_some());
+    }
+
+    #[test]
+    fn test_cell_delay_parse() {
+        let sdf_source = r#"
+        (DELAYFILE (SDFVERSION "3.0"))
+        (CELL (CELLTYPE "AND2")
+            (INSTANCE u_and)
+            (DELAY
+                (ABSOLUTE
+                    (IOPATH a z (1.0) (1.5))
+                    (IOPATH b z (2.0:2.5:3.0) (2.5:3.0:3.5))
+                )
+            )
+        )
+        "#;
+        let sdf = SdfData::parse(sdf_source).unwrap();
+        assert!(
+            sdf.cell_delays.contains_key("u_and"),
+            "cell 'u_and' should be present: keys={:?}",
+            sdf.cell_delays.keys().collect::<Vec<_>>()
+        );
+        let cell = &sdf.cell_delays["u_and"];
+        assert!(
+            cell.io_paths.contains_key("a->z"),
+            "IOPATH a->z should be present: paths={:?}",
+            cell.io_paths.keys().collect::<Vec<_>>()
+        );
+        let path_az = &cell.io_paths["a->z"];
+        assert!((path_az.rise.get(TimingMode::Typ) - 1.0).abs() < 1e-9);
+        assert!((path_az.fall.get(TimingMode::Typ) - 1.5).abs() < 1e-9);
+
+        let path_bz = &cell.io_paths["b->z"];
+        assert!((path_bz.rise.get(TimingMode::Min) - 2.0).abs() < 1e-9);
+        assert!((path_bz.rise.get(TimingMode::Typ) - 2.5).abs() < 1e-9);
+        assert!((path_bz.rise.get(TimingMode::Max) - 3.0).abs() < 1e-9);
+        assert!((path_bz.fall.get(TimingMode::Min) - 2.5).abs() < 1e-9);
+        assert!((path_bz.fall.get(TimingMode::Typ) - 3.0).abs() < 1e-9);
+        assert!((path_bz.fall.get(TimingMode::Max) - 3.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_net_delay_parse() {
+        let sdf_source = r#"
+        (DELAYFILE (SDFVERSION "3.0"))
+        (NET "top.clk"
+            (ABSDELAY (1.0) (1.2))
+        )
+        (NET "top.data"
+            (DELAY (0.5:0.8:1.0) (0.6:0.9:1.2))
+        )
+        "#;
+        let sdf = SdfData::parse(sdf_source).unwrap();
+        assert!(sdf.net_delays.contains_key("top.clk"));
+        assert!(sdf.net_delays.contains_key("top.data"));
+
+        let clk = &sdf.net_delays["top.clk"];
+        assert!((clk.rise.get(TimingMode::Typ) - 1.0).abs() < 1e-9);
+        assert!((clk.fall.get(TimingMode::Typ) - 1.2).abs() < 1e-9);
+
+        let data = &sdf.net_delays["top.data"];
+        assert!((data.rise.get(TimingMode::Min) - 0.5).abs() < 1e-9);
+        assert!((data.rise.get(TimingMode::Max) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_timing_checks_parse() {
+        let sdf_source = r#"
+        (DELAYFILE (SDFVERSION "3.0"))
+        (CELL (CELLTYPE "DFF")
+            (INSTANCE u_dff)
+            (TIMINGCHECK
+                (SETUP (POSEDGE clk) (COND (reset == 1) (DATA d)) (1.0:1.5:2.0))
+                (HOLD (POSEDGE clk) (DATA d) (0.5:1.0:1.5))
+                (WIDTH (POSEDGE clk) (1.0:2.0:3.0))
+                (PERIOD (POSEDGE clk) (5.0:6.0:7.0))
+            )
+        )
+        "#;
+        let sdf = SdfData::parse(sdf_source).unwrap();
+        assert!(!sdf.timing_checks.is_empty(), "timing checks should be parsed");
+        assert!(sdf.timing_checks.len() >= 1, "should have at least 1 timing check");
+    }
+
+    #[test]
+    fn test_sdf_file_parse() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("maria_sdf_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let sdf_path = dir.join("test.sdf");
+        let sdf_content = r#"
+        (DELAYFILE
+            (SDFVERSION "3.0")
+            (DESIGN "test")
+        )
+        (CELL (CELLTYPE "BUF")
+            (INSTANCE u_buf)
+            (DELAY (ABSOLUTE (IOPATH a y (0.5) (0.7))))
+        )
+        (NET "test.sig"
+            (ABSDELAY (0.1) (0.1))
+        )
+        "#;
+        {
+            let mut f = std::fs::File::create(&sdf_path).unwrap();
+            f.write_all(sdf_content.as_bytes()).unwrap();
+        }
+
+        let sdf = SdfData::parse_file(sdf_path.to_str().unwrap()).unwrap();
+        assert_eq!(sdf.sdf_version, Some("3.0".to_string()));
+        assert!(sdf.cell_delays.contains_key("u_buf"));
+        assert!(sdf.net_delays.contains_key("test.sig"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_timing_mode_thread_local() {
+        set_timing_mode(TimingMode::Min);
+        assert_eq!(get_timing_mode(), TimingMode::Min);
+        set_timing_mode(TimingMode::Max);
+        assert_eq!(get_timing_mode(), TimingMode::Max);
+    }
+
+    #[test]
+    fn test_tokenize_with_comments() {
+        let tokens = tokenize("(CELL /* comment */ (IOPATH a z (1.0) (1.5)))");
+        assert!(tokens.contains(&"CELL".to_string()));
+        assert!(tokens.contains(&"IOPATH".to_string()));
+        assert!(tokens.contains(&"1.0".to_string()));
+        assert!(tokens.contains(&"1.5".to_string()));
+    }
+
+    #[test]
+    fn test_tokenize_with_line_comments() {
+        let tokens = tokenize("(CELL // line comment\n (IOPATH a z (1.0) (1.5)))");
+        assert!(tokens.contains(&"CELL".to_string()));
+        assert!(tokens.contains(&"IOPATH".to_string()));
+    }
+
+    #[test]
+    fn test_parse_conditional_delay() {
+        let sdf_source = r#"
+        (DELAYFILE (SDFVERSION "3.0"))
+        (CELL (CELLTYPE "MUX")
+            (INSTANCE u_mux)
+            (DELAY (ABSOLUTE
+                (COND (sel == 1) (IOPATH a z (2.0) (2.5)))
+                (IOPATH a z (3.0) (3.5))
+            ))
+        )
+        "#;
+        let sdf = SdfData::parse(sdf_source).unwrap();
+        assert!(sdf.cell_delays.contains_key("u_mux"));
+    }
 }

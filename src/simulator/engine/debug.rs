@@ -26,20 +26,12 @@ impl SimulationEngine {
             }
         }
 
-        // Update signal history
+        // Update signal history via SignalHistoryStore
         for sig in &self.design.top.signals {
             let id = self.find_signal(sig.name.as_str());
             if let Some(id) = id {
                 let val = self.state.read_signal(id).clone();
-                self.signal_history
-                    .entry(sig.name)
-                    .or_insert_with(|| VecDeque::with_capacity(self.signal_history_max.min(1024)))
-                    .push_back((time, val));
-                if let Some(hist) = self.signal_history.get(&sig.name) {
-                    if hist.len() > self.signal_history_max {
-                        self.signal_history.get_mut(&sig.name).unwrap().pop_front();
-                    }
-                }
+                self.signal_history.record(time, sig.name, val);
             }
         }
 
@@ -85,21 +77,21 @@ impl SimulationEngine {
                     }
                 }
                 Breakpoint::SignalChange(name) => {
-                    if let Some(history) = self.signal_history.get(name.as_str()) {
-                        if history.len() >= 2 {
-                            let last = &history[history.len() - 1];
-                            let prev = &history[history.len() - 2];
-                            if last.1 != prev.1 {
-                                self.paused = true;
-                                self.event_log.push(DebugEvent {
-                                    kind: DebugEventKind::BreakpointHit,
-                                    time,
-                                    message: format!(
-                                        "breakpoint change {} hit: {} → {}",
-                                        name, prev.1, last.1
-                                    ),
-                                });
-                            }
+                    let sym = crate::Symbol::intern(name);
+                    let history = self.signal_history.get_history(&sym);
+                    if history.len() >= 2 {
+                        let last = &history[history.len() - 1];
+                        let prev = &history[history.len() - 2];
+                        if last.1 != prev.1 {
+                            self.paused = true;
+                            self.event_log.push(DebugEvent {
+                                kind: DebugEventKind::BreakpointHit,
+                                time,
+                                message: format!(
+                                    "breakpoint change {} hit: {} → {}",
+                                    name, prev.1, last.1
+                                ),
+                            });
                         }
                     }
                 }
@@ -120,21 +112,21 @@ impl SimulationEngine {
         for wp in &self.watchpoints {
             match wp {
                 Watchpoint::Signal(name) => {
-                    if let Some(history) = self.signal_history.get(name.as_str()) {
-                        if history.len() >= 2 {
-                            let last = &history[history.len() - 1];
-                            let prev = &history[history.len() - 2];
-                            if last.1 != prev.1 {
-                                self.event_log.push(DebugEvent {
-                                    kind: DebugEventKind::WatchpointHit,
-                                    time,
-                                    message: format!(
-                                        "WATCH: {} changed\n  old = {}\n  new = {}\n  cycle = {}",
-                                        name, prev.1, last.1, time
-                                    ),
-                                });
-                                self.paused = true;
-                            }
+                    let sym = crate::Symbol::intern(name);
+                    let history = self.signal_history.get_history(&sym);
+                    if history.len() >= 2 {
+                        let last = &history[history.len() - 1];
+                        let prev = &history[history.len() - 2];
+                        if last.1 != prev.1 {
+                            self.event_log.push(DebugEvent {
+                                kind: DebugEventKind::WatchpointHit,
+                                time,
+                                message: format!(
+                                    "WATCH: {} changed\n  old = {}\n  new = {}\n  cycle = {}",
+                                    name, prev.1, last.1, time
+                                ),
+                            });
+                            self.paused = true;
                         }
                     }
                 }

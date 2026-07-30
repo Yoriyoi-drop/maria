@@ -116,6 +116,21 @@ impl SimulationEngine {
             IrExpr::FillLit(val) => Ok(LogicVec::fill(*val, 1)),
             IrExpr::Signal(id, _) => {
                 let mut val = self.state.read_signal(*id).clone();
+                // UPF power-aware: if signal's domain is OFF, force to X (or isolation clamp)
+                if let Some(ref pi) = self.power_intent {
+                    if pi.enabled {
+                        if let Some(sig) = self.design.top.signals.get(*id) {
+                            if pi.is_signal_powered_off(sig.name.as_str()) {
+                                // Check for isolation cell: clamp to specified value instead of X
+                                if let Some(clamp) = pi.get_isolation_clamp(sig.name.as_str()) {
+                                    val = LogicVec::fill(clamp, val.width);
+                                } else {
+                                    val = LogicVec::fill(LogicVal::X, val.width);
+                                }
+                            }
+                        }
+                    }
+                }
                 sanitize_for_2state(&self.design.top.signals, *id, &mut val);
                 Ok(val)
             }

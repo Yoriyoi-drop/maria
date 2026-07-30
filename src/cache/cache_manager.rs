@@ -5,11 +5,13 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 use dashmap::DashMap;
 
 use super::checksum::compute_checksum;
+use super::remote::{CacheError, RemoteCacheBackend, RemoteCacheStats};
 use crate::intern::Symbol;
 
 // ─── Cache Key ───
@@ -189,6 +191,52 @@ impl<V> Default for CacheStore<V> {
     }
 }
 
+// ─── Remote Sync Mode ───
+
+/// How aggressively to sync cache entries with remote backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteSyncMode {
+    /// Never sync (local-only, default)
+    None,
+    /// Sync on explicit request only
+    Manual,
+    /// Auto-sync on cache miss (check remote before falling back)
+    ReadThrough,
+    /// Auto-sync on cache insert (write to remote on put)
+    WriteThrough,
+    /// Both read-through and write-through
+    ReadWrite,
+}
+
+impl RemoteSyncMode {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "none" => RemoteSyncMode::None,
+            "manual" => RemoteSyncMode::Manual,
+            "read" | "read-through" | "readthrough" => RemoteSyncMode::ReadThrough,
+            "write" | "write-through" | "writethrough" => RemoteSyncMode::WriteThrough,
+            "readwrite" | "read-write" | "rw" => RemoteSyncMode::ReadWrite,
+            _ => RemoteSyncMode::None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RemoteSyncMode::None => "none",
+            RemoteSyncMode::Manual => "manual",
+            RemoteSyncMode::ReadThrough => "read-through",
+            RemoteSyncMode::WriteThrough => "write-through",
+            RemoteSyncMode::ReadWrite => "read-write",
+        }
+    }
+}
+
+impl Default for RemoteSyncMode {
+    fn default() -> Self {
+        RemoteSyncMode::None
+    }
+}
+
 // ─── Cache Manager ───
 
 /// Unified cache manager — single entry point untuk semua caching.
@@ -207,6 +255,10 @@ pub struct CacheManager {
     pub dep_cache: CacheStore<Vec<PathBuf>>,
     /// Global stats
     pub total_invalidations: AtomicUsize,
+    /// Remote cache backend (shared across CI builds)
+    pub remote: Option<Arc<dyn RemoteCacheBackend>>,
+    /// Sync mode: how aggressively to sync with remote
+    pub remote_sync_mode: RemoteSyncMode,
 }
 
 impl CacheManager {
@@ -234,7 +286,100 @@ impl CacheManager {
             macro_cache: CacheStore::new(macro_budget),
             dep_cache: CacheStore::new(16 * 1024 * 1024),
             total_invalidations: AtomicUsize::new(0),
+            remote: None,
+            remote_sync_mode: RemoteSyncMode::None,
         }
+    }
+
+    /// Set the remote cache backend.
+    pub fn set_remote_backend(&mut self, backend: Arc<dyn RemoteCacheBackend>) {
+        self.remote = Some(backend);
+    }
+
+    /// Set the remote sync mode.
+    pub fn set_remote_sync_mode(&mut self, mode: RemoteSyncMode) {
+        self.remote_sync_mode = mode;
+    }
+
+    /// Try to load a cache entry from remote backend.
+    /// Returns `Some(data)` if found, `None` if not found or no backend configured.
+    pub fn try_load_from_remote(&self, key: &CacheKey) -> Option<Vec<u8>> {
+        let backend = self.remote.as_ref()?;
+        match backend.get(key) {
+            Ok(Some(data)) => {
+                // Also store locally for faster access
+                self.store_in_local(key, &data);
+                Some(data)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                // Log error but don't fail – remote is best-effort
+                eprintln!("Remote cache read error: {}", e);
+                None
+            }
+        }
+    }
+
+    /// Try to store a cache entry to remote backend.
+    pub fn try_store_to_remote(&self, key: &CacheKey, data: &[u8]) {
+        let Some(backend) = self.remote.as_ref() else { return };
+        if let Err(e) = backend.put(key, data) {
+            eprintln!("Remote cache write error: {}", e);
+        }
+    }
+
+    /// Sync a cache store entry to remote based on sync mode.
+    /// Called after a local cache insert.
+    pub fn sync_on_insert(&self, key: &CacheKey, data: &[u8]) {
+        if self.remote_sync_mode == RemoteSyncMode::WriteThrough
+            || self.remote_sync_mode == RemoteSyncMode::ReadWrite
+        {
+            self.try_store_to_remote(key, data);
+        }
+    }
+
+    /// Try to load from remote on cache miss.
+    /// Called when a local cache miss occurs.
+    pub fn sync_on_miss(&self, key: &CacheKey) -> Option<Vec<u8>> {
+        if self.remote_sync_mode == RemoteSyncMode::ReadThrough
+            || self.remote_sync_mode == RemoteSyncMode::ReadWrite
+        {
+            self.try_load_from_remote(key)
+        } else {
+            None
+        }
+    }
+
+    /// Store data in local cache store with appropriate key type.
+    fn store_in_local(&self, key: &CacheKey, data: &[u8]) {
+        let size = data.len() as u64;
+        match key {
+            CacheKey::FileContent(c) => {
+                self.ast_cache.insert(key.clone(), data.to_vec(), size, *c);
+            }
+            CacheKey::FilePath(_) => {
+                self.ast_cache.insert(key.clone(), data.to_vec(), size, 0);
+            }
+            CacheKey::Module { .. } => {
+                self.hir_cache.insert(key.clone(), data.to_vec(), size, 0);
+            }
+            CacheKey::Package(_) => {
+                self.hir_cache.insert(key.clone(), data.to_vec(), size, 0);
+            }
+            CacheKey::Macro { .. } => {
+                self.macro_cache
+                    .insert(key.clone(), String::from_utf8_lossy(data).to_string(), size, 0);
+            }
+            CacheKey::Include { .. } => {
+                self.include_cache
+                    .insert(key.clone(), String::from_utf8_lossy(data).to_string(), size, 0);
+            }
+        }
+    }
+
+    /// Get remote cache statistics.
+    pub fn remote_stats(&self) -> Option<RemoteCacheStats> {
+        self.remote.as_ref().map(|r| r.stats())
     }
 
     /// Check if a file has been registered.
@@ -343,6 +488,12 @@ impl CacheManager {
 
     /// Get cache statistics.
     pub fn stats(&self) -> CacheStats {
+        let remote_backend = self
+            .remote
+            .as_ref()
+            .map(|r| r.backend_name().to_string())
+            .unwrap_or_default();
+        let remote_stats = self.remote.as_ref().map(|r| r.stats());
         CacheStats {
             ast_entries: self.ast_cache.len(),
             ast_memory: self.ast_cache.memory_used(),
@@ -357,6 +508,8 @@ impl CacheManager {
             macro_memory: self.macro_cache.memory_used(),
             macro_hit_rate: self.macro_cache.hit_rate(),
             total_invalidations: self.total_invalidations.load(Ordering::Relaxed),
+            remote_backend,
+            remote_stats,
         }
     }
 
@@ -395,6 +548,10 @@ pub struct CacheStats {
     pub macro_memory: u64,
     pub macro_hit_rate: f64,
     pub total_invalidations: usize,
+    /// Remote cache backend type name (empty if none)
+    pub remote_backend: String,
+    /// Remote cache stats (empty if none)
+    pub remote_stats: Option<RemoteCacheStats>,
 }
 
 impl std::fmt::Display for CacheStats {
@@ -429,6 +586,9 @@ impl std::fmt::Display for CacheStats {
             self.macro_hit_rate * 100.0
         )?;
         writeln!(f, "  Total invalidations: {}", self.total_invalidations)?;
+        if let Some(ref rs) = self.remote_stats {
+            writeln!(f, "  Remote: {} ({})", rs, self.remote_backend)?;
+        }
         Ok(())
     }
 }

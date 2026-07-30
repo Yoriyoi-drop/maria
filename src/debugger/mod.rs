@@ -172,15 +172,17 @@ impl Debugger {
 
     pub fn timeline(&self, name: &str, max_entries: usize) -> String {
         let mut out = String::new();
-        let history = match self.engine.signal_history.get(name) {
-            Some(h) => h,
-            None => return format!("no timeline data for '{}'\n", name),
-        };
-        let w = if history.is_empty() {
-            8
-        } else {
+        let sym = Symbol::intern(name);
+        // Try the new SignalHistoryStore first, fall back to pre-computed timeline
+        let history = crate::simulator::signal_history::SignalHistoryStore::get_history(
+            &self.engine.signal_history, &sym
+        );
+        if history.is_empty() {
+            return format!("no timeline data for '{}'\n", name);
+        }
+        let w = {
             let mut max_len = 4usize;
-            for (_, v) in history.iter() {
+            for (_, v) in &history {
                 let s = format!("{}", v);
                 if s.len() > max_len {
                     max_len = s.len();

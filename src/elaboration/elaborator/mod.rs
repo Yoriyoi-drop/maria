@@ -43,6 +43,12 @@ pub struct Elaborator {
     pub source_lines: Vec<String>,
     pub source_file: String,
     pub current_module: Option<Symbol>,
+    // ── Incremental elaboration cache ──
+    /// Global cache: signature → cached IrModule (session-wide)
+    pub module_cache: HashMap<u64, IrModule>,
+    /// Stats for profiling
+    pub cache_hits: usize,
+    pub cache_misses: usize,
 }
 
 impl Elaborator {
@@ -158,6 +164,10 @@ impl Elaborator {
             source_lines,
             source_file,
             current_module: None,
+
+            module_cache: HashMap::new(),
+            cache_hits: 0,
+            cache_misses: 0,
         }
     }
 
@@ -361,14 +371,58 @@ impl Elaborator {
             }
         }
 
-        // First pass: elaborate all modules
+        // ── Incremental elaboration pass ──
+        // 1. Compute structural checksums for all modules
+        // 2. Compute topological order (children before parents)
+        // 3. Compute dependency-aware signatures
+        // 4. Check cache before each elaborate_module()
+
         let module_names: Vec<Symbol> =
             self.design.modules.iter().map(|m| m.name).collect();
 
         let modules_snapshot: Vec<Module> = self.design.modules.clone();
+
+        // Phase A: Compute structural checksums for all modules
+        let mut struct_sigs: HashMap<Symbol, u64> = HashMap::new();
         for module in &modules_snapshot {
-            let ir = self.elaborate_module(module, &module_names)?;
-            self.modules.insert(module.name.clone(), ir);
+            let sig = self.compute_module_checksum(module);
+            struct_sigs.insert(module.name, sig);
+        }
+
+        // Phase B: Compute topological order (leaves/children before parents)
+        let topo_order = self.compute_topo_order(&modules_snapshot, &module_names);
+
+        // Phase C: Compute dependency-aware signatures and elaborate/cache
+        let mut dep_sigs: HashMap<Symbol, u64> = HashMap::new();
+
+        for &mod_name in &topo_order {
+            let module = modules_snapshot.iter().find(|m| m.name == mod_name)
+                .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound,
+                    format!("module '{}' not found in snapshot", mod_name)))?;
+
+            let structural = struct_sigs.get(&mod_name).copied().unwrap_or(0);
+
+            // Combine with dependency (child) signatures
+            let mut dep_aware = structural;
+            for item in &module.items {
+                if let ModuleItem::Instance(inst) = item {
+                    if let Some(child_sig) = dep_sigs.get(&inst.module_name) {
+                        dep_aware = crate::cache::checksum::combine_checksum(dep_aware, *child_sig);
+                    }
+                }
+            }
+            dep_sigs.insert(mod_name, dep_aware);
+
+            // Check cache: if dependency-aware signature matches, skip elaboration
+            if let Some(cached_ir) = self.module_cache.get(&dep_aware) {
+                self.modules.insert(mod_name, cached_ir.clone());
+                self.cache_hits += 1;
+            } else {
+                let ir = self.elaborate_module(module, &module_names)?;
+                self.module_cache.insert(dep_aware, ir.clone());
+                self.modules.insert(mod_name, ir);
+                self.cache_misses += 1;
+            }
         }
 
         // Elaborate interfaces as signal-only modules
@@ -761,6 +815,87 @@ impl Elaborator {
         })
     }
 
+    // ── Module signature computation (for incremental caching) ──
+
+    /// Compute a structural checksum for a module AST.
+    /// Uses Debug formatting of the entire module to capture ALL content:
+    /// ports, params, decls, always/initial/assign bodies, function bodies, etc.
+    /// Dependency instance names are also included for topological signature combining.
+    fn compute_module_checksum(&self, module: &Module) -> u64 {
+        use crate::cache::checksum::{combine_checksum, compute_str_checksum};
+
+        // Hash the Debug representation — catches ALL AST content changes
+        let mut h = compute_str_checksum(&format!("{:?}", module));
+
+        // Also explicitly hash instance module names for dependency edge tracking
+        // (Debug formatting already includes these, but this ensures clarity)
+        for item in &module.items {
+            if let ModuleItem::Instance(inst) = item {
+                h = combine_checksum(h, compute_str_checksum(inst.module_name.as_str()));
+            }
+        }
+
+        h
+    }
+
+    /// Compute topological order of modules so children (instantiated) come before parents.
+    /// Uses Kahn's algorithm.
+    fn compute_topo_order(&self, modules: &[Module], module_names: &[Symbol]) -> Vec<Symbol> {
+        use std::collections::{HashMap, HashSet, VecDeque};
+
+        let name_set: HashSet<Symbol> = module_names.iter().copied().collect();
+        let mut in_degree: HashMap<Symbol, usize> = HashMap::new();
+        let mut dependents: HashMap<Symbol, Vec<Symbol>> = HashMap::new(); // child → [parents]
+
+        for module in modules {
+            in_degree.entry(module.name).or_insert(0);
+            for item in &module.items {
+                if let ModuleItem::Instance(inst) = item {
+                    if name_set.contains(&inst.module_name) {
+                        // parent depends on child (child must be elaborated first)
+                        dependents.entry(inst.module_name).or_default().push(module.name);
+                        *in_degree.entry(module.name).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+
+        // Kahn: start with modules that have no dependencies (in_degree == 0)
+        let mut queue: VecDeque<Symbol> = VecDeque::new();
+        for (&name, &deg) in &in_degree {
+            if deg == 0 {
+                queue.push_back(name);
+            }
+        }
+
+        let mut order = Vec::new();
+        let mut order_set: HashSet<Symbol> = HashSet::new();
+        while let Some(name) = queue.pop_front() {
+            order.push(name);
+            order_set.insert(name);
+            if let Some(children) = dependents.get(&name) {
+                for &parent in children {
+                    if let Some(deg) = in_degree.get_mut(&parent) {
+                        *deg -= 1;
+                        if *deg == 0 {
+                            queue.push_back(parent);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Handle cycles: add remaining modules not in order
+        for module in modules {
+            if !order_set.contains(&module.name) {
+                order.push(module.name);
+                order_set.insert(module.name);
+            }
+        }
+
+        order
+    }
+
     fn resolve_param_values(
         &self,
         module: &Module,
@@ -813,6 +948,16 @@ impl Elaborator {
     /// Flush diagnostics from DiagSink and return them.
     pub fn flush_diagnostics(&self) -> Vec<Diagnostic> {
         self.diag_sink.diagnostics()
+    }
+
+    /// Prime the module cache from an existing cache (session-level persistence).
+    pub fn set_cache(&mut self, cache: HashMap<u64, IrModule>) {
+        self.module_cache = cache;
+    }
+
+    /// Take the module cache out for session-level storage after elaboration.
+    pub fn take_cache(&mut self) -> HashMap<u64, IrModule> {
+        std::mem::take(&mut self.module_cache)
     }
 
     fn store_typedef_fields(&mut self, name: Symbol, dtype: &DataType) {
@@ -1420,7 +1565,7 @@ impl Elaborator {
                         ar.lsb - ar.msb + 1
                     };
                     let total_width = elem_width * depth;
-                    let _sid = get_or_create_signal(
+                    let sid = get_or_create_signal(
                         var.name,
                         total_width,
                         kind.clone(),
@@ -1435,56 +1580,55 @@ impl Elaborator {
                         decl_is_2state,
                         is_signed_type(&decl.dtype),
                     );
-                    if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
-                        sig.is_2state = decl_is_2state;
-                        let elem_init = if kind == SignalKind::Wire {
-                            LogicVec::fill(LogicVal::Z, elem_width)
-                        } else {
-                            LogicVec::new(elem_width)
-                        };
-                        let mut full_init = if kind == SignalKind::Wire {
-                            LogicVec::fill(LogicVal::Z, total_width)
-                        } else {
-                            LogicVec::new(total_width)
-                        };
-                        for i in 0..depth {
-                            for j in 0..elem_width {
-                                full_init.bits[i * elem_width + j] = elem_init.bits[j].clone();
-                            }
+                    let sig = &mut signals[sid];
+                    sig.is_2state = decl_is_2state;
+                    let elem_init = if kind == SignalKind::Wire {
+                        LogicVec::fill(LogicVal::Z, elem_width)
+                    } else {
+                        LogicVec::new(elem_width)
+                    };
+                    let mut full_init = if kind == SignalKind::Wire {
+                        LogicVec::fill(LogicVal::Z, total_width)
+                    } else {
+                        LogicVec::new(total_width)
+                    };
+                    for i in 0..depth {
+                        for j in 0..elem_width {
+                            full_init.bits[i * elem_width + j] = elem_init.bits[j].clone();
                         }
-                        sig.init_val = full_init;
-                        if let Some(ref class) = class_name {
-                            sig.class_name = Some(Symbol::intern(class));
-                            if class == "__mailbox" {
-                                sig.is_mailbox = true;
-                            }
-                            if class == "__semaphore" {
-                                sig.is_semaphore = true;
-                            }
+                    }
+                    sig.init_val = full_init;
+                    if let Some(ref class) = class_name {
+                        sig.class_name = Some(Symbol::intern(class));
+                        if class == "__mailbox" {
+                            sig.is_mailbox = true;
                         }
-                        // Compute packed dimension widths for multi-dim packed arrays
-                        if !var.extra_packed_dims.is_empty() {
-                            let first_width = if let Some(er) = &var.expr_range {
-                                resolve_expr_range(er, &effective_params).map(|r| r.width())
-                            } else if let Some(r) = &var.range {
-                                Ok(r.width())
-                            } else {
-                                Ok(1usize)
-                            };
-                            if let Ok(fw) = first_width {
-                                let mut pd = vec![fw];
-                                for (extra_er, _) in &var.extra_packed_dims {
-                                    if let Ok(or) = resolve_expr_range(extra_er, &effective_params)
-                                    {
-                                        pd.push(or.width());
-                                    }
+                        if class == "__semaphore" {
+                            sig.is_semaphore = true;
+                        }
+                    }
+                    // Compute packed dimension widths for multi-dim packed arrays
+                    if !var.extra_packed_dims.is_empty() {
+                        let first_width = if let Some(er) = &var.expr_range {
+                            resolve_expr_range(er, &effective_params).map(|r| r.width())
+                        } else if let Some(r) = &var.range {
+                            Ok(r.width())
+                        } else {
+                            Ok(1usize)
+                        };
+                        if let Ok(fw) = first_width {
+                            let mut pd = vec![fw];
+                            for (extra_er, _) in &var.extra_packed_dims {
+                                if let Ok(or) = resolve_expr_range(extra_er, &effective_params)
+                                {
+                                    pd.push(or.width());
                                 }
-                                sig.packed_dims = pd;
                             }
+                            sig.packed_dims = pd;
                         }
                     }
                 } else {
-                    let _sid = get_or_create_signal(
+                    let sid = get_or_create_signal(
                         var.name,
                         elem_width,
                         kind,
@@ -1499,41 +1643,39 @@ impl Elaborator {
                         decl_is_2state,
                         is_signed_type(&decl.dtype),
                     );
+                    let sig = &mut signals[sid];
                     if let Some(class) = &class_name {
-                        if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
-                            sig.class_name = Some(Symbol::intern(class));
-                            if class == "__mailbox" {
-                                sig.is_mailbox = true;
-                            }
-                            if class == "__semaphore" {
-                                sig.is_semaphore = true;
-                            }
+                        sig.class_name = Some(Symbol::intern(class));
+                        if class == "__mailbox" {
+                            sig.is_mailbox = true;
+                        }
+                        if class == "__semaphore" {
+                            sig.is_semaphore = true;
                         }
                     }
-                    if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
-                        sig.is_2state = decl_is_2state;
-                        // Compute packed dimension widths for multi-dim packed arrays
-                        if !var.extra_packed_dims.is_empty() {
-                            if let Some(er) = &var.expr_range {
-                                if let Ok(r) = resolve_expr_range(er, &effective_params) {
-                                    let mut pd = vec![r.width()];
-                                    for (extra_er, _) in &var.extra_packed_dims {
-                                        if let Ok(or) =
-                                            resolve_expr_range(extra_er, &effective_params)
-                                        {
-                                            pd.push(or.width());
-                                        }
+                    sig.is_2state = decl_is_2state;
+                    // Compute packed dimension widths for multi-dim packed arrays
+                    if !var.extra_packed_dims.is_empty() {
+                        if let Some(er) = &var.expr_range {
+                            if let Ok(r) = resolve_expr_range(er, &effective_params) {
+                                let mut pd = vec![r.width()];
+                                for (extra_er, _) in &var.extra_packed_dims {
+                                    if let Ok(or) =
+                                        resolve_expr_range(extra_er, &effective_params)
+                                    {
+                                        pd.push(or.width());
                                     }
-                                    sig.packed_dims = pd;
                                 }
+                                sig.packed_dims = pd;
                             }
                         }
                     }
                 }
                 // Compute struct/union field offsets for member access
-                match &decl.dtype {
-                    DataType::StructType { members } | DataType::UnionType { members } => {
-                        if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
+                if let Some(&sid) = signal_map.get(&var.name) {
+                    let sig = &mut signals[sid];
+                    match &decl.dtype {
+                        DataType::StructType { members } | DataType::UnionType { members } => {
                             match &decl.dtype {
                                 DataType::UnionType { members } => {
                                     for m in members {
@@ -1561,17 +1703,15 @@ impl Elaborator {
                                 }
                             }
                         }
-                    }
-                    DataType::UserDefined(name) => {
-                        if let Some(fields) = self.typedef_field_map.get(name) {
-                            if !fields.is_empty() {
-                                if let Some(sig) = signals.iter_mut().find(|s| s.name == var.name) {
+                        DataType::UserDefined(name) => {
+                            if let Some(fields) = self.typedef_field_map.get(name) {
+                                if !fields.is_empty() {
                                     sig.struct_fields = fields.clone();
                                 }
                             }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
         }

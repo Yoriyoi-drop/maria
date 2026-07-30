@@ -12,7 +12,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::ast::Design;
-use crate::cache::{CacheManager, compute_checksum};
+use std::sync::Arc;
+use crate::cache::{CacheManager, RemoteCacheBackend, RemoteSyncMode, compute_checksum};
 use crate::error::SimError;
 use crate::frontend::discovery::{DiscoveryOptions, FileDiscovery};
 use crate::frontend::io::MmapFile;
@@ -82,6 +83,8 @@ pub struct CompileSession {
     merged_design: Option<Design>,
     /// Cached elaborated IR design (lifetime: until next compile)
     cached_ir_design: Option<crate::ir::IrDesign>,
+    /// Session-level incremental elaboration cache: signature → IrModule
+    cached_elab_modules: HashMap<u64, crate::ir::IrModule>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -130,6 +133,7 @@ impl CompileSession {
             prev_checksums: HashMap::new(),
             merged_design: None,
             cached_ir_design: None,
+            cached_elab_modules: HashMap::new(),
         }
     }
 
@@ -157,19 +161,23 @@ impl CompileSession {
         let use_fast_lexer = self.config.use_fast_lexer;
         let prev_designs = &self.prev_designs;
 
-        let results: Vec<Result<(PathBuf, Design), SimError>> = files
+        let prev_checksums = &self.prev_checksums;
+
+        let results: Vec<Result<(PathBuf, Design, u64), SimError>> = files
             .par_iter()
             .map(|path| {
                 // ── Fast path: file unchanged, use cached design ──
                 if incremental && !changed_set.contains(path) {
                     if let Some(cached) = prev_designs.get(path) {
-                        return Ok((path.clone(), cached.clone()));
+                        let cksum = prev_checksums.get(path).copied().unwrap_or(0);
+                        return Ok((path.clone(), cached.clone(), cksum));
                     }
                 }
 
                 // ── Slow path: process file ──
                 let mmap = MmapFile::open(path)
                     .map_err(SimError::from)?;
+                let cksum = mmap.checksum;
                 let content = mmap.as_str().to_string();
 
                 cache.register_file(path, content.as_bytes());
@@ -208,13 +216,12 @@ impl CompileSession {
                 };
 
                 let source_name = path_str.to_string();
-                eprintln!("DEBUG: parsing file {}", source_name);
                 let mut parser = Parser::new(tokens, &source_name);
                 let design = parser
                     .parse_design()
                     .map_err(|e| SimError::Parse(format!("{}: {}", path_str, e)))?;
 
-                Ok((path.clone(), design))
+                Ok((path.clone(), design, cksum))
             })
             .collect();
 
@@ -230,9 +237,11 @@ impl CompileSession {
         self.timing.processed_files = 0;
 
         let mut file_designs: Vec<(PathBuf, Design)> = Vec::new();
+        let mut file_checksums: HashMap<PathBuf, u64> = HashMap::new();
         for r in results {
-            let (path, design) = r?;
-            file_designs.push((path, design));
+            let (path, design, cksum) = r?;
+            file_designs.push((path.clone(), design));
+            file_checksums.insert(path, cksum);
             self.timing.processed_files += 1;
         }
         self.timing.cached_files = files.len().saturating_sub(self.timing.processed_files);
@@ -249,7 +258,7 @@ impl CompileSession {
 
         // Build module index + dependency graph + incremental tracking (with profiling)
         let index_timer_start = self.profiler.as_ref().map(|_| Instant::now());
-        self.build_index_and_deps(&paths, &designs)?;
+        self.build_index_and_deps(&paths, &designs, &file_checksums)?;
         if let Some(p) = self.profiler.as_ref() {
             if let Some(start) = index_timer_start {
                 p.record_phase(Phase::Elaborate, start.elapsed().as_nanos() as u64);
@@ -311,7 +320,7 @@ impl CompileSession {
         self.prev_checksums.clear();
         self.prev_designs.clear();
         for (path, design) in paths.iter().zip(designs.iter()) {
-            let cksum = compute_checksum(&std::fs::read(path).unwrap_or_default());
+            let cksum = file_checksums.get(path).copied().unwrap_or(0);
             self.prev_checksums.insert(path.clone(), cksum);
             self.prev_designs.insert(path.clone(), design.clone());
         }
@@ -384,6 +393,7 @@ impl CompileSession {
         &mut self,
         files: &[PathBuf],
         designs: &[Design],
+        checksums: &HashMap<PathBuf, u64>,
     ) -> Result<(), SimError> {
         // Temporary mapping: module_name → NodeId (for edge building)
         let mut module_to_node: HashMap<Symbol, crate::scheduler::dag::NodeId> = HashMap::new();
@@ -391,9 +401,9 @@ impl CompileSession {
         // ── Pass 1: Insert into index, create DAG nodes, register files ──
         for (i, design) in designs.iter().enumerate() {
             let path = &files[i];
-            let checksum = compute_checksum(
-                &std::fs::read(path).unwrap_or_default()
-            );
+            let checksum = checksums.get(path).copied().unwrap_or_else(|| {
+                compute_checksum(&std::fs::read(path).unwrap_or_default())
+            });
 
             let mut module_nodes = Vec::new();
 
@@ -546,6 +556,30 @@ impl CompileSession {
         self.profiler.as_ref().map(|p| p.report())
     }
 
+    /// Set remote cache backend with sync mode.
+    pub fn set_remote_cache(
+        &mut self,
+        backend: Arc<dyn RemoteCacheBackend>,
+        sync_mode: RemoteSyncMode,
+    ) {
+        self.cache.set_remote_backend(backend);
+        self.cache.set_remote_sync_mode(sync_mode);
+    }
+
+    /// Clear all caches (local + remote if configured).
+    pub fn clear_cache(&mut self) {
+        self.cache.clear();
+        // If remote is set, also clear remote
+        if let Some(ref backend) = self.cache.remote {
+            let _ = backend.clear();
+        }
+        self.prev_checksums.clear();
+        self.prev_designs.clear();
+        self.cached_elab_modules.clear();
+        self.cached_ir_design = None;
+        self.merged_design = None;
+    }
+
     /// Get cache statistics.
     pub fn cache_stats(&self) -> crate::cache::CacheStats {
         self.cache.stats()
@@ -651,7 +685,16 @@ impl CompileSession {
         let index_len = module_index.len();
 
         let mut elaborator = crate::elaboration::Elaborator::new(design.clone());
+
+        // Prime with session-level cache from previous compile
+        if !self.cached_elab_modules.is_empty() {
+            elaborator.set_cache(std::mem::take(&mut self.cached_elab_modules));
+        }
+
         let ir_design = elaborator.elaborate(top_name)?;
+
+        // Store module cache back for next incremental compile
+        self.cached_elab_modules = elaborator.take_cache();
 
         // Cache IR design for access after compile
         self.cached_ir_design = Some(ir_design.clone());

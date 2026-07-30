@@ -26,6 +26,7 @@ pub struct Preprocessor {
     search_paths: Vec<PathBuf>,
     warned_includes: HashSet<String>,
     include_stack: Vec<PathBuf>,
+    include_set: std::collections::HashSet<PathBuf>,
     pub quiet: bool,
     pub timescale: Option<(String, String)>, // (unit, precision)
     pub warnings: Vec<Diagnostic>,
@@ -38,6 +39,7 @@ impl Preprocessor {
             search_paths: Vec::new(),
             warned_includes: HashSet::new(),
             include_stack: Vec::new(),
+            include_set: std::collections::HashSet::new(),
             quiet: false,
             timescale: None,
             warnings: Vec::new(),
@@ -139,13 +141,14 @@ impl Preprocessor {
                                         MAX_INCLUDE_DEPTH, inc_path
                                     )));
                                 }
-                                if self.include_stack.contains(&resolved) {
+                                if self.include_set.contains(&resolved) {
                                     return Err(SimError::preprocessor(format!(
                                         "circular include detected: '{}' already in include stack",
                                         inc_path
                                     )));
                                 }
                                 self.include_stack.push(resolved.clone());
+                                self.include_set.insert(resolved.clone());
                                 self.warned_includes.remove(&inc_path);
                                 let inc_result = (|| -> Result<(), SimError> {
                                     let inc_source = fs::read_to_string(&resolved)
@@ -162,7 +165,10 @@ impl Preprocessor {
                                     }
                                     Ok(())
                                 })();
-                                self.include_stack.pop();
+                                let popped = self.include_stack.pop();
+                                if let Some(p) = popped {
+                                    self.include_set.remove(&p);
+                                }
                                 if let Err(e) = inc_result {
                                     if !self.quiet {
                                         self.warnings.push(Diagnostic::warning(DiagCode::InvalidSyntax, format!("{}", e)));

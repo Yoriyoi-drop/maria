@@ -6,7 +6,6 @@
 use super::handle::*;
 use super::types::*;
 use crate::ir::*;
-use std::ffi::CString;
 
 /// vpi_get_value(handle, value_p) — read the current value of a signal/object.
 pub fn vpi_get_value(handle: vpiHandle, value_p: &mut t_vpi_value) -> i32 {
@@ -54,24 +53,24 @@ pub fn vpi_get_value(handle: vpiHandle, value_p: &mut t_vpi_value) -> i32 {
         }
         vpiBinStrVal => {
             let s = bin_str(&logic_val);
-            let cstr = CString::new(s).unwrap_or_default();
+            let ptr = cache_cstring(&s);
             value_p.value = vpi_value_union {
-                string: cstr.into_raw(),
+                string: ptr,
             };
         }
         vpiHexStrVal => {
             let s = hex_str(&logic_val);
-            let cstr = CString::new(s).unwrap_or_default();
+            let ptr = cache_cstring(&s);
             value_p.value = vpi_value_union {
-                string: cstr.into_raw(),
+                string: ptr,
             };
         }
         vpiDecStrVal => {
             let val = logic_val.to_u64();
             let s = val.to_string();
-            let cstr = CString::new(s).unwrap_or_default();
+            let ptr = cache_cstring(&s);
             value_p.value = vpi_value_union {
-                string: cstr.into_raw(),
+                string: ptr,
             };
         }
         vpiRealVal => {

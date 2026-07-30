@@ -23,8 +23,8 @@ pub struct Parser {
     pos: usize,
     source_file: String,
     source_lines: Vec<String>,
-    class_names: Vec<Symbol>,
-    typedef_names: Vec<Symbol>,
+    class_names: std::collections::HashSet<Symbol>,
+    typedef_names: std::collections::HashSet<Symbol>,
     package_tdefs: std::collections::HashMap<Symbol, Vec<Symbol>>,
     type_param_names: Vec<Symbol>,
     file_line_map: Vec<(usize, String)>,
@@ -39,25 +39,27 @@ impl Parser {
             pos: 0,
             source_file: source_file.to_string(),
             source_lines: Vec::new(),
-            class_names: vec![
-                Symbol::intern("process"),
-                Symbol::intern("uvm_object"),
-                Symbol::intern("uvm_component"),
-                Symbol::intern("uvm_sequence_item"),
-                Symbol::intern("uvm_sequence"),
-                Symbol::intern("uvm_sequencer"),
-                Symbol::intern("uvm_driver"),
-                Symbol::intern("uvm_monitor"),
-                Symbol::intern("uvm_scoreboard"),
-                Symbol::intern("uvm_analysis_port"),
-                Symbol::intern("uvm_analysis_imp"),
-                Symbol::intern("uvm_test"),
-                Symbol::intern("uvm_config_db"),
-                Symbol::intern("uvm_report_object"),
-                Symbol::intern("uvm_factory"),
-                Symbol::intern("uvm_resource_db"),
-            ],
-            typedef_names: Vec::new(),
+            class_names: {
+                let mut s = std::collections::HashSet::new();
+                s.insert(Symbol::intern("process"));
+                s.insert(Symbol::intern("uvm_object"));
+                s.insert(Symbol::intern("uvm_component"));
+                s.insert(Symbol::intern("uvm_sequence_item"));
+                s.insert(Symbol::intern("uvm_sequence"));
+                s.insert(Symbol::intern("uvm_sequencer"));
+                s.insert(Symbol::intern("uvm_driver"));
+                s.insert(Symbol::intern("uvm_monitor"));
+                s.insert(Symbol::intern("uvm_scoreboard"));
+                s.insert(Symbol::intern("uvm_analysis_port"));
+                s.insert(Symbol::intern("uvm_analysis_imp"));
+                s.insert(Symbol::intern("uvm_test"));
+                s.insert(Symbol::intern("uvm_config_db"));
+                s.insert(Symbol::intern("uvm_report_object"));
+                s.insert(Symbol::intern("uvm_factory"));
+                s.insert(Symbol::intern("uvm_resource_db"));
+                s
+            },
+            typedef_names: std::collections::HashSet::new(),
             package_tdefs: std::collections::HashMap::new(),
             type_param_names: Vec::new(),
             file_line_map: Vec::new(),
@@ -236,22 +238,22 @@ impl Parser {
 
     pub fn parse_design(&mut self) -> Result<Design, SimError> {
         self.class_names.clear();
-        self.class_names.push(Symbol::intern("process"));
-        self.class_names.push(Symbol::intern("uvm_object"));
-        self.class_names.push(Symbol::intern("uvm_component"));
-        self.class_names.push(Symbol::intern("uvm_sequence_item"));
-        self.class_names.push(Symbol::intern("uvm_sequence"));
-        self.class_names.push(Symbol::intern("uvm_sequencer"));
-        self.class_names.push(Symbol::intern("uvm_driver"));
-        self.class_names.push(Symbol::intern("uvm_monitor"));
-        self.class_names.push(Symbol::intern("uvm_scoreboard"));
-        self.class_names.push(Symbol::intern("uvm_analysis_port"));
-        self.class_names.push(Symbol::intern("uvm_analysis_imp"));
-        self.class_names.push(Symbol::intern("uvm_test"));
-        self.class_names.push(Symbol::intern("uvm_config_db"));
-        self.class_names.push(Symbol::intern("uvm_report_object"));
-        self.class_names.push(Symbol::intern("uvm_factory"));
-        self.class_names.push(Symbol::intern("uvm_resource_db"));
+        self.class_names.insert(Symbol::intern("process"));
+        self.class_names.insert(Symbol::intern("uvm_object"));
+        self.class_names.insert(Symbol::intern("uvm_component"));
+        self.class_names.insert(Symbol::intern("uvm_sequence_item"));
+        self.class_names.insert(Symbol::intern("uvm_sequence"));
+        self.class_names.insert(Symbol::intern("uvm_sequencer"));
+        self.class_names.insert(Symbol::intern("uvm_driver"));
+        self.class_names.insert(Symbol::intern("uvm_monitor"));
+        self.class_names.insert(Symbol::intern("uvm_scoreboard"));
+        self.class_names.insert(Symbol::intern("uvm_analysis_port"));
+        self.class_names.insert(Symbol::intern("uvm_analysis_imp"));
+        self.class_names.insert(Symbol::intern("uvm_test"));
+        self.class_names.insert(Symbol::intern("uvm_config_db"));
+        self.class_names.insert(Symbol::intern("uvm_report_object"));
+        self.class_names.insert(Symbol::intern("uvm_factory"));
+        self.class_names.insert(Symbol::intern("uvm_resource_db"));
         let mut modules = Vec::new();
         let mut classes = Vec::new();
         let mut packages = Vec::new();
@@ -267,7 +269,7 @@ impl Parser {
         let mut udp_defs = Vec::new();
         // First pass: collect all class names — with error recovery
         // If parsing fails, error is saved and we skip to next construct
-        let saved_pos = self.pos;
+let saved_pos = self.pos;
         let mut _last_pos = self.pos;
         let mut _stuck = 0u32;
         while self.peek() != &Token::Eof {
@@ -285,27 +287,13 @@ impl Parser {
                 _last_pos = self.pos;
             }
             if self.peek() == &Token::Class {
-                let start = self.pos;
-                self.advance(); // consume 'class'
-                if self.peek() == &Token::Hash {
-                    self.advance(); // consume #
-                    let _ = self.expect(Token::LParen);
-                    while self.peek() != &Token::RParen && self.peek() != &Token::Eof {
-                        self.advance();
-                    }
-                    let _ = self.expect(Token::RParen);
-                }
-                if let Token::Ident(name) = self.peek() {
-                    self.class_names.push(*name);
-                }
-                self.pos = start;
-                match self.parse_class() {
-                    Ok(c) => { classes.push(c); }
+                match self.parse_class_fast() {
+                    Ok(_) => {}
                     Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
                 }
             } else if self.peek() == &Token::Module {
-                match self.parse_module() {
-                    Ok(m) => { modules.push(m); }
+                match self.parse_module_fast() {
+                    Ok(_) => {}
                     Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
                 }
             } else if self.peek() == &Token::Interface {
@@ -321,9 +309,15 @@ impl Parser {
                     Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
                 }
             } else if self.peek() == &Token::Package {
-                match self.parse_package_decl() {
-                    Ok(p) => { packages.push(p); }
-                    Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
+                // Skip package in first pass — full parse only in pass 2
+                self.advance(); // consume 'package'
+                let _ = self.expect_ident();
+                // Skip to endpackage or EOF
+                while self.peek() != &Token::EndPackage && self.peek() != &Token::Eof {
+                    self.advance();
+                }
+                if self.peek() == &Token::EndPackage {
+                    self.advance();
                 }
             } else if self.peek() == &Token::Import {
                 // Skip import statements in first pass
@@ -338,23 +332,9 @@ impl Parser {
                 // Skip (* ... *) attributes
                 self.skip_attribute();
             } else if self.peek() == &Token::Virtual && self.peek_ahead(1) == &Token::Class {
-                // virtual class — collect class name
-                let start = self.pos;
                 self.advance(); // consume virtual
-                self.advance(); // consume class
-                if self.peek() == &Token::Hash {
-                    self.advance();
-                    if self.peek() == &Token::LParen {
-                        let _ = self.skip_balanced_paren();
-                    }
-                }
-                if let Token::Ident(name) = self.peek() {
-                    self.class_names.push(*name);
-                }
-                self.pos = start;
-                self.advance(); // consume virtual so parse_class() sees 'class'
-                match self.parse_class() {
-                    Ok(c) => { classes.push(c); }
+                match self.parse_class_fast() {
+                    Ok(_) => {}
                     Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
                 }
             } else if self.peek() == &Token::Covergroup {
@@ -363,7 +343,7 @@ impl Parser {
                     Ok(cg) => cg,
                     Err(e) => { self.errors.push(e.to_diagnostic()); self.skip_to_next_top_level(); continue; }
                 };
-                self.class_names.push(cg.name);
+                self.class_names.insert(cg.name);
             } else if self.peek() == &Token::Bind {
                 // Skip bind in first pass
                 self.advance(); // consume 'bind'
@@ -449,18 +429,25 @@ impl Parser {
                 let line = self.peek_line();
                 let col = self.peek_col();
                 let tok = format!("{}", self.peek());
+                let (display_file, display_line) = self.resolve_source_file(line);
                 let summary = if tok.len() > 40 { format!("{}...", &tok[..40]) } else { tok };
+
                 self.push_warning_at(format!("skipping top-level construct: {}", summary), line, col);
                 self.skip_to_next_top_level();
             }
         }
+// First pass done in {:?} — class_names={}, typedef_names={}
         self.pos = saved_pos;
         modules.clear();
         classes.clear();
         // Second pass: full parse with class names known — with error recovery
         // Jika parsing modul/class gagal, error disimpan dan lanjut ke konstruk berikutnya
-        let mut _last_pos = self.pos;
+let mut _last_pos = self.pos;
         let mut _stuck = 0u32;
+        let mut _n_module = 0u32;
+        let mut _n_interface = 0u32;
+        let mut _n_class = 0u32;
+        let mut _n_package = 0u32;
         while self.peek() != &Token::Eof {
             // Stuck detection: if pos hasn't changed for too many iterations, abort
             if self.pos == _last_pos {
@@ -476,21 +463,33 @@ impl Parser {
                 _last_pos = self.pos;
             }
              let had_error = match self.peek() {
-                Token::Module => match self.parse_module() {
-                    Ok(m) => { modules.push(m); false }
-                    Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                Token::Module => {
+                    _n_module += 1;
+                    match self.parse_module() {
+                        Ok(m) => { modules.push(m); false }
+                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                    }
                 },
-                Token::Interface => match self.parse_interface() {
-                    Ok(iface) => { interfaces.push(iface); false }
-                    Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                Token::Interface => {
+                    _n_interface += 1;
+                    match self.parse_interface() {
+                        Ok(iface) => { interfaces.push(iface); false }
+                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                    }
                 },
-                Token::Class => match self.parse_class() {
-                    Ok(c) => { classes.push(c); false }
-                    Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                Token::Class => {
+                    _n_class += 1;
+                    match self.parse_class() {
+                        Ok(c) => { classes.push(c); false }
+                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                    }
                 },
-                Token::Package => match self.parse_package_decl() {
-                    Ok(p) => { packages.push(p); false }
-                    Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                Token::Package => {
+                    _n_package += 1;
+                    match self.parse_package_decl() {
+                        Ok(p) => { packages.push(p); false }
+                        Err(e) => { self.errors.push(e.to_diagnostic()); true }
+                    }
                 },
                 Token::Program => match self.parse_module() {
                     Ok(m) => { modules.push(m); false }
@@ -677,11 +676,13 @@ impl Parser {
                         let col = self.peek_col();
                         let tok = self.peek().clone();
                         let tok_str = format!("{}", tok);
+                        let (display_file, display_line) = self.resolve_source_file(line);
                         let summary = if tok_str.len() > 40 {
                             format!("{}...", &tok_str[..40])
                         } else {
                             tok_str
                         };
+
                         self.push_warning_at(format!("skipping top-level construct: {}", summary), line, col);
                         self.skip_to_next_top_level();
                     }
@@ -693,6 +694,7 @@ impl Parser {
                 self.skip_to_next_top_level();
             }
         }
+// Second pass done in {:?}
         Ok(Design {
             modules,
             classes,
@@ -952,13 +954,13 @@ impl Parser {
                 let col = self.peek_col();
                 let tok = self.peek().clone();
                 let tok_str = format!("{}", tok);
+                let (display_file, display_line) = self.resolve_source_file(line);
                 let summary = if tok_str.len() > 40 {
                     format!("{}...", &tok_str[..40])
                 } else {
                     tok_str
                 };
-                
-                self.push_warning_at(format!("skipping unknown construct: {}", summary), line, col);
+self.push_warning_at(format!("skipping unknown construct: {}", summary), line, col);
                 self.skip_until_semi_or_end()?;
                 Ok(None)
             }
@@ -1128,7 +1130,7 @@ impl Parser {
                     return Ok(None);
                 }
                 let td = self.parse_typedef()?;
-                self.typedef_names.push(td.name);
+                self.typedef_names.insert(td.name);
                 Ok(Some(ModuleItem::Typedef(td)))
             }
             Token::Import => {
@@ -1152,12 +1154,10 @@ impl Parser {
                 if let Some(tdefs) = self.package_tdefs.get(&pkg) {
                     if item == "*" {
                         for name in tdefs {
-                            if !self.typedef_names.contains(name) {
-                                self.typedef_names.push(*name);
-                            }
+                            self.typedef_names.insert(*name);
                         }
-                    } else if tdefs.contains(&item) && !self.typedef_names.contains(&item) {
-                        self.typedef_names.push(item);
+                    } else if tdefs.contains(&item) {
+                        self.typedef_names.insert(item);
                     }
                 }
                 self.skip_semi();
@@ -1224,6 +1224,7 @@ impl Parser {
             if self.pos == _last_pos {
                 _stuck += 1;
                 if _stuck > 500_000 {
+// emergency exit: stuck in skip_to_next_top_level
                     return; // emergency exit: stuck in skip_to_next_top_level
                 }
             } else {
@@ -1273,7 +1274,7 @@ impl Parser {
                     self.advance();
                     return Ok(());
                 }
-                Token::Endmodule | Token::EndFunction | Token::EndTask | Token::Eof => {
+                Token::Endmodule | Token::EndFunction | Token::EndTask | Token::EndClass | Token::Eof => {
                     return Ok(());
                 }
                 Token::Begin => {
@@ -1392,6 +1393,7 @@ impl Parser {
                 | Token::EndFunction
                 | Token::EndTask
                 | Token::Endmodule
+                | Token::EndClass
                 | Token::Eof => {
                     return;
                 }

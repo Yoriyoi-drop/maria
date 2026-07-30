@@ -1,5 +1,12 @@
 pub mod arena;
+pub mod checkpoint;
+pub mod cosim;
+pub mod distributed;
 pub mod dpi;
+pub mod liberty;
+pub mod upf;
+pub mod signal_history;
+pub mod coverage_db;
 pub mod engine;
 pub mod jit;
 pub mod packed;

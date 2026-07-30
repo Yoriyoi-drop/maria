@@ -45,8 +45,14 @@ impl FormalEngine {
             .map(|s| s.width.max(1).min(64) as u32)
             .collect();
 
+        // Collect initial values for each signal
+        let init_vals: Vec<u64> = design.top.signals
+            .iter()
+            .map(|s| s.init_val.to_u64())
+            .collect();
+
         for (aidx, (assert_name, cond)) in all_assertions.iter().enumerate() {
-            let result = self.bmc_check_single(bound, n_signals, &signal_widths, &assignments, cond);
+            let result = self.bmc_check_single(bound, n_signals, &signal_widths, &init_vals, &assignments, cond);
             results.push((format!("{}.assert_{}", assert_name, aidx), result));
         }
         results
@@ -58,6 +64,7 @@ impl FormalEngine {
         bound: u64,
         n_signals: usize,
         signal_widths: &[u32],
+        init_vals: &[u64],
         assignments: &[Vec<(usize, Box<IrExpr>)>],
         cond: &IrExpr,
     ) -> FormalResult {
@@ -68,8 +75,8 @@ impl FormalEngine {
         };
 
         // STEP 1: Create signal variables for all depths 0..bound
-        // sig[d][i] = BV variable for signal i at depth d
-        let mut sig_vars: Vec<Vec<z3::ast::BV>> = Vec::with_capacity((bound + 1) as usize);
+        let n_vars = (bound + 1) as usize;
+        let mut sig_vars: Vec<Vec<z3::ast::BV>> = Vec::with_capacity(n_vars);
 
         for d in 0..=bound {
             let mut depth_vars = Vec::with_capacity(n_signals);
@@ -82,53 +89,73 @@ impl FormalEngine {
         }
 
         // STEP 2: Add initial state constraints for depth 0
-        // sig_i_0 == init_val_i
-        // We don't have direct access to init_val here, but we can skip init constraints
-        // and instead model signals as free at depth 0 (more general for BMC — finds bugs
-        // from any initial state)
-        // For a stronger check, init constraints can be added later
+        // sig_i_0 == init_val_i — apply to ALL signals at depth 0
+        // (init_val comes from reg declaration like `reg [7:0] sig = 5;`,
+        //  and is always the initial state regardless of combinational assignments)
+        for i in 0..n_signals {
+            let init = *init_vals.get(i).unwrap_or(&0);
+            let width = *signal_widths.get(i).unwrap_or(&64);
+            let init_z3 = z3::ast::BV::from_u64(init, width);
+            let sig_var = &sig_vars[0][i];
+            solver.assert(&sig_var.eq(&init_z3));
+        }
 
         // STEP 3: Add next-state constraints for each depth d ≥ 1
+        let all_assigned: HashSet<usize> = if !assignments.is_empty() {
+            assignments[0].iter().map(|(id, _)| *id).collect()
+        } else {
+            HashSet::new()
+        };
+
         for d in 1..=bound {
-            // For each assignment, add constraint at this depth
+            // 3a: Add assignment constraints for signals driven by combinational logic
             for assign_group in assignments.iter() {
                 for (sig_id, rhs) in assign_group.iter() {
                     if *sig_id >= n_signals {
                         continue;
                     }
-                    // Translate RHS using variables at depth d-1 (previous state)
                     let rhs_z3 = self.expr_to_z3_int_at(rhs, d as isize - 1, &sig_vars);
                     if let Some(rhs_val) = rhs_z3 {
                         let lhs_var = &sig_vars[d as usize][*sig_id];
                         let (lhs_mw, rhs_mw) = self.zero_extend_match(lhs_var, &rhs_val);
-                        let eq_constraint = lhs_mw.eq(&rhs_mw);
-                        solver.assert(&eq_constraint);
+                        solver.assert(&lhs_mw.eq(&rhs_mw));
                     }
+                }
+            }
+
+            // 3b: Frame constraints — unassigned signals retain previous value
+            for i in 0..n_signals {
+                if !all_assigned.contains(&i) {
+                    let prev = &sig_vars[(d - 1) as usize][i];
+                    let curr = &sig_vars[d as usize][i];
+                    solver.assert(&prev.eq(curr));
                 }
             }
         }
 
-        // STEP 4: For each depth d, check assertion
+        // STEP 4: For each depth d, check if ¬P(d) is satisfiable
+        // IMPORTANT: use push/pop to isolate each depth's assertion.
+        // Without this, ¬P(0) = false (when P(0) holds) would poison all
+        // subsequent depth checks because `false` persists in the solver.
         for d in 0..=bound {
-            // Translate assertion condition using variables at depth d
+            solver.push();
             let cond_bool = self.expr_to_z3_bool_at(cond, d as isize, &sig_vars);
             if let Some(cond_val) = cond_bool {
-                // Assert ¬property (checking if negation is satisfiable)
                 let neg = cond_val.not();
                 solver.assert(&neg);
             }
 
             match solver.check() {
                 z3::SatResult::Sat => {
+                    solver.pop(1);
                     return FormalResult::Counterexample(d);
                 }
                 z3::SatResult::Unsat => {
-                    // Property holds at this depth (¬property is unsat)
-                    // Remove the assertion negation and continue
-                    // But we can't easily remove it — leave it (it only constrains depth d vars)
+                    solver.pop(1);
                     continue;
                 }
                 z3::SatResult::Unknown => {
+                    solver.pop(1);
                     if d > bound / 2 {
                         return FormalResult::Pass;
                     }
@@ -137,7 +164,128 @@ impl FormalEngine {
             }
         }
 
+        // STEP 5: If induction is enabled, attempt k-induction proof
+        if self.config.induction && bound >= 2 {
+            // Reset solver before induction — clear BMC constraints from solver
+            self.reset();
+            return self.check_inductive(bound, n_signals, signal_widths, init_vals, assignments, cond);
+        }
+
         FormalResult::Pass
+    }
+
+    // ─── k-Induction Proof ───
+    //
+    // Algorithm:
+    //   1. BASE: BMC up to k (already done above — property holds at depths 0..k)
+    //   2. STEP: For induction depth k, assume property holds at depths 1..k,
+    //      and prove at depth k+1. If all these checks are UNSAT (property
+    //      holds at k+1 under assumption it holds at 1..k), then by induction
+    //      the property holds for all depths.
+    //
+    // Simple k=1 induction:
+    //   - BASE: prove P(0) and P(1) — already done by BMC
+    //   - STEP: assume P(d), prove P(d+1) — check if ¬P(d+1) ∧ P(d) is SAT
+    //   - If UNSAT → P holds for all depths (inductive proof)
+
+    /// Try to prove the property holds for ALL depths using k-induction.
+    fn check_inductive(
+        &mut self,
+        bound: u64,
+        n_signals: usize,
+        signal_widths: &[u32],
+        init_vals: &[u64],
+        assignments: &[Vec<(usize, Box<IrExpr>)>],
+        cond: &IrExpr,
+    ) -> FormalResult {
+        // Try k=1 induction first (simplest)
+        // STEP: assume P(d) for arbitrary d, prove P(d+1)
+        // We construct a transition at depths 0 and 1 with:
+        //   - P(0) assumed true
+        //   - ¬P(1) checked for SAT
+        // If UNSAT → P(0) ⇒ P(1) holds → induction succeeds
+
+        let k: u64 = 1;
+        if bound < k {
+            return FormalResult::Unknown;
+        }
+
+        // Note: solver was reset by caller (bmc_check_single resets before calling)
+        let solver = match self.solver.as_ref() {
+            Some(s) => s,
+            None => return FormalResult::Error("Z3 solver not initialized".into()),
+        };
+        
+        // Create variables for 2 depths (0 = pre, 1 = post)
+        let mut sig_vars: Vec<Vec<z3::ast::BV>> = Vec::with_capacity(2);
+        for d in 0..2 {
+            let mut depth_vars = Vec::with_capacity(n_signals);
+            for i in 0..n_signals {
+                let width = if i < signal_widths.len() { signal_widths[i] } else { 64 };
+                let var = z3::ast::BV::new_const(format!("induct_sig_{}_{}", i, d), width);
+                depth_vars.push(var);
+            }
+            sig_vars.push(depth_vars);
+        }
+
+        // Add next-state constraints from pre (d=0) to post (d=1)
+        let all_assigned: HashSet<usize> = if !assignments.is_empty() {
+            assignments[0].iter().map(|(id, _)| *id).collect()
+        } else {
+            HashSet::new()
+        };
+
+        for assign_group in assignments.iter() {
+            for (sig_id, rhs) in assign_group.iter() {
+                if *sig_id >= n_signals {
+                    continue;
+                }
+                let rhs_z3 = self.expr_to_z3_int_at(rhs, 0, &sig_vars);
+                if let Some(rhs_val) = rhs_z3 {
+                    let lhs_var = &sig_vars[1][*sig_id];
+                    let (lhs_mw, rhs_mw) = self.zero_extend_match(lhs_var, &rhs_val);
+                    solver.assert(&lhs_mw.eq(&rhs_mw));
+                }
+            }
+        }
+
+        // Frame constraints for pre→post
+        for i in 0..n_signals {
+            if !all_assigned.contains(&i) {
+                let prev = &sig_vars[0][i];
+                let curr = &sig_vars[1][i];
+                solver.assert(&prev.eq(curr));
+            }
+        }
+
+        // Assume P(0) holds (property at pre-state)
+        if let Some(p_at_0) = self.expr_to_z3_bool_at(cond, 0, &sig_vars) {
+            solver.assert(&p_at_0);
+        } else {
+            return FormalResult::Unknown;
+        }
+
+        // Check ¬P(1) (property fails at post-state)
+        if let Some(p_at_1) = self.expr_to_z3_bool_at(cond, 1, &sig_vars) {
+            solver.assert(&p_at_1.not());
+        } else {
+            return FormalResult::Unknown;
+        }
+
+        // UNSAT → induction step holds → property proved for all depths
+        match solver.check() {
+            z3::SatResult::Unsat => FormalResult::InductiveProof,
+            z3::SatResult::Sat => {
+                // Induction step failed (SAT = counterexample found at step k+1)
+                // Could try higher k (k=2, k=3) for more complex properties
+                FormalResult::Pass  // BMC already proved up to bound
+            }
+            z3::SatResult::Unknown => {
+                // Z3 timeout or inconclusive
+                // Fall back to BMC result (Pass up to bound)
+                FormalResult::Pass
+            }
+        }
     }
 
     /// Translate IrExpr to Z3 BV, with signal references at a specific depth.

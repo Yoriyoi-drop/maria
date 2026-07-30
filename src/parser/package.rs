@@ -211,7 +211,7 @@ impl Parser {
                                 self.skip_semi();
                             } else {
                                 let td = self.parse_typedef()?;
-                                self.typedef_names.push(td.name.clone());
+                                self.typedef_names.insert(td.name.clone());
                                 self.package_tdefs
                                     .entry(name.clone())
                                     .or_default()
@@ -233,14 +233,10 @@ impl Parser {
                             if let Some(tdefs) = self.package_tdefs.get(&pkg) {
                                 if item == "*" {
                                     for name in tdefs {
-                                        if !self.typedef_names.contains(name) {
-                                            self.typedef_names.push(name.clone());
-                                        }
+                                        self.typedef_names.insert(*name);
                                     }
-                                } else if tdefs.contains(&item)
-                                    && !self.typedef_names.contains(&item)
-                                {
-                                    self.typedef_names.push(item.clone());
+                                } else if tdefs.contains(&item) {
+                                    self.typedef_names.insert(item);
                                 }
                             }
                             self.skip_semi();

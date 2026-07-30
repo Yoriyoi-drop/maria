@@ -35,17 +35,15 @@ impl SimulationEngine {
                         }
                     }
                     Process::AlwaysWithDelay { delay, body, .. } => {
-                        if t < self.events.len() {
-                            self.disable_pending = None;
-                            self.evaluate_block_with_delay(body)?;
-                            let next_t = t + *delay as usize;
-                            if next_t < self.events.len() {
-                                self.events[next_t].push(RegionEvent {
-                                    region: EventRegion::Active,
-                                    event: EventKind::EvalProcess(pid),
-                                });
-                            }
-                        }
+                        self.ensure_events(t);
+                        self.disable_pending = None;
+                        self.evaluate_block_with_delay(body)?;
+                        let next_t = t + *delay as usize;
+                        self.ensure_events(next_t);
+                        self.push_event(next_t, RegionEvent {
+                            region: EventRegion::Active,
+                            event: EventKind::EvalProcess(pid),
+                        });
                     }
                     Process::Combinational { body, .. } => {
                         // Try MIR JIT for compiled-code execution path
@@ -61,56 +59,61 @@ impl SimulationEngine {
                             self.evaluate_stmt_block(body)?;
                         }
                     }
+                    Process::Sequential { body, .. } => {
+                        // Try MIR JIT for always_ff blocks (edge-triggered)
+                        // JIT handles the combinational body; scheduler handles edge wakeup
+                        if !self.use_mir_jit || !self.try_evaluate_mir_jit(pid, body)? {
+                            self.evaluate_stmt_block(body)?;
+                        }
+                    }
                     _ => {}
                 }
             }
             EventKind::ContinueBlock(cont) => {
-                if t < self.events.len() {
-                    let all_consumed =
-                        self.evaluate_block_with_delay_fork(&cont.stmts_to_exec, cont.fork_id)?;
-                    // Detect natural process completion: when a continuation runs to completion (all_consumed)
-                    // and has a stored process_id, mark that process as Finished and trigger await continuations
-                    if all_consumed {
-                        if let Some(pid) = cont.process_id {
-                            if let Some(pi) = self.process_map.get_mut(&pid) {
-                                if pi.status == ProcessStatus::Running {
-                                    pi.status = ProcessStatus::Finished;
-                                    let conts = std::mem::take(&mut pi.await_continuations);
-                                    for c in conts {
-                                        self.evaluate_block_with_delay(&c)?;
-                                    }
+                self.ensure_events(t);
+                let all_consumed =
+                    self.evaluate_block_with_delay_fork(&cont.stmts_to_exec, cont.fork_id)?;
+                // Detect natural process completion: when a continuation runs to completion (all_consumed)
+                // and has a stored process_id, mark that process as Finished and trigger await continuations
+                if all_consumed {
+                    if let Some(pid) = cont.process_id {
+                        if let Some(pi) = self.process_map.get_mut(&pid) {
+                            if pi.status == ProcessStatus::Running {
+                                pi.status = ProcessStatus::Finished;
+                                let conts = std::mem::take(&mut pi.await_continuations);
+                                for c in conts {
+                                    self.evaluate_block_with_delay(&c)?;
                                 }
                             }
                         }
                     }
-                    if let Some(fid) = cont.fork_id {
-                        if fid < self.fork_groups.len() && all_consumed {
-                            if self.fork_groups[fid].remaining > 0 {
-                                self.fork_groups[fid].remaining -= 1;
-                            }
-                            if self.fork_groups[fid].remaining == 0 {
-                                let group = self.fork_groups[fid].clone();
-                                if !group.continuation.is_empty() {
-                                    self.evaluate_block_with_delay_fork(&group.continuation, None)?;
-                                }
+                }
+                if let Some(fid) = cont.fork_id {
+                    if fid < self.fork_groups.len() && all_consumed {
+                        if self.fork_groups[fid].remaining > 0 {
+                            self.fork_groups[fid].remaining -= 1;
+                        }
+                        if self.fork_groups[fid].remaining == 0 {
+                            let group = self.fork_groups[fid].clone();
+                            if !group.continuation.is_empty() {
+                                self.evaluate_block_with_delay_fork(&group.continuation, None)?;
                             }
                         }
                     }
                 }
             }
             EventKind::ContinueAstBlock(stmts, fork_id) => {
-                if t < self.events.len() {
-                    let all_consumed = self.evaluate_ast_block_with_delay_fork(&stmts, fork_id)?;
-                    if let Some(fid) = fork_id {
-                        if fid < self.fork_groups.len() && all_consumed {
-                            if self.fork_groups[fid].remaining > 0 {
-                                self.fork_groups[fid].remaining -= 1;
-                            }
-                            if self.fork_groups[fid].remaining == 0 {
-                                let group = self.fork_groups[fid].clone();
-                                if !group.continuation.is_empty() {
-                                    self.evaluate_block_with_delay_fork(&group.continuation, None)?;
-                                }
+                self.ensure_events(t);
+                let all_consumed = self.evaluate_ast_block_with_delay_fork(&stmts, fork_id)?;
+                if let Some(fid) = fork_id {
+                    if fid < self.fork_groups.len() && all_consumed {
+                        if self.fork_groups[fid].remaining > 0 {
+                            self.fork_groups[fid].remaining -= 1;
+                        }
+                        if self.fork_groups[fid].remaining == 0 {
+                            let group = self.fork_groups[fid].clone();
+                            if !group.continuation.is_empty() {
+                                self.evaluate_block_with_delay_fork(&group.continuation, None)?;
                             }
                         }
                     }

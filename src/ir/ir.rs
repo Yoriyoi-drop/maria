@@ -6,7 +6,7 @@ pub type SignalId = usize;
 pub type ClassId = usize;
 pub type ObjId = usize;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct IrDesign {
     pub top: IrModule,
     pub modules: HashMap<Symbol, IrModule>,
@@ -90,7 +90,7 @@ pub struct IrClassMethod {
     pub stmts: Vec<crate::ast::Stmt>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct IrModule {
     pub name: Symbol,
     pub signals: Vec<SignalInfo>,
@@ -101,8 +101,9 @@ pub struct IrModule {
     pub sub_instances: Vec<IrInstance>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum NetType {
+    #[default]
     Wire,
     Wand,
     Wor,
@@ -161,7 +162,7 @@ pub struct StructFieldInfo {
     pub width: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct SignalInfo {
     pub name: Symbol,
     pub width: usize,
@@ -193,8 +194,9 @@ pub struct SignalInfo {
     pub iface_modport: Option<Symbol>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum SignalKind {
+    #[default]
     Wire,
     Reg,
     Logic,

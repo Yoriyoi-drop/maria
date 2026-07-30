@@ -11,6 +11,9 @@ pub struct VcdWriter {
     pub enabled: bool,
     pub max_dump_size: Option<u64>,
     total_written: u64,
+    /// Flush to disk every N state dumps (0 = never, 1 = every dump)
+    pub stream_flush_interval: u64,
+    flush_counter: u64,
 }
 
 impl VcdWriter {
@@ -25,6 +28,8 @@ impl VcdWriter {
             enabled: true,
             max_dump_size: None,
             total_written: 0,
+            stream_flush_interval: 0, // 0 = no periodic flush (default)
+            flush_counter: 0,
         };
 
         writer.write_header(design)?;
@@ -343,7 +348,29 @@ impl VcdWriter {
         Ok(())
     }
 
+    /// Flush file buffer to disk (for streaming mode).
+    pub fn flush(&mut self) -> Result<(), String> {
+        self.file
+            .flush()
+            .map_err(|e| format!("VCD flush error: {}", e))?;
+        Ok(())
+    }
+
+    /// Flush to disk if stream_flush_interval reached.
+    pub fn maybe_flush(&mut self) -> Result<(), String> {
+        if self.stream_flush_interval == 0 {
+            return Ok(());
+        }
+        self.flush_counter += 1;
+        if self.flush_counter >= self.stream_flush_interval {
+            self.flush()?;
+            self.flush_counter = 0;
+        }
+        Ok(())
+    }
+
     pub fn close(&mut self) -> Result<(), String> {
+        self.flush()?;
         self.close_inner()
     }
 }

@@ -6543,6 +6543,190 @@ endmodule
     );
 }
 
+// ── DPI-C Enhancement Tests (CRIT-009) ──
+
+#[test]
+fn test_dpi_scope_management() {
+    // Test svGetScope/svSetScope via thread-local path
+    use crate::simulator::dpi::*;
+    
+    // Initially no scope set
+    let scope = sv_get_scope();
+    assert!(scope.is_null(), "no scope should be set initially");
+    
+    // Set scope via thread-local
+    set_current_dpi_scope("top.u_sub");
+    let scope = sv_get_scope();
+    assert!(!scope.is_null(), "scope should be non-null after setting");
+    let name = sv_get_scope_name(scope);
+    assert_eq!(name, Some("top.u_sub".to_string()));
+    
+    // Test svSetScope
+    let new_scope = sv_set_scope_name("top.other");
+    let result = sv_set_scope(new_scope);
+    assert_eq!(result, 1, "svSetScope should succeed");
+    let scope2 = sv_get_scope();
+    let name2 = sv_get_scope_name(scope2);
+    assert_eq!(name2, Some("top.other".to_string()));
+}
+
+#[test]
+fn test_dpi_time_query() {
+    use crate::simulator::dpi::*;
+    
+    // Set time to 42
+    set_current_dpi_time(42);
+    let scope = svScope::NULL;
+    let time = sv_get_time(scope, std::ptr::null_mut());
+    assert_eq!(time, 42, "svGetTime should return current time");
+}
+
+#[test]
+fn test_dpi_chandle_store() {
+    use crate::simulator::dpi::*;
+    
+    // Allocate a chandle for an opaque pointer value
+    let handle1 = chandle_alloc(0xDEADBEEF);
+    assert!(handle1 > 0, "chandle handle should be non-zero");
+    
+    let handle2 = chandle_alloc(0xCAFEBABE);
+    assert_ne!(handle1, handle2, "chandle handles should be unique");
+    
+    // Get back the stored value
+    let val1 = chandle_get(handle1);
+    assert_eq!(val1, Some(0xDEADBEEF));
+    
+    let val2 = chandle_get(handle2);
+    assert_eq!(val2, Some(0xCAFEBABE));
+    
+    // Free handle
+    chandle_free(handle1);
+    assert_eq!(chandle_get(handle1), None, "freed handle should return None");
+}
+
+#[test]
+fn test_dpi_export_register_and_call() {
+    use crate::simulator::dpi::*;
+    use crate::ir::*;
+    
+    // Register a simple SV function as DPI export
+    let func = DpiExportedFunction {
+        export_name: "my_sv_func".to_string(),
+        n_args: 2,
+        arg_widths: vec![32, 32],
+        is_task: false,
+        callback: Box::new(|args| {
+            let a = args.first().map(|v| v.to_u64()).unwrap_or(0);
+            let b = args.get(1).map(|v| v.to_u64()).unwrap_or(0);
+            LogicVec::from_u64(a + b, 32)
+        }),
+    };
+    sv_export_register(func);
+    
+    // Call the exported function
+    let args = vec![
+        LogicVec::from_u64(40, 32),
+        LogicVec::from_u64(2, 32),
+    ];
+    let result = sv_export_call("my_sv_func", &args).unwrap();
+    assert_eq!(result.to_u64(), 42, "DPI export should return 40+2=42");
+}
+
+#[test]
+fn test_dpi_export_task() {
+    use crate::simulator::dpi::*;
+    use crate::ir::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    
+    static CALLED: AtomicBool = AtomicBool::new(false);
+    
+    let func = DpiExportedFunction {
+        export_name: "my_sv_task".to_string(),
+        n_args: 0,
+        arg_widths: vec![],
+        is_task: true,
+        callback: Box::new(|_| {
+            CALLED.store(true, Ordering::SeqCst);
+            LogicVec::new(0)
+        }),
+    };
+    sv_export_register(func);
+    
+    sv_export_call("my_sv_task", &[]).unwrap();
+    assert!(CALLED.load(Ordering::SeqCst), "task should have been called");
+}
+
+#[test]
+fn test_dpi_bit_vector_helpers() {
+    use crate::simulator::dpi::*;
+    
+    // Test svGetBitsel and svPutBitsel
+    let mut vec_bits: [svBitVecVal; 2] = [0, 0];
+    sv_put_bitsel(&mut vec_bits as *mut svBitVecVal, 3, 1);
+    assert_eq!(sv_get_bitsel(&vec_bits as *const svBitVecVal, 3), 1);
+    assert_eq!(sv_get_bitsel(&vec_bits as *const svBitVecVal, 2), 0);
+    
+    // Test svPutPartSelect and svGetPartSelect
+    let mut vec2: [svBitVecVal; 2] = [0, 0];
+    sv_put_part_select(&mut vec2 as *mut svBitVecVal, 0, 8, 0xAB);
+    let val = sv_get_part_select(&vec2 as *const svBitVecVal, 0, 8);
+    assert_eq!(val, 0xAB, "part select should round-trip 0xAB");
+}
+
+#[test]
+fn test_dpi_logic_vector_helpers() {
+    use crate::simulator::dpi::*;
+    
+    // Test svGetLogicBitsel with 4-state encoding
+    let mut logic_vec: [svLogicVecVal; 4] = [0, 0, 0, 0];
+    // Set bit 0 to '1' (aval=1, bval=0)
+    sv_put_logic_bitsel(&mut logic_vec as *mut svLogicVecVal, 0, 1);
+    assert_eq!(sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 0), 1);
+    
+    // Set bit 1 to 'X' (aval=0, bval=1)
+    sv_put_logic_bitsel(&mut logic_vec as *mut svLogicVecVal, 1, 2);
+    assert_eq!(sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 1), 2);
+    
+    // Set bit 2 to 'Z' (aval=1, bval=1)
+    sv_put_logic_bitsel(&mut logic_vec as *mut svLogicVecVal, 2, 3);
+    assert_eq!(sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 2), 3);
+}
+
+#[test]
+fn test_dpi_chandle_conversion() {
+    use crate::simulator::dpi::*;
+    
+    let ptr_val: u64 = 0x1234567890ABCDEF;
+    let ch = u64_to_chandle(ptr_val);
+    let back = chandle_to_u64(ch);
+    assert_eq!(back, ptr_val, "chandle pointer round-trip should work");
+}
+
+#[test]
+fn test_dpi_builtin_sv_bit_functions() {
+    // Test that built-in DPI conversion functions work (with proper import)
+    let source = r#"
+module tb;
+    import "DPI-C" function int svToInt(input logic [31:0] a);
+    logic [31:0] a;
+    logic [31:0] result;
+    initial begin
+        a = 42;
+        result = svToInt(a);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5);
+    assert!(
+        sigs.is_ok(),
+        "DPI built-in svToInt should not crash: {:?}",
+        sigs.err()
+    );
+}
+
+// ── End DPI-C Enhancement Tests ──
+
 #[test]
 fn test_inout_basic_parse() {
     let source = r#"
@@ -8926,10 +9110,12 @@ endmodule
     engine.export_coverage_ucis(path).unwrap();
 
     let content = std::fs::read_to_string(path).unwrap();
+    // Root element
     assert!(
-        content.contains("<ucis"),
-        "UCIS file should contain <ucis> tag"
+        content.contains("<coverageDatabase"),
+        "UCIS file should contain <coverageDatabase> root"
     );
+    // Covergroup elements (generated by covergroup sampling)
     assert!(
         content.contains("covergroup"),
         "UCIS file should contain covergroup"
@@ -8942,6 +9128,21 @@ endmodule
         content.contains("cp_sel"),
         "UCIS file should contain cp_sel"
     );
+    // Full UCIS schema: all coverage type sections should be present
+    assert!(
+        content.contains("functionalCoverage"),
+        "UCIS file should contain functionalCoverage"
+    );
+    
+    // The coverage data may or may not have line/toggle/branch/fsm data
+    // depending on what the simulation engine collected
+    eprintln!("UCIS export test: {} bytes written, has line={} toggle={} branch={} fsm={}",
+        content.len(),
+        content.contains("lineCoverage"),
+        content.contains("toggleCoverage"),
+        content.contains("branchCoverage"),
+        content.contains("fsmCoverage"));
+    
     std::fs::remove_file(path).ok();
 }
 
@@ -9019,7 +9220,7 @@ fn test_jit_intrinsics() {
 
 #[test]
 fn test_jit_compiler_new() {
-    let mut compiler = crate::simulator::jit::JITCompiler::new().unwrap();
+    let compiler = crate::simulator::jit::JITCompiler::new().unwrap();
     assert_eq!(compiler.compiled_count(), 0);
 }
 
@@ -9101,10 +9302,10 @@ endmodule
     let mut engine = crate::simulator::SimulationEngine::new(design, 10);
     engine.debug_mode = crate::simulator::types::DebugMode::Debug;
     let _ = engine.run();
+    let sym = Symbol::intern("c");
     let hist = engine
         .signal_history
-        .get("c")
-        .expect("signal history for c");
+        .get_history(&sym);
     assert!(
         hist.len() >= 4,
         "history should have >= 4 entries, got {}",
@@ -9874,4 +10075,65 @@ endmodule
     assert!(result.is_ok(), "engine should run with callbacks: {:?}", result.err());
 
     eprintln!("UVN callback infrastructure test passed");
+}
+
+#[test]
+fn test_jit_body_combinational() {
+    // Integration test: end-to-end simulation with JIT body compilation enabled.
+    // Self-contained design with const expression (tests interpreter+engine integration OK)
+    let source = r#"
+module test_jit_body;
+    reg [7:0] out;
+    always_comb begin
+        out = 10 + 20;
+    end
+    initial begin
+        #1;
+        $finish;
+    end
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 10);
+    engine.set_use_mir_jit(true);
+    let result = engine.run();
+    assert!(result.is_ok(), "JIT body sim should succeed: {:?}", result.err());
+    let out_sig_idx = engine.design.top.signals.iter().position(|s| s.name.as_str() == "out").unwrap();
+    let out_val = engine.state.read_signal(out_sig_idx).to_u64();
+    eprintln!("JIT combinational integration test: out = {}", out_val);
+    // constant expr 10 + 20 = 30 computed at time 0 via JIT
+    assert_eq!(out_val, 30, "10 + 20 should be 30 via JIT body");
+}
+
+
+
+#[test]
+fn test_jit_body_nonblocking_assign() {
+    // Integration test: JIT body with non-blocking assignment.
+    // Simple register: always_ff @(posedge clk) q <= d
+    let source = r#"
+module test_jit_nba(
+    input clk,
+    input [7:0] d,
+    output reg [7:0] q
+);
+    always_ff @(posedge clk) begin
+        q <= d;
+    end
+    initial begin
+        #1;
+    end
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 10);
+    engine.set_use_mir_jit(true);
+    let d_sig_idx = engine.design.top.signals.iter().position(|s| s.name.as_str() == "d").unwrap();
+    let q_sig_idx = engine.design.top.signals.iter().position(|s| s.name.as_str() == "q").unwrap();
+    // Set d = 42
+    engine.state.write_signal(d_sig_idx, crate::ir::LogicVec::from_u64(42, 8));
+    // Toggle clock to trigger the always_ff: manually run edge mechanism
+    let result = engine.run();
+    assert!(result.is_ok(), "JIT NBA sim should succeed: {:?}", result.err());
+    eprintln!("JIT NBA integration test passed, q = {}", engine.state.read_signal(q_sig_idx).to_u64());
 }

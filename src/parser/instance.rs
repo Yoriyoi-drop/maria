@@ -30,7 +30,6 @@ impl Parser {
                 return Err(self.err("expected module name"))
             }
         };
-
         let mut ports = Vec::new();
         let mut params = Vec::new();
         let mut decls = Vec::new();
@@ -72,7 +71,13 @@ impl Parser {
 
         let mut _last_pos = self.pos;
         let mut _stuck = 0u32;
+        let _mod_start = std::time::Instant::now();
+        let mut _mod_tokens = 0u64;
         loop {
+            // Progress tracking
+            if _mod_tokens > 0 && _mod_tokens % 1000 == 0 {
+                eprintln!("[DBG-MODULE-BODY] {} items parsed, token {}/{}, elapsed {:?}", _mod_tokens, self.pos, self.tokens.len(), _mod_start.elapsed());
+            }
             // Stuck detection: if pos hasn't changed for too many iterations, abort
             if self.pos == _last_pos {
                 _stuck += 1;
@@ -95,8 +100,9 @@ impl Parser {
                     let result = self.parse_module_item();
                     match result {
                         Ok(Some(item)) => {
+                            _mod_tokens += 1;
                             if let ModuleItem::Covergroup(ref cg) = item {
-                                self.class_names.push(cg.name);
+                                self.class_names.insert(cg.name);
                             }
                             match item {
                                 ModuleItem::Decl(d) => decls.push(d),
@@ -105,12 +111,14 @@ impl Parser {
                             }
                         }
                         Ok(None) => {
+                            _mod_tokens += 1;
                             // If position didn't advance, skip the token to avoid infinite loop
                             if self.pos == before {
                                 self.advance();
                             }
                         }
                         Err(e) => {
+                            _mod_tokens += 1;
                             let diag = e.to_diagnostic();
                             self.errors.push(diag);
                             self.skip_until_semi_or_end()?;
@@ -147,44 +155,111 @@ impl Parser {
         })
     }
 
-    pub(crate) fn parse_interface_fast(&mut self) -> Result<(), SimError> {
-        self.advance(); // consume 'interface'
+    /// Fast skip: quickly advance past module body without parsing items.
+    /// Used in first pass (class discovery) where we only need class names,
+    /// not full module structure. Dramatically faster than parse_module().
+    pub(crate) fn parse_module_fast(&mut self) -> Result<(), SimError> {
+        self.advance(); // consume 'module'
         match self.peek() {
-            Token::Ident(_) => {
-                self.advance();
+            Token::Ident(_) => { self.advance(); }
+            _ => return Err(self.err("expected module name")),
+        }
+        // Skip #(params) if any
+        if self.peek() == &Token::Hash {
+            self.advance();
+            if self.peek() == &Token::LParen {
+                self.skip_balanced_paren()?;
             }
-            _ => return Err(self.err("expected interface name")),
+        }
+        // Skip (ports) if any
+        if self.peek() == &Token::LParen {
+            self.skip_balanced_paren()?;
         }
         self.skip_semi();
+        // Fast-skip module body until endmodule
         loop {
             match self.peek() {
-                Token::EndInterface | Token::Eof => {
-                    self.advance();
+                Token::Endmodule | Token::EndInterface | Token::EndProgram | Token::Eof => {
+                    if self.peek() != &Token::Eof { self.advance(); }
                     break;
                 }
+                Token::Class => {
+                    // Collect class name from inside module
+                    let start = self.pos;
+                    self.advance(); // consume 'class'
+                    if self.peek() == &Token::Hash {
+                        self.advance();
+                        if self.peek() == &Token::LParen {
+                            let _ = self.skip_balanced_paren_light();
+                        }
+                    }
+                    if let Token::Ident(name) = self.peek() {
+                        self.class_names.insert(*name);
+                    }
+                    self.pos = start;
+                    // Skip class body
+                    // Re-use existing skip_class_body
+                    self.skip_class_body();
+                }
                 _ => {
-                    match self.peek() {
-                        Token::ModPort => {
-                            self.advance(); // consume 'modport'
-                            if let Token::Ident(_) = self.peek() {
-                                self.advance();
-                            }
-                            self.skip_until_semi_or_end()?;
-                        }
-                        Token::Param
-                        | Token::Parameter
-                        | Token::LocalParam
-                        | Token::Function
-                        | Token::Task => {
-                            self.skip_until_semi_or_end()?;
-                        }
-                        _ => {
-                            self.parse_decl()?;
-                        }
+                    // Check for (* attribute annotations
+                    if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
+                        self.skip_attribute();
+                    } else {
+                        self.advance();
                     }
                 }
             }
         }
+        // Skip optional ': name' after endmodule
+        if self.peek() == &Token::Colon {
+            self.advance();
+            if matches!(self.peek(), Token::Ident(_)) {
+                self.advance();
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn parse_interface_fast(&mut self) -> Result<(), SimError> {
+        self.advance(); // consume 'interface'
+        // Skip name
+        match self.peek() {
+            Token::Ident(_) | Token::Hash => { /* name optional if #(params) follows */ }
+            _ => return Err(self.err("expected interface name")),
+        }
+        if matches!(self.peek(), Token::Ident(_)) {
+            self.advance(); // consume name
+        }
+        // Skip #(params) if any
+        if self.peek() == &Token::Hash {
+            self.advance();
+            if self.peek() == &Token::LParen {
+                self.skip_balanced_paren_light()?;
+            }
+        }
+        // Skip (ports) if any
+        if self.peek() == &Token::LParen {
+            self.skip_balanced_paren_light()?;
+        }
+        self.skip_semi();
+        // Fast-skip interface body until endinterface
+        loop {
+            match self.peek() {
+                Token::EndInterface | Token::Eof => {
+                    if self.peek() != &Token::Eof { self.advance(); }
+                    break;
+                }
+                _ => {
+                    if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
+                        self.skip_attribute();
+                    } else {
+                        self.advance();
+                    }
+                }
+            }
+        }
+        // Skip optional ': name' after endinterface
         if self.peek() == &Token::Colon {
             self.advance();
             if matches!(self.peek(), Token::Ident(_)) {
@@ -261,13 +336,45 @@ impl Parser {
                 return Err(self.err("expected interface name"))
             }
         };
+        // Handle #(params) and (ports) after interface name (like module syntax)
+        if self.peek() == &Token::Hash {
+            self.advance();
+            self.expect(Token::LParen)?;
+            // Fast-skip parameter list — parameter declarations not critical for interface struct
+            loop {
+                match self.peek() {
+                    Token::RParen => { self.advance(); break; }
+                    Token::Eof => return Err(self.err("unexpected EOF in interface parameter list")),
+                    _ => { self.advance(); }
+                }
+            }
+        }
+        if self.peek() == &Token::LParen {
+            self.skip_balanced_paren()?;
+        }
         self.skip_semi();
 
         let params = Vec::new();
         let mut decls = Vec::new();
         let mut modports = Vec::new();
+        let mut _last_pos = self.pos;
+        let mut _stuck = 0u32;
 
         loop {
+            if self.pos == _last_pos {
+                _stuck += 1;
+                if _stuck > 1_000_000 {
+                    let line = self.peek_line();
+                    let col = self.peek_col();
+                    let tok_str = format!("{}", self.peek());
+                    let summary = if tok_str.len() > 40 { format!("{}...", &tok_str[..40]) } else { tok_str };
+                    self.push_warning_at(format!("parser stuck in interface body at token: {}", summary), line, col);
+                    return Err(self.err("parser stuck (no progress) in interface body"));
+                }
+            } else {
+                _stuck = 0;
+                _last_pos = self.pos;
+            }
             match self.peek() {
                 Token::EndInterface | Token::Eof => {
                     break;
@@ -279,9 +386,40 @@ impl Parser {
                     Token::Param | Token::Parameter | Token::LocalParam => {
                         self.skip_until_semi_or_end()?;
                     }
+                    Token::Import => {
+                        self.advance();
+                        let _ = self.skip_until_semi_or_end();
+                    }
+                    Token::Function | Token::Task => {
+                        let _ = self.skip_until_semi_or_end();
+                    }
+                    Token::Always
+                    | Token::AlwaysComb
+                    | Token::AlwaysFF
+                    | Token::AlwaysLatch
+                    | Token::Initial
+                    | Token::Assign
+                    | Token::Assert
+                    | Token::Assume
+                    | Token::Cover
+                    | Token::GenVar => {
+                        let _ = self.skip_until_semi_or_end();
+                    }
+                    Token::LParen if self.peek_ahead(1) == &Token::Star => {
+                        self.skip_attribute();
+                    }
                     _ => {
-                        let decl = self.parse_decl()?;
-                        decls.push(decl);
+                        let before = self.pos;
+                        match self.parse_decl() {
+                            Ok(decl) => decls.push(decl),
+                            Err(_) => {
+                                // If parse_decl fails, skip to boundary to avoid infinite loop
+                                let _ = self.skip_until_semi_or_end();
+                            }
+                        }
+                        if self.pos == before {
+                            self.advance();
+                        }
                     }
                 },
             }

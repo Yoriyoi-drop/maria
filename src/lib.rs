@@ -4,6 +4,9 @@
 // ── VPI (Verilog Procedural Interface) ──
 pub mod vpi;
 
+// ── LSP (Language Server Protocol) ──
+pub mod lsp;
+
 // ── Formal Verification Engine ──
 pub mod formal;
 
@@ -33,7 +36,8 @@ pub mod profiling;
 pub mod scheduler;
 
 pub use arena::{BumpArena, TypedArena};
-pub use error::{ErrorContext, SimError};
+pub use error::SimError;
+pub use diagnostics::{DiagCode, DiagLevel, Diagnostic, DiagSink, RuntimeContext, SourceSnippet};
 pub use frontend::compile_session::{CompileSession, SessionConfig};
 pub use frontend::discovery::FileDiscovery;
 pub use intern::{init_string_table, Span, Symbol};

@@ -20,8 +20,7 @@ use crate::simulator::sdf::TimingCheck;
 use crate::simulator::state::SimulationState;
 use crate::simulator::types::*;
 use crate::Symbol;
-use crate::waveform::FstWaveWriter;
-use crate::waveform::VcdWriter;
+use crate::waveform::{CsvWaveWriter, FstWaveWriter, SignalStats, VcdWriter};
 use rand::rngs::StdRng;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
@@ -48,6 +47,10 @@ pub struct SimulationEngine {
     pub nba_pending: Vec<(IrLValue, LogicVec)>,
     pub vcd: Option<VcdWriter>,
     pub fst: Option<FstWaveWriter>,
+    /// CSV waveform writer (signal values as comma-separated values)
+    pub csv: Option<CsvWaveWriter>,
+    /// Signal statistics collector (toggle counts, transitions)
+    pub signal_stats: Option<SignalStats>,
     pub current_this: Option<ObjId>,
     pub method_locals: Vec<HashMap<Symbol, LogicVec>>,
     pub current_method: Option<Symbol>,
@@ -86,6 +89,14 @@ pub struct SimulationEngine {
     pub uvm_config_db_data: HashMap<(String, String), LogicVec>,
     pub sdf_timing_checks: Vec<TimingCheck>,
     pub uvm_resource_db_data: HashMap<(String, String), LogicVec>,
+    /// UVM register layer data: register objects
+    pub uvm_reg_data: std::collections::HashMap<ObjId, UvmRegData>,
+    /// UVM register layer data: register field objects
+    pub uvm_reg_field_data: std::collections::HashMap<ObjId, UvmRegFieldData>,
+    /// UVM register layer data: register block objects
+    pub uvm_reg_block_data: std::collections::HashMap<ObjId, UvmRegBlockData>,
+    /// UVM register layer data: register map objects
+    pub uvm_reg_map_data: std::collections::HashMap<ObjId, UvmRegMapData>,
     /// UVM callback queues: (component_type, cb_type) → registered callbacks
     pub callback_queues: HashMap<(String, String), crate::simulator::types::UvmCallbackData>,
     pub factory_type_overrides: HashMap<String, String>,
@@ -100,8 +111,7 @@ pub struct SimulationEngine {
     pub debug_mode: DebugMode,
     pub breakpoints: Vec<Breakpoint>,
     pub watchpoints: Vec<Watchpoint>,
-    pub signal_history: HashMap<Symbol, std::collections::VecDeque<(u64, LogicVec)>>,
-    pub signal_history_max: usize,
+    pub signal_history: crate::simulator::signal_history::SignalHistoryStore,
     pub signal_last_change: HashMap<usize, u64>,
     pub udp_prev_args: HashMap<Symbol, Vec<LogicVec>>,
     pub parallel_config: ParallelConfig,
@@ -117,6 +127,8 @@ pub struct SimulationEngine {
     pub assert_modules_off: HashSet<Symbol>,
     pub coverage_options: HashMap<String, String>,
     pub coverage_enabled: bool,
+    /// Selectively enable specific coverage types (empty = all enabled)
+    pub coverage_enabled_types: HashSet<CoverageType>,
     pub cover_line: HashMap<Symbol, u64>,
     pub cover_toggle: HashMap<usize, HashSet<(LogicVal, LogicVal)>>,
     pub cover_branches: HashMap<Symbol, HashMap<Symbol, u64>>,
@@ -163,6 +175,29 @@ pub struct SimulationEngine {
     pub signal_write_count: std::collections::HashMap<SignalId, u32>,
     /// Max delta cycles per time step before abort (configurable for testing)
     pub delta_limit: u64,
+
+    /// Co-simulation state (shared with external simulator via TCP)
+    pub cosim_state: Option<std::sync::Arc<std::sync::Mutex<crate::simulator::cosim::CosimState>>>,
+
+    /// Co-simulation signal mapping: (signal_id, signal_name, direction)
+    pub cosim_signals: Vec<(usize, String, bool)>,
+
+    /// Per-path signal delays from SDF annotation: "cell_name:from->to" → SignalDelay
+    pub signal_delays: std::collections::HashMap<String, crate::simulator::state::SignalDelay>,
+
+    /// UPF (Unified Power Format) power intent database for power-aware simulation
+    pub power_intent: Option<crate::simulator::upf::PowerIntent>,
+
+    /// Process body cache for DAG parallel evaluation.
+    /// Dibangun sekali di run() untuk menghindari clone bodies setiap cycle.
+    pub process_body_cache: HashMap<usize, Vec<IrStmt>>,
+
+    /// Hierarchical timing wheel for O(1) event scheduling (replaces Vec<Vec<RegionEvent>>).
+    /// When enabled, events are stored in the timing wheel instead of `events: Vec<Vec<RegionEvent>>`.
+    pub timing_wheel: Option<crate::simulator::engine::scheduler::timing_wheel::HierarchicalTimingWheel>,
+
+    /// Whether to use the timing wheel for event scheduling.
+    pub use_timing_wheel: bool,
 }
 
 // ============================================================================

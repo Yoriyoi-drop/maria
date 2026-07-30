@@ -1,57 +1,6 @@
 use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, SourceSnippet};
 use crate::diagnostics::emitter::format_diagnostic;
 
-/// Error context for rich error reporting.
-///
-/// ⚠️ DEPRECATED: Use `Diagnostic` with `RuntimeContext` and `SourceSnippet` instead.
-/// See `src/diagnostics/diagnostic.rs` for the modern error reporting API.
-#[derive(Debug, Clone)]
-#[deprecated(note = "Use Diagnostic with RuntimeContext and SourceSnippet instead")]
-pub struct ErrorContext {
-    pub file: Option<String>,
-    pub line: Option<usize>,
-    pub col: Option<usize>,
-    pub source_line: Option<String>,
-    pub note: Option<String>,
-}
-
-impl ErrorContext {
-    pub fn new() -> Self {
-        ErrorContext {
-            file: None,
-            line: None,
-            col: None,
-            source_line: None,
-            note: None,
-        }
-    }
-
-    pub fn with_file(mut self, file: impl Into<String>) -> Self {
-        self.file = Some(file.into());
-        self
-    }
-
-    pub fn with_line(mut self, line: usize) -> Self {
-        self.line = Some(line);
-        self
-    }
-
-    pub fn with_col(mut self, col: usize) -> Self {
-        self.col = Some(col);
-        self
-    }
-
-    pub fn with_source(mut self, source: impl Into<String>) -> Self {
-        self.source_line = Some(source.into());
-        self
-    }
-
-    pub fn with_note(mut self, note: impl Into<String>) -> Self {
-        self.note = Some(note.into());
-        self
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum SimError {
     Parse(String),
@@ -94,9 +43,12 @@ impl SimError {
         SimError::Debugger(msg.into())
     }
 
-    /// Buat runtime error dengan diagnostic penuh (error code, konteks, dll).
+    /// Buat error dengan structured Diagnostic (error code, konteks, dll).
+    /// Menggantikan format string-based `[CODE] message` dengan Diagnostic nyata.
     pub fn with_diag(code: DiagCode, message: impl Into<String>) -> Self {
-        Self::Runtime(format!("[{}] {}", code.as_str(), message.into()))
+        let diag = Diagnostic::new(DiagLevel::Error, code, message.into())
+            .with_code_context();
+        Self::Diagnostic(diag)
     }
 
     /// Buat runtime error dari Diagnostic struct.
@@ -256,60 +208,14 @@ impl SimError {
         diag
     }
 
-    /// Format error dengan konteks lengkap seperti compiler profesional.
-    pub fn format_with_context(&self, ctx: &ErrorContext) -> String {
-        // If we already have a structured diagnostic, use its formatted output
+    /// Format error sebagai string dengan konteks.
+    /// Saat ini menggunakan format default dari `Display`.
+    /// Untuk format yang lebih kaya, gunakan `TerminalEmitter` dengan `Diagnostic`.
+    pub fn format_with_context(&self) -> String {
         if let SimError::Diagnostic(diag) = self {
             return format_diagnostic(diag);
         }
-
-        let msg = self.to_string();
-        let kind = match self {
-            SimError::Parse(_) => "error",
-            SimError::Elaborate(_) => "error",
-            SimError::Runtime(_) => "error",
-            SimError::Preprocessor(_) => "warning",
-            SimError::Waveform(_) => "error",
-            SimError::Debugger(_) => "error",
-            SimError::Io(_, _) => "error",
-            SimError::Diagnostic(_) => unreachable!(), // handled above
-        };
-
-        let code = self.error_code();
-
-        let mut output = format!("{}[{}]: {}\n", kind, code, msg);
-
-        if let Some(file) = &ctx.file {
-            if let (Some(line), Some(col)) = (ctx.line, ctx.col) {
-                output.push_str(&format!(" --> {}:{}:{}\n", file, line, col));
-            } else if let Some(line) = ctx.line {
-                output.push_str(&format!(" --> {}:{}\n", file, line));
-            } else {
-                output.push_str(&format!(" --> {}\n", file));
-            }
-        }
-
-        if let Some(source) = &ctx.source_line {
-            output.push_str("  |\n");
-            if let Some(line) = ctx.line {
-                output.push_str(&format!("{} | {}\n", line, source));
-            }
-
-            if let Some(col) = ctx.col {
-                output.push_str("  | ");
-                for _ in 0..col {
-                    output.push(' ');
-                }
-                output.push_str("^\n");
-            }
-        }
-
-        if let Some(note) = &ctx.note {
-            output.push_str("  |\n");
-            output.push_str(&format!("  = note: {}\n", note));
-        }
-
-        output
+        self.to_string()
     }
 }
 

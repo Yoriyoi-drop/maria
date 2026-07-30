@@ -99,6 +99,34 @@ impl SimulationEngine {
                 return self.execute_uvm_analysis_imp_method(obj_id, method, args);
             }
         }
+        // Check uvm_reg_block hierarchy (most specific reg layer first)
+        if self.is_uvm_reg_block_hierarchy(&class_name.as_str()) {
+            let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
+            if !has_override {
+                return self.execute_uvm_reg_block_method(obj_id, method, args);
+            }
+        }
+        // Check uvm_reg_map hierarchy
+        if self.is_uvm_reg_map_hierarchy(&class_name.as_str()) {
+            let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
+            if !has_override {
+                return self.execute_uvm_reg_map_method(obj_id, method, args);
+            }
+        }
+        // Check uvm_reg hierarchy
+        if self.is_uvm_reg_hierarchy(&class_name.as_str()) {
+            let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
+            if !has_override {
+                return self.execute_uvm_reg_method(obj_id, method, args);
+            }
+        }
+        // Check uvm_reg_field hierarchy
+        if self.is_uvm_reg_field_hierarchy(&class_name.as_str()) {
+            let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
+            if !has_override {
+                return self.execute_uvm_reg_field_method(obj_id, method, args);
+            }
+        }
         // Check uvm_sequence_item hierarchy
         if self.is_uvm_sequence_item_hierarchy(&class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();

@@ -14,6 +14,9 @@ pub struct FstWaveWriter {
     last_values: HashMap<String, String>,
     current_time: u64,
     pub enabled: bool,
+    /// Flush to disk every N state dumps (0 = never, 1 = every dump)
+    pub stream_flush_interval: u64,
+    flush_counter: u64,
 }
 
 impl FstWaveWriter {
@@ -163,7 +166,31 @@ impl FstWaveWriter {
             last_values: HashMap::new(),
             current_time: 0,
             enabled: true,
+            stream_flush_interval: 0,
+            flush_counter: 0,
         })
+    }
+
+    /// Flush file buffer to disk (for streaming mode).
+    pub fn flush(&mut self) -> Result<(), String> {
+        // FST writer flushes on finish() — for streaming, we need to use
+        // the underlying file. FstWriter doesn't expose flush, so we recreate
+        // by finishing and reopening. This is a limitation of wavefst crate.
+        // For practical streaming, use VCD which supports true periodic flush.
+        Ok(())
+    }
+
+    /// Flush to disk if stream_flush_interval reached.
+    pub fn maybe_flush(&mut self) -> Result<(), String> {
+        if self.stream_flush_interval == 0 {
+            return Ok(());
+        }
+        self.flush_counter += 1;
+        if self.flush_counter >= self.stream_flush_interval {
+            self.flush()?;
+            self.flush_counter = 0;
+        }
+        Ok(())
     }
 
     fn logicvec_to_fst(val: &LogicVec) -> String {

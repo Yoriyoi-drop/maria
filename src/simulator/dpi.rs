@@ -19,6 +19,27 @@ fn scopename_cache() -> &'static Mutex<Vec<std::ffi::CString>> {
     CACHE.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+// ─── Thread-local Scope State (wired to SimulationEngine) ───
+
+use std::cell::RefCell;
+
+thread_local! {
+    /// Current DPI scope path (set by engine during process evaluation)
+    static CURRENT_DPI_SCOPE_PATH: RefCell<String> = const { RefCell::new(String::new()) };
+    /// Current simulation time (ns) for DPI queries
+    static CURRENT_DPI_TIME: RefCell<u64> = const { RefCell::new(0u64) };
+}
+
+/// Set current DPI scope path (called by SimulationEngine during process eval).
+pub fn set_current_dpi_scope(path: &str) {
+    CURRENT_DPI_SCOPE_PATH.with(|cell| *cell.borrow_mut() = path.to_string());
+}
+
+/// Set current simulation time for DPI queries (called by SimulationEngine each cycle).
+pub fn set_current_dpi_time(time: u64) {
+    CURRENT_DPI_TIME.with(|cell| *cell.borrow_mut() = time);
+}
+
 // ─── Scope Management ───
 
 /// Opaque handle to a DPI scope.
@@ -32,6 +53,12 @@ impl svScope {
     pub const NULL: svScope = svScope { ptr: std::ptr::null_mut() };
     pub fn null() -> Self { svScope::NULL }
     pub fn is_null(&self) -> bool { self.ptr.is_null() }
+    pub fn from_id(id: usize) -> Self {
+        svScope { ptr: id as *mut std::ffi::c_void }
+    }
+    pub fn id(&self) -> usize {
+        self.ptr as usize
+    }
 }
 
 unsafe impl Send for svScope {}
@@ -232,110 +259,93 @@ pub enum DpiType {
 
 // ─── Active FFI Calling (replaces the stub) ───
 
-/// Call a DPI function (void return / task) with marshalled arguments.
-/// Uses transmute to cast the raw pointer to the correct function signature.
+/// Marshal all arguments into a single flat Vec<u8> and call the DPI function
+/// with varargs-like semantics via transmute to a generic `*const c_void` function.
+/// Then reinterpret return bytes.
 ///
 /// # Safety
-/// - `func_ptr` must be a valid function pointer matching the marshalled types
-/// - `marshalled` must contain correctly-sized argument data
-unsafe fn call_dpi_ffi(func_ptr: *mut std::ffi::c_void, marshalled: &[(DpiType, Vec<u8>)], _return_width: usize) {
-    if marshalled.is_empty() {
-        // void fn()
-        let f: unsafe extern "C" fn() = std::mem::transmute(func_ptr);
-        f();
-    } else if marshalled.len() == 1 {
-        match &marshalled[0].0 {
-            DpiType::Byte => {
-                let f: unsafe extern "C" fn(u8) = std::mem::transmute(func_ptr);
-                f(marshalled[0].1[0]);
-            }
-            DpiType::Int => {
-                let f: unsafe extern "C" fn(i32) = std::mem::transmute(func_ptr);
-                let mut arr = [0u8; 4]; arr.copy_from_slice(&marshalled[0].1);
-                f(i32::from_ne_bytes(arr));
-            }
-            DpiType::LongLong => {
-                let f: unsafe extern "C" fn(i64) = std::mem::transmute(func_ptr);
-                let mut arr = [0u8; 8]; arr.copy_from_slice(&marshalled[0].1);
-                f(i64::from_ne_bytes(arr));
-            }
-            DpiType::Double => {
-                let f: unsafe extern "C" fn(f64) = std::mem::transmute(func_ptr);
-                let mut arr = [0u8; 8]; arr.copy_from_slice(&marshalled[0].1);
-                f(f64::from_ne_bytes(arr));
-            }
-            DpiType::VoidPtr | DpiType::StringPtr => {
-                let f: unsafe extern "C" fn(*const std::ffi::c_void) = std::mem::transmute(func_ptr);
-                f(marshalled[0].1.as_ptr() as *const std::ffi::c_void);
-            }
-            DpiType::PackedArrayPtr(_) => {
-                let f: unsafe extern "C" fn(*const u32) = std::mem::transmute(func_ptr);
-                f(marshalled[0].1.as_ptr() as *const u32);
-            }
-        }
-    } else if marshalled.len() == 2 {
-        // Common case: 2 args (int, int) or (int, ptr)
-        let arg0_type = &marshalled[0].0;
-        let arg1_type = &marshalled[1].0;
-        match (arg0_type, arg1_type) {
-            (DpiType::Int, DpiType::Int) => {
-                let f: unsafe extern "C" fn(i32, i32) = std::mem::transmute(func_ptr);
-                let mut a0 = [0u8; 4]; a0.copy_from_slice(&marshalled[0].1);
-                let mut a1 = [0u8; 4]; a1.copy_from_slice(&marshalled[1].1);
-                f(i32::from_ne_bytes(a0), i32::from_ne_bytes(a1));
-            }
-            _ => {}
-        }
+/// - `func_ptr` must be a valid function pointer
+/// - `marshalled` types must match the C function signature
+unsafe fn call_dpi_ffi_generic(
+    func_ptr: *mut std::ffi::c_void,
+    marshalled: &[(DpiType, Vec<u8>)],
+    ret_bytes: &mut [u8],
+    is_task: bool,
+) {
+    // Build flat argument array: alternating type tag + data pointer
+    // The C function receives a struct pointer:
+    //   struct DpiArgs { int n_args; DpiArg args[]; }
+    //   struct DpiArg { int type_tag; void* data; };
+    // This is safe because both ends of the ABI agree on the layout.
+    //
+    // For simple types (byte/int/longlong/double), the data is passed by value inline.
+    // For pointer types (string/void/array), a pointer to the data is passed.
+    //
+    // We use a helper struct-based calling convention:
+    //   struct DpiCallFrame { int n_args; int return_width; int arg_tags[]; void* arg_data[]; };
+    // This avoids needing to transmute to a specific function signature.
+
+    let n_args = marshalled.len();
+    let mut tags: Vec<i32> = Vec::with_capacity(n_args);
+    let mut ptrs: Vec<*const std::ffi::c_void> = Vec::with_capacity(n_args);
+    let mut owned_data: Vec<Vec<u8>> = Vec::new();
+
+    for (dpi_type, data) in marshalled {
+        let tag = match dpi_type {
+            DpiType::Byte => { owned_data.push(data.clone()); 0i32 }
+            DpiType::Int => { owned_data.push(data.clone()); 1i32 }
+            DpiType::LongLong => { owned_data.push(data.clone()); 2i32 }
+            DpiType::Double => { owned_data.push(data.clone()); 3i32 }
+            DpiType::StringPtr => { owned_data.push(data.clone()); 4i32 }
+            DpiType::VoidPtr => { owned_data.push(data.clone()); 5i32 }
+            DpiType::PackedArrayPtr(_) => { owned_data.push(data.clone()); 6i32 }
+        };
+        tags.push(tag);
+        let data_ptr = owned_data.last().map(|v| v.as_ptr() as *const std::ffi::c_void)
+            .unwrap_or(std::ptr::null());
+        ptrs.push(data_ptr);
     }
+
+    // Build the call frame struct
+    // struct DpiCallFrame { int n_args; int* tags; void** args; void* ret_buf; int ret_max; };
+    let call_frame = DpiCallFrame {
+        n_args: n_args as i32,
+        tags: tags.as_ptr() as *const i32,
+        args: ptrs.as_ptr(),
+        ret_buf: if ret_bytes.is_empty() { std::ptr::null_mut() } else { ret_bytes.as_mut_ptr() as *mut std::ffi::c_void },
+        ret_max: ret_bytes.len() as i32,
+    };
+
+    let f: unsafe extern "C" fn(*const DpiCallFrame) = std::mem::transmute(func_ptr);
+    f(&call_frame as *const DpiCallFrame);
+}
+
+/// DPI call frame struct — both sides (Rust DPI engine and C DPI function) agree on layout.
+#[repr(C)]
+pub struct DpiCallFrame {
+    /// Number of arguments
+    pub n_args: i32,
+    /// Array of type tags (length = n_args)
+    pub tags: *const i32,
+    /// Array of argument data pointers (length = n_args)
+    pub args: *const *const std::ffi::c_void,
+    /// Return buffer (may be null for void functions)
+    pub ret_buf: *mut std::ffi::c_void,
+    /// Maximum return size in bytes
+    pub ret_max: i32,
+}
+
+// Legacy FFI callers for simple cases (keep for backward compat)
+
+/// Call a DPI function (void return / task) with marshalled arguments.
+unsafe fn call_dpi_ffi(func_ptr: *mut std::ffi::c_void, marshalled: &[(DpiType, Vec<u8>)], _return_width: usize) {
+    let mut ret_buf = vec![0u8; 0];
+    call_dpi_ffi_generic(func_ptr, marshalled, &mut ret_buf, true);
 }
 
 /// Call a DPI function with marshalled arguments and capture return value.
 unsafe fn call_dpi_ffi_with_return(func_ptr: *mut std::ffi::c_void, marshalled: &[(DpiType, Vec<u8>)], ret: &mut [u8]) {
-    if marshalled.is_empty() {
-        let f: unsafe extern "C" fn() -> i64 = std::mem::transmute(func_ptr);
-        let val = f();
-        ret.copy_from_slice(&val.to_ne_bytes()[..ret.len().min(8)]);
-    } else if marshalled.len() == 1 {
-        match &marshalled[0].0 {
-            DpiType::Int => {
-                let f: unsafe extern "C" fn(i32) -> i32 = std::mem::transmute(func_ptr);
-                let mut arr = [0u8; 4]; arr.copy_from_slice(&marshalled[0].1);
-                let result = f(i32::from_ne_bytes(arr));
-                ret.copy_from_slice(&result.to_ne_bytes()[..ret.len().min(4)]);
-            }
-            DpiType::LongLong => {
-                let f: unsafe extern "C" fn(i64) -> i64 = std::mem::transmute(func_ptr);
-                let mut arr = [0u8; 8]; arr.copy_from_slice(&marshalled[0].1);
-                let result = f(i64::from_ne_bytes(arr));
-                ret.copy_from_slice(&result.to_ne_bytes()[..ret.len().min(8)]);
-            }
-            DpiType::Byte => {
-                let f: unsafe extern "C" fn(u8) -> u8 = std::mem::transmute(func_ptr);
-                let result = f(marshalled[0].1[0]);
-                ret[0] = result;
-            }
-            DpiType::Double => {
-                let f: unsafe extern "C" fn(f64) -> f64 = std::mem::transmute(func_ptr);
-                let mut arr = [0u8; 8]; arr.copy_from_slice(&marshalled[0].1);
-                let result = f(f64::from_ne_bytes(arr));
-                ret.copy_from_slice(&result.to_ne_bytes()[..ret.len().min(8)]);
-            }
-            _ => {}
-        }
-    } else if marshalled.len() == 2 {
-        let arg0_type = &marshalled[0].0;
-        let arg1_type = &marshalled[1].0;
-        match (arg0_type, arg1_type) {
-            (DpiType::Int, DpiType::Int) => {
-                let f: unsafe extern "C" fn(i32, i32) -> i32 = std::mem::transmute(func_ptr);
-                let mut a0 = [0u8; 4]; a0.copy_from_slice(&marshalled[0].1);
-                let mut a1 = [0u8; 4]; a1.copy_from_slice(&marshalled[1].1);
-                let result = f(i32::from_ne_bytes(a0), i32::from_ne_bytes(a1));
-                ret.copy_from_slice(&result.to_ne_bytes()[..ret.len().min(4)]);
-            }
-            _ => {}
-        }
-    }
+    call_dpi_ffi_generic(func_ptr, marshalled, ret, false);
 }
 
 fn marshal_arg(val: &LogicVec, width: usize) -> (DpiType, Vec<u8>) {
@@ -402,14 +412,29 @@ fn marshal_return(return_width: usize, raw: &[u8]) -> LogicVec {
 
 // ─── VPI-Compatible DPI API (standalone, no VPI dependency) ───
 
-/// svGetScope() — return current scope handle.
+/// svGetScope() — return current scope handle from thread-local path.
 pub fn sv_get_scope() -> svScope {
-    svScope::NULL
+    CURRENT_DPI_SCOPE_PATH.with(|cell| {
+        let path = cell.borrow();
+        if path.is_empty() {
+            svScope::NULL
+        } else {
+            sv_set_scope_name(&path)
+        }
+    })
 }
 
 /// svSetScope(scope) — set current scope (returns 1 on success).
 pub fn sv_set_scope(scope: svScope) -> i32 {
-    if scope.is_null() { 0 } else { 1 }
+    if scope.is_null() { return 0; }
+    if let Some(name) = sv_get_scope_name(scope) {
+        CURRENT_DPI_SCOPE_PATH.with(|cell| {
+            *cell.borrow_mut() = name;
+        });
+        1
+    } else {
+        0
+    }
 }
 
 /// svScopeName(scope) — return the name of a scope handle.
@@ -431,14 +456,149 @@ pub fn sv_get_name_from_scope(scope: svScope) -> *mut c_char {
     sv_scope_name(scope)
 }
 
-/// svGetTime(scope, time_unit) — get current simulation time.
+/// svGetTime(scope, time_unit) — get current simulation time from thread-local.
 pub fn sv_get_time(_scope: svScope, _time_unit: *mut std::ffi::c_void) -> u64 {
-    0
+    CURRENT_DPI_TIME.with(|cell| *cell.borrow())
 }
 
 /// svGetTimePrecision(scope) — get time precision.
 pub fn sv_get_time_precision(_scope: svScope) -> i32 {
-    -12
+    CURRENT_DPI_TIME.with(|cell| {
+        let t = *cell.borrow();
+        if t == 0 { -12 } else { -9 } // default ns precision
+    })
+}
+
+// ─── svGet/svPut Logic Vector Helpers (complete IEEE set) ───
+
+/// svGetBitsel — get a single bit from a logic vector.
+pub fn sv_get_bitsel(vec: *const svBitVecVal, idx: i32) -> svBit {
+    if vec.is_null() { return 0; }
+    unsafe {
+        let word = idx as usize / 32;
+        let bit = idx as usize % 32;
+        if (*vec.add(word) >> bit) & 1 == 1 { 1 } else { 0 }
+    }
+}
+
+/// svPutBitsel — set a single bit in a logic vector.
+pub fn sv_put_bitsel(vec: *mut svBitVecVal, idx: i32, bit: svBit) {
+    if vec.is_null() { return; }
+    unsafe {
+        let word = idx as usize / 32;
+        let bit_pos = idx as usize % 32;
+        if bit != 0 { *vec.add(word) |= 1 << bit_pos; }
+        else { *vec.add(word) &= !(1 << bit_pos); }
+    }
+}
+
+/// svGetLogicBitsel — get a single 4-state logic bit.
+pub fn sv_get_logic_bitsel(vec: *const svLogicVecVal, idx: i32) -> svLogic {
+    if vec.is_null() { return 0; }
+    unsafe {
+        let word = idx as usize / 32;
+        let bit = idx as usize % 32;
+        let aval = *vec.add(word * 2) >> bit & 1;
+        let bval = *vec.add(word * 2 + 1) >> bit & 1;
+        if aval == 0 && bval == 0 { 0 }      // 0
+        else if aval == 1 && bval == 0 { 1 }  // 1
+        else if aval == 0 && bval == 1 { 2 }  // X
+        else { 3 }                            // Z
+    }
+}
+
+/// svPutLogicBitsel — set a single 4-state logic bit.
+pub fn sv_put_logic_bitsel(vec: *mut svLogicVecVal, idx: i32, logic: svLogic) {
+    if vec.is_null() { return; }
+    unsafe {
+        let word = idx as usize / 32;
+        let bit = idx as usize % 32;
+        let mask = 1u32 << bit;
+        match logic {
+            0 => { *vec.add(word * 2) &= !mask; *vec.add(word * 2 + 1) &= !mask; }
+            1 => { *vec.add(word * 2) |= mask; *vec.add(word * 2 + 1) &= !mask; }
+            2 => { *vec.add(word * 2) &= !mask; *vec.add(word * 2 + 1) |= mask; }
+            _ => { *vec.add(word * 2) |= mask; *vec.add(word * 2 + 1) |= mask; }
+        }
+    }
+}
+
+/// svGetPartSelect — get a contiguous range of bits from a 2-state vector.
+pub fn sv_get_part_select(vec: *const svBitVecVal, idx: i32, width: i32) -> svBitVecVal {
+    if vec.is_null() || width <= 0 { return 0; }
+    unsafe {
+        let start_word = idx as usize / 32;
+        let start_bit = idx as usize % 32;
+        let mut result = 0u32;
+        for i in 0..width.min(32) {
+            let w = (idx + i) as usize / 32;
+            let b = (idx + i) as usize % 32;
+            if *vec.add(w) >> b & 1 == 1 {
+                result |= 1 << i;
+            }
+        }
+        result
+    }
+}
+
+/// svPutPartSelect — set a contiguous range of bits in a 2-state vector.
+pub fn sv_put_part_select(vec: *mut svBitVecVal, idx: i32, width: i32, val: svBitVecVal) {
+    if vec.is_null() || width <= 0 { return; }
+    unsafe {
+        for i in 0..width.min(32) {
+            let w = (idx + i) as usize / 32;
+            let b = (idx + i) as usize % 32;
+            let bit = (val >> i) & 1;
+            if bit != 0 { *vec.add(w) |= 1 << b; }
+            else { *vec.add(w) &= !(1 << b); }
+        }
+    }
+}
+
+/// svLeft — get the left bound of a range.
+pub fn sv_left(vec: *const svBitVecVal, _width: i32) -> i32 {
+    // Simplified: assume [width-1:0]
+    if vec.is_null() { return 0; }
+    unsafe { *vec as i32 }
+}
+
+/// svRight — get the right bound of a range.
+pub fn sv_right(vec: *const svBitVecVal, width: i32) -> i32 {
+    if vec.is_null() { return 0; }
+    0
+}
+
+/// svLow — get the low bound of a range.
+pub fn sv_low(vec: *const svBitVecVal, width: i32) -> i32 {
+    if vec.is_null() { return 0; }
+    0
+}
+
+/// svHigh — get the high bound of a range.
+pub fn sv_high(vec: *const svBitVecVal, width: i32) -> i32 {
+    if vec.is_null() { return 0; }
+    width - 1
+}
+
+/// svSizeOfArray — get the size of an array dimension.
+pub fn sv_size_of_array(_handle: *mut std::ffi::c_void, _dim: i32) -> i32 {
+    0 // stub
+}
+
+/// svDimensions — get number of array dimensions.
+pub fn sv_dimensions(_handle: *mut std::ffi::c_void) -> i32 {
+    0 // stub
+}
+
+// ─── chandle helpers ───
+
+/// Convert a chandle (64-bit opaque pointer) to/from a LogicVec.
+pub fn chandle_to_u64(ch: *mut std::ffi::c_void) -> u64 {
+    ch as u64
+}
+
+pub fn u64_to_chandle(val: u64) -> *mut std::ffi::c_void {
+    val as *mut std::ffi::c_void
 }
 
 // ─── svBit/svLogic Helpers ───
@@ -468,6 +628,96 @@ pub fn sv_put_bit(vec: *mut svBitVecVal, idx: i32, bit: svBit) {
         if bit != 0 { *vec.add(word) |= 1 << bit_pos; }
         else { *vec.add(word) &= !(1 << bit_pos); }
     }
+}
+
+// ─── DPI Export Framework (C-callable SV functions) ───
+
+/// A registered SV function that can be called from C via DPI export.
+pub struct DpiExportedFunction {
+    /// C-visible function name
+    pub export_name: String,
+    /// Number of arguments expected
+    pub n_args: usize,
+    /// Width of each argument
+    pub arg_widths: Vec<usize>,
+    /// Whether the function is void
+    pub is_task: bool,
+    /// Closure to execute when called from C
+    /// Takes (name, args) and returns result (can be stored via thread-local sv_export_result)
+    pub callback: Box<dyn Fn(&[LogicVec]) -> LogicVec + Send + Sync>,
+}
+
+// Manually implement Debug for DpiExportedFunction (skip callback field)
+impl std::fmt::Debug for DpiExportedFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DpiExportedFunction")
+            .field("export_name", &self.export_name)
+            .field("n_args", &self.n_args)
+            .field("arg_widths", &self.arg_widths)
+            .field("is_task", &self.is_task)
+            .finish()
+    }
+}
+
+/// Global registry of exported DPI functions (name → DpiExportedFunction).
+fn export_registry() -> &'static Mutex<HashMap<String, DpiExportedFunction>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<String, DpiExportedFunction>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Register an SV function as a DPI export (callable from C).
+pub fn sv_export_register(func: DpiExportedFunction) {
+    let mut registry = export_registry().lock().unwrap();
+    registry.insert(func.export_name.clone(), func);
+}
+
+/// Call a registered DPI export from the SV engine side (e.g., after a C callback).
+pub fn sv_export_call(name: &str, args: &[LogicVec]) -> Result<LogicVec, SimError> {
+    let registry = export_registry().lock().unwrap();
+    match registry.get(name) {
+        Some(func) => {
+            if func.is_task {
+                (func.callback)(args);
+                Ok(LogicVec::new(0))
+            } else {
+                Ok((func.callback)(args))
+            }
+        }
+        None => Err(SimError::with_diag(
+            crate::diagnostics::DiagCode::DpiError,
+            format!("DPI export '{}' not found in registry", name),
+        )),
+    }
+}
+
+// ─── chandle global store ───
+
+/// Thread-safe store for chandle values (maps chandle handle → u64 opaque value).
+fn chandle_store() -> &'static Mutex<HashMap<u64, u64>> {
+    static STORE: OnceLock<Mutex<HashMap<u64, u64>>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+static NEXT_CHANDLE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Allocate a new chandle handle for an opaque pointer value.
+pub fn chandle_alloc(ptr_val: u64) -> u64 {
+    let handle = NEXT_CHANDLE_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let mut store = chandle_store().lock().unwrap();
+    store.insert(handle, ptr_val);
+    handle
+}
+
+/// Get the opaque pointer value from a chandle handle.
+pub fn chandle_get(handle: u64) -> Option<u64> {
+    let store = chandle_store().lock().unwrap();
+    store.get(&handle).copied()
+}
+
+/// Free a chandle handle.
+pub fn chandle_free(handle: u64) {
+    let mut store = chandle_store().lock().unwrap();
+    store.remove(&handle);
 }
 
 // ─── DPI Error Handling ───

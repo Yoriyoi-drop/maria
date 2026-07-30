@@ -84,7 +84,7 @@ impl SimulationEngine {
                 IrStmt::Delay { delay, body } => {
                     let delay_val = *delay as usize;
                     let delay_t = self.state.time as usize + delay_val;
-                    if delay_t < self.events.len() {
+                    self.ensure_events(delay_t);
                         let mut later: Vec<IrStmt> = body.clone();
                         let remaining: Vec<IrStmt> = stmts[i + 1..].to_vec();
                         later.extend(remaining);
@@ -98,7 +98,7 @@ impl SimulationEngine {
                                 EventRegion::Active
                             };
                             let pid = self.current_process_id;
-                            self.events[delay_t].push(RegionEvent {
+                            self.push_event(delay_t, RegionEvent {
                                 region,
                                 event: EventKind::ContinueBlock(Continuation {
                                     stmts_to_exec: later,
@@ -108,7 +108,6 @@ impl SimulationEngine {
                                 }),
                             });
                         }
-                    }
                     return Ok(false);
                 }
                 IrStmt::EventControl { sig_id, edge, body } => {
@@ -933,7 +932,7 @@ impl SimulationEngine {
                     let delay_val = self.evaluate_ast_expr(delay)?;
                     let d = delay_val.to_u64() as usize;
                     let delay_t = self.state.time as usize + d;
-                    if delay_t < self.events.len() {
+                    self.ensure_events(delay_t);
                         let remaining: Vec<crate::ast::Stmt> = {
                             let mut v = Vec::new();
                             v.push(*body.clone());
@@ -947,11 +946,10 @@ impl SimulationEngine {
                         } else {
                             EventRegion::Active
                         };
-                        self.events[delay_t].push(RegionEvent {
+                        self.push_event(delay_t, RegionEvent {
                             region,
                             event: EventKind::ContinueAstBlock(remaining, fork_id),
                         });
-                    }
                     return Ok(false);
                 }
                 crate::ast::Stmt::EventControl { events, stmt: body } => {
@@ -1436,7 +1434,7 @@ impl SimulationEngine {
                 IrStmt::Delay { delay, body } => {
                     let delay_val = *delay as usize;
                     let delay_t = self.state.time as usize + delay_val;
-                    if delay_t < self.events.len() {
+                    self.ensure_events(delay_t);
                         let mut later: Vec<IrStmt> = body.clone();
                         let remaining: Vec<IrStmt> = stmts[i + 1..].to_vec();
                         later.extend(remaining);
@@ -1447,7 +1445,7 @@ impl SimulationEngine {
                                 EventRegion::Active
                             };
                             let pid = self.current_process_id;
-                            self.events[delay_t].push(RegionEvent {
+                            self.push_event(delay_t, RegionEvent {
                                 region,
                                 event: EventKind::ContinueBlock(Continuation {
                                     stmts_to_exec: later,
@@ -1457,7 +1455,6 @@ impl SimulationEngine {
                                 }),
                             });
                         }
-                    }
                     return Ok(());
                 }
                 IrStmt::EventControl { sig_id, edge, body } => {

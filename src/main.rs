@@ -1,6 +1,8 @@
 // Allow large Result Err variant for SimError (intentional)
 #![allow(clippy::result_large_err)]
 
+mod cli;
+use cli::Cli;
 use clap::Parser as ClapParser;
 use std::path::PathBuf;
 use std::process;
@@ -21,194 +23,6 @@ use maria::simulator::SimulationEngine;
 use maria::simulator::Watchpoint;
 use maria::waveform::VcdWriter;
 use rayon::prelude::*;
-
-#[derive(ClapParser)]
-#[command(name = "maria", about = "RTL Simulator untuk SystemVerilog")]
-struct Cli {
-    /// Input SystemVerilog file(s) — last is top module
-    #[arg(
-        required_unless_present = "start",
-        required_unless_present = "filelist"
-    )]
-    files: Vec<String>,
-
-    /// Top module name (default: first module)
-    #[arg(short = 't', long = "top")]
-    top: Option<String>,
-
-    /// Maximum simulation time
-    #[arg(short = 'T', long = "time", default_value = "1000")]
-    max_time: u64,
-
-    /// VCD output file (default: <module>.vcd)
-    #[arg(short = 'o', long = "output")]
-    output: Option<String>,
-
-    /// Start from .maria project file (lists .sv files to compile)
-    #[arg(long = "start")]
-    start: bool,
-
-    /// Add include search path
-    #[arg(short = 'I', long = "incdir", num_args = 1)]
-    incdirs: Vec<String>,
-
-    /// Define preprocessor macro (NAME or NAME=VALUE)
-    #[arg(short = 'D', long = "define", num_args = 1)]
-    defines: Vec<String>,
-
-    /// Read file list from file
-    #[arg(short = 'f', long = "filelist")]
-    filelist: Option<String>,
-
-    /// Pass plusarg (NAME=VALUE)
-    #[arg(long = "plusarg", num_args = 1)]
-    plusargs: Vec<String>,
-
-    /// Dump all signal values at each timestep
-    #[arg(long = "dump-all")]
-    dump_all: bool,
-
-    /// Print tokens before parsing
-    #[arg(long = "tokens")]
-    print_tokens: bool,
-
-    /// Print AST after parsing
-    #[arg(long = "ast")]
-    print_ast: bool,
-
-    // ── Debug flags ──
-    /// Enable debug mode (pause at breakpoints/watchpoints)
-    #[arg(long = "debug")]
-    debug: bool,
-
-    /// Enable deep debug mode (with snapshot for reverse debugging)
-    #[arg(long = "deep-debug")]
-    deep_debug: bool,
-
-    /// Single-step mode: run one cycle then pause
-    #[arg(long = "step")]
-    step: bool,
-
-    /// Set breakpoint on cycle number
-    #[arg(long = "break-cycle")]
-    break_cycle: Vec<u64>,
-
-    /// Set breakpoint on signal change (NAME)
-    #[arg(long = "break-change")]
-    break_change: Vec<String>,
-
-    /// Set breakpoint on signal equality: NAME=VALUE (hex)
-    #[arg(long = "break-eq")]
-    break_eq: Vec<String>,
-
-    /// Set watchpoint on signal name
-    #[arg(long = "watch")]
-    watch: Vec<String>,
-
-    /// Print hierarchy tree after elaboration
-    #[arg(long = "tree")]
-    print_tree: bool,
-
-    /// Print signal value after simulation
-    #[arg(long = "print-signal")]
-    print_signal: Vec<String>,
-
-    /// Print all signal values after simulation
-    #[arg(long = "print-state")]
-    print_state: bool,
-
-    /// Print timeline for signal after simulation
-    #[arg(long = "timeline")]
-    timeline: Vec<String>,
-
-    /// Inspect memory at address with length
-    #[arg(long = "mem", num_args = 2)]
-    mem: Vec<String>,
-
-    /// Snapshot interval for reverse debug (default: 1000)
-    #[arg(long = "snap-interval", default_value = "1000")]
-    snap_interval: u64,
-
-    /// Print timeline entries count
-    #[arg(long = "timeline-len", default_value = "20")]
-    timeline_len: usize,
-
-    /// Export coverage to UCIS XML file (default: <module>.ucis.xml)
-    #[arg(long = "coverage-ucis")]
-    coverage_ucis: Option<String>,
-
-    /// Library directory to search for missing modules (-y <dir>)
-    #[arg(short = 'y', long = "libdir", num_args = 1)]
-    libdirs: Vec<String>,
-
-    /// Library file containing one or more modules (-v <file>)
-    #[arg(short = 'v', long = "libfile", num_args = 1)]
-    libfiles: Vec<String>,
-
-    /// Suppress preprocessor warnings (missing include files, etc.)
-    #[arg(short = 'q', long = "quiet")]
-    quiet: bool,
-
-    /// X-propagation mode: optimistic, pessimistic, or x-anywhere
-    #[arg(long = "xprop", default_value = "pessimistic")]
-    xprop: String,
-
-    /// Compile-only mode: parse + elaborate, skip simulation & VCD
-    #[arg(long = "compile-only")]
-    compile_only: bool,
-
-    /// Use fast parallel pipeline (CompileSession + FastLexer)
-    #[arg(long = "fast")]
-    fast: bool,
-
-    /// Use legacy lexer (char-based, default with new pipeline)
-    #[arg(long = "legacy-lexer")]
-    legacy_lexer: bool,
-
-    /// Cache stats (show AST/HIR cache hit rates after run)
-    #[arg(long = "cache-stats")]
-    cache_stats: bool,
-
-    /// Save checksums to file for change detection across runs
-    #[arg(long = "checksum-file")]
-    checksum_file: Option<String>,
-
-    /// Enable profiling (show phase timings and counters)
-    #[arg(long = "profile")]
-    profile: bool,
-
-    /// Force full recompile (ignore cache)
-    #[arg(long = "recompile")]
-    recompile: bool,
-
-    /// Use lazy elaboration (HIR-based, on-demand)
-    #[arg(long = "lazy")]
-    lazy: bool,
-
-    /// Use packed 4-state eval (SIMD-ready bitmask ops for bitwise operations)
-    #[arg(long = "packed", short = 'P')]
-    packed: bool,
-
-    /// Use DAG-parallel process evaluation (parallel simulation via rayon)
-    #[arg(long = "parallel", short = 'L')]
-    parallel: bool,
-
-    /// Use cycle-based simulation fusion (clock-gated domain fusion)
-    #[arg(long = "cycle-fusion")]
-    cycle_fusion: bool,
-
-    /// Enable formal verification with Z3 (Bounded Model Checking)
-    #[arg(long = "formal")]
-    formal: bool,
-
-    /// Maximum unrolling bound for BMC (default: 20)
-    #[arg(long = "formal-bound", default_value = "20")]
-    formal_bound: u64,
-
-    /// DPI shared library to load (can be specified multiple times)
-    #[arg(long = "dpi-lib", num_args = 1)]
-    dpi_libs: Vec<String>,
-}
 
 /// Emit a list of diagnostics through TerminalEmitter.
 fn emit_diags(diags: &[maria::diagnostics::diagnostic::Diagnostic]) {
@@ -267,7 +81,21 @@ fn run_formal(ir_design: &maria::ir::IrDesign, bound: u64, quiet: bool) -> Resul
 }
 
 fn main() {
+    // Configure rayon thread pool with larger stack for deep recursion in parser
+    // Some SV files have deeply nested blocks that need more than the default 2MB stack
+    rayon::ThreadPoolBuilder::new()
+        .stack_size(16 * 1024 * 1024) // 16MB stack
+        .build_global()
+        .ok();
+
     let cli = Cli::parse();
+
+    // ── LSP mode: start language server (stdio transport) ──
+    if cli.lsp {
+        let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime for LSP");
+        rt.block_on(maria::lsp::run_lsp_server());
+        return;
+    }
 
     let result = run(cli);
     if let Err(e) = result {
@@ -364,7 +192,8 @@ fn run(cli: Cli) -> Result<(), SimError> {
     }
 
     // ── Fast pipeline via CompileSession (skip legacy pipeline entirely) ──
-    if cli.fast {
+    // Auto-use fast pipeline when filelist is specified (legacy can't handle large file sets)
+    if cli.fast || cli.filelist.is_some() {
         return run_fast(cli, None);
     }
 
@@ -375,11 +204,13 @@ fn run(cli: Cli) -> Result<(), SimError> {
 
     // Preprocess files in parallel using rayon
     
+    eprintln!("[TIMING] Preprocessing {} files...", sources.len());
+    let pp_start = std::time::Instant::now();
     let pp_for_parallel = &base_pp;
     let pp_results: Vec<Result<(String, Option<(String, String)>), String>> = sources
         .par_iter()
         .enumerate()
-        .map(|(idx, path)| {
+        .map(|(_idx, path)| {
 
             let mut pp = pp_for_parallel.clone();
             match pp.preprocess_file(path) {
@@ -391,7 +222,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
             }
         })
         .collect();
-
+    eprintln!("[TIMING] Preprocessing done in {:?}", pp_start.elapsed());
 
     for (i, path) in sources.iter().enumerate() {
         let (processed, ts) = match &pp_results[i] {
@@ -408,6 +239,8 @@ fn run(cli: Cli) -> Result<(), SimError> {
         combined.push('\n');
     }
 
+    eprintln!("[TIMING] Starting lexer (combined size: {} bytes)...", combined.len());
+    let lex_start = std::time::Instant::now();
     let mut lexer = Lexer::new(&combined);
     let mut tokens = Vec::new();
     
@@ -421,6 +254,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
         }
         tokens.push((tok, line, col));
     }
+    eprintln!("[TIMING] Lexer done: {} tokens in {:?}", tokens.len(), lex_start.elapsed());
 
     if tokens.is_empty() {
         return Err(SimError::new(None, "no tokens found (empty source?)"));
@@ -429,11 +263,16 @@ fn run(cli: Cli) -> Result<(), SimError> {
     let first_source = sources.first().map(|s| s.as_str()).unwrap_or("<unknown>");
 
     let file_line_map = lexer.file_line_map.clone();
+    eprintln!("[TIMING] Starting parser...");
+    let parse_start = std::time::Instant::now();
     let mut parser = Parser::new(tokens, first_source)
         .with_source_lines(&combined)
         .with_file_line_map(file_line_map);
     let mut design = match parser.parse_design() {
-        Ok(d) => d,
+        Ok(d) => {
+            eprintln!("[TIMING] Parser done in {:?}", parse_start.elapsed());
+            d
+        },
         Err(e) => {
             if !parser.errors.is_empty() {
                 let mut emitter = maria::diagnostics::TerminalEmitter::new();
@@ -445,13 +284,14 @@ fn run(cli: Cli) -> Result<(), SimError> {
         }
     };
     // Emit parser diagnostics (warnings + errors) — only abort for real errors
+    // In compile-only mode, individual construct errors are non-fatal
     if !parser.errors.is_empty() {
         let has_real_errors = parser.errors.iter().any(|d| d.is_error());
         let mut emitter = maria::diagnostics::TerminalEmitter::new();
         for diag in &parser.errors {
             let _ = emitter.emit(diag);
         }
-        if has_real_errors {
+        if has_real_errors && !cli.compile_only {
             return Err(maria::error::SimError::from_parse_diagnostic(parser.errors[0].clone()));
         }
     }
@@ -569,9 +409,12 @@ fn run(cli: Cli) -> Result<(), SimError> {
     if !cli.quiet {
         println!("Compiling design ({} file sources)...", sources.len());
     }
+    eprintln!("[TIMING] Starting elaboration...");
+    let elab_start = std::time::Instant::now();
     let source_lines: Vec<String> = combined.lines().map(|s| s.to_string()).collect();
     let mut elaborator = Elaborator::with_source(design, source_lines, first_source.to_string());
     let mut ir_design = elaborator.elaborate(top_name)?;
+    eprintln!("[TIMING] Elaboration done in {:?}", elab_start.elapsed());
 
     // Flush elaboration-time diagnostics (warnings like WR0102)
     emit_diags(&elaborator.flush_diagnostics());
@@ -625,11 +468,133 @@ fn run(cli: Cli) -> Result<(), SimError> {
         return Err(SimError::new(None, format!("invalid --xprop '{}': use optimistic, pessimistic, or x-anywhere", cli.xprop)));
     }
 
+    // ── Distributed simulation mode ──
+    if cli.dist_master {
+        let config = maria::simulator::distributed::MasterConfig {
+            port: cli.dist_port,
+            num_partitions: cli.num_partitions,
+            verbose: !cli.quiet,
+            ..Default::default()
+        };
+        let mut master = maria::simulator::distributed::DistributedMaster::new(config);
+        master.run(&ir_design, cli.max_time)?;
+        if !cli.quiet {
+            println!("Distributed simulation (master) complete");
+        }
+        return Ok(());
+    }
+
+    if cli.dist_slave {
+        let config = maria::simulator::distributed::SlaveConfig {
+            master_host: cli.master_host.clone(),
+            master_port: cli.dist_port,
+            max_time: cli.max_time,
+            verbose: !cli.quiet,
+        };
+        let mut slave = maria::simulator::distributed::DistributedSlave::new(config);
+        slave.run(&ir_design)?;
+        if !cli.quiet {
+            println!("Distributed simulation (slave) complete");
+        }
+        return Ok(());
+    }
+
     let mut engine = SimulationEngine::new(ir_design, cli.max_time);
+
+    // ── Set SDF timing mode ──
+    if let Some(mode) = maria::simulator::sdf::TimingMode::from_str(&cli.timing_mode) {
+        maria::simulator::sdf::set_timing_mode(mode);
+        if !cli.quiet {
+            println!("SDF timing mode: {}", mode.as_str());
+        }
+    } else {
+        return Err(SimError::new(None, format!("invalid --timing-mode '{}': use min, typ, or max", cli.timing_mode)));
+    }
+
+    // ── SDF Annotation (applies timing delays from Standard Delay Format file) ──
+    if let Some(ref sdf_path) = cli.sdf {
+        let sdf_data = maria::simulator::sdf::SdfData::parse_file(sdf_path)
+            .map_err(|e| SimError::new(None, format!("SDF parse failed: {}", e)))?;
+        engine.annotate_sdf(&sdf_data)?;
+        if !cli.quiet {
+            println!("SDF annotation loaded from '{}'", sdf_path);
+        }
+    }
+
     engine.debug_mode = debug_mode;
     engine.snapshot_interval = cli.snap_interval;
     engine.use_packed_eval = cli.packed;
     engine.use_dag_parallel = cli.parallel;
+    engine.use_mir_jit = cli.jit_body;
+    engine.use_timing_wheel = cli.use_timing_wheel;
+    if cli.use_timing_wheel && !cli.quiet {
+        println!("Timing wheel enabled (O(1) event scheduling)");
+    }
+    if cli.jit_body && !cli.quiet {
+        println!("Body-level MIR JIT enabled (compiled-code simulation path)");
+    }
+
+    // ── Co-simulation (VHDL/SystemVerilog bridge) ──
+    if let Some(cosim_port) = cli.cosim_port {
+        // Build signal mapping from --cosim-signals or auto-detect
+        let signal_mapping: Vec<(usize, String, bool)> = if let Some(ref sig_names) = cli.cosim_signals {
+            sig_names.split(',')
+                .filter_map(|name| {
+                    let trimmed = name.trim();
+                    let is_output = trimmed.starts_with('+');
+                    let clean_name = trimmed.trim_start_matches('+');
+                    engine.design.top.signals.iter().position(|s| s.name.as_str() == clean_name)
+                        .map(|id| (id, clean_name.to_string(), is_output))
+                })
+                .collect()
+        } else {
+            // Auto-detect: all output ports are outputs, all input ports are inputs
+            engine.design.top.signals.iter().enumerate()
+                .filter_map(|(id, s)| {
+                    let is_output = matches!(s.kind, maria::ir::SignalKind::Output | maria::ir::SignalKind::Inout);
+                    Some((id, s.name.to_string(), is_output))
+                })
+                .collect()
+        };
+
+        if signal_mapping.is_empty() && !cli.quiet {
+            eprintln!("warning: no signals mapped for co-simulation on port {}", cosim_port);
+        }
+
+        let n_sigs = signal_mapping.len();
+        let cosim_state = maria::simulator::cosim::start_cosim_server(cosim_port, n_sigs);
+        engine.cosim_state = cosim_state;
+        engine.cosim_signals = signal_mapping.clone();
+
+        if !cli.quiet {
+            println!("Co-simulation bridge active on port {} ({} signals)", cosim_port, signal_mapping.len());
+        }
+    }
+
+    // Configure signal history disk spill
+    if let Some(ref spill_path) = cli.signal_history_spill {
+        engine.signal_history.enable_spill(std::path::PathBuf::from(spill_path));
+        if !cli.quiet {
+            println!("Signal history spill to '{}'", spill_path);
+        }
+    }
+
+    // ── UPF Power Intent (power-aware simulation) ──
+    if let Some(ref upf_path) = cli.upf {
+        match maria::simulator::upf::PowerIntent::parse_file(upf_path) {
+            Ok(mut power_intent) => {
+                power_intent.build_signal_mapping(&engine.design.top.signals);
+                if !cli.quiet {
+                    println!("UPF power intent loaded from '{}' ({} domains, {} supply nets)",
+                        upf_path, power_intent.domains.len(), power_intent.supply_nets.len());
+                }
+                engine.power_intent = Some(power_intent);
+            }
+            Err(e) => {
+                eprintln!("warning: UPF parse failed: {}", e);
+            }
+        }
+    }
 
     // Load DPI shared libraries
     if !cli.dpi_libs.is_empty() {
@@ -718,9 +683,31 @@ fn run(cli: Cli) -> Result<(), SimError> {
     let vcd_path = cli
         .output
         .unwrap_or_else(|| format!("{}.vcd", engine.design.top.name));
-    let vcd = VcdWriter::new(&vcd_path, &engine.design)
+    let mut vcd = VcdWriter::new(&vcd_path, &engine.design)
         .map_err(|e| SimError::new(None, format!("VCD creation failed: {}", e)))?;
+    if cli.waveform_stream {
+        vcd.stream_flush_interval = 1;
+        if !cli.quiet {
+            println!("Waveform streaming enabled (flush every time step)");
+        }
+    }
     engine.set_vcd(vcd);
+
+    // CSV waveform setup
+    if let Some(ref csv_path) = cli.waveform_csv {
+        let csv = maria::waveform::CsvWaveWriter::new(csv_path, &engine.design)
+            .map_err(|e| SimError::new(None, format!("CSV creation failed: {}", e)))?;
+        engine.set_csv(csv);
+        if !cli.quiet {
+            println!("CSV waveform: {}", csv_path);
+        }
+    }
+
+    // Signal statistics setup
+    if cli.signal_stats.is_some() {
+        let stats = maria::waveform::SignalStats::new(&engine.design);
+        engine.set_signal_stats(stats);
+    }
 
     // ── Simulation ──
     let mut debugger = Debugger::new(engine);
@@ -797,6 +784,60 @@ fn run(cli: Cli) -> Result<(), SimError> {
         println!("VCD waveform written to '{}'", vcd_path);
     }
 
+    // ── CSV close ──
+    let _ = debugger.engine.close_csv();
+
+    // ── Signal statistics ──
+    if let Some(ref stats_path) = cli.signal_stats {
+        let path = if stats_path.is_empty() {
+            format!("{}.stats.txt", debugger.engine.design.top.name)
+        } else {
+            stats_path.clone()
+        };
+        if let Some(ref stats) = debugger.engine.signal_stats {
+            if let Err(e) = stats.write_to_file(&path) {
+                eprintln!("warning: signal stats write failed: {}", e);
+            } else if !cli.quiet {
+                println!("Signal statistics written to '{}'", path);
+            }
+        }
+    }
+
+    // ── GTKWave save file ──
+    if let Some(ref gtkw_path) = cli.gtkw {
+        let path = if gtkw_path.is_empty() {
+            format!("{}.gtkw", debugger.engine.design.top.name)
+        } else {
+            gtkw_path.clone()
+        };
+        match maria::waveform::save_gtkw(&path, &vcd_path, &debugger.engine.design) {
+            Ok(()) => {
+                if !cli.quiet {
+                    println!("GTKWave save file written to '{}'", path);
+                }
+            }
+            Err(e) => eprintln!("warning: GTKW save failed: {}", e),
+        }
+    }
+
+    // ── HTML waveform viewer ──
+    if let Some(ref html_path) = cli.waveform_html_viewer {
+        let csv_ref = cli.waveform_csv.as_deref().unwrap_or("output.csv");
+        let path = if html_path.is_empty() {
+            format!("{}.html", debugger.engine.design.top.name)
+        } else {
+            html_path.clone()
+        };
+        match maria::waveform::save_html_viewer(&path, csv_ref, &debugger.engine.design) {
+            Ok(()) => {
+                if !cli.quiet {
+                    println!("HTML waveform viewer written to '{}'", path);
+                }
+            }
+            Err(e) => eprintln!("warning: HTML viewer failed: {}", e),
+        }
+    }
+
     // UCIS coverage export
     if let Some(ref ucis_path) = cli.coverage_ucis {
         let path = if ucis_path.is_empty() {
@@ -814,12 +855,105 @@ fn run(cli: Cli) -> Result<(), SimError> {
         }
     }
 
+    // Signal history stats
+    if !cli.quiet && cli.signal_history_spill.is_some() {
+        let stats = debugger.engine.signal_history.stats();
+        println!("Signal history: {} mem entries, {} spilled to disk",
+            stats.total_memory_entries, stats.total_spilled_entries);
+    }
+
+    // Save coverage database if requested
+    if let Some(ref covdb_path) = cli.coverage_ucdb {
+        let mut covdb = maria::simulator::coverage_db::CoverageDatabase::with_path(covdb_path);
+        covdb.merge_from_engine(&debugger.engine);
+        if let Err(e) = covdb.save() {
+            eprintln!("warning: coverage DB save failed: {}", e);
+        } else if !cli.quiet {
+            println!("Coverage database saved to '{}'", covdb_path);
+        }
+
+        // Coverage threshold check
+        if let Some(threshold) = cli.coverage_threshold {
+            let stats = debugger.engine.coverage_stats();
+            let branch_pct = stats.get("branch_percent").copied().unwrap_or(0.0);
+            if branch_pct < threshold {
+                let msg = format!("COVERAGE FAILED: branch coverage {:.1}% < threshold {:.1}%", branch_pct, threshold);
+                eprintln!("warning: {}", msg);
+                return Err(SimError::new(None, msg));
+            } else if !cli.quiet {
+                println!("Coverage threshold: {:.1}% >= {:.1}% ✅", branch_pct, threshold);
+            }
+        }
+    }
+
+    // Export HTML coverage report
+    if let Some(ref html_path) = cli.coverage_html {
+        let mut covdb = maria::simulator::coverage_db::CoverageDatabase::new();
+        covdb.merge_from_engine(&debugger.engine);
+        if let Err(e) = covdb.export_html(html_path) {
+            eprintln!("warning: HTML coverage report failed: {}", e);
+        } else if !cli.quiet {
+            println!("HTML coverage report written to '{}'", html_path);
+        }
+    }
+
+    // Save checkpoint to file if requested
+    if let Some(save_path) = &cli.save {
+        let _ = debugger.engine.signal_history.flush();
+        let path = std::path::Path::new(save_path);
+        debugger.engine.save_checkpoint(path)
+            .map_err(|e| SimError::new(None, format!("checkpoint save failed: {}", e)))?;
+        if !cli.quiet {
+            println!("Checkpoint saved to '{}'", save_path);
+        }
+    }
+
+    // CDC (Clock-Domain Crossing) analysis
+    if let Some(ref cdc_path) = cli.cdc_report {
+        if !cli.quiet {
+            println!("Running CDC analysis...");
+        }
+        let cdc_analysis = maria::scheduler::cdc::CdcAnalysis::analyze(&debugger.engine.design);
+
+        // Print summary to console
+        if !cli.quiet {
+            println!(
+                "CDC: {} crossings — {} unsynchronized, {} single-flop, {} OK (2+ flops)",
+                cdc_analysis.total_crossings,
+                cdc_analysis.unsynchronized_count,
+                cdc_analysis.single_flop_count,
+                cdc_analysis.sync_ok_count,
+            );
+            if cdc_analysis.unsynchronized_count > 0 {
+                eprintln!(
+                    "  ⚠️ {} unsynchronized crossing(s) detected — check CDC report for details",
+                    cdc_analysis.unsynchronized_count
+                );
+            }
+        }
+
+        // Write detailed report
+        let path = if cdc_path.is_empty() {
+            format!("{}_cdc_report.txt", debugger.engine.design.top.name.as_str())
+        } else {
+            cdc_path.clone()
+        };
+        match cdc_analysis.write_report(&path) {
+            Ok(()) => {
+                if !cli.quiet {
+                    println!("CDC report written to '{}'", path);
+                }
+            }
+            Err(e) => eprintln!("warning: CDC report write failed: {}", e),
+        }
+    }
+
     Ok(())
 }
 
 /// Run compilation + simulation using the new parallel pipeline (CompileSession + FastLexer).
 fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimError> {
-    let sources: Vec<PathBuf> = if cli.start {
+    let mut sources: Vec<PathBuf> = if cli.start {
         read_project_file(".maria")?
             .into_iter()
             .map(PathBuf::from)
@@ -827,6 +961,10 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     } else {
         cli.files.iter().map(PathBuf::from).collect()
     };
+    if let Some(ref fpath) = cli.filelist {
+        let flist = read_project_file(fpath)?;
+        sources.extend(flist.into_iter().map(PathBuf::from));
+    }
 
     let config = SessionConfig {
         sources,
@@ -851,35 +989,45 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         session.enable_profiling();
     }
 
-    // ── Lazy mode: compile-only, skip full elaboration ──
-    if cli.lazy && cli.compile_only {
-        let (design, hir_count, index_len) = session.compile_lazy_only()?;
+    // ── Compile-only mode: parse only, skip elaboration & simulation ──
+    if cli.compile_only {
+        let (design, module_index) = if cli.lazy {
+            let (design, hir_count, index_len) = session.compile_lazy_only()?;
+            if !cli.quiet {
+                session.print_timing();
+                println!("Modules indexed: {}", index_len);
+                println!("Lazy-elaborated modules (HIR): {}", hir_count);
+                if let Some(_top) = &session.config.top_module {
+                    println!("HIR query ready: session.elaborate_lazy_module(...)");
+                }
+            }
+            return Ok(());
+        } else {
+            session.compile()?
+        };
+        let index_len = module_index.len();
         if !cli.quiet {
             session.print_timing();
             println!("Modules indexed: {}", index_len);
-            println!("Lazy-elaborated modules (HIR): {}", hir_count);
-            if let Some(_top) = &session.config.top_module {
-                println!("HIR query ready: session.elaborate_lazy_module(...)");
-            }
         }
         if cli.print_ast {
             println!("{:#?}", design);
         }
         return Ok(());
     }
-
-    // ── Full pipeline: compile + elaborate (use compile_and_elaborate when --lazy) ──
+    // ── Lazy mode: skip full elaboration ──
     let top_name = cli.top.as_deref();
-
-    let (design, ir_design, index_len) = if cli.lazy {
-        // Use integrated compile + elaborate with lazy pre-population
-        let (design, ir_design, index_len) = session.compile_and_elaborate(top_name)?;
+    if cli.lazy {
+        let (_design, _ir_design, index_len) = session.compile_and_elaborate(top_name)?;
         if !cli.quiet {
             session.print_timing();
             println!("Modules indexed: {}, lazy HIR modules: {}", index_len, session.lazy_elaborated_count());
         }
-        (design, ir_design, index_len)
-    } else if cli.recompile {
+        return Ok(());
+    }
+
+    // ── Full pipeline: compile + elaborate ──
+    let (design, ir_design, index_len) = if cli.recompile {
         if !cli.quiet { eprintln!("Forcing full recompile..."); }
         let all_sources: Vec<PathBuf> = session.config.sources.clone();
         let (design, module_index) = session.compile_incremental(&all_sources)?;
@@ -903,6 +1051,32 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
 
     if !cli.quiet {
         println!("Modules indexed: {}", index_len);
+    }
+
+    // Configure remote cache backend
+    if let Some(ref remote_dir) = cli.cache_remote_dir {
+        let sync_mode = maria::cache::cache_manager::RemoteSyncMode::from_str(&cli.cache_remote_sync);
+        match maria::cache::FilesystemCache::new(remote_dir) {
+            Ok(backend) => {
+                let remote: std::sync::Arc<dyn maria::cache::RemoteCacheBackend> =
+                    std::sync::Arc::new(backend);
+                session.set_remote_cache(remote, sync_mode);
+                if !cli.quiet {
+                    eprintln!("Remote cache enabled: {} (sync: {})", remote_dir, sync_mode.as_str());
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: cannot open remote cache '{}': {}", remote_dir, e);
+            }
+        }
+    }
+
+    // Clear all cache if requested
+    if cli.cache_clear {
+        session.clear_cache();
+        if !cli.quiet {
+            eprintln!("All caches cleared.");
+        }
     }
 
     // Show cache stats if enabled
@@ -985,11 +1159,48 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     }
 
     let mut engine = SimulationEngine::new(ir_design, cli.max_time);
+
+    // ── SDF Annotation (applies timing delays from Standard Delay Format file) ──
+    if let Some(ref sdf_path) = cli.sdf {
+        let sdf_data = maria::simulator::sdf::SdfData::parse_file(sdf_path)
+            .map_err(|e| SimError::new(None, format!("SDF parse failed: {}", e)))?;
+        engine.annotate_sdf(&sdf_data)?;
+        if !cli.quiet {
+            println!("SDF annotation loaded from '{}'", sdf_path);
+        }
+    }
+
     engine.debug_mode = debug_mode;
     engine.snapshot_interval = cli.snap_interval;
     engine.use_packed_eval = cli.packed;
     engine.use_dag_parallel = cli.parallel;
     engine.use_cycle_fusion = cli.cycle_fusion;
+    engine.use_timing_wheel = cli.use_timing_wheel;
+
+    // Configure signal history disk spill
+    if let Some(ref spill_path) = cli.signal_history_spill {
+        engine.signal_history.enable_spill(std::path::PathBuf::from(spill_path));
+        if !cli.quiet {
+            println!("Signal history spill to '{}'", spill_path);
+        }
+    }
+
+    // ── UPF Power Intent (power-aware simulation) ──
+    if let Some(ref upf_path) = cli.upf {
+        match maria::simulator::upf::PowerIntent::parse_file(upf_path) {
+            Ok(mut power_intent) => {
+                power_intent.build_signal_mapping(&engine.design.top.signals);
+                if !cli.quiet {
+                    println!("UPF power intent loaded from '{}' ({} domains, {} supply nets)",
+                        upf_path, power_intent.domains.len(), power_intent.supply_nets.len());
+                }
+                engine.power_intent = Some(power_intent);
+            }
+            Err(e) => {
+                eprintln!("warning: UPF parse failed: {}", e);
+            }
+        }
+    }
 
     // Load DPI shared libraries
     if !cli.dpi_libs.is_empty() {
@@ -1074,9 +1285,31 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     let vcd_path = cli
         .output
         .unwrap_or_else(|| format!("{}.vcd", &engine.design.top.name.to_string()));
-    let vcd = VcdWriter::new(&vcd_path, &engine.design)
+    let mut vcd = VcdWriter::new(&vcd_path, &engine.design)
         .map_err(|e| SimError::new(None, format!("VCD creation failed: {}", e)))?;
+    if cli.waveform_stream {
+        vcd.stream_flush_interval = 1;
+        if !cli.quiet {
+            println!("Waveform streaming enabled (flush every time step)");
+        }
+    }
     engine.set_vcd(vcd);
+
+    // CSV waveform setup (fast path)
+    if let Some(ref csv_path) = cli.waveform_csv {
+        let csv = maria::waveform::CsvWaveWriter::new(csv_path, &engine.design)
+            .map_err(|e| SimError::new(None, format!("CSV creation failed: {}", e)))?;
+        engine.set_csv(csv);
+        if !cli.quiet {
+            println!("CSV waveform: {}", csv_path);
+        }
+    }
+
+    // Signal statistics setup
+    if cli.signal_stats.is_some() {
+        let stats = maria::waveform::SignalStats::new(&engine.design);
+        engine.set_signal_stats(stats);
+    }
 
     let mut debugger = Debugger::new(engine);
 
@@ -1130,6 +1363,113 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
 
     if !cli.quiet {
         println!("VCD waveform written to '{}'", vcd_path);
+    }
+
+    // ── CSV close ──
+    let _ = debugger.engine.close_csv();
+
+    // ── Signal statistics ──
+    if let Some(ref stats_path) = cli.signal_stats {
+        let path = if stats_path.is_empty() {
+            format!("{}.stats.txt", debugger.engine.design.top.name)
+        } else {
+            stats_path.clone()
+        };
+        if let Some(ref stats) = debugger.engine.signal_stats {
+            if let Err(e) = stats.write_to_file(&path) {
+                eprintln!("warning: signal stats write failed: {}", e);
+            } else if !cli.quiet {
+                println!("Signal statistics written to '{}'", path);
+            }
+        }
+    }
+
+    // ── GTKWave save file ──
+    if let Some(ref gtkw_path) = cli.gtkw {
+        let path = if gtkw_path.is_empty() {
+            format!("{}.gtkw", debugger.engine.design.top.name)
+        } else {
+            gtkw_path.clone()
+        };
+        match maria::waveform::save_gtkw(&path, &vcd_path, &debugger.engine.design) {
+            Ok(()) => {
+                if !cli.quiet {
+                    println!("GTKWave save file written to '{}'", path);
+                }
+            }
+            Err(e) => eprintln!("warning: GTKW save failed: {}", e),
+        }
+    }
+
+    // ── HTML waveform viewer ──
+    if let Some(ref html_path) = cli.waveform_html_viewer {
+        let csv_ref = cli.waveform_csv.as_deref().unwrap_or("output.csv");
+        let path = if html_path.is_empty() {
+            format!("{}.html", debugger.engine.design.top.name)
+        } else {
+            html_path.clone()
+        };
+        match maria::waveform::save_html_viewer(&path, csv_ref, &debugger.engine.design) {
+            Ok(()) => {
+                if !cli.quiet {
+                    println!("HTML waveform viewer written to '{}'", path);
+                }
+            }
+            Err(e) => eprintln!("warning: HTML viewer failed: {}", e),
+        }
+    }
+
+    // Signal history stats
+    if !cli.quiet && cli.signal_history_spill.is_some() {
+        let stats = debugger.engine.signal_history.stats();
+        println!("Signal history: {} mem entries, {} spilled to disk",
+            stats.total_memory_entries, stats.total_spilled_entries);
+    }
+
+    // Save coverage database if requested
+    if let Some(ref covdb_path) = cli.coverage_ucdb {
+        let mut covdb = maria::simulator::coverage_db::CoverageDatabase::with_path(covdb_path);
+        covdb.merge_from_engine(&debugger.engine);
+        if let Err(e) = covdb.save() {
+            eprintln!("warning: coverage DB save failed: {}", e);
+        } else if !cli.quiet {
+            println!("Coverage database saved to '{}'", covdb_path);
+        }
+
+        // Coverage threshold check
+        if let Some(threshold) = cli.coverage_threshold {
+            let stats = debugger.engine.coverage_stats();
+            let branch_pct = stats.get("branch_percent").copied().unwrap_or(0.0);
+            if branch_pct < threshold {
+                let msg = format!("COVERAGE FAILED: branch coverage {:.1}% < threshold {:.1}%", branch_pct, threshold);
+                eprintln!("warning: {}", msg);
+                return Err(SimError::new(None, msg));
+            } else if !cli.quiet {
+                println!("Coverage threshold: {:.1}% >= {:.1}% ✅", branch_pct, threshold);
+            }
+        }
+    }
+
+    // Export HTML coverage report
+    if let Some(ref html_path) = cli.coverage_html {
+        let mut covdb = maria::simulator::coverage_db::CoverageDatabase::new();
+        covdb.merge_from_engine(&debugger.engine);
+        if let Err(e) = covdb.export_html(html_path) {
+            eprintln!("warning: HTML coverage report failed: {}", e);
+        } else if !cli.quiet {
+            println!("HTML coverage report written to '{}'", html_path);
+        }
+    }
+
+    // Save checkpoint to file if requested
+    if let Some(save_path) = &cli.save {
+        let _ = debugger.engine.signal_history.flush();
+        let path = std::path::Path::new(save_path);
+        debugger.engine.save_checkpoint(path)
+            .map_err(|e| SimError::new(None, format!("checkpoint save failed: {}", e)))?;
+        if !cli.quiet {
+            println!("Checkpoint saved to '{}'", save_path);
+        }
     }
 
     Ok(())

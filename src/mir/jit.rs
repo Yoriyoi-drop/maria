@@ -131,21 +131,50 @@ impl MirJitCompiler {
                 })
                 .collect();
 
-            // NOTE: Label→Block mapping and basic-block compilation is NOT yet
-            // implemented. Branch/Jump/Label instructions are skipped for MVP.
-            // For full control-flow support, see TODO CRIT-006 phase 2.
+            // Phase 1: Pre-scan instructions untuk collect all Label positions
+            // Map label numbers → instruction index and Cranelift block
+            let mut label_to_block: std::collections::HashMap<usize, cranelift::codegen::ir::Block> = std::collections::HashMap::new();
+            let mut label_positions: Vec<usize> = Vec::new();
+            for (idx, instr) in process.instrs.iter().enumerate() {
+                if let MirInstr::Label(l) = instr {
+                    label_positions.push(idx);
+                    let block = builder.create_block();
+                    label_to_block.insert(*l, block);
+                }
+            }
+            let end_block = builder.create_block();
 
+            // Phase 3: Process instructions with proper block switching
+            let mut last_was_terminator = false;
             let mut i = 0;
             while i < process.instrs.len() {
                 let instr = &process.instrs[i];
-                match instr {
-                    MirInstr::Label(_) => {
-                        // NOTE: Control flow (Label) requires proper
-                        // basic-block compilation with Cranelift blocks.
-                        // For MVP, skip — compile only straight-line code.
-                        // Full block support: TODO CRIT-006 phase 2
-                        i += 1;
+
+                // Check if this instruction is a label — switch to its block
+                if let MirInstr::Label(l) = instr {
+                    if let Some(&block) = label_to_block.get(l) {
+                        // If previous block was unterminated, jump to this label's block
+                        if !last_was_terminator {
+                            builder.ins().jump(block, &[]);
+                        }
+                        builder.switch_to_block(block);
+                        builder.seal_block(block);
+                        last_was_terminator = false;
                     }
+                    i += 1;
+                    continue;
+                }
+
+                // If the previous instruction was a terminator (Branch/Jump),
+                // and we're not at a Label, this instruction is unreachable.
+                // Switch to end_block to avoid unterminated blocks.
+                if last_was_terminator && !matches!(instr, MirInstr::Label(_)) {
+                    builder.ins().jump(end_block, &[]);
+                    builder.switch_to_block(end_block);
+                    last_was_terminator = false;
+                }
+
+                match instr {
                     MirInstr::Const { dest, value, width } => {
                         if *dest < n_regs {
                             let v = *value & ((1u64 << (*width as u64).min(64)) - 1);
@@ -156,7 +185,6 @@ impl MirJitCompiler {
                     }
                     MirInstr::Load { dest, signal } => {
                         if *dest < n_regs && *signal < n_sigs_for_function {
-                            // Load from signals[*signal]
                             let offset = builder.ins().iconst(types::I64, (*signal * 8) as i64);
                             let ptr = builder.ins().iadd(sigs_ptr, offset);
                             let flags = MemFlags::new().with_notrap();
@@ -215,7 +243,6 @@ impl MirJitCompiler {
                                     builder.ins().select(cond, one, zero)
                                 }
                             };
-                            // Apply width mask
                             let masked = if *width < 64 {
                                 let mask_val = ((1u64 << width) - 1) as i64;
                                 let mask = builder.ins().iconst(types::I64, mask_val);
@@ -245,24 +272,61 @@ impl MirJitCompiler {
                         }
                         i += 1;
                     }
-                    MirInstr::Branch { .. } | MirInstr::Jump { .. } | MirInstr::Label(_) => {
-                        // NOTE: Control flow (Branch/Jump/Label) requires proper
-                        // basic-block compilation with Cranelift blocks.
-                        // For MVP, skip — compile only straight-line code.
-                        // Full block support: TODO CRIT-006 phase 2
+                    MirInstr::Branch { cond, then_label, else_label } => {
+                        if *cond < n_regs {
+                            let cond_val = builder.use_var(reg_slots[*cond]);
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            let is_true = builder.ins().icmp(IntCC::NotEqual, cond_val, zero);
+                            let then_block = label_to_block.get(then_label)
+                                .copied()
+                                .unwrap_or(end_block);
+                            let else_block = label_to_block.get(else_label)
+                                .copied()
+                                .unwrap_or(end_block);
+                            builder.ins().brif(is_true, then_block, &[], else_block, &[]);
+                        }
+                        last_was_terminator = true;
                         i += 1;
                     }
-                    MirInstr::NonBlocking { .. } | MirInstr::Display { .. } | MirInstr::Finish => {
-                        // For now: unsupported in JIT path — skip
+                    MirInstr::Jump { label } => {
+                        let target_block = label_to_block.get(label)
+                            .copied()
+                            .unwrap_or(end_block);
+                        builder.ins().jump(target_block, &[]);
+                        last_was_terminator = true;
+                        i += 1;
+                    }
+                    MirInstr::NonBlocking { signal, src, .. } => {
+                        if *src < n_regs && *signal < n_sigs_for_function {
+                            let val = builder.use_var(reg_slots[*src]);
+                            let offset = builder.ins().iconst(types::I64, (*signal * 8) as i64);
+                            let ptr = builder.ins().iadd(out_ptr, offset);
+                            let flags = MemFlags::new().with_notrap();
+                            builder.ins().store(flags, val, ptr, 0);
+                        }
+                        i += 1;
+                    }
+                    MirInstr::Display { .. } | MirInstr::Finish => {
                         i += 1;
                     }
                     MirInstr::Nop => {
                         i += 1;
                     }
+                    MirInstr::Label(_) => {
+                        // Already handled above via continue
+                        i += 1;
+                    }
                 }
             }
 
-            // Return success
+            // Post-process: ensure all blocks are sealed and terminated
+            // If the last block wasn't terminated, jump to end_block
+            if !last_was_terminator {
+                builder.ins().jump(end_block, &[]);
+            }
+            // End block: just return success
+            builder.switch_to_block(end_block);
+            builder.seal_block(end_block);
             let one = builder.ins().iconst(types::I64, 1);
             builder.ins().return_(&[one]);
             builder.finalize();
@@ -329,6 +393,11 @@ impl MirJitCompiler {
         type MirProcessFn = unsafe extern "C" fn(*const u64, *mut u64, u64) -> u64;
         let func: MirProcessFn = std::mem::transmute(code_ptr);
         func(signal_vals.as_ptr(), out_vals.as_mut_ptr(), signal_vals.len() as u64)
+    }
+
+    /// Clear the compilation cache (for testing/reloading).
+    pub fn clear_cache(&mut self) {
+        self.cache.lock().unwrap().clear();
     }
 
     /// Statistics
@@ -457,7 +526,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Control flow (Branch/Jump/Label) not yet supported in MIR JIT; see CRIT-006 phase 2"]
     fn test_mir_jit_if_true() {
         let mut compiler = MirJitCompiler::new().unwrap();
         let process = make_if_process();
@@ -472,7 +540,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Control flow (Branch/Jump/Label) not yet supported in MIR JIT; see CRIT-006 phase 2"]
     fn test_mir_jit_if_false() {
         let mut compiler = MirJitCompiler::new().unwrap();
         let process = make_if_process();
@@ -496,6 +563,68 @@ mod tests {
         let _ = compiler.compile_process(&process, 2); // cache hit
         assert_eq!(compiler.cache_size(), 1); // still 1
         assert_eq!(compiler.compiled_count(), 1); // compiled once
+    }
+
+    #[test]
+    fn test_mir_jit_clear_cache() {
+        let mut compiler = MirJitCompiler::new().unwrap();
+        let process = make_const_process();
+        let _ = compiler.compile_process(&process, 2);
+        assert_eq!(compiler.cache_size(), 1);
+        compiler.clear_cache();
+        assert_eq!(compiler.cache_size(), 0);
+    }
+
+    #[test]
+    fn test_mir_jit_multi_store() {
+        // Process: out[0] = signal[0] + 1, out[1] = signal[1] * 2
+        let process = MirProcess {
+            name: Symbol::intern("test_multi_store"),
+            sensitivity: MirSensitivity::AlwaysComb,
+            instrs: vec![
+                MirInstr::Load { dest: 0, signal: 0 },
+                MirInstr::Const { dest: 1, value: 1, width: 32 },
+                MirInstr::Binary { op: MirBinOp::Add, dest: 2, lhs: 0, rhs: 1, width: 32 },
+                MirInstr::Store { signal: 0, src: 2 },
+                MirInstr::Load { dest: 3, signal: 1 },
+                MirInstr::Const { dest: 4, value: 2, width: 32 },
+                MirInstr::Binary { op: MirBinOp::Mul, dest: 5, lhs: 3, rhs: 4, width: 32 },
+                MirInstr::Store { signal: 1, src: 5 },
+            ],
+        };
+        let mut compiler = MirJitCompiler::new().unwrap();
+        let compiled = compiler.compile_process(&process, 3).unwrap();
+
+        let mut signals = [10u64, 20u64, 0u64];
+        let mut out = [0u64; 3];
+        unsafe {
+            MirJitCompiler::call_process(compiled.code_ptr, &signals, &mut out);
+        }
+        assert_eq!(out[0], 11, "signal[0] + 1 = 11");
+        assert_eq!(out[1], 40, "signal[1] * 2 = 40");
+    }
+
+    #[test]
+    fn test_mir_jit_unary_not() {
+        // Process: out[0] = ~signal[0]
+        let process = MirProcess {
+            name: Symbol::intern("test_unary_not"),
+            sensitivity: MirSensitivity::AlwaysComb,
+            instrs: vec![
+                MirInstr::Load { dest: 0, signal: 0 },
+                MirInstr::Unary { op: MirUnOp::Not, dest: 1, operand: 0, width: 8 },
+                MirInstr::Store { signal: 0, src: 1 },
+            ],
+        };
+        let mut compiler = MirJitCompiler::new().unwrap();
+        let compiled = compiler.compile_process(&process, 2).unwrap();
+
+        let mut signals = [0xFu64, 0u64];
+        let mut out = [0u64; 2];
+        unsafe {
+            MirJitCompiler::call_process(compiled.code_ptr, &signals, &mut out);
+        }
+        assert_eq!(out[0], 0xF0, "~0x0F with width=8 should be 0xF0");
     }
 
     #[test]

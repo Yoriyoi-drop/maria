@@ -45,7 +45,17 @@ pub fn vpi_get_time(_handle: vpiHandle, time_p: &mut t_vpi_time) -> i32 {
 }
 
 /// vpi_get_cb_info(cb_handle, cb_data_p) — get info about a registered callback.
-pub fn vpi_get_cb_info(_cb_handle: vpiHandle, _cb_data_p: &mut t_cb_data) -> i32 {
-    // Not fully implemented — returns 0 to indicate the callback info is not available
-    0
+pub fn vpi_get_cb_info(cb_handle: vpiHandle, cb_data_p: &mut t_cb_data) -> i32 {
+    if cb_handle.is_null() {
+        return 0;
+    }
+    let idx = cb_handle.ptr as usize - 1;
+    // Callback info is stored in the VPI_CALLBACKS registry
+    let registry = crate::vpi::callback::get_callback_registry();
+    if idx < registry.len() {
+        *cb_data_p = registry[idx].data.clone();
+        1
+    } else {
+        0
+    }
 }
