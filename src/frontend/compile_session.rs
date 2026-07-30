@@ -9,11 +9,12 @@
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::ast::Design;
 use std::sync::Arc;
 use crate::cache::{CacheManager, RemoteCacheBackend, RemoteSyncMode, compute_checksum};
+use crate::diagnostics::DiagCode;
 use crate::error::SimError;
 use crate::frontend::discovery::{DiscoveryOptions, FileDiscovery};
 use crate::frontend::io::MmapFile;
@@ -146,7 +147,7 @@ impl CompileSession {
         // ── Phase 1: File Discovery ──
         let files: Vec<PathBuf> = self.discover_files()?;
         if files.is_empty() {
-            return Err(SimError::new(None, "no source files found"));
+            return Err(SimError::with_diag(DiagCode::ModuleNotFound, "no source files found"));
         }
 
         // ── Phase 2: Detect changed files ──
@@ -185,7 +186,7 @@ impl CompileSession {
                 let path_str = path.to_string_lossy();
                 let preprocessed = pp
                     .preprocess(mmap.as_str(), None)
-                    .map_err(|e| SimError::new(None, format!("preprocessor {}: {}", path_str, e)))?;
+                    .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("preprocessor {}: {}", path_str, e)))?;
 
                 let combined = format!("`line 1 \"{}\"\n{}\n", path_str, preprocessed);
                 let tokens = if use_fast_lexer {
@@ -245,7 +246,7 @@ impl CompileSession {
         // ── Phase 6: Build Index + Merge ──
         let index_start = Instant::now();
         if file_designs.is_empty() {
-            return Err(SimError::new(None, "no parsed files"));
+            return Err(SimError::with_diag(DiagCode::ModuleNotFound, "no parsed files"));
         }
 
         // Separate file paths and designs
@@ -404,7 +405,7 @@ impl CompileSession {
             self.timing.discovery_ms = result.scan_time_ms;
             return Ok(result.files.iter().map(|f| f.path.clone()).collect());
         }
-        Err(SimError::new(None, "no source files configured"))
+        Err(SimError::with_diag(DiagCode::ModuleNotFound, "no source files configured"))
     }
 
     /// Build module index, dependency graph, and incremental tracking from parsed designs.
@@ -732,7 +733,7 @@ impl CompileSession {
         &mut self,
     ) -> Result<(Design, usize, usize), SimError> {
         if !self.config.use_lazy_elab {
-            return Err(SimError::new(None, "lazy mode not enabled (use --lazy)"));
+            return Err(SimError::with_diag(DiagCode::NotImplemented, "lazy mode not enabled (use --lazy)"));
         }
 
         let (design, module_index) = self.compile()?;

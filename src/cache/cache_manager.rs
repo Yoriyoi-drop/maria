@@ -11,7 +11,7 @@ use std::time::Instant;
 use dashmap::DashMap;
 
 use super::checksum::compute_checksum;
-use super::remote::{CacheError, RemoteCacheBackend, RemoteCacheStats};
+use super::remote::{RemoteCacheBackend, RemoteCacheStats};
 use crate::intern::Symbol;
 
 // ─── Cache Key ───

@@ -24,7 +24,7 @@
 //! }
 //! ```
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use super::cache_manager::CacheKey;

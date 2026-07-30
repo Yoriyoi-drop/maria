@@ -238,7 +238,7 @@ fn read_process_info<R: Read>(r: &mut R) -> io::Result<ProcessInfo> {
         _ => ProcessStatus::Finished,
     };
     let await_count = read_usize(r)?;
-    let mut await_continuations = Vec::with_capacity(await_count);
+    let await_continuations = Vec::with_capacity(await_count);
     for _ in 0..await_count {
         // Skip: continuations are vectors of IrStmt (not serializable simply)
         // We'll regenerate them

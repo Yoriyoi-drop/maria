@@ -5,8 +5,6 @@
 //!
 //! Gunakan `--signal-stats <path>` untuk mengaktifkan.
 
-use std::collections::HashMap;
-
 use crate::ir::{IrDesign, LogicVal};
 
 /// Per-signal statistics.

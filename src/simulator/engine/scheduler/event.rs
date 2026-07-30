@@ -310,20 +310,13 @@ impl SimulationEngine {
                         self.evaluate_stmt_block(body)?;
                     }
                 }
-                // Skip fused combinational/reactive processes — they're evaluated
+                // Skip fused combinational processes — they're evaluated
                 // as part of their clock domain's follower set
-                Process::Combinational { .. } | Process::CombReactive { .. }
+                Process::Combinational { .. }
                     if self.use_cycle_fusion
                     && self.clock_analysis.as_ref()
                         .map(|a| a.fused_processes.contains(&pid))
                         .unwrap_or(false) => {}
-                Process::CombReactive { sensitivity, .. } => {
-                    let should_trigger = sensitivity.is_empty()
-                        || changed.iter().any(|(id, _, _)| sensitivity.contains(id));
-                    if should_trigger {
-                        self.reactive_events.push(EventKind::EvalProcess(pid));
-                    }
-                }
                 _ => {}
             }
         }

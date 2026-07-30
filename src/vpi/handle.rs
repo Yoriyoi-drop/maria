@@ -121,7 +121,7 @@ pub fn vpi_handle(vpi_type: i32, ref_handle: vpiHandle) -> vpiHandle {
         None => return vpiHandle::NULL,
     };
     match (vpi_type, &obj.kind) {
-        (vpiModule, VpiObjectKind::Signal(sig_id, _)) => {
+        (vpiModule, VpiObjectKind::Signal(_, _)) => {
             // Return the module that contains this signal
             // For now, return the top module
             super::with_vpi_engine(|engine| {
@@ -134,7 +134,7 @@ pub fn vpi_handle(vpi_type: i32, ref_handle: vpiHandle) -> vpiHandle {
             // Module is also a scope
             ref_handle
         }
-        (vpiReg | vpiNet, VpiObjectKind::Signal(sig_id, _)) => {
+        (vpiReg | vpiNet, VpiObjectKind::Signal(_, _)) => {
             ref_handle
         }
         (vpiParent, VpiObjectKind::Signal(_, _)) => {
@@ -373,7 +373,7 @@ pub fn vpi_get(property: i32, handle: vpiHandle) -> i32 {
         }
         vpiRightRange => {
             match &obj.kind {
-                VpiObjectKind::Signal(sig_id, _) => 0,
+                VpiObjectKind::Signal(_, _) => 0,
                 _ => 0,
             }
         }
@@ -383,14 +383,17 @@ pub fn vpi_get(property: i32, handle: vpiHandle) -> i32 {
             match &obj.kind {
                 VpiObjectKind::Signal(sig_id, _) => {
                     super::with_vpi_engine(|engine| {
-                        engine.design.top.signals.get(*sig_id).map(|s| match s.kind {
-                            SignalKind::Reg => vpiReg,
-                            SignalKind::Logic => vpiReg,
-                            SignalKind::Wire => vpiNet,
-                            SignalKind::Input => vpiReg,
-                            SignalKind::Output => vpiReg,
-                            SignalKind::Inout => vpiReg,
-                            _ => vpiReg,
+                        engine.design.top.signals.get(*sig_id).map(|s| {
+                            #[allow(unreachable_patterns)]
+                            match s.kind {
+                                SignalKind::Reg => vpiReg,
+                                SignalKind::Logic => vpiReg,
+                                SignalKind::Wire => vpiNet,
+                                SignalKind::Input => vpiReg,
+                                SignalKind::Output => vpiReg,
+                                SignalKind::Inout => vpiReg,
+                                _ => vpiReg,
+                            }
                         }).unwrap_or(vpiReg)
                     }).unwrap_or(vpiReg)
                 }
@@ -465,7 +468,7 @@ pub fn vpi_get_str(property: i32, handle: vpiHandle) -> *mut c_char {
                 VpiObjectKind::Signal(sig_id, _) => {
                     super::with_vpi_engine(|engine| {
                         engine.design.top.signals.get(*sig_id)
-                            .map(|s| engine.design.top.name.as_str().to_string())
+                            .map(|_| engine.design.top.name.as_str().to_string())
                     }).flatten().unwrap_or_default()
                 }
                 VpiObjectKind::Module(_, name) => {

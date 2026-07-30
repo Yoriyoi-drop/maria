@@ -32,10 +32,10 @@
 //! create_power_switch SW_CORE -domain PD_TOP -output_supply_net VDD_SW -input_supply_net VDD -on_state {ctrl == 1}
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use crate::ir::*;
-use crate::simulator::value::*;
+
 
 // ─── Data Structures ───
 
@@ -544,7 +544,7 @@ impl PowerIntent {
         // ── Step 2: Evaluate domain power states ──
         let domain_names: Vec<String> = self.domains.keys().cloned().collect();
         for dname in &domain_names {
-            let (mut is_on, pwr_net) = {
+            let (is_on, _pwr_net) = {
                 let domain = match self.domains.get(dname) {
                     Some(d) => d,
                     None => continue,
@@ -717,7 +717,7 @@ impl PowerIntent {
     /// Build signal-to-domain mapping from design signals.
     pub fn build_signal_mapping(&mut self, signals: &[SignalInfo]) {
         self.signal_domain_map.clear();
-        for (sid, sig) in signals.iter().enumerate() {
+        for (_, sig) in signals.iter().enumerate() {
             let sig_name = sig.name.as_str();
             for (dname, domain) in &self.domains {
                 for elem in &domain.elements {

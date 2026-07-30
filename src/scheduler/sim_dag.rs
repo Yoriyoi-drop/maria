@@ -16,8 +16,6 @@
 
 use std::collections::HashSet;
 use crate::ir::*;
-use crate::Symbol;
-use std::collections::HashMap;
 
 
 // ─── Signal Access Analysis ───

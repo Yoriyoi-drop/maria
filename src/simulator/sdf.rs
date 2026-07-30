@@ -228,8 +228,9 @@ impl SdfData {
                     }
                     "CELL" | "DELAYCELL" => {
                         pos = match parse_cell(&tokens, pos) {
-                            Ok((name, delay, new_pos)) => {
+                            Ok((name, delay, cell_checks, new_pos)) => {
                                 sdf.cell_delays.insert(name, delay);
+                                sdf.timing_checks.extend(cell_checks);
                                 new_pos
                             }
                             Err(_) => {
@@ -238,6 +239,7 @@ impl SdfData {
                                 while pos < tokens.len() {
                                     if tokens[pos] == "(" { depth += 1; }
                                     if tokens[pos] == ")" { depth -= 1; }
+                                    if depth < 0 { break; }
                                     pos += 1;
                                     if depth == 0 { break; }
                                 }
@@ -256,6 +258,7 @@ impl SdfData {
                                 while pos < tokens.len() {
                                     if tokens[pos] == "(" { depth += 1; }
                                     if tokens[pos] == ")" { depth -= 1; }
+                                    if depth < 0 { break; }
                                     pos += 1;
                                     if depth == 0 { break; }
                                 }
@@ -274,6 +277,7 @@ impl SdfData {
                                 while pos < tokens.len() {
                                     if tokens[pos] == "(" { depth += 1; }
                                     if tokens[pos] == ")" { depth -= 1; }
+                                    if depth < 0 { break; }
                                     pos += 1;
                                     if depth == 0 { break; }
                                 }
@@ -287,6 +291,7 @@ impl SdfData {
                         while pos < tokens.len() {
                             if tokens[pos] == "(" { inner += 1; }
                             if tokens[pos] == ")" { inner -= 1; }
+                            if inner < 0 { break; }
                             pos += 1;
                             if inner == 0 { break; }
                         }
@@ -516,6 +521,7 @@ fn parse_delayfile_header(tokens: &[String], mut pos: usize, sdf: &mut SdfData) 
                 while pos < tokens.len() {
                     if tokens[pos] == "(" { inner += 1; }
                     if tokens[pos] == ")" { inner -= 1; }
+                    if inner < 0 { break; }
                     pos += 1;
                     if inner == 0 { break; }
                 }
@@ -529,7 +535,8 @@ fn parse_delayfile_header(tokens: &[String], mut pos: usize, sdf: &mut SdfData) 
 }
 
 /// Parse a CELL/DELAYCELL construct.
-fn parse_cell(tokens: &[String], mut pos: usize) -> Result<(String, CellDelay, usize), String> {
+/// Returns (cell_name, cell_delay, timing_checks, new_pos).
+fn parse_cell(tokens: &[String], mut pos: usize) -> Result<(String, CellDelay, Vec<TimingCheck>, usize), String> {
     pos += 2; // skip (CELL or (DELAYCELL
     let mut name = "unknown".to_string();
 
@@ -537,6 +544,7 @@ fn parse_cell(tokens: &[String], mut pos: usize) -> Result<(String, CellDelay, u
         io_paths: HashMap::new(),
         cond_paths: Vec::new(),
     };
+    let mut timing_checks = Vec::new();
 
     let mut depth = 1;
     while pos < tokens.len() && depth > 0 {
@@ -573,7 +581,28 @@ fn parse_cell(tokens: &[String], mut pos: usize) -> Result<(String, CellDelay, u
                     let (rise, fall) = parse_rise_fall(tokens, &mut pos)?;
                     delay.io_paths.insert(format!("{}->{}", from, to), IoPathDelay { rise, fall });
                     continue;
-                }                            "COND" => {
+                }
+                "TIMINGCHECK" => {
+                    match parse_timing_checks(tokens, pos) {
+                        Ok((checks, new_pos)) => {
+                            timing_checks.extend(checks);
+                            pos = new_pos;
+                        }
+                        Err(_) => {
+                            // Skip to matching )
+                            let mut skip = 0;
+                            while pos < tokens.len() {
+                                if tokens[pos] == "(" { skip += 1; }
+                                if tokens[pos] == ")" { skip -= 1; }
+                                if skip < 0 { break; }
+                                pos += 1;
+                                if skip == 0 { break; }
+                            }
+                        }
+                    }
+                    continue;
+                }
+                "COND" => {
                     // Parse COND: (COND <expression> <delay_spec>)
                     // Skip (COND and the condition expression tokens
                     pos += 2; // skip (COND
@@ -618,7 +647,7 @@ fn parse_cell(tokens: &[String], mut pos: usize) -> Result<(String, CellDelay, u
     }
     if pos < tokens.len() { pos += 1; } // skip closing )
 
-    Ok((name, delay, pos))
+    Ok((name, delay, timing_checks, pos))
 }
 
 /// Parse a NET/DELAYNET construct.
@@ -709,6 +738,7 @@ fn parse_timing_checks(tokens: &[String], mut pos: usize) -> Result<(Vec<TimingC
                     while p < tokens.len() {
                         if tokens[p] == "(" { inner += 1; }
                         if tokens[p] == ")" { inner -= 1; }
+                        if inner < 0 { break; }
                         p += 1;
                         if inner == 0 { break; }
                         if tokens[p] == "(" && p + 3 < tokens.len() {
@@ -719,6 +749,7 @@ fn parse_timing_checks(tokens: &[String], mut pos: usize) -> Result<(Vec<TimingC
                             while p < tokens.len() {
                                 if tokens[p] == "(" { skip += 1; }
                                 if tokens[p] == ")" { skip -= 1; }
+                                if skip < 0 { break; }
                                 p += 1;
                                 if skip == 0 { break; }
                             }
@@ -786,8 +817,6 @@ fn parse_timing_checks(tokens: &[String], mut pos: usize) -> Result<(Vec<TimingC
                 }
                 _ => {}
             }
-            // Unknown construct inside TIMINGCHECK — let outer depth handle naturally
-            continue;
         }
         pos += 1;
     }
@@ -1024,27 +1053,35 @@ mod tests {
 
     #[test]
     fn test_timing_checks_parse() {
-        // TIMINGCHECK must be at the top level (outside CELL),
-        // because parse_cell does not handle TIMINGCHECK.
-        // POSEDGE and COND constructs are safe now (parse_simple_timing_check
-        // only enters inner loop for known sub-keywords).
+        // TIMINGCHECK can now be inside CELL — parse_cell() handles TIMINGCHECK.
+        // POSEDGE and COND constructs are safe (known sub-keyword filter + safety guard).
+        // Also test top-level TIMINGCHECK for backward compatibility.
         let sdf_source = r#"
         (DELAYFILE (SDFVERSION "3.0"))
         (CELL (CELLTYPE "DFF")
             (INSTANCE u_dff)
             (DELAY (ABSOLUTE (IOPATH clk q (1.0) (1.5))))
+            (TIMINGCHECK
+                (SETUP (POSEDGE clk) (COND (reset == 1) (DATA d)) (1.0:1.5:2.0))
+                (HOLD (POSEDGE clk) (DATA d) (0.5:1.0:1.5))
+                (WIDTH (POSEDGE clk) (1.0:2.0:3.0))
+                (PERIOD (POSEDGE clk) (5.0:6.0:7.0))
+            )
         )
         (TIMINGCHECK
-            (SETUP (POSEDGE clk) (COND (reset == 1) (DATA d)) (1.0:1.5:2.0))
-            (HOLD (POSEDGE clk) (DATA d) (0.5:1.0:1.5))
-            (WIDTH (POSEDGE clk) (1.0:2.0:3.0))
-            (PERIOD (POSEDGE clk) (5.0:6.0:7.0))
+            (RECOVERY (POSEDGE clk) (DATA d) (2.0:3.0:4.0))
+            (REMOVAL (POSEDGE clk) (DATA d) (1.0:2.0:3.0))
         )
         "#;
         let sdf = SdfData::parse(sdf_source).unwrap();
         assert!(!sdf.timing_checks.is_empty(), "timing checks should be parsed");
-        assert!(sdf.timing_checks.len() >= 1, "should have at least 1 timing check");
-        // Also verify cell parsing still works alongside timing checks
+        // 4 inside CELL + 2 at top level = 6
+        assert_eq!(
+            sdf.timing_checks.len(),
+            6,
+            "should have 6 timing checks (4 inside cell + 2 at top level)"
+        );
+        // Also verify cell parsing still works
         assert!(
             sdf.cell_delays.contains_key("u_dff"),
             "cell 'u_dff' should still be present"

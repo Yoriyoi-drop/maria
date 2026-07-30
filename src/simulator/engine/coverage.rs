@@ -125,7 +125,6 @@ impl SimulationEngine {
             return;
         }
         eprintln!("\n=== Toggle Coverage ===");
-        let mut total_toggle_pairs = 0usize;
         for (sig_id, toggles) in &self.cover_toggle {
             let sig_name = self.design.top.signals.get(*sig_id)
                 .map(|s| s.name.as_str())
@@ -134,7 +133,6 @@ impl SimulationEngine {
             for (from, to) in toggles.iter() {
                 eprintln!("    {:?}→{:?}", from, to);
             }
-            total_toggle_pairs += toggles.len();
         }
         let total_signals = self.design.top.signals.len();
         eprintln!("  {} signals with toggles / {} total", self.cover_toggle.len(), total_signals);

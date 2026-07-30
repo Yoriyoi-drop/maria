@@ -315,8 +315,7 @@ _ => {}
         // Inline function calls in all modules
         for module in &mut self.design.modules {
             let temps = crate::ast::inline::inline_func_calls_in_module(module)?;
-            for (name_str, width) in temps {
-                let name = Symbol::intern(&name_str);
+            for (name, width) in temps {
                 module.decls.push(Decl {
                     dtype: DataType::Logic,
                     kind: DeclKind::Reg,

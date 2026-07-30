@@ -34,7 +34,7 @@ impl SimulationEngine {
                 let size_val = self.evaluate_expr(&args[0])?;
                 let size = size_val.to_u64() as usize;
                 if let Some(sig_id) = self.signal_id_from_lvalue(lhs) {
-                    let elem_width = self.design.top.signals[sig_id].elem_width;
+                    let elem_width = self.design.top.signals.get(sig_id).map(|s| s.elem_width).unwrap_or(1);
                     Ok(LogicVec::fill(LogicVal::X, size * elem_width))
                 } else {
                     self.evaluate_expr(expr)
@@ -63,7 +63,10 @@ impl SimulationEngine {
         // (Gunakan collect_signal_ids sebagai pre-check murah sebelum build signal_values)
         if self.use_jit_expression {
             let mut sig_ids = Vec::new();
+            #[cfg(feature = "jit")]
             let is_compatible = crate::simulator::jit_eval::collect_signal_ids(expr, &mut sig_ids);
+            #[cfg(not(feature = "jit"))]
+            let is_compatible = false;
             if is_compatible && !sig_ids.is_empty() && sig_ids.len() <= 8 {
                 // Compute result_width FIRST to avoid borrow conflict with jit_evaluator
                 let result_width = self.compute_jit_expr_width(expr);
@@ -1345,7 +1348,7 @@ impl SimulationEngine {
                         .map(|s| s.is_dynamic || s.is_queue)
                         .unwrap_or(false);
                     if is_arr {
-                        let sig_info = self.design.top.signals[*id].clone();
+                        let sig_info = self.design.top.signals.get(*id).cloned().unwrap_or_default();
                         return self.evaluate_array_method(
                             *id,
                             &sig_info,
@@ -1758,7 +1761,7 @@ impl SimulationEngine {
                         let handle = binding_val.to_u64() as usize;
                         if handle > 0 && handle < self.design.top.signals.len() {
                             // Bound — extract instance path from the bound signal's name
-                            let bound_sig_name = self.design.top.signals[handle].name.as_str();
+                            let bound_sig_name = self.design.top.signals.get(handle).map(|s| s.name.as_str()).unwrap_or("<out-of-bounds>");
                             // Strip the signal name to get instance path: top.inst.sig -> top.inst
                             if let Some(dot_pos) = bound_sig_name.rfind('.') {
                                 let inst_path = &bound_sig_name[..dot_pos];

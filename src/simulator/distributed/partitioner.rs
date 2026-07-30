@@ -20,7 +20,7 @@
 //! Semua signal global (clock, reset) tetap di semua partition.
 //! Cross-partition signal di-exchange via distributed protocol.
 
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{HashMap, HashSet};
 use crate::ir::*;
 use crate::Symbol;
 
@@ -120,7 +120,7 @@ impl DesignPartitioner {
         // Multiple partitions: distribute instances round-robin
         let instances = &top.sub_instances;
         let num_instances = instances.len();
-        let instances_per_partition = (num_instances + num_partitions - 1) / num_partitions;
+        let _instances_per_partition = (num_instances + num_partitions - 1) / num_partitions;
 
         // Assign instances to partitions (round-robin for load balancing)
         let mut instance_to_partition: HashMap<Symbol, usize> = HashMap::new();
@@ -149,7 +149,7 @@ impl DesignPartitioner {
         // In the flattened design, signals and processes are all at top level.
         // We figure out which signals belong to which instance by examining
         // the writing processes and the port mapping.
-        for (pid, process) in top.processes.iter().enumerate() {
+        for (pid, _process) in top.processes.iter().enumerate() {
             // Assign process to partition based on which instance it belongs to
             // For now, all top-level processes go to partition 0 (control partition)
             process_to_partition.entry(pid).or_insert(0);
@@ -168,7 +168,7 @@ impl DesignPartitioner {
         // Detect cross-partition signals by analyzing instance port maps
         for inst in instances {
             let src_part = instance_to_partition.get(&inst.instance_name).copied().unwrap_or(0);
-            for (port_name, sig_id) in inst.port_map.iter() {
+            for (_port_name, sig_id) in inst.port_map.iter() {
                 let dst_opt = signal_to_partition.get(sig_id).copied();
                 if let Some(dst_part) = dst_opt {
                     if src_part != dst_part {

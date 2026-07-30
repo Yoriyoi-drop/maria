@@ -8,7 +8,6 @@ pub mod eval;
 pub mod uvm;
 pub mod sequence;
 
-use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, RuntimeContext, SourceSnippet};
 use crate::diagnostics::DiagSink;
 use crate::ir::*;
 use crate::scheduler::clock_domain::ClockDomainAnalysis;

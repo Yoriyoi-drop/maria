@@ -5,7 +5,6 @@
 
 use super::protocol::*;
 use super::CosimState;
-use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 

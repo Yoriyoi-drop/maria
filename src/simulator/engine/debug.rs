@@ -2,7 +2,6 @@
 /// Contains signal history tracking, breakpoint checking, and watchpoint logic.
 use crate::error::SimError;
 use crate::simulator::types::*;
-use std::collections::VecDeque;
 
 
 use super::SimulationEngine;

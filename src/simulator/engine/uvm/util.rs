@@ -4,7 +4,6 @@ use crate::diagnostics::DiagCode;
 use crate::ir::*;
 use crate::ast::*;
 use crate::Symbol;
-use rand::Rng;
 use std::collections::HashMap;
 
 impl SimulationEngine {

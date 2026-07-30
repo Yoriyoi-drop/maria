@@ -188,7 +188,6 @@ fn bin_str(lv: &LogicVec) -> String {
 
 /// Format a LogicVec as a hex string.
 fn hex_str(lv: &LogicVec) -> String {
-    let mut s = String::with_capacity(lv.width / 4 + 1);
     let val = lv.to_u64();
     if lv.width <= 4 {
         format!("{:x}", val as u8)

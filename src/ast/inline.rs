@@ -6,7 +6,7 @@ use super::stmt::Stmt;
 use super::types::{FunctionDecl, Module, ModuleItem};
 use crate::ast::inline_util::*;
 use crate::intern::Symbol;
-pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(String, usize)>, String> {
+pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(Symbol, usize)>, String> {
     let funcs: HashMap<Symbol, FunctionDecl> = module
         .items
         .iter()
@@ -28,7 +28,7 @@ pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(String, u
 
     let mut counter = 0usize;
     let prefix = module.name;
-    let mut temp_signals: Vec<(String, usize)> = Vec::new();
+    let mut temp_signals: Vec<(Symbol, usize)> = Vec::new();
 
     let old_items = std::mem::replace(&mut module.items, Vec::new());
     let mut new_items: Vec<ModuleItem> = Vec::new();
@@ -150,7 +150,7 @@ fn inline_funcs_in_stmt(
     funcs: &HashMap<Symbol, FunctionDecl>,
     prefix: Symbol,
     counter: &mut usize,
-    temp_signals: &mut Vec<(String, usize)>,
+    temp_signals: &mut Vec<(Symbol, usize)>,
     recursive_funcs: &HashSet<Symbol>,
 ) -> Stmt {
     match stmt {
@@ -622,14 +622,12 @@ fn inline_funcs_in_stmt(
                                 expr_range: None,
                                 direction: None,
                             }
-                        });
-                        let temp_arg_name =
-                            format!("__func_{}_{}_{}_{}", prefix, name, c, port.name);
-                        let port_width = func_port_width(func, port.name);
-                        temp_signals.push((temp_arg_name.clone(), port_width));
-                        rename_map.insert(port.name, Symbol::intern(&temp_arg_name));
-                        preamble.push(Stmt::BlockingAssign {
-                            lhs: Expr::Ident { name: Symbol::intern(&temp_arg_name), line: 0, col: 0 },
+                        });                            let temp_arg_name = Symbol::intern(&format!("__func_{}_{}_{}_{}", prefix, name, c, port.name));
+                    let port_width = func_port_width(func, port.name);
+                    temp_signals.push((temp_arg_name, port_width));
+                    rename_map.insert(port.name, temp_arg_name);
+                    preamble.push(Stmt::BlockingAssign {
+                        lhs: Expr::Ident { name: temp_arg_name, line: 0, col: 0 },
                             rhs: arg,
                             delay: None,
                         });
@@ -640,7 +638,7 @@ fn inline_funcs_in_stmt(
                         for var in &decl.names {
                             if rename_map.contains_key(&var.name) {
                                 continue;
-                            }                        let new_name = format!("__func_{}_{}_{}_{}", prefix, name, c, var.name);
+                            }                        let new_name_sym = Symbol::intern(&format!("__func_{}_{}_{}_{}", prefix, name, c, var.name));
                         let dtype_width = match &decl.dtype {
                             super::types::DataType::Bit | super::types::DataType::Logic => 1,
                             super::types::DataType::Byte => 8,
@@ -674,8 +672,8 @@ fn inline_funcs_in_stmt(
                         } else {
                             dtype_width.max(decl_width)
                         };
-                        temp_signals.push((new_name.clone(), width));
-                        rename_map.insert(var.name, Symbol::intern(&new_name));
+                        temp_signals.push((new_name_sym, width));
+                        rename_map.insert(var.name, new_name_sym);
                     }
                 }
 
@@ -1490,7 +1488,7 @@ fn replace_func_calls_in_expr(
     prefix: Symbol,
     counter: &mut usize,
     preamble: &mut Vec<Stmt>,
-    temp_signals: &mut Vec<(String, usize)>,
+    temp_signals: &mut Vec<(Symbol, usize)>,
     recursive_funcs: &HashSet<Symbol>,
 ) -> Expr {
     match expr {
@@ -1523,8 +1521,8 @@ fn replace_func_calls_in_expr(
                 let ret_width = func_return_width(func);
                 let is_void = ret_width == 0;
                 let ret_name = if !is_void {
-                    let rn = format!("__func_{}_{}_{}_result", prefix, name, c);
-                    temp_signals.push((rn.clone(), ret_width));
+                    let rn = Symbol::intern(&format!("__func_{}_{}_{}_result", prefix, name, c));
+                    temp_signals.push((rn, ret_width));
                     Some(rn)
                 } else {
                     None
@@ -1547,7 +1545,7 @@ fn replace_func_calls_in_expr(
 
                 let mut rename_map: HashMap<Symbol, Symbol> = HashMap::new();
                 if let Some(ref rn) = ret_name {
-                    rename_map.insert(name, Symbol::intern(rn));
+                    rename_map.insert(name, *rn);
                 }
 
                 let orig_args: Vec<Expr> = new_args.clone();
@@ -1562,13 +1560,12 @@ fn replace_func_calls_in_expr(
                                 range: None,
                                 expr_range: None,
                                 direction: None,
-                            });
-                    let temp_arg_name = format!("__func_{}_{}_{}_{}", prefix, name, c, port.name);
-                    let port_width = func_port_width(func, port.name);
-                    temp_signals.push((temp_arg_name.clone(), port_width));
-                    rename_map.insert(port.name, Symbol::intern(&temp_arg_name));
-                    preamble.push(Stmt::BlockingAssign {
-                        lhs: Expr::Ident { name: Symbol::intern(&temp_arg_name), line: 0, col: 0 },
+                            });                    let temp_arg_name = Symbol::intern(&format!("__func_{}_{}_{}_{}", prefix, name, c, port.name));
+                        let port_width = func_port_width(func, port.name);
+                        temp_signals.push((temp_arg_name, port_width));
+                        rename_map.insert(port.name, temp_arg_name);
+                        preamble.push(Stmt::BlockingAssign {
+                            lhs: Expr::Ident { name: temp_arg_name, line: 0, col: 0 },
                         rhs: arg,
                         delay: None,
                     });
@@ -1580,7 +1577,7 @@ fn replace_func_calls_in_expr(
                         if rename_map.contains_key(&var.name) {
                             continue;
                         }
-                        let new_name = format!("__func_{}_{}_{}_{}", prefix, name, c, var.name);
+                        let new_name_sym = Symbol::intern(&format!("__func_{}_{}_{}_{}", prefix, name, c, var.name));
                         let dtype_width = match &decl.dtype {
                             super::types::DataType::Bit | super::types::DataType::Logic => 1,
                             super::types::DataType::Byte => 8,
@@ -1611,8 +1608,8 @@ fn replace_func_calls_in_expr(
                         } else {
                             dtype_width.max(decl_width)
                         };
-                        temp_signals.push((new_name.clone(), width));
-                        rename_map.insert(var.name.clone(), Symbol::intern(&new_name));
+                        temp_signals.push((new_name_sym, width));
+                        rename_map.insert(var.name, new_name_sym);
                     }
                 }
 
@@ -1622,7 +1619,7 @@ fn replace_func_calls_in_expr(
                     if let Some(ref rn) = ret_name {
                         if let Stmt::Return(Some(expr)) = &renamed {
                             renamed = Stmt::BlockingAssign {
-                                lhs: Expr::Ident { name: Symbol::intern(&rn), line: 0, col: 0 },
+                                lhs: Expr::Ident { name: *rn, line: 0, col: 0 },
                                 rhs: *expr.clone(),
                                 delay: None,
                             };
@@ -1644,18 +1641,18 @@ fn replace_func_calls_in_expr(
                                 expr_range: None,
                                 direction: None,
                             });
-                    let temp_arg_name = format!("__func_{}_{}_{}_{}", prefix, name, c, port.name);
+                    let temp_arg_sym = Symbol::intern(&format!("__func_{}_{}_{}_{}", prefix, name, c, port.name));
                     if let Expr::Ident { .. } = &orig_arg {
                         preamble.push(Stmt::BlockingAssign {
                             lhs: orig_arg,
-                            rhs: Expr::Ident { name: Symbol::intern(&temp_arg_name), line: 0, col: 0 },
+                            rhs: Expr::Ident { name: temp_arg_sym, line: 0, col: 0 },
                             delay: None,
                         });
                     }
                 }
 
                 if let Some(rn) = ret_name {
-                    Expr::Ident { name: Symbol::intern(&rn), line: 0, col: 0 }
+                    Expr::Ident { name: rn, line: 0, col: 0 }
                 } else {
                     Expr::Value(Value::Decimal(0))
                 }

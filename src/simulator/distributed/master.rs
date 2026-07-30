@@ -8,9 +8,7 @@
 //! 5. Exchange cross-partition signal values antar slave
 //! 6. Collect final results
 
-use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
-use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 

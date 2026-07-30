@@ -332,6 +332,7 @@ impl SimulationEngine {
     }
 
     /// Call a DPI function via the DPI engine (dynamic library resolution).
+    #[cfg(feature = "dpi")]
     fn call_dpi_function(
         &mut self,
         name: &str,
@@ -374,6 +375,19 @@ impl SimulationEngine {
         }
 
         // Fallback
+        Ok(LogicVec::from_u64(0, return_width.max(1)))
+    }
+
+    /// Non-DPI fallback when dpi feature is not compiled in
+    #[cfg(not(feature = "dpi"))]
+    fn call_dpi_function(
+        &mut self,
+        name: &str,
+        _arg_vals: &[LogicVec],
+        return_width: usize,
+        _is_task: bool,
+    ) -> Result<LogicVec, SimError> {
+        eprintln!("warning: DPI function '{}' not available (compile with --features dpi)", name);
         Ok(LogicVec::from_u64(0, return_width.max(1)))
     }
 

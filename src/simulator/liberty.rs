@@ -39,7 +39,6 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
 
 // ─── Data Structures ───
 
@@ -1019,7 +1018,7 @@ impl LibertyParser {
     // ── Delay template parsing ──
 
     fn parse_delay_template(&mut self) -> Result<LibertyDelayTemplate, String> {
-        let keyword = self.expect_ident()?; // delay_template or lu_table_template
+        let _keyword = self.expect_ident()?; // delay_template or lu_table_template
         self.expect(&LibToken::LParen)?;
         let name = self.expect_ident()?;
         self.expect(&LibToken::RParen)?;

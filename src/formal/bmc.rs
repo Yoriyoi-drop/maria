@@ -194,7 +194,7 @@ impl FormalEngine {
         bound: u64,
         n_signals: usize,
         signal_widths: &[u32],
-        init_vals: &[u64],
+        _init_vals: &[u64],
         assignments: &[Vec<(usize, Box<IrExpr>)>],
         cond: &IrExpr,
     ) -> FormalResult {

@@ -16,7 +16,6 @@ use std::collections::{HashMap, HashSet};
 impl SimulationEngine {
     pub fn new(design: IrDesign, max_time: u64) -> Self {
         let state = SimulationState::new(&design);
-        let max_t = max_time as usize + 1;
         SimulationEngine {
             state,
             design,
@@ -524,7 +523,7 @@ impl SimulationEngine {
                 let cond_reg = *next_reg;
                 *next_reg += 1;
                 Self::ir_expr_to_mir(cond, instrs, cond_reg, next_reg);
-                let width = Self::compute_expr_width(expr).unwrap_or(1);
+                let _width = Self::compute_expr_width(expr).unwrap_or(1);
                 let then_label = Self::next_label(instrs);
                 let else_label = Self::next_label(instrs) + 1;
                 let end_label = Self::next_label(instrs) + 2;
@@ -1173,9 +1172,11 @@ impl SimulationEngine {
             }
 
             // ── DPI: update thread-local scope path and simulation time ──
+            #[cfg(feature = "dpi")]
             if let Some(ref path) = self.current_instance_path {
                 crate::simulator::dpi::set_current_dpi_scope(path);
             }
+            #[cfg(feature = "dpi")]
             crate::simulator::dpi::set_current_dpi_time(self.state.time);
 
             // ── Zero-deallocation: reset cycle arena (O(1) — bump pointer reset) ──
@@ -1540,7 +1541,7 @@ impl SimulationEngine {
                             if let Some(inner) = self.cosim_signals.iter().find(|(id, _, _)| *id as u32 == sig_id) {
                                 let sid = inner.0;
                                 if sid < self.state.signals.len() {
-                                    let width = self.design.top.signals[sid].width;
+                                    let width = self.design.top.signals.get(sid).map(|s| s.width).unwrap_or(1);
                                     let val = u64::from_le_bytes(val_bytes[..8.min(val_bytes.len())].try_into().unwrap_or([0u8; 8]));
                                     let lv = LogicVec::from_u64(val, width);
                                     if *self.state.read_signal(sid) != lv {

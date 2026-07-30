@@ -463,7 +463,7 @@ let saved_pos = self.pos.get();
                 let line = self.peek_line();
                 let col = self.peek_col();
                 let tok = format!("{}", self.peek());
-                let (display_file, display_line) = self.resolve_source_file(line);
+                let (_, _) = self.resolve_source_file(line);
                 let summary = if tok.len() > 40 { format!("{}...", &tok[..40]) } else { tok };
 
                 self.push_warning_at(format!("skipping top-level construct: {}", summary), line, col);
@@ -714,7 +714,7 @@ let mut _last_pos = self.pos.get();
                         let col = self.peek_col();
                         let tok = self.peek().clone();
                         let tok_str = format!("{}", tok);
-                        let (display_file, display_line) = self.resolve_source_file(line);
+                        let (_, _) = self.resolve_source_file(line);
                         let summary = if tok_str.len() > 40 {
                             format!("{}...", &tok_str[..40])
                         } else {
@@ -992,7 +992,7 @@ let mut _last_pos = self.pos.get();
                 let col = self.peek_col();
                 let tok = self.peek().clone();
                 let tok_str = format!("{}", tok);
-                let (display_file, display_line) = self.resolve_source_file(line);
+                let (_, _) = self.resolve_source_file(line);
                 let summary = if tok_str.len() > 40 {
                     format!("{}...", &tok_str[..40])
                 } else {

@@ -5,9 +5,8 @@
 
 use crate::error::SimError;
 use crate::ir::*;
-use crate::simulator::types::*;
 use std::collections::HashMap;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::os::raw::c_char;
 use std::path::Path;
 use std::sync::Mutex;
@@ -270,7 +269,7 @@ unsafe fn call_dpi_ffi_generic(
     func_ptr: *mut std::ffi::c_void,
     marshalled: &[(DpiType, Vec<u8>)],
     ret_bytes: &mut [u8],
-    is_task: bool,
+    _is_task: bool,
 ) {
     // Build flat argument array: alternating type tag + data pointer
     // The C function receives a struct pointer:
@@ -527,8 +526,6 @@ pub fn sv_put_logic_bitsel(vec: *mut svLogicVecVal, idx: i32, logic: svLogic) {
 pub fn sv_get_part_select(vec: *const svBitVecVal, idx: i32, width: i32) -> svBitVecVal {
     if vec.is_null() || width <= 0 { return 0; }
     unsafe {
-        let start_word = idx as usize / 32;
-        let start_bit = idx as usize % 32;
         let mut result = 0u32;
         for i in 0..width.min(32) {
             let w = (idx + i) as usize / 32;
@@ -563,13 +560,13 @@ pub fn sv_left(vec: *const svBitVecVal, _width: i32) -> i32 {
 }
 
 /// svRight — get the right bound of a range.
-pub fn sv_right(vec: *const svBitVecVal, width: i32) -> i32 {
+pub fn sv_right(vec: *const svBitVecVal, _width: i32) -> i32 {
     if vec.is_null() { return 0; }
     0
 }
 
 /// svLow — get the low bound of a range.
-pub fn sv_low(vec: *const svBitVecVal, width: i32) -> i32 {
+pub fn sv_low(vec: *const svBitVecVal, _width: i32) -> i32 {
     if vec.is_null() { return 0; }
     0
 }
@@ -603,9 +600,13 @@ pub fn u64_to_chandle(val: u64) -> *mut std::ffi::c_void {
 
 // ─── svBit/svLogic Helpers ───
 
+#[allow(non_camel_case_types)]
 pub type svBit = u8;
+#[allow(non_camel_case_types)]
 pub type svLogic = u8;
+#[allow(non_camel_case_types)]
 pub type svBitVecVal = u32;
+#[allow(non_camel_case_types)]
 pub type svLogicVecVal = u32;
 
 pub fn sv_bit_to_logic(b: svBit) -> svLogic { b }

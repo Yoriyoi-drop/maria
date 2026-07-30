@@ -19,11 +19,11 @@
 //! - Merge: combine with current Engine coverage data (sum hits, union sets)
 //! - Save: serialize to binary file
 
-use crate::ir::{LogicVal, LogicVec};
+use crate::ir::LogicVal;
 use crate::Symbol;
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
-use std::path::Path;
+use std::collections::HashMap;
+use std::io::{self, BufReader, BufWriter, Read, Write};
+
 
 // ─── Binary I/O Helpers ─────────────────────────────────────────────
 
@@ -915,9 +915,9 @@ impl CoverageDatabase {
 
         // Summary cards
         let total_cg = self.covergroups.len();
-        let total_cp: usize = self.covergroups.values().map(|e| e.coverpoints.len()).sum();
+        let _total_cp: usize = self.covergroups.values().map(|e| e.coverpoints.len()).sum();
         let total_line = self.line_hits.len();
-        let total_branch = self.branch_data.len();
+        let _total_branch = self.branch_data.len();
         let total_fsm = self.fsm_data.len();
 
         // Branch percentage

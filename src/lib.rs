@@ -5,9 +5,11 @@
 pub mod vpi;
 
 // ── LSP (Language Server Protocol) ──
+#[cfg(feature = "lsp")]
 pub mod lsp;
 
 // ── Formal Verification Engine ──
+#[cfg(feature = "formal")]
 pub mod formal;
 
 // ── Core Infrastructure (Fase 0) ──
@@ -114,7 +116,7 @@ pub fn compare_asts(design_a: &ir::IrDesign, design_b: &ir::IrDesign) -> Vec<Str
 /// Paths in .maria are resolved relative to the .maria file's directory
 pub fn read_project_file(path: &str) -> Result<Vec<String>, SimError> {
     let content = fs::read_to_string(path)
-        .map_err(|e| SimError::new(None, format!("cannot read '{}': {}", path, e)))?;
+        .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("cannot read '{}': {}", path, e)))?;
     let base = Path::new(path).parent().unwrap_or(Path::new("."));
     let files: Vec<String> = content
         .lines()
@@ -126,8 +128,8 @@ pub fn read_project_file(path: &str) -> Result<Vec<String>, SimError> {
         })
         .collect();
     if files.is_empty() {
-        return Err(SimError::new(
-            None,
+        return Err(SimError::with_diag(
+            DiagCode::ModuleNotFound,
             format!("no .sv files listed in '{}'", path),
         ));
     }
@@ -158,7 +160,7 @@ pub fn compile_files(paths: &[String]) -> Result<ir::IrDesign, SimError> {
 /// Compile a SystemVerilog source file and run simulation
 pub fn simulate_file(path: &str, max_time: u64) -> Result<(), SimError> {
     let source = fs::read_to_string(path)
-        .map_err(|e| SimError::new(None, format!("cannot read '{}': {}", path, e)))?;
+        .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("cannot read '{}': {}", path, e)))?;
     simulate_str(&source, max_time)
 }
 
@@ -173,7 +175,7 @@ pub fn compile_str(source: &str) -> Result<ir::IrDesign, SimError> {
     let mut pp = Preprocessor::new();
     let preprocessed = pp
         .preprocess(source, None)
-        .map_err(|e| SimError::new(None, format!("preprocessor: {}", e)))?;
+        .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("preprocessor: {}", e)))?;
     let timescale = pp.timescale.clone();
     let mut lexer = Lexer::new(&preprocessed);
     let mut tokens = Vec::new();
@@ -244,7 +246,7 @@ pub fn run_simulation(ir_design: ir::IrDesign, max_time: u64) -> Result<(), SimE
     let design_name = &engine.design.top.name.clone();
     let vcd_path = format!("{}.vcd", design_name);
     let vcd = waveform::VcdWriter::new(&vcd_path, &engine.design)
-        .map_err(|e| SimError::new(None, format!("VCD creation failed: {}", e)))?;
+        .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("VCD creation failed: {}", e)))?;
     engine.set_vcd(vcd);
 
     // Also create FST waveform

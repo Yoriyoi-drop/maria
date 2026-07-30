@@ -22,7 +22,6 @@
 use std::collections::{HashMap, HashSet};
 use crate::ir::*;
 use crate::scheduler::clock_domain::{ClockDomainAnalysis, ClockEdgeType};
-use crate::Symbol;
 
 // ─── Types ───
 

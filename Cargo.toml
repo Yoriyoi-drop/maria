@@ -15,12 +15,6 @@ rayon = "1"
 thiserror = "2"
 wavefst = { version = "0.1", default-features = false, features = ["gzip"] }
 
-# ── JIT Compilation ──
-cranelift = "0.110"
-cranelift-jit = "0.110"
-cranelift-frontend = "0.110"
-cranelift-module = "0.110"
-
 # ── Fase 0: Foundation ──
 dashmap = "6"
 crossbeam = "0.8"
@@ -35,20 +29,43 @@ fxhash = "0.2"
 thread_local = "1"
 parking_lot = "0.12"
 itertools = "0.12"
-
-# ── DPI-C FFI ──
-libloading = "0.8"
-
-# ── LSP Server ──
-tower-lsp = "0.20"
-lsp-types = "0.94"
-url = "2"
-tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# ── Formal Verification ──
-z3 = "0.20"
+# ── Opsional: JIT Compilation (cranelift) ──
+cranelift = { version = "0.110", optional = true }
+cranelift-jit = { version = "0.110", optional = true }
+cranelift-frontend = { version = "0.110", optional = true }
+cranelift-module = { version = "0.110", optional = true }
+
+# ── Opsional: DPI-C FFI ──
+libloading = { version = "0.8", optional = true }
+
+# ── Opsional: LSP Server ──
+tower-lsp = { version = "0.20", optional = true }
+lsp-types = { version = "0.94", optional = true }
+url = { version = "2", optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+
+# ── Opsional: Formal Verification (Z3 SMT) ──
+z3 = { version = "0.20", optional = true }
+
+[features]
+# Semua fitur diaktifkan secara default
+# Untuk build minimal: cargo build --no-default-features
+default = ["lsp", "jit", "formal", "dpi"]
+
+# LSP server (tower-lsp + tokio) — IDE integration via --lsp flag
+lsp = ["tower-lsp", "lsp-types", "url", "tokio"]
+
+# Cranelift JIT — compiled-code simulation (expression + body level)
+jit = ["cranelift", "cranelift-jit", "cranelift-frontend", "cranelift-module"]
+
+# Formal verification (Z3 SMT solver + BMC engine)
+formal = ["z3"]
+
+# DPI-C foreign language interface
+dpi = ["libloading"]
 
 [profile.release]
 opt-level = 3

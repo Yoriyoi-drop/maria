@@ -121,7 +121,6 @@ fn gen_elab_design(count: usize) -> String {
 }
 
 #[test]
-#[ignore]
 fn bench_release_sim_throughput_counter() {
     // Simulation throughput: counter design, 100K cycles
     let cycles = 100_000u64;
@@ -377,7 +376,6 @@ fn bench_release_memory_open_titan() {
 }
 
 #[test]
-#[ignore]
 fn bench_release_memory_stress() {
     // Memory stress test: compile 5000 modules and track memory
     let src = gen_elab_design(5_000);
@@ -407,7 +405,6 @@ fn bench_release_memory_stress() {
 }
 
 #[test]
-#[ignore]
 fn bench_release_compile_counter() {
     let src = include_str!("../../test/counter.sv");
     let start = Instant::now();
@@ -435,7 +432,6 @@ fn bench_release_parse_large() {
 }
 
 #[test]
-#[ignore]
 fn bench_release_string_intern() {
     let start = Instant::now();
     for i in 0..100000 {

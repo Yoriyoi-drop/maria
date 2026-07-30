@@ -1,5 +1,6 @@
 use crate::ir::{IrDesign, IrModule, LogicVec, ObjId, ObjectData, SignalId};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Per-signal delay information from SDF annotation.
 #[derive(Debug, Clone)]
@@ -15,6 +16,9 @@ pub struct SimulationState {
     pub time: u64,
     pub objects: Vec<ObjectData>,
     next_obj_id: ObjId,
+    /// Fallback LogicVec returned for out-of-bounds read requests.
+    /// Prevents panic; instead returns a zero-width X value.
+    dummy_signal: LogicVec,
 }
 
 impl SimulationState {
@@ -42,6 +46,7 @@ impl SimulationState {
             time: 0,
             objects,
             next_obj_id: 1,
+            dummy_signal: LogicVec::new(1),
         }
     }
 
@@ -66,45 +71,59 @@ impl SimulationState {
     }
 
     pub fn get_object(&self, id: ObjId) -> Option<&ObjectData> {
-        if id > 0 {
-            self.check_obj_bounds(id);
+        if id > 0 && !self.check_obj_bounds(id) {
+            return None;
         }
         self.objects.get(id)
     }
 
     pub fn get_object_mut(&mut self, id: ObjId) -> Option<&mut ObjectData> {
-        if id > 0 {
-            self.check_obj_bounds(id);
+        if id > 0 && !self.check_obj_bounds(id) {
+            return None;
         }
         self.objects.get_mut(id)
     }
 
+    /// Returns false if id is out of bounds, emitting at most one warning per process lifetime.
     #[inline(always)]
-    fn check_signal_bounds(&self, id: SignalId) {
-        if id >= self.signals.len() {
-            panic!(
-                "SimulationState::signal access: signal id {} out of bounds (signals.len={}, next_signals.len={}, changed.len={})",
+    fn check_signal_bounds(&self, id: SignalId) -> bool {
+        if id < self.signals.len() {
+            return true;
+        }
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::Relaxed) {
+            eprintln!(
+                "[WARN] SimulationState: signal id {} out of bounds (signals.len={}, next_signals.len={}, changed.len={})",
                 id,
                 self.signals.len(),
                 self.next_signals.len(),
                 self.changed.len()
             );
         }
+        false
     }
 
+    /// Returns false if id is out of bounds, emitting at most one warning per process lifetime.
     #[inline(always)]
-    fn check_obj_bounds(&self, id: ObjId) {
-        if id >= self.objects.len() {
-            panic!(
-                "SimulationState::object access: object id {} out of bounds (objects.len={})",
+    fn check_obj_bounds(&self, id: ObjId) -> bool {
+        if id < self.objects.len() {
+            return true;
+        }
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::Relaxed) {
+            eprintln!(
+                "[WARN] SimulationState: object id {} out of bounds (objects.len={})",
                 id,
                 self.objects.len()
             );
         }
+        false
     }
 
     pub fn read_signal(&self, id: SignalId) -> &LogicVec {
-        self.check_signal_bounds(id);
+        if !self.check_signal_bounds(id) {
+            return &self.dummy_signal;
+        }
         if self.changed[id] {
             &self.next_signals[id]
         } else {
@@ -113,7 +132,9 @@ impl SimulationState {
     }
 
     pub fn write_signal(&mut self, id: SignalId, val: LogicVec) {
-        self.check_signal_bounds(id);
+        if !self.check_signal_bounds(id) {
+            return; // silently drop
+        }
         // Compare against pending (next_signals) if already changed this delta,
         // otherwise compare against committed (signals)
         if self.changed[id] {

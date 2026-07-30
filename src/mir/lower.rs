@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::mir::*;
-use crate::hir::hir::{HirDesign, HirModule, HirStmt, HirExpr, HirBinOp, HirUnOp, HirInstance};
+use crate::hir::hir::{HirDesign, HirModule, HirStmt, HirExpr, HirBinOp, HirUnOp};
 use crate::intern::Symbol;
 
 // ─── Design-Level Lowering ───

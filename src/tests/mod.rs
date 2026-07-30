@@ -6545,6 +6545,7 @@ endmodule
 
 // ── DPI-C Enhancement Tests (CRIT-009) ──
 
+#[cfg(feature = "dpi")]
 #[test]
 fn test_dpi_scope_management() {
     // Test svGetScope/svSetScope via thread-local path
@@ -6570,6 +6571,7 @@ fn test_dpi_scope_management() {
     assert_eq!(name2, Some("top.other".to_string()));
 }
 
+#[cfg(feature = "dpi")]
 #[test]
 fn test_dpi_time_query() {
     use crate::simulator::dpi::*;
@@ -6581,6 +6583,7 @@ fn test_dpi_time_query() {
     assert_eq!(time, 42, "svGetTime should return current time");
 }
 
+#[cfg(feature = "dpi")]
 #[test]
 fn test_dpi_chandle_store() {
     use crate::simulator::dpi::*;
@@ -6604,6 +6607,7 @@ fn test_dpi_chandle_store() {
     assert_eq!(chandle_get(handle1), None, "freed handle should return None");
 }
 
+#[cfg(feature = "dpi")]
 #[test]
 fn test_dpi_export_register_and_call() {
     use crate::simulator::dpi::*;
@@ -6632,6 +6636,7 @@ fn test_dpi_export_register_and_call() {
     assert_eq!(result.to_u64(), 42, "DPI export should return 40+2=42");
 }
 
+#[cfg(feature = "dpi")]
 #[test]
 fn test_dpi_export_task() {
     use crate::simulator::dpi::*;
@@ -6656,6 +6661,7 @@ fn test_dpi_export_task() {
     assert!(CALLED.load(Ordering::SeqCst), "task should have been called");
 }
 
+#[cfg(feature = "dpi")]
 #[test]
 fn test_dpi_bit_vector_helpers() {
     use crate::simulator::dpi::*;
@@ -6673,6 +6679,7 @@ fn test_dpi_bit_vector_helpers() {
     assert_eq!(val, 0xAB, "part select should round-trip 0xAB");
 }
 
+#[cfg(feature = "dpi")]
 #[test]
 fn test_dpi_logic_vector_helpers() {
     use crate::simulator::dpi::*;
@@ -6692,6 +6699,7 @@ fn test_dpi_logic_vector_helpers() {
     assert_eq!(sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 2), 3);
 }
 
+#[cfg(feature = "dpi")]
 #[test]
 fn test_dpi_chandle_conversion() {
     use crate::simulator::dpi::*;

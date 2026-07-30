@@ -37,6 +37,7 @@ fn emit_diags(diags: &[maria::diagnostics::diagnostic::Diagnostic]) {
 
 /// Run formal verification (BMC) and print results.
 /// Returns Err if any assertion fails (counterexample found — for CI/CD integration).
+#[cfg(feature = "formal")]
 fn run_formal(ir_design: &maria::ir::IrDesign, bound: u64, quiet: bool) -> Result<(), SimError> {
     use maria::formal::*;
     let mut formal_cfg = FormalConfig::default();
@@ -91,9 +92,15 @@ fn main() {
     let cli = Cli::parse();
 
     // ── LSP mode: start language server (stdio transport) ──
+    #[cfg(feature = "lsp")]
     if cli.lsp {
         let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime for LSP");
         rt.block_on(maria::lsp::run_lsp_server());
+        return;
+    }
+    #[cfg(not(feature = "lsp"))]
+    if cli.lsp {
+        eprintln!("LSP server not available: compile with --features lsp");
         return;
     }
 
@@ -432,8 +439,14 @@ fn run(cli: Cli) -> Result<(), SimError> {
     }
 
     // ── Formal Verification (runs before simulation, skips sim) ──
+    #[cfg(feature = "formal")]
     if cli.formal {
         return run_formal(&ir_design, cli.formal_bound, cli.quiet);
+    }
+    #[cfg(not(feature = "formal"))]
+    if cli.formal {
+        eprintln!("Formal verification not available: compile with --features formal");
+        return Err(maria::error::SimError::new(None, "formal feature not enabled"));
     }
 
     // ── Compile-only mode: skip simulation & VCD ──
@@ -598,8 +611,10 @@ fn run(cli: Cli) -> Result<(), SimError> {
     }
 
     // Load DPI shared libraries
+    #[cfg(feature = "dpi")]
     if !cli.dpi_libs.is_empty() {
         use maria::simulator::dpi::DpiEngine;
+        #[allow(unused_imports)]
         use std::sync::Mutex;
         fn get_dpi_engine() -> &'static Mutex<Option<DpiEngine>> {
             use std::sync::OnceLock;
@@ -1123,8 +1138,14 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     }
 
     // ── Formal Verification (runs before simulation, skips sim) ──
+    #[cfg(feature = "formal")]
     if cli.formal {
         return run_formal(&ir_design, cli.formal_bound, cli.quiet);
+    }
+    #[cfg(not(feature = "formal"))]
+    if cli.formal {
+        eprintln!("Formal verification not available: compile with --features formal");
+        return Err(maria::error::SimError::new(None, "formal feature not enabled"));
     }
 
     if cli.compile_only {
@@ -1204,8 +1225,10 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     }
 
     // Load DPI shared libraries
+    #[cfg(feature = "dpi")]
     if !cli.dpi_libs.is_empty() {
         use maria::simulator::dpi::DpiEngine;
+        #[allow(unused_imports)]
         use std::sync::Mutex;
         fn get_dpi_engine() -> &'static Mutex<Option<DpiEngine>> {
             use std::sync::OnceLock;
