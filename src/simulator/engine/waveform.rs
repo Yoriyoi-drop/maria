@@ -1,5 +1,6 @@
 /// Waveform and display output management for SimulationEngine.
 /// Contains VCD/FST dump timing, monitor checking, and strobe processing.
+use crate::diagnostics::DiagCode;
 use crate::error::SimError;
 use crate::ir::*;
 use crate::simulator::util::*;
@@ -108,7 +109,7 @@ impl SimulationEngine {
         if let Some(ref mut vcd) = self.vcd {
             vcd.dump_state(&self.design, &self.state.signals)?;
             vcd.maybe_flush()
-                .map_err(|e| SimError::waveform(format!("VCD flush error: {}", e)))?;
+                .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("VCD flush error: {}", e)))?;
         }
         Ok(())
     }
@@ -118,7 +119,7 @@ impl SimulationEngine {
         if let Some(ref mut fst) = self.fst {
             fst.dump_state(&self.design, &self.state.signals)?;
             fst.maybe_flush()
-                .map_err(|e| SimError::waveform(format!("FST flush error: {}", e)))?;
+                .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("FST flush error: {}", e)))?;
         }
         Ok(())
     }
@@ -127,7 +128,7 @@ impl SimulationEngine {
     pub(crate) fn dump_csv_state(&mut self) -> Result<(), SimError> {
         if let Some(ref mut csv) = self.csv {
             csv.dump_state(self.state.time, &self.state.signals)
-                .map_err(|e| SimError::waveform(format!("CSV dump error: {}", e)))?;
+                .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("CSV dump error: {}", e)))?;
         }
         Ok(())
     }
@@ -143,7 +144,7 @@ impl SimulationEngine {
     pub fn close_csv(&mut self) -> Result<(), SimError> {
         if let Some(ref mut csv) = self.csv {
             csv.close()
-                .map_err(|e| SimError::waveform(format!("CSV close error: {}", e)))?;
+                .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("CSV close error: {}", e)))?;
         }
         Ok(())
     }

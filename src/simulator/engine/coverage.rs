@@ -1,5 +1,6 @@
 /// Coverage tracking and reporting for SimulationEngine.
 /// Manages covergroup sampling, coverage reporting, and UCIS XML export.
+use crate::diagnostics::DiagCode;
 use crate::error::SimError;
 use crate::ir::*;
 use crate::simulator::util::*;
@@ -617,7 +618,7 @@ impl SimulationEngine {
         xml.push_str("</coverageDatabase>\n");
 
         std::fs::write(path, xml)
-            .map_err(|e| SimError::waveform(format!("cannot write UCIS file '{}': {}", path, e)))?;
+            .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("cannot write UCIS file '{}': {}", path, e)))?;
 
         // Print summary to stderr
         let line_count = self.cover_line.len();

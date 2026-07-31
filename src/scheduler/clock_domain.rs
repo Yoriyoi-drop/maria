@@ -446,6 +446,7 @@ fn lvalue_collect_writes(lvalue: &IrLValue, writes: &mut HashSet<SignalId>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::intern::Symbol;
 
     #[test]
     fn test_empty_design() {

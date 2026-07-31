@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::diagnostics::DiagCode;
 use crate::error::SimError;
 use crate::intern::Symbol;
 use crate::ir::*;
@@ -481,7 +482,7 @@ pub fn read_hex_file(
     end: Option<usize>,
 ) -> Result<Vec<LogicVec>, SimError> {
     let content = std::fs::read_to_string(filename)
-        .map_err(|e| SimError::waveform(format!("cannot read {}: {}", filename, e)))?;
+        .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("cannot read {}: {}", filename, e)))?;
     let start_addr = start.unwrap_or(0);
     let end_addr = end.unwrap_or(array_depth - 1);
     let len = end_addr - start_addr + 1;
@@ -492,7 +493,7 @@ pub fn read_hex_file(
             continue;
         }
         let val = i64::from_str_radix(line, 16)
-            .map_err(|e| SimError::waveform(format!("bad hex value '{}': {}", line, e)))?;
+            .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("bad hex value '{}': {}", line, e)))?;
         data.push(LogicVec::from_u64(val as u64, elem_width));
         if data.len() >= len {
             break;
@@ -509,7 +510,7 @@ pub fn read_bin_file(
     end: Option<usize>,
 ) -> Result<Vec<LogicVec>, SimError> {
     let content = std::fs::read_to_string(filename)
-        .map_err(|e| SimError::waveform(format!("cannot read {}: {}", filename, e)))?;
+        .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("cannot read {}: {}", filename, e)))?;
     let start_addr = start.unwrap_or(0);
     let end_addr = end.unwrap_or(array_depth - 1);
     let len = end_addr - start_addr + 1;
@@ -520,7 +521,7 @@ pub fn read_bin_file(
             continue;
         }
         let val = i64::from_str_radix(line, 2)
-            .map_err(|e| SimError::waveform(format!("bad binary value '{}': {}", line, e)))?;
+            .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("bad binary value '{}': {}", line, e)))?;
         data.push(LogicVec::from_u64(val as u64, elem_width));
         if data.len() >= len {
             break;

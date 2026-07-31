@@ -11,6 +11,7 @@ use maria::frontend::CompileSession;
 use maria::SessionConfig;
 use maria::debugger::Debugger;
 use maria::elaboration::Elaborator;
+use maria::diagnostics::DiagCode;
 use maria::error::SimError;
 use maria::ir::LogicVec;
 use maria::parser::lexer::Lexer;
@@ -73,10 +74,10 @@ fn run_formal(ir_design: &maria::ir::IrDesign, bound: u64, quiet: bool) -> Resul
     }
 
     if has_error {
-        return Err(SimError::new(None, "formal verification encountered errors"));
+        return Err(SimError::with_diag(DiagCode::InternalError, "formal verification encountered errors"));
     }
     if has_fail {
-        return Err(SimError::new(None, "formal verification FAILED — counterexample(s) found"));
+        return Err(SimError::with_diag(DiagCode::AssertionFailed, "formal verification FAILED — counterexample(s) found"));
     }
     Ok(())
 }
@@ -236,7 +237,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
         let (processed, ts) = match &pp_results[i] {
             Ok(r) => (r.0.clone(), r.1.clone()),
             Err(e) => {
-                return Err(SimError::new(None, format!("preprocessing failed: {}", e)));
+                return Err(SimError::with_diag(DiagCode::PreprocessorError, format!("preprocessing failed: {}", e)));
             }
         };
         if let Some(ref ts) = ts {
@@ -265,7 +266,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
     eprintln!("[TIMING] Lexer done: {} tokens in {:?}", tokens.len(), lex_start.elapsed());
 
     if tokens.is_empty() {
-        return Err(SimError::new(None, "no tokens found (empty source?)"));
+        return Err(SimError::with_diag(DiagCode::InvalidSyntax, "no tokens found (empty source?)"));
     }
 
     let first_source = sources.first().map(|s| s.as_str()).unwrap_or("<unknown>");
@@ -410,7 +411,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
             }
             return Ok(());
         }
-        return Err(SimError::new(None, "no modules found in design"));
+        return Err(SimError::with_diag(DiagCode::ModuleNotFound, "no modules found in design"));
     }
 
     let top_name = cli.top.as_deref();
@@ -446,7 +447,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
     #[cfg(not(feature = "formal"))]
     if cli.formal {
         eprintln!("Formal verification not available: compile with --features formal");
-        return Err(maria::error::SimError::new(None, "formal feature not enabled"));
+        return Err(SimError::with_diag(DiagCode::NotImplemented, "formal feature not enabled"));
     }
 
     // ── Compile-only mode: skip simulation & VCD ──
@@ -479,7 +480,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
             println!("X-propagation mode: {}", mode.as_str());
         }
     } else {
-        return Err(SimError::new(None, format!("invalid --xprop '{}': use optimistic, pessimistic, or x-anywhere", cli.xprop)));
+        return Err(SimError::with_diag(DiagCode::InvalidSyntax, format!("invalid --xprop '{}': use optimistic, pessimistic, or x-anywhere", cli.xprop)));
     }
 
     // ── Distributed simulation mode ──
@@ -522,13 +523,13 @@ fn run(cli: Cli) -> Result<(), SimError> {
             println!("SDF timing mode: {}", mode.as_str());
         }
     } else {
-        return Err(SimError::new(None, format!("invalid --timing-mode '{}': use min, typ, or max", cli.timing_mode)));
+        return Err(SimError::with_diag(DiagCode::InvalidSyntax, format!("invalid --timing-mode '{}': use min, typ, or max", cli.timing_mode)));
     }
 
     // ── SDF Annotation (applies timing delays from Standard Delay Format file) ──
     if let Some(ref sdf_path) = cli.sdf {
         let sdf_data = maria::simulator::sdf::SdfData::parse_file(sdf_path)
-            .map_err(|e| SimError::new(None, format!("SDF parse failed: {}", e)))?;
+            .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("SDF parse failed: {}", e)))?;
         engine.annotate_sdf(&sdf_data)?;
         if !cli.quiet {
             println!("SDF annotation loaded from '{}'", sdf_path);
@@ -700,7 +701,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
         .output
         .unwrap_or_else(|| format!("{}.vcd", engine.design.top.name));
     let mut vcd = VcdWriter::new(&vcd_path, &engine.design)
-        .map_err(|e| SimError::new(None, format!("VCD creation failed: {}", e)))?;
+        .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("VCD creation failed: {}", e)))?;
     if cli.waveform_stream {
         vcd.stream_flush_interval = 1;
         if !cli.quiet {
@@ -712,7 +713,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
     // CSV waveform setup
     if let Some(ref csv_path) = cli.waveform_csv {
         let csv = maria::waveform::CsvWaveWriter::new(csv_path, &engine.design)
-            .map_err(|e| SimError::new(None, format!("CSV creation failed: {}", e)))?;
+            .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("CSV creation failed: {}", e)))?;
         engine.set_csv(csv);
         if !cli.quiet {
             println!("CSV waveform: {}", csv_path);
@@ -895,7 +896,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
             if branch_pct < threshold {
                 let msg = format!("COVERAGE FAILED: branch coverage {:.1}% < threshold {:.1}%", branch_pct, threshold);
                 eprintln!("warning: {}", msg);
-                return Err(SimError::new(None, msg));
+                return Err(SimError::with_diag(DiagCode::SimulationError, msg));
             } else if !cli.quiet {
                 println!("Coverage threshold: {:.1}% >= {:.1}% ✅", branch_pct, threshold);
             }
@@ -918,7 +919,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
         let _ = debugger.engine.signal_history.flush();
         let path = std::path::Path::new(save_path);
         debugger.engine.save_checkpoint(path)
-            .map_err(|e| SimError::new(None, format!("checkpoint save failed: {}", e)))?;
+            .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("checkpoint save failed: {}", e)))?;
         if !cli.quiet {
             println!("Checkpoint saved to '{}'", save_path);
         }
@@ -1008,7 +1009,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     // ── Compile-only mode: parse only, skip elaboration & simulation ──
     if cli.compile_only {
         let (design, module_index) = if cli.lazy {
-            let (design, hir_count, index_len) = session.compile_lazy_only()?;
+            let (_design, hir_count, index_len) = session.compile_lazy_only()?;
             if !cli.quiet {
                 session.print_timing();
                 println!("Modules indexed: {}", index_len);
@@ -1050,7 +1051,12 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         let index_len = module_index.len();
         if !cli.quiet { session.print_timing(); }
         let design_clone = design.clone();
-        let mut elab = Elaborator::new(design);
+        let (source_lines, source_file) = session.source_info().unwrap_or_default();
+        let mut elab = if source_lines.is_empty() {
+            Elaborator::new(design)
+        } else {
+            Elaborator::with_source(design, source_lines, source_file)
+        };
         let ir_design = elab.elaborate(top_name)?;
         emit_diags(&elab.flush_diagnostics());
         (design_clone, ir_design, index_len)
@@ -1059,7 +1065,12 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         let index_len = module_index.len();
         if !cli.quiet { session.print_timing(); }
         let design_clone = design.clone();
-        let mut elab = Elaborator::new(design);
+        let (source_lines, source_file) = session.source_info().unwrap_or_default();
+        let mut elab = if source_lines.is_empty() {
+            Elaborator::new(design)
+        } else {
+            Elaborator::with_source(design, source_lines, source_file)
+        };
         let ir_design = elab.elaborate(top_name)?;
         emit_diags(&elab.flush_diagnostics());
         (design_clone, ir_design, index_len)
@@ -1113,7 +1124,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     }
 
     if design.modules.is_empty() {
-        return Err(SimError::new(None, "no modules found in design"));
+        return Err(SimError::with_diag(DiagCode::ModuleNotFound, "no modules found in design"));
     }
 
     // ── Lazy mode info (when not compile-only) ──
@@ -1145,7 +1156,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     #[cfg(not(feature = "formal"))]
     if cli.formal {
         eprintln!("Formal verification not available: compile with --features formal");
-        return Err(maria::error::SimError::new(None, "formal feature not enabled"));
+        return Err(SimError::with_diag(DiagCode::NotImplemented, "formal feature not enabled"));
     }
 
     if cli.compile_only {
@@ -1177,7 +1188,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
             println!("X-propagation mode: {}", mode.as_str());
         }
     } else {
-        return Err(SimError::new(None, format!("invalid --xprop '{}': use optimistic, pessimistic, or x-anywhere", cli.xprop)));
+        return Err(SimError::with_diag(DiagCode::InvalidSyntax, format!("invalid --xprop '{}': use optimistic, pessimistic, or x-anywhere", cli.xprop)));
     }
 
     let mut engine = SimulationEngine::new(ir_design, cli.max_time);
@@ -1185,7 +1196,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     // ── SDF Annotation (applies timing delays from Standard Delay Format file) ──
     if let Some(ref sdf_path) = cli.sdf {
         let sdf_data = maria::simulator::sdf::SdfData::parse_file(sdf_path)
-            .map_err(|e| SimError::new(None, format!("SDF parse failed: {}", e)))?;
+            .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("SDF parse failed: {}", e)))?;
         engine.annotate_sdf(&sdf_data)?;
         if !cli.quiet {
             println!("SDF annotation loaded from '{}'", sdf_path);
@@ -1310,7 +1321,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         .output
         .unwrap_or_else(|| format!("{}.vcd", &engine.design.top.name.to_string()));
     let mut vcd = VcdWriter::new(&vcd_path, &engine.design)
-        .map_err(|e| SimError::new(None, format!("VCD creation failed: {}", e)))?;
+        .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("VCD creation failed: {}", e)))?;
     if cli.waveform_stream {
         vcd.stream_flush_interval = 1;
         if !cli.quiet {
@@ -1322,7 +1333,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     // CSV waveform setup (fast path)
     if let Some(ref csv_path) = cli.waveform_csv {
         let csv = maria::waveform::CsvWaveWriter::new(csv_path, &engine.design)
-            .map_err(|e| SimError::new(None, format!("CSV creation failed: {}", e)))?;
+            .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("CSV creation failed: {}", e)))?;
         engine.set_csv(csv);
         if !cli.quiet {
             println!("CSV waveform: {}", csv_path);
@@ -1467,7 +1478,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
             if branch_pct < threshold {
                 let msg = format!("COVERAGE FAILED: branch coverage {:.1}% < threshold {:.1}%", branch_pct, threshold);
                 eprintln!("warning: {}", msg);
-                return Err(SimError::new(None, msg));
+                return Err(SimError::with_diag(DiagCode::SimulationError, msg));
             } else if !cli.quiet {
                 println!("Coverage threshold: {:.1}% >= {:.1}% ✅", branch_pct, threshold);
             }
@@ -1490,7 +1501,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         let _ = debugger.engine.signal_history.flush();
         let path = std::path::Path::new(save_path);
         debugger.engine.save_checkpoint(path)
-            .map_err(|e| SimError::new(None, format!("checkpoint save failed: {}", e)))?;
+            .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("checkpoint save failed: {}", e)))?;
         if !cli.quiet {
             println!("Checkpoint saved to '{}'", save_path);
         }

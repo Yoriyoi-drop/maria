@@ -231,6 +231,14 @@ pub enum DiagCode {
     /// Type mismatch at runtime (E9003)
     RuntimeTypeMismatch,
 
+    // ── Infrastructure Errors (E0xxx) ──
+    /// Preprocessor/IO error (E0101)
+    PreprocessorError,
+    /// Debugger error (E0003)
+    DebuggerError,
+    /// I/O operation error (E0004)
+    IoError,
+
     // ── Other Codes ──
     /// Waveform error (W0001)
     WaveformError,
@@ -316,6 +324,10 @@ impl DiagCode {
             DiagCode::InternalError => "RT9001",
             DiagCode::Unreachable => "RT9002",
             DiagCode::NotImplemented => "RT9003",
+            // Infrastructure
+            DiagCode::PreprocessorError => "E0101",
+            DiagCode::DebuggerError => "E0003",
+            DiagCode::IoError => "E0004",
             // Other
             DiagCode::WaveformError => "W0001",
             // Legacy Runtime
@@ -396,6 +408,10 @@ impl DiagCode {
             DiagCode::InternalError => "internal simulator error",
             DiagCode::Unreachable => "unreachable code reached",
             DiagCode::NotImplemented => "not yet implemented",
+            // Infrastructure
+            DiagCode::PreprocessorError => "preprocessor error",
+            DiagCode::DebuggerError => "debugger error",
+            DiagCode::IoError => "I/O error",
             // Other
             DiagCode::WaveformError => "waveform error",
             // Legacy Runtime
@@ -416,46 +432,256 @@ impl DiagCode {
     /// Dapatkan penjelasan panjang tentang penyebab error.
     pub fn explanation(&self) -> &'static str {
         match self {
+            DiagCode::UnexpectedToken =>
+                "The parser encountered a token that does not match any valid production in the grammar at the current position.",
+            DiagCode::ExpectedToken =>
+                "A specific token was expected at the current position but a different token was found.",
+            DiagCode::ExpectedSemi =>
+                "A semicolon (';') is required to terminate the current statement but was not found.",
+            DiagCode::UnclosedBlock =>
+                "A block (begin/end, module/endmodule, etc.) was opened but never closed.",
+            DiagCode::InvalidSyntax =>
+                "The source code contains syntax that does not conform to the SystemVerilog language specification.",
             DiagCode::UndefinedSignal =>
                 "A signal name was referenced but has not been declared in the current scope.",
-            DiagCode::ModuleNotFound =>
-                "A module, interface, or package name could not be found in the design hierarchy.",
-            DiagCode::ParamMismatch =>
-                "A parameter value does not match its declaration type or range constraints.",
             DiagCode::TypeMismatch =>
                 "An expression's type does not match the expected type for this context.",
             DiagCode::WidthMismatch =>
                 "The bit width of an expression does not match the expected width.",
+            DiagCode::UndefinedVariable =>
+                "A variable was referenced but has not been declared in the current scope.",
+            DiagCode::ModuleNotFound =>
+                "A module, interface, or package name could not be found in the design hierarchy.",
+            DiagCode::CircularDependency =>
+                "A circular dependency was detected during elaboration — module A depends on B which depends on A.",
+            DiagCode::ParamMismatch =>
+                "A parameter value does not match its declaration type or range constraints.",
+            DiagCode::InstanceNotFound =>
+                "A module instance could not be found in the design hierarchy.",
             DiagCode::NullHandle =>
                 "An object handle was used (method call or member access) but the handle is null.",
+            DiagCode::InvalidReference =>
+                "An object reference points to an invalid or deallocated object.",
             DiagCode::NullInterface =>
                 "A virtual interface was used before being connected to a physical interface.",
             DiagCode::MemoryOutOfBounds =>
                 "A memory access attempted to read or write beyond the declared array bounds.",
+            DiagCode::MailboxError =>
+                "A mailbox operation failed — the mailbox may be empty, full, or not initialized.",
+            DiagCode::SignalUnknown =>
+                "A signal entered the unknown (X) state, typically due to uninitialized registers or contention.",
+            DiagCode::SignalFloating =>
+                "A signal is not driven by any driver and has no default value.",
+            DiagCode::SignalContention =>
+                "Multiple drivers are attempting to drive the same signal with different values.",
+            DiagCode::SignalWidthMismatch =>
+                "A signal assignment width does not match the target signal width at runtime.",
+            DiagCode::SignalUninitialized =>
+                "A signal was read before any value was assigned to it.",
+            DiagCode::InfiniteDelta =>
+                "Simulation cannot advance past the current time step due to a zero-delay combinational loop.",
+            DiagCode::SchedulerDeadlock =>
+                "The scheduler detected a deadlock — no processes can proceed.",
+            DiagCode::SimulationTimeout =>
+                "The simulation exceeded the maximum time limit.",
+            DiagCode::ForkError =>
+                "A fork/join operation failed to create or manage parallel processes.",
+            DiagCode::MaxDeltaExceeded =>
+                "The simulation exceeded the maximum number of delta cycles without advancing time.",
+            DiagCode::EventTimeout =>
+                "An event wait operation timed out before the event was triggered.",
+            DiagCode::EventOrderViolation =>
+                "Events were triggered or waited in an invalid order.",
+            DiagCode::EventCreateFailed =>
+                "Failed to create a new event object.",
+            DiagCode::ModuleInstantiation =>
+                "A module could not be instantiated — check port connections and parameter values.",
+            DiagCode::ModuleBindError =>
+                "A module binding operation failed — the port or interface could not be connected.",
+            DiagCode::InterfaceNull =>
+                "A null interface handle was accessed.",
+            DiagCode::InterfaceConnect =>
+                "An interface connection could not be established.",
+            DiagCode::ClockPeriodViolation =>
+                "A clock period constraint was violated during simulation.",
+            DiagCode::ClockGenError =>
+                "Clock generation failed — check clock parameters and dependencies.",
+            DiagCode::AssertionFailed =>
+                "A concurrent assertion (assert property) evaluated to false.",
+            DiagCode::AssertionImmediateFailed =>
+                "An immediate assertion (assert) evaluated to false.",
+            DiagCode::CoverProperty =>
+                "A cover property hit its target count or reported a coverage event.",
+            DiagCode::AssertionDisableError =>
+                "An assertion disable operation failed.",
+            DiagCode::DpiError =>
+                "A DPI (Direct Programming Interface) function call encountered an error.",
+            DiagCode::DpiImportNotFound =>
+                "A DPI imported function could not be found in the loaded shared libraries.",
+            DiagCode::DpiScopeError =>
+                "A DPI scope operation failed — check that the scope is valid.",
+            DiagCode::InternalError =>
+                "An internal simulator error occurred — this is a bug in the simulator itself.",
+            DiagCode::Unreachable =>
+                "The simulator reached code that should be unreachable — this indicates a bug.",
             DiagCode::NotImplemented =>
-                "A SystemVerilog feature used in the design is not yet implemented.",
-            _ => self.description(),
+                "A SystemVerilog feature used in the design is not yet implemented in this simulator.",
+            DiagCode::PreprocessorError =>
+                "The preprocessor encountered an error while processing `include, `define, or conditional compilation directives.",
+            DiagCode::DebuggerError =>
+                "The debugger encountered an error during stepping, breakpoints, or reverse debugging.",
+            DiagCode::IoError =>
+                "An I/O operation failed — the file may not exist, may be unreadable, or the disk may be full.",
+            DiagCode::WaveformError =>
+                "A waveform operation failed — the VCD/FST file could not be written or read.",
+            DiagCode::SimulationError =>
+                "A general simulation error occurred — check the message for details.",
+            DiagCode::OutOfBounds =>
+                "An array or memory access went out of bounds.",
+            DiagCode::RuntimeTypeMismatch =>
+                "A type mismatch was detected at runtime.",
+            DiagCode::UninitializedRegister =>
+                "A register was read before being assigned a value.",
+            DiagCode::WidthMismatchWarning =>
+                "A signal or expression width does not match the expected width.",
+            DiagCode::UnusedSignal =>
+                "A signal was declared but never used in the design.",
+            DiagCode::ClockNeverToggles =>
+                "A clock signal was detected but never toggled during simulation.",
+            DiagCode::ResetPermanentlyAsserted =>
+                "A reset signal is permanently asserted and never de-asserted.",
+            DiagCode::CombinationalLoop =>
+                "A potential combinational loop was detected in the design.",
+            DiagCode::SlowSimulation =>
+                "A simulation region or process is significantly slower than others.",
         }
     }
 
     /// Dapatkan saran perbaikan untuk error ini.
     pub fn help(&self) -> &'static str {
         match self {
+            DiagCode::UnexpectedToken =>
+                "Review the syntax near the indicated position and check for typos or missing operators.",
+            DiagCode::ExpectedToken =>
+                "Check the code near the indicated position for missing keywords or operators.",
+            DiagCode::ExpectedSemi =>
+                "Add a semicolon at the end of the statement.",
+            DiagCode::UnclosedBlock =>
+                "Add the closing keyword (end, endmodule, endinterface, etc.) for the block.",
+            DiagCode::InvalidSyntax =>
+                "Review the code at the indicated location and fix the reported issue.",
             DiagCode::UndefinedSignal =>
                 "Declare the signal before using it, or check for typos in the signal name.",
-            DiagCode::ModuleNotFound =>
-                "Check that the module/package name is spelled correctly and that all source files are included.",
-            DiagCode::ParamMismatch =>
-                "Verify parameter values match the declared types and ranges in the module definition.",
             DiagCode::TypeMismatch =>
                 "Use a type conversion or change the expression type to match the expected type.",
+            DiagCode::WidthMismatch =>
+                "Adjust the bit width of the expression or use a width extension/truncation.",
+            DiagCode::UndefinedVariable =>
+                "Declare the variable before using it, or check for typos in the variable name.",
+            DiagCode::ModuleNotFound =>
+                "Check that the module/package name is spelled correctly and that all source files are included.",
+            DiagCode::CircularDependency =>
+                "Restructure the design to eliminate circular dependencies between modules.",
+            DiagCode::ParamMismatch =>
+                "Verify parameter values match the declared types and ranges in the module definition.",
+            DiagCode::InstanceNotFound =>
+                "Check that the instance name is correct and that the module is properly instantiated.",
             DiagCode::NullHandle =>
                 "Initialize the object handle with 'new()' before accessing its members.",
+            DiagCode::InvalidReference =>
+                "Ensure the object reference points to a valid, allocated object.",
             DiagCode::NullInterface =>
                 "Connect the virtual interface to a physical interface instance before simulation.",
+            DiagCode::MemoryOutOfBounds =>
+                "Check array bounds and ensure indices are within the declared range.",
+            DiagCode::MailboxError =>
+                "Initialize the mailbox with 'new()' and check that it is not full/empty for put/get operations.",
+            DiagCode::SignalUnknown =>
+                "Initialize all registers and avoid multiple drivers driving the same signal.",
+            DiagCode::SignalFloating =>
+                "Assign a default value or drive the signal from a valid driver.",
+            DiagCode::SignalContention =>
+                "Check for multiple drivers on the same signal and resolve the conflict.",
+            DiagCode::SignalWidthMismatch =>
+                "Adjust the width of the assignment to match the target signal.",
+            DiagCode::SignalUninitialized =>
+                "Initialize the signal in the reset block or at declaration before reading it.",
+            DiagCode::InfiniteDelta =>
+                "Add non-zero delays to break the combinational loop, or use a flip-flop.",
+            DiagCode::SchedulerDeadlock =>
+                "Check for processes waiting on events that never trigger, or circular wait conditions.",
+            DiagCode::SimulationTimeout =>
+                "Increase the simulation time limit or check for infinite loops in the design.",
+            DiagCode::ForkError =>
+                "Check fork/join syntax and ensure all branches are valid processes.",
+            DiagCode::MaxDeltaExceeded =>
+                "Add delays to combinational logic paths or restructure the design to avoid delta cycles.",
+            DiagCode::EventTimeout =>
+                "Check that the event is triggered within the expected time frame.",
+            DiagCode::EventOrderViolation =>
+                "Restructure event trigger/wait sequences to maintain proper ordering.",
+            DiagCode::EventCreateFailed =>
+                "Check system resources and ensure events are properly initialized.",
+            DiagCode::ModuleInstantiation =>
+                "Check port connections, parameter values, and module definition for mismatches.",
+            DiagCode::ModuleBindError =>
+                "Verify the module/interface bind directives and port mapping.",
+            DiagCode::InterfaceNull =>
+                "Initialize the interface handle before accessing its members.",
+            DiagCode::InterfaceConnect =>
+                "Check interface connections between modules and verify port matching.",
+            DiagCode::ClockPeriodViolation =>
+                "Adjust clock generation parameters to meet timing constraints.",
+            DiagCode::ClockGenError =>
+                "Check clock generation logic and ensure all clock parameters are valid.",
+            DiagCode::AssertionFailed =>
+                "Review the assertion condition and check if the design behavior is correct.",
+            DiagCode::AssertionImmediateFailed =>
+                "Review the immediate assertion and fix the violation in the design.",
+            DiagCode::CoverProperty =>
+                "Review coverage results to ensure all cover properties are hit.",
+            DiagCode::AssertionDisableError =>
+                "Check assertion disable directives and ensure proper usage.",
+            DiagCode::DpiError =>
+                "Check DPI function arguments, return types, and shared library compatibility.",
+            DiagCode::DpiImportNotFound =>
+                "Ensure the shared library is loaded and the function name matches exactly (case-sensitive).",
+            DiagCode::DpiScopeError =>
+                "Check DPI scope setup and ensure the scope is active before making DPI calls.",
+            DiagCode::InternalError =>
+                "Please report this bug to the simulator developers with a minimal reproduction test case.",
+            DiagCode::Unreachable =>
+                "Please report this bug to the simulator developers with the design files.",
             DiagCode::NotImplemented =>
                 "Consider using an alternative coding style or wait for the feature to be implemented.",
-            _ => "Review the code at the indicated location and fix the reported issue.",
+            DiagCode::PreprocessorError =>
+                "Check that all `include files exist, `define macros are properly declared, and the file is readable.",
+            DiagCode::DebuggerError =>
+                "Check debugger settings, breakpoints, and snapshot configuration.",
+            DiagCode::IoError =>
+                "Check file paths, permissions, and disk space. Verify the file exists and is accessible.",
+            DiagCode::WaveformError =>
+                "Check disk space, file path permissions, and waveform configuration.",
+            DiagCode::SimulationError =>
+                "Review the error message and check the code at the indicated location.",
+            DiagCode::OutOfBounds =>
+                "Ensure array indices are within the declared bounds before accessing them.",
+            DiagCode::RuntimeTypeMismatch =>
+                "Use type casting or convert the expression to the expected type.",
+            DiagCode::UninitializedRegister =>
+                "Assign a reset value to the register or initialize it before use.",
+            DiagCode::WidthMismatchWarning =>
+                "Adjust the bit width to match or use explicit width conversion.",
+            DiagCode::UnusedSignal =>
+                "Remove the unused signal or use it in the design to silence this warning.",
+            DiagCode::ClockNeverToggles =>
+                "Check clock generation and ensure the clock signal is properly driven.",
+            DiagCode::ResetPermanentlyAsserted =>
+                "Check reset logic and ensure the reset de-asserts after initialization.",
+            DiagCode::CombinationalLoop =>
+                "Add flip-flops or non-zero delays to break the potential combinational loop.",
+            DiagCode::SlowSimulation =>
+                "Optimize the identified region or process to improve simulation performance.",
         }
     }
 
@@ -507,6 +733,9 @@ impl DiagCode {
             | DiagCode::Unreachable
             | DiagCode::NotImplemented => "Internal",
             DiagCode::WaveformError => "Waveform",
+            DiagCode::PreprocessorError
+            | DiagCode::DebuggerError
+            | DiagCode::IoError => "Infrastructure",
             DiagCode::SimulationError
             | DiagCode::OutOfBounds
             | DiagCode::RuntimeTypeMismatch => "Runtime",

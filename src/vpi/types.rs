@@ -2,6 +2,8 @@
 //!
 //! C-compatible types for VPI FFI. All types use C representation
 //! for direct FFI with external C code.
+// IEEE 1800 standard VPI constant names intentionally use non-upper-case conventions.
+#![allow(non_upper_case_globals)]
 
 use std::ffi::CStr;
 use std::os::raw::c_char;

@@ -103,6 +103,21 @@ impl SimError {
         (None, None, None)
     }
 
+    /// Tebak DiagCode dari pesan parse error.
+    fn parse_code(msg: &str) -> DiagCode {
+        if msg.contains("unexpected token") || msg.contains("Unexpected") {
+            DiagCode::UnexpectedToken
+        } else if msg.contains("expected") && msg.contains("';'") {
+            DiagCode::ExpectedSemi
+        } else if msg.contains("expected") {
+            DiagCode::ExpectedToken
+        } else if msg.contains("unclosed") {
+            DiagCode::UnclosedBlock
+        } else {
+            DiagCode::InvalidSyntax
+        }
+    }
+
     /// Dapatkan error code yang sesuai.
     pub fn error_code(&self) -> &'static str {
         let msg = self.to_string();
@@ -118,19 +133,7 @@ impl SimError {
         }
 
         match self {
-            SimError::Parse(_) => {
-                if msg.contains("unexpected token") || msg.contains("Unexpected") {
-                    "E1001"
-                } else if msg.contains("expected") && msg.contains("';'") {
-                    "E1003"
-                } else if msg.contains("expected") {
-                    "E1002"
-                } else if msg.contains("unclosed") {
-                    "E1004"
-                } else {
-                    "E1005"
-                }
-            }
+            SimError::Parse(ref _msg) => Self::parse_code(&msg).as_str(),
             SimError::Elaborate(_) => {
                 if msg.contains("not found") || msg.contains("module") {
                     "E3001"
@@ -143,10 +146,10 @@ impl SimError {
                 }
             }
             SimError::Runtime(_) => "E9001",
-            SimError::Preprocessor(_) => "E0001",
-            SimError::Waveform(_) => "E0002",
+            SimError::Preprocessor(_) => "E0101",
+            SimError::Waveform(_) => "W0001",
             SimError::Debugger(_) => "E0003",
-            SimError::Io(_, _) => "E0000",
+            SimError::Io(_, _) => "E0004",
             SimError::Diagnostic(diag) => diag.code.as_str(),
         }
     }
@@ -154,29 +157,28 @@ impl SimError {
     /// Convert ke Diagnostic struct untuk formatting penuh.
     /// Jika message mengandung "[CODE] ...", extract code dan message terpisah.
     pub fn to_diagnostic(&self) -> Diagnostic {
-        // Fast path: already a Diagnostic
+        // Fast path: already a Diagnostic — return clone immediately
         if let SimError::Diagnostic(diag) = self {
             return diag.clone();
         }
 
         let msg = self.to_string();
-        let level = match self {
-            SimError::Parse(_) | SimError::Elaborate(_) | SimError::Runtime(_) => DiagLevel::Error,
-            SimError::Preprocessor(_) => DiagLevel::Warning,
-            SimError::Waveform(_) => DiagLevel::Error,
-            SimError::Debugger(_) => DiagLevel::Error,
-            SimError::Io(_, _) => DiagLevel::Error,
-            SimError::Diagnostic(diag) => diag.level,
+        let (level, code) = match self {
+            SimError::Parse(_) => (DiagLevel::Error, Self::parse_code(&msg)),
+            SimError::Elaborate(_) => (DiagLevel::Error, DiagCode::SimulationError),
+            SimError::Runtime(_) => (DiagLevel::Error, DiagCode::SimulationError),
+            SimError::Preprocessor(_) => (DiagLevel::Error, DiagCode::PreprocessorError),
+            SimError::Waveform(_) => (DiagLevel::Error, DiagCode::WaveformError),
+            SimError::Debugger(_) => (DiagLevel::Error, DiagCode::DebuggerError),
+            SimError::Io(_, _) => (DiagLevel::Error, DiagCode::IoError),
+            SimError::Diagnostic(_) => unreachable!(), // caught by fast path above
         };
 
-        let code_str = self.error_code();
-        let code = crate::diagnostics::codes::lookup_code(code_str).unwrap_or(DiagCode::SimulationError);
-
-        // Jika ada format "[CODE] message", gunakan message tanpa prefix [CODE]
+        // Jika ada format "[CODE] message", extract code dan gunakan message bersih
         let clean_msg = if msg.starts_with('[') {
             if let Some(end) = msg.find(']') {
                 if end + 2 < msg.len() {
-                    msg[end + 2..].to_string()  // Skip "] "
+                    msg[end + 2..].to_string()
                 } else {
                     msg.clone()
                 }
@@ -191,9 +193,6 @@ impl SimError {
 
         // Try to reconstruct source snippet from flat string format like "file:line:col: message"
         if let (Some(file), Some(line), Some(col)) = Self::extract_location(&msg) {
-            // Try to extract the actual source line from the message
-            // The message might be something like "cpu_top.sv:182:17: interface is null"
-            // Extract the actual error message after the location prefix
             let parts: Vec<&str> = msg.splitn(4, ':').collect();
             let error_msg = if parts.len() >= 4 {
                 parts[3..].join(":").trim().to_string()
@@ -204,6 +203,9 @@ impl SimError {
             let snippet = SourceSnippet::new(file, line, col, error_msg);
             diag = diag.with_source_snippet(snippet);
         }
+
+        // Tambah explanation + help dari DiagCode untuk diagnostic yang kaya
+        diag = diag.with_code_context();
 
         diag
     }

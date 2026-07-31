@@ -852,6 +852,9 @@ impl<'a> FastLexer<'a> {
                             b'd' | b'D' => 10,
                             _ => 16,
                         };
+                        while self.pos < self.input.len() && self.input[self.pos].is_ascii_whitespace() {
+                            self.skip_byte();
+                        }
                         let mut value = String::new();
                         while self.pos < self.input.len() {
                             let c = self.input[self.pos];
@@ -886,6 +889,9 @@ impl<'a> FastLexer<'a> {
                                     b'd' | b'D' => 10,
                                     _ => 16,
                                 };
+                                while self.pos < self.input.len() && self.input[self.pos].is_ascii_whitespace() {
+                                    self.skip_byte();
+                                }
                                 let mut value = String::new();
                                 while self.pos < self.input.len() {
                                     let c = self.input[self.pos];

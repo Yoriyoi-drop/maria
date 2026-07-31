@@ -625,6 +625,8 @@ pub fn is_process_parallelizable(process: &Process) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::intern::Symbol;
+    use std::collections::HashMap;
 
     #[test]
     fn test_signal_access_analysis() {

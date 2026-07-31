@@ -78,10 +78,16 @@ pub struct CompileSession {
     pub lazy_elab: crate::hir::LazyElaborator,
     /// Cached designs from previous compile (incremental)
     prev_designs: HashMap<PathBuf, Design>,
+    /// Cached combined preprocessed source from previous compile (for source snippets in incremental)
+    prev_combined_sources: HashMap<PathBuf, String>,
     /// Cached checksums from previous compile
     prev_checksums: HashMap<PathBuf, u64>,
     /// Merged design from last compile (for lazy elaboration)
     merged_design: Option<Design>,
+    /// Merged preprocessed source from last compile (for source snippets)
+    pub merged_source: Option<String>,
+    /// Combined preprocessed source strings collected during parallel pass
+    combined_parts: std::sync::Mutex<Vec<(usize, String)>>,
     /// Cached elaborated IR design (lifetime: until next compile)
     cached_ir_design: Option<crate::ir::IrDesign>,
     /// Session-level incremental elaboration cache: signature → IrModule
@@ -131,8 +137,11 @@ impl CompileSession {
             profiler: None,
             lazy_elab: crate::hir::LazyElaborator::new(),
             prev_designs: HashMap::new(),
+            prev_combined_sources: HashMap::new(),
             prev_checksums: HashMap::new(),
             merged_design: None,
+            merged_source: None,
+            combined_parts: std::sync::Mutex::new(Vec::new()),
             cached_ir_design: None,
             cached_elab_modules: HashMap::new(),
         }
@@ -161,16 +170,30 @@ impl CompileSession {
         let cache = &self.cache;
         let use_fast_lexer = self.config.use_fast_lexer;
         let prev_designs = &self.prev_designs;
-
+        let prev_combined = &self.prev_combined_sources;
         let prev_checksums = &self.prev_checksums;
+
+        // Shared collection for combined source strings (indexed by file position)
+        let combined_parts = &self.combined_parts;
+        // Clear any previous parts
+        {
+            let mut parts = combined_parts.lock().unwrap();
+            parts.clear();
+        }
 
         let results: Vec<Result<(PathBuf, Design, u64), SimError>> = files
             .par_iter()
-            .map(|path| {
+            .enumerate()
+            .map(|(file_idx, path)| {
                 // ── Fast path: file unchanged, use cached design ──
                 if incremental && !changed_set.contains(path) {
                     if let Some(cached) = prev_designs.get(path) {
                         let cksum = prev_checksums.get(path).copied().unwrap_or(0);
+                        // Push cached combined source for this file
+                        if let Some(cached_combined) = prev_combined.get(path) {
+                            let mut parts = combined_parts.lock().unwrap();
+                            parts.push((file_idx, cached_combined.clone()));
+                        }
                         return Ok((path.clone(), cached.clone(), cksum));
                     }
                 }
@@ -189,6 +212,11 @@ impl CompileSession {
                     .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("preprocessor {}: {}", path_str, e)))?;
 
                 let combined = format!("`line 1 \"{}\"\n{}\n", path_str, preprocessed);
+                // Store combined source for later use (source snippets)
+                {
+                    let mut parts = combined_parts.lock().unwrap();
+                    parts.push((file_idx, combined.clone()));
+                }
                 let tokens = if use_fast_lexer {
                     let mut lexer = FastLexer::new(&combined, &path_str);
                     let mut toks = Vec::new();
@@ -217,6 +245,13 @@ impl CompileSession {
 
                 let mut parser = Parser::new(tokens, &path_str);
                 let design = parser.parse_design()?;
+                if std::env::var("MARIA_DEBUG_PARSE").is_ok() && !parser.errors.is_empty() {
+                    eprintln!("[DBG-PARSE] {} errors={}", path_str, parser.errors.len());
+                    for e in &parser.errors {
+                        eprintln!("  [DBG-PARSE] {:?}", e.message);
+                    }
+                    eprintln!("[DBG-PARSE] n_packages={} n_modules={}", design.packages.len(), design.modules.len());
+                }
 
                 Ok((path.clone(), design, cksum))
             })
@@ -326,6 +361,20 @@ impl CompileSession {
             self.prev_designs.insert(path.clone(), design.clone());
         }
 
+        // ── Phase 7: Rebuild merged source from collected combined strings ──
+        {
+            let mut parts = self.combined_parts.lock().unwrap();
+            parts.sort_by_key(|(idx, _)| *idx);
+            let merged_source: String = parts.iter().map(|(_, s)| s.clone()).collect();
+            self.merged_source = Some(merged_source);
+            // Store per-file combined sources for future incremental compiles
+            self.prev_combined_sources.clear();
+            for (path, combined) in paths.iter().zip(parts.iter()) {
+                self.prev_combined_sources.insert(path.clone(), combined.1.clone());
+            }
+            parts.clear();
+        }
+
         self.timing.index_ms = index_start.elapsed().as_millis() as u64;
         self.timing.total_ms = total_start.elapsed().as_millis() as u64;
 
@@ -344,6 +393,7 @@ impl CompileSession {
             // Remove from cache so they get re-processed
             self.prev_checksums.remove(path);
             self.prev_designs.remove(path);
+            self.prev_combined_sources.remove(path);
         }
 
         // Re-compile (will skip unchanged files automatically)
@@ -595,9 +645,11 @@ impl CompileSession {
         }
         self.prev_checksums.clear();
         self.prev_designs.clear();
+        self.prev_combined_sources.clear();
         self.cached_elab_modules.clear();
         self.cached_ir_design = None;
         self.merged_design = None;
+        self.merged_source = None;
     }
 
     /// Get cache statistics.
@@ -704,7 +756,14 @@ impl CompileSession {
         let (design, module_index) = self.compile()?;
         let index_len = module_index.len();
 
-        let mut elaborator = crate::elaboration::Elaborator::new(design.clone());
+        // Create elaborator with source info for rich diagnostics
+        let (source_lines, source_file) = self.source_info()
+            .unwrap_or_default();
+        let mut elaborator = if source_lines.is_empty() {
+            crate::elaboration::Elaborator::new(design.clone())
+        } else {
+            crate::elaboration::Elaborator::with_source(design.clone(), source_lines, source_file)
+        };
 
         // Prime with session-level cache from previous compile
         if !self.cached_elab_modules.is_empty() {
@@ -746,6 +805,19 @@ impl CompileSession {
     /// Get cached IR design (if previously elaborated).
     pub fn get_cached_ir(&self) -> Option<&crate::ir::IrDesign> {
         self.cached_ir_design.as_ref()
+    }
+
+    /// Get merged source info: (source_lines, first_source_file)
+    /// Returns None if merged_source hasn't been populated (e.g., before first compile).
+    pub fn source_info(&self) -> Option<(Vec<String>, String)> {
+        self.merged_source.as_ref().map(|src| {
+            let lines: Vec<String> = src.lines().map(|l| l.to_string()).collect();
+            // Extract first source file from the `line directive
+            let first_source = self.config.sources.first()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            (lines, first_source)
+        })
     }
 }
 

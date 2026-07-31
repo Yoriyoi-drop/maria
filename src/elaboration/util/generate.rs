@@ -23,12 +23,80 @@ use crate::intern::Symbol;
 
 use super::loop_unroll::{substitute_loop_var_in_expr, substitute_loop_var_in_stmt};
 
+/// Structured error untuk elaboration/generate expansion dengan source location.
+#[derive(Debug, Clone)]
+pub struct ElabError {
+    pub msg: String,
+    pub line: usize,
+    pub col: usize,
+}
+
+impl ElabError {
+    pub fn new(msg: impl Into<String>, line: usize, col: usize) -> Self {
+        ElabError { msg: msg.into(), line, col }
+    }
+}
+
+impl std::fmt::Display for ElabError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.msg)
+    }
+}
+
+impl std::error::Error for ElabError {}
+
+impl From<ElabError> for crate::error::SimError {
+    fn from(e: ElabError) -> Self {
+        let msg = if e.line > 0 {
+            format!("{} (at line {}:{})", e.msg, e.line, e.col)
+        } else {
+            e.msg
+        };
+        let diag = crate::diagnostics::diagnostic::Diagnostic::error(
+            crate::diagnostics::diagnostic::DiagCode::InvalidSyntax,
+            msg,
+        )
+        .with_code_context();
+        crate::error::SimError::Diagnostic(diag)
+    }
+}
+
+/// Extract the best available source location from an expression.
+fn expr_location(expr: &Expr) -> (usize, usize) {
+    match expr {
+        Expr::Ident { line, col, .. } => (*line, *col),
+        Expr::Value(_) | Expr::FillLit(_) | Expr::String(_) | Expr::Null => (0, 0),
+        Expr::FuncCall { args, .. }
+        | Expr::MethodCall { args, .. } => {
+            args.first().map(|a| expr_location(a)).unwrap_or((0, 0))
+        }
+        Expr::UnaryOp { expr: inner, .. }
+        | Expr::Paren(inner)
+        | Expr::BitSelect { expr: inner, .. }
+        | Expr::Cast { expr: inner, .. }
+        | Expr::Dist { expr: inner, .. } => expr_location(inner),
+        Expr::BinaryOp { lhs, rhs, .. } => {
+            let (ll, lc) = expr_location(lhs);
+            if ll > 0 || lc > 0 { (ll, lc) } else { expr_location(rhs) }
+        }
+        Expr::RangeSelect { expr: lhs, .. }
+        | Expr::PartSelect { expr: lhs, .. } => expr_location(lhs),
+        Expr::TernaryOp { cond, .. } => expr_location(cond),
+        Expr::Inside { expr: inner, .. } => expr_location(inner),
+        Expr::Concat(items) | Expr::StreamingConcat { slices: items, .. } => {
+            items.first().map(|i| expr_location(i)).unwrap_or((0, 0))
+        }
+        Expr::Replicate { expr: inner, .. } => expr_location(inner),
+        Expr::ScopedIdent { .. } | Expr::MemberAccess { .. } => (0, 0),
+    }
+}
+
 /// Perluas SEMUA generate block di module dengan nilai parameter tertentu.
 pub fn expand_all_generates(
     module: &mut Module,
     param_vals: &HashMap<Symbol, i64>,
     diag_sink: &DiagSink,
-) -> Result<(), String> {
+) -> Result<(), ElabError> {
     let mut i = 0;
     let mut total_items = 0usize;
     while i < module.items.len() {
@@ -36,8 +104,9 @@ pub fn expand_all_generates(
             let expanded = expand_generate_block(gen, param_vals, diag_sink)?;
             total_items += expanded.len();
             if total_items > MAX_GENERATED_ITEMS {
-                return Err(format!(
-                    "generate expansion exceeded limit ({} items)", MAX_GENERATED_ITEMS
+                return Err(ElabError::new(
+                    format!("generate expansion exceeded limit ({} items)", MAX_GENERATED_ITEMS),
+                    0, 0
                 ));
             }
             for item in &expanded {
@@ -78,7 +147,7 @@ pub fn expand_generate_block(
     gen: &GenerateBlock,
     param_vals: &HashMap<Symbol, i64>,
     diag_sink: &DiagSink,
-) -> Result<Vec<ModuleItem>, String> {
+) -> Result<Vec<ModuleItem>, ElabError> {
     let mut result = Vec::new();
     for item in &gen.items {
         match item {
@@ -87,19 +156,16 @@ pub fn expand_generate_block(
                 true_items,
                 false_items,
             } => {
+                let (cond_line, cond_col) = expr_location(cond);
                 let eval_result = const_eval_with_params(cond, param_vals);
                 match eval_result {
                     Ok(val) => {
                         let branch = if val != 0 { true_items } else { false_items };
-                        for item in branch {
-                            result.push(item.clone());
-                        }
+                        result.extend(expand_item_list(branch, param_vals, diag_sink)?);
                     }
                     Err(_) => {
                         diag_sink.push(Diagnostic::new(DiagLevel::Warning, DiagCode::NotImplemented, "non-constant condition in generate if, taking true branch"));
-                        for item in true_items {
-                            result.push(item.clone());
-                        }
+                        result.extend(expand_item_list(true_items, param_vals, diag_sink)?);
                     }
                 }
             }
@@ -110,25 +176,47 @@ pub fn expand_generate_block(
                 step,
                 body_items,
             } => {
+                let (init_line, init_col) = init.as_ref()
+                    .and_then(|s| match s { Stmt::BlockingAssign { rhs, .. } => Some(expr_location(rhs)), _ => None })
+                    .unwrap_or((0, 0));
                 let start_val: i64 = match init {
                     Some(Stmt::BlockingAssign { rhs, .. }) => {
-                        const_eval_with_params(rhs, param_vals)?
+                        const_eval_with_params(rhs, param_vals)
+                            .map_err(|e| ElabError::new(format!("generate for init eval failed: {}", e), init_line, init_col))?
                     }
                     _ => 0,
                 };
+                let (lim_line, lim_col) = cond.as_ref().map(|c| expr_location(c)).unwrap_or((0, 0));
                 let limit: i64 = match cond {
                     Some(Expr::BinaryOp {
                         op: BinaryOp::Lt,
                         rhs,
                         ..
-                    }) => const_eval_with_params(rhs, param_vals)?,
+                    }) => {
+                        let (rhs_line, rhs_col) = expr_location(rhs);
+                        let loc_line = if rhs_line > 0 { rhs_line } else { lim_line };
+                        let loc_col = if rhs_col > 0 { rhs_col } else { lim_col };
+                        const_eval_with_params(rhs, param_vals)
+                            .map_err(|e| ElabError::new(format!("generate for limit eval failed: {}", e), loc_line, loc_col))?
+                    },
                     Some(Expr::BinaryOp {
                         op: BinaryOp::Le,
                         rhs,
                         ..
-                    }) => const_eval_with_params(rhs, param_vals)? + 1,
+                    }) => {
+                        let (rhs_line, rhs_col) = expr_location(rhs);
+                        let loc_line = if rhs_line > 0 { rhs_line } else { lim_line };
+                        let loc_col = if rhs_col > 0 { rhs_col } else { lim_col };
+                        const_eval_with_params(rhs, param_vals)
+                            .map_err(|e| ElabError::new(format!("generate for limit eval failed: {}", e), loc_line, loc_col))? + 1
+                    },
                     Some(c) => {
-                        if const_eval_with_params(c, param_vals)? != 0 {
+                        let (c_line, c_col) = expr_location(c);
+                        let loc_line = if c_line > 0 { c_line } else { lim_line };
+                        let loc_col = if c_col > 0 { c_col } else { lim_col };
+                        if const_eval_with_params(c, param_vals)
+                            .map_err(|e| ElabError::new(format!("generate for condition eval failed: {}", e), loc_line, loc_col))? != 0
+                        {
                             1
                         } else {
                             0
@@ -143,16 +231,17 @@ pub fn expand_generate_block(
                     let mut iter = 0usize;
                     while cur < limit {
                         if iter >= max_iter {
-                            return Err(format!(
-                                "generate for loop exceeded {} iterations (possible O(2^N) blowup)",
-                                max_iter
+                            return Err(ElabError::new(
+                                format!("generate for loop exceeded {} iterations (possible O(2^N) blowup)", max_iter),
+                                lim_line, lim_col
                             ));
                         }
                         iter += 1;
-                        for mut item in body_items.clone() {
-                            substitute_genvar_in_module_item(&mut item, var.as_str(), cur);
-                            result.push(item);
+                        let mut substituted: Vec<ModuleItem> = body_items.clone();
+                        for item in &mut substituted {
+                            substitute_genvar_in_module_item(item, var.as_str(), cur);
                         }
+                        result.extend(expand_item_list(&substituted, param_vals, diag_sink)?);
                         cur += step_val;
                     }
                 } else if step_val < 0 {
@@ -160,16 +249,17 @@ pub fn expand_generate_block(
                     let mut iter = 0usize;
                     while cur > limit {
                         if iter >= max_iter {
-                            return Err(format!(
-                                "generate for loop exceeded {} iterations (possible O(2^N) blowup)",
-                                max_iter
+                            return Err(ElabError::new(
+                                format!("generate for loop exceeded {} iterations (possible O(2^N) blowup)", max_iter),
+                                lim_line, lim_col
                             ));
                         }
                         iter += 1;
-                        for mut item in body_items.clone() {
-                            substitute_genvar_in_module_item(&mut item, var.as_str(), cur);
-                            result.push(item);
+                        let mut substituted: Vec<ModuleItem> = body_items.clone();
+                        for item in &mut substituted {
+                            substitute_genvar_in_module_item(item, var.as_str(), cur);
                         }
+                        result.extend(expand_item_list(&substituted, param_vals, diag_sink)?);
                         cur += step_val;
                     }
                 }
@@ -180,18 +270,15 @@ pub fn expand_generate_block(
                 default,
                 ..
             } => {
+                let (case_line, case_col) = expr_location(expr);
                 let case_val = match const_eval_with_params(expr, param_vals) {
                     Ok(v) => v,
                     Err(_) => {
-                        diag_sink.push(Diagnostic::new(DiagLevel::Warning, DiagCode::NotImplemented, "non-constant expression in generate case, taking first case"));
+                        diag_sink.push(Diagnostic::new(DiagLevel::Warning, DiagCode::NotImplemented, format!("non-constant expression in generate case at line {}:{}, taking first case", case_line, case_col)));
                         if let Some(first) = items.first() {
-                            for item in &first.body {
-                                result.push(item.clone());
-                            }
+                            result.extend(expand_item_list(&first.body, param_vals, diag_sink)?);
                         } else if let Some(default_items) = default {
-                            for item in default_items {
-                                result.push(item.clone());
-                            }
+                            result.extend(expand_item_list(default_items, param_vals, diag_sink)?);
                         }
                         continue;
                     }
@@ -199,11 +286,11 @@ pub fn expand_generate_block(
                 let mut matched = false;
                 for ci in items {
                     for label in &ci.labels {
-                        let label_val = const_eval_with_params(label, param_vals)?;
+                        let (lab_line, lab_col) = expr_location(label);
+                        let label_val = const_eval_with_params(label, param_vals)
+                            .map_err(|e| ElabError::new(format!("generate case label eval failed: {}", e), lab_line, lab_col))?;
                         if label_val == case_val {
-                            for item in &ci.body {
-                                result.push(item.clone());
-                            }
+                            result.extend(expand_item_list(&ci.body, param_vals, diag_sink)?);
                             matched = true;
                             break;
                         }
@@ -214,17 +301,45 @@ pub fn expand_generate_block(
                 }
                 if !matched {
                     if let Some(default_items) = default {
-                        for item in default_items {
-                            result.push(item.clone());
-                        }
+                        result.extend(expand_item_list(default_items, param_vals, diag_sink)?);
                     }
                 }
             }
             GenerateItem::Items(items) => {
-                for item in items {
-                    result.push(item.clone());
+                result.extend(expand_item_list(items, param_vals, diag_sink)?);
+            }
+        }
+    }
+    Ok(result)
+}
+
+/// Perluas daftar module items: evaluasi localparam yang didefinisikan di dalamnya
+/// (dipakai oleh generate sibling), lalu perluas generate block bersarang secara
+/// rekursif dengan param context yang diperpanjang.
+fn expand_item_list(
+    items: &[ModuleItem],
+    param_vals: &HashMap<Symbol, i64>,
+    diag_sink: &DiagSink,
+) -> Result<Vec<ModuleItem>, ElabError> {
+    let mut extended = param_vals.clone();
+    for item in items {
+        if let ModuleItem::Param(p) = item {
+            if !extended.contains_key(&p.name) {
+                if let Some(e) = &p.default {
+                    if let Ok(v) = const_eval_with_params(e, &extended) {
+                        extended.insert(p.name.clone(), v);
+                    }
                 }
             }
+        }
+    }
+    let mut result = Vec::new();
+    for item in items {
+        match item {
+            ModuleItem::Generate(gen) => {
+                result.extend(expand_generate_block(gen, &extended, diag_sink)?);
+            }
+            other => result.push(other.clone()),
         }
     }
     Ok(result)

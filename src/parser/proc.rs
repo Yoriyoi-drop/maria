@@ -233,6 +233,7 @@ impl Parser {
         } else {
             None
         };
+        self.skip_extra_packed_dims()?;
         let name_tok = self.peek().clone();
         let name = match &name_tok {
             Token::Ident(n) => {
@@ -326,6 +327,7 @@ impl Parser {
                 } else {
                     None
                 };
+                self.skip_extra_packed_dims()?;
                 // Parse port name(s)
                 loop {
                     match self.peek() {
@@ -762,7 +764,7 @@ impl Parser {
                     return Ok(GenerateBlock { items });
                 }
                 Token::Eof => {
-                    return Err(SimError::parse("line {}: unexpected EOF in generate block"));
+                    return Err(self.err("unexpected EOF in generate block"));
                 }
                 _ => {
                     let item = self.parse_generate_item()?;

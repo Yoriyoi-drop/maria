@@ -82,7 +82,7 @@ impl Parser {
             Token::Assume => { self.advance(); "assume" }
             Token::Cover => { self.advance(); "cover" }
             Token::Expect => { self.advance(); "expect" }
-            _ => return Err(SimError::parse("expected assert/assume/cover/expect")),
+            _ => return Err(self.err("expected assert/assume/cover/expect")),
         };
         if self.peek() == &Token::Property {
             self.advance();
@@ -107,7 +107,7 @@ impl Parser {
                 self.advance();
                 match self.peek() {
                     Token::Ident(s) if s == "iff" => { self.advance(); }
-                    _ => return Err(SimError::parse("expected 'iff' after 'disable'")),
+                    _ => return Err(self.err("expected 'iff' after 'disable'")),
                 }
                 self.expect(Token::LParen)?;
                 let expr = self.parse_expr(0)?;
@@ -472,7 +472,7 @@ impl Parser {
                 self.skip_semi();
                 if let Expr::Ident { .. } = &expr {
                     Ok(Stmt::Release { expr })
-                } else { Err(SimError::parse("expected signal name after release")) }
+                } else { Err(self.err("expected signal name after release")) }
             }
             Token::Deassign => {
                 self.advance();

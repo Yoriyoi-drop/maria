@@ -1,5 +1,5 @@
 use super::SimulationEngine;
-use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, RuntimeContext};
+use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, RuntimeContext, SourceSnippet};
 use crate::error::SimError;
 use crate::ir::*;
 use crate::mir::*;
@@ -170,20 +170,49 @@ impl SimulationEngine {
 
     /// Emit error diagnostic ke DiagSink dan return SimError dengan full context.
     pub fn diag_error(&self, code: DiagCode, message: impl Into<String>) -> SimError {
+        self.diag_error_at(code, message, 0, 0)
+    }
+
+    /// Emit error diagnostic dengan posisi source (line, col).
+    pub fn diag_error_at(&self, code: DiagCode, message: impl Into<String>, line: usize, col: usize) -> SimError {
         let msg: String = message.into();
-        let diag = Diagnostic::new(DiagLevel::Error, code, msg.clone())
+        let mut diag = Diagnostic::new(DiagLevel::Error, code, msg)
             .with_runtime_context(self.runtime_context())
             .with_code_context();
+        // Add source snippet if source lines are available
+        if line > 0 {
+            if let Some(ref source_lines) = self.design.source_lines {
+                if line <= source_lines.len() {
+                    let source_line = &source_lines[line - 1];
+                    let file = self.design.source_file.as_deref().unwrap_or("<unknown>");
+                    diag = diag.with_source_snippet(SourceSnippet::new(file, line, col, source_line));
+                }
+            }
+        }
         self.diag_sink.push(diag.clone());
         SimError::Diagnostic(diag)
     }
 
     /// Emit fatal diagnostic ke DiagSink dan return SimError dengan full context.
     pub fn diag_fatal(&self, code: DiagCode, message: impl Into<String>) -> SimError {
+        self.diag_fatal_at(code, message, 0, 0)
+    }
+
+    /// Emit fatal diagnostic dengan posisi source.
+    pub fn diag_fatal_at(&self, code: DiagCode, message: impl Into<String>, line: usize, col: usize) -> SimError {
         let msg: String = message.into();
-        let diag = Diagnostic::new(DiagLevel::Fatal, code, msg.clone())
+        let mut diag = Diagnostic::new(DiagLevel::Fatal, code, msg)
             .with_runtime_context(self.runtime_context())
             .with_code_context();
+        if line > 0 {
+            if let Some(ref source_lines) = self.design.source_lines {
+                if line <= source_lines.len() {
+                    let source_line = &source_lines[line - 1];
+                    let file = self.design.source_file.as_deref().unwrap_or("<unknown>");
+                    diag = diag.with_source_snippet(SourceSnippet::new(file, line, col, source_line));
+                }
+            }
+        }
         self.diag_sink.push(diag.clone());
         SimError::Diagnostic(diag)
     }

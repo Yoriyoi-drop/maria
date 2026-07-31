@@ -358,6 +358,7 @@ pub fn const_eval_with_params(
             }
         }
         Expr::Paren(inner) => const_eval_with_params(inner, param_vals),
+        Expr::Cast { expr: inner, .. } => const_eval_with_params(inner, param_vals),
         Expr::ScopedIdent { package, item } => {
             let qualified = Symbol::intern(&format!("{}::{}", package, item));
             if let Some(&val) = param_vals.get(&qualified) {
@@ -418,6 +419,24 @@ pub fn const_eval_with_params(
             } else {
                 Ok(0)
             }
+        }
+        // OpenTitan prim_util_pkg::vbits(value) = (value == 1) ? 1 : $clog2(value)
+        Expr::FuncCall { name, args } if name == "vbits" => {
+            let v = const_eval_with_params(args.first().ok_or("vbits needs 1 arg")?, param_vals)?;
+            Ok(if v == 1 { 1 } else {
+                let n = v as u64;
+                let msb = (64 - n.leading_zeros()) as i64;
+                if n.is_power_of_two() { msb - 1 } else { msb }
+            })
+        }
+        // OpenTitan prim_util_pkg::ceil_div(a, b) = ceiling division
+        Expr::FuncCall { name, args } if name == "ceil_div" => {
+            let a = const_eval_with_params(args.first().ok_or("ceil_div needs 2 args")?, param_vals)?;
+            let b = const_eval_with_params(args.get(1).ok_or("ceil_div needs 2 args")?, param_vals)?;
+            if b == 0 {
+                return Err("division by zero in ceil_div".to_string());
+            }
+            Ok(if a % b != 0 { a / b + 1 } else { a / b })
         }
         Expr::FuncCall { name, args } if name == "$bits" || name == "$size" => {
             if let Some(arg) = args.first() {

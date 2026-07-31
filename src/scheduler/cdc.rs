@@ -324,7 +324,7 @@ impl CdcAnalysis {
         // For signals written by multiple domains, assign to the one that writes most often.
         let mut signal_owner_counts: HashMap<(SignalId, usize), usize> = HashMap::new();
 
-        for (pid, process) in processes.iter().enumerate() {
+        for (_pid, process) in processes.iter().enumerate() {
             if let Process::Sequential { .. } = process {
                 let clock_sig = get_clock_signal_id(process).unwrap_or(0);
                 if let Some(&domain_id) = clock_to_domain.get(&clock_sig) {
@@ -867,6 +867,7 @@ fn collect_expr_signal_ids(expr: &IrExpr, ids: &mut HashSet<SignalId>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::intern::Symbol;
     use crate::scheduler::clock_domain::ClockEdgeType;
 
     /// Helper to create a default SignalInfo with just a name.

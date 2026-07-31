@@ -75,7 +75,7 @@ impl Parser {
                 if self.peek() == &Token::Unsigned { self.advance(); }
                 let decl_expr_range = if self.peek() == &Token::LBrack { self.parse_range()? } else { None };
                 let mut extra_packed: Vec<(ExprRange, Option<Range>)> = Vec::new();
-                while self.peek() == &Token::LBrack && self.peek_ahead(1) == &Token::Colon {
+                while self.peek_is_packed_dim() {
                     if let Some(er) = self.parse_range()? {
                         extra_packed.push((er, None));
                     }
@@ -111,7 +111,7 @@ impl Parser {
                 };
                 let members = self.parse_enum_members()?;
                 let mut extra_packed: Vec<(ExprRange, Option<Range>)> = Vec::new();
-                while self.peek() == &Token::LBrack && self.peek_ahead(1) == &Token::Colon {
+                while self.peek_is_packed_dim() {
                     if let Some(er) = self.parse_range()? {
                         extra_packed.push((er, None));
                     }
@@ -181,7 +181,7 @@ impl Parser {
                     None
                 };
                 let mut extra_packed: Vec<(ExprRange, Option<Range>)> = Vec::new();
-                while self.peek() == &Token::LBrack && self.peek_ahead(1) == &Token::Colon {
+                while self.peek_is_packed_dim() {
                     if let Some(er) = self.parse_range()? {
                         extra_packed.push((er, None));
                     }
@@ -233,7 +233,7 @@ impl Parser {
         let effective_dtype = scoped_dtype.unwrap_or(dtype);
 
         let mut extra_packed: Vec<(ExprRange, Option<Range>)> = Vec::new();
-        while self.peek() == &Token::LBrack && self.peek_ahead(1) == &Token::Colon {
+        while self.peek_is_packed_dim() {
             if let Some(er) = self.parse_range()? {
                 extra_packed.push((er, None));
             }
@@ -623,6 +623,7 @@ impl Parser {
             } else {
                 None
             };
+            self.skip_extra_packed_dims()?;
             let name = self.expect_ident()?;
             self.skip_semi();
             members.push(StructMember {
@@ -668,6 +669,24 @@ impl Parser {
                         }
                         Some(Box::new(dt))
                     }
+                    // User-defined base type: typedef enum lc_state_t {...} or
+                    // typedef enum pkg::type {...}
+                    Token::Ident(name) => {
+                        let name = name.clone();
+                        self.advance();
+                        let dtype = if self.peek() == &Token::Scope {
+                            self.advance();
+                            let type_name = self.expect_ident()?;
+                            DataType::UserDefined(Symbol::intern(&format!(
+                                "{}::{}",
+                                name,
+                                type_name
+                            )))
+                        } else {
+                            DataType::UserDefined(name)
+                        };
+                        Some(Box::new(dtype))
+                    }
                     _ => None,
                 };
                 if base.is_some() && self.peek() == &Token::LBrack {
@@ -697,6 +716,7 @@ impl Parser {
                 } else {
                     None
                 };
+                self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
@@ -720,6 +740,7 @@ impl Parser {
                 } else {
                     None
                 };
+                self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
@@ -743,6 +764,7 @@ impl Parser {
                 } else {
                     None
                 };
+                self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
@@ -766,6 +788,7 @@ impl Parser {
                 } else {
                     None
                 };
+                self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
@@ -781,6 +804,7 @@ impl Parser {
                 } else {
                     None
                 };
+                self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
@@ -804,6 +828,7 @@ impl Parser {
                 } else {
                     None
                 };
+                self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
@@ -827,6 +852,7 @@ impl Parser {
                 } else {
                     None
                 };
+                self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
@@ -850,6 +876,7 @@ impl Parser {
                 } else {
                     None
                 };
+                self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
@@ -866,6 +893,7 @@ impl Parser {
                 } else {
                     None
                 };
+                self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = name.clone();
                     self.advance();
@@ -900,6 +928,37 @@ impl Parser {
                     (name, DataType::UnionType { members }, None)
                 } else {
                     return Err(self.err("expected name after typedef union"));
+                }
+            }
+            // User-defined base type: typedef some_type_t name; or
+            // typedef some_type_t [range] name; or typedef pkg::type name;
+            Token::Ident(_) => {
+                let type_name = self.expect_ident()?;
+                let mut dtype = DataType::UserDefined(type_name);
+                if self.peek() == &Token::Scope {
+                    self.advance();
+                    let t = self.expect_ident()?;
+                    dtype = DataType::UserDefined(Symbol::intern(&format!(
+                        "{}::{}",
+                        match &dtype {
+                            DataType::UserDefined(s) => s.as_str(),
+                            _ => "",
+                        },
+                        t
+                    )));
+                }
+                let range = if self.peek() == &Token::LBrack {
+                    self.parse_range()?
+                } else {
+                    None
+                };
+                self.skip_extra_packed_dims()?;
+                if let Token::Ident(name) = self.peek() {
+                    let name = name.clone();
+                    self.advance();
+                    (name, dtype, range)
+                } else {
+                    return Err(self.err("expected name after typedef type"));
                 }
             }
             _ => {
@@ -1105,6 +1164,40 @@ impl Parser {
         let lsb = self.parse_expr(0)?;
         self.expect(Token::RBrack)?;
         Ok(Some(ExprRange { msb, lsb }))
+    }
+
+    /// Skip packed dimensions tambahan `[msb:lsb][msb:lsb]...` setelah range pertama.
+    /// Dipakai di typedef agar `typedef logic [W-1:0][N-1:0] name;` tidak gagal parse.
+    pub(crate) fn skip_extra_packed_dims(&mut self) -> Result<(), SimError> {
+        while self.peek() == &Token::LBrack {
+            self.parse_range()?;
+        }
+        Ok(())
+    }
+
+    /// True jika token saat ini adalah packed dimension `[msb:lsb]` (bukan
+    /// unpacked `[N]`, dynamic `[$]`, atau associative `[int]`).
+    pub(crate) fn peek_is_packed_dim(&self) -> bool {
+        if self.peek() != &Token::LBrack {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut i = 0usize;
+        loop {
+            match self.peek_ahead(i) {
+                Token::LBrack => depth += 1,
+                Token::RBrack => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return false;
+                    }
+                }
+                Token::Colon if depth == 1 => return true,
+                Token::Eof => return false,
+                _ => {}
+            }
+            i += 1;
+        }
     }
 
 }

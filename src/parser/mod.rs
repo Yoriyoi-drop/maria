@@ -1060,6 +1060,12 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                         dtype = Some(DataType::Signed(Box::new(DataType::Int)));
                     }
                 }
+                if self.peek() == &Token::Unsigned {
+                    self.advance();
+                    if dtype.is_none() {
+                        dtype = Some(DataType::Int);
+                    }
+                }
                 let mut range = None;
                 if self.peek() == &Token::LBrack {
                     self.advance();

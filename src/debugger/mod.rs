@@ -1,3 +1,4 @@
+use crate::diagnostics::DiagCode;
 use crate::error::SimError;
 use crate::intern::Symbol;
 use crate::ir::*;
@@ -293,7 +294,7 @@ impl Debugger {
             self.engine.step_mode = StepMode::Paused;
             Ok(())
         } else {
-            Err(SimError::debugger("no snapshot available for reverse step"))
+            Err(SimError::with_diag(DiagCode::DebuggerError, "no snapshot available for reverse step"))
         }
     }
 
@@ -311,7 +312,7 @@ impl Debugger {
             }
             self.engine.snapshots.pop();
         }
-        Err(SimError::debugger(format!(
+        Err(SimError::with_diag(DiagCode::DebuggerError, format!(
             "no snapshot at or before time {}",
             target_time
         )))

@@ -118,6 +118,13 @@ pub const RUNTIME_INTERNAL_ERRORS: &[(DiagCode, &str)] = &[
     (DiagCode::NotImplemented, "not yet implemented"),
 ];
 
+/// All infrastructure error codes (E0xxx)
+pub const INFRASTRUCTURE_ERRORS: &[(DiagCode, &str)] = &[
+    (DiagCode::PreprocessorError, "preprocessor error"),
+    (DiagCode::DebuggerError, "debugger error"),
+    (DiagCode::IoError, "I/O error"),
+];
+
 /// All legacy runtime error codes (E9xxx)
 pub const LEGACY_RUNTIME_ERRORS: &[(DiagCode, &str)] = &[
     (DiagCode::SimulationError, "simulation error"),
@@ -158,6 +165,7 @@ pub fn all_codes() -> Vec<(DiagCode, &'static str)> {
         .chain(RUNTIME_DPI_ERRORS.iter())
         .chain(RUNTIME_INTERNAL_ERRORS.iter())
         .chain(LEGACY_RUNTIME_ERRORS.iter())
+        .chain(INFRASTRUCTURE_ERRORS.iter())
         .chain(OTHER_CODES.iter())
         .chain(WARNING_CODES.iter())
         .cloned()
@@ -192,7 +200,7 @@ mod tests {
         // Parse: 5, Semantic: 4, Elab: 4, Memory: 5, Signal: 5, Scheduler: 5,
         // Event: 3, Module: 2, Interface: 2, Clock: 2, Assertion: 4, DPI: 3,
         // Internal: 3, Other: 1, Legacy: 3, Warnings: 7 = 58 total
-        assert_eq!(codes.len(), 58);
+        assert_eq!(codes.len(), 61);
     }
 
     #[test]

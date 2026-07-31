@@ -19,6 +19,10 @@ pub struct IrDesign {
     pub timescale: Option<(String, String)>,
     /// Module-level recursive function declarations — kept for runtime evaluation (not inlined)
     pub module_functions: HashMap<Symbol, crate::ast::types::FunctionDecl>,
+    /// Preprocessed source lines for rich diagnostics (used by SimulationEngine)
+    pub source_lines: Option<Vec<String>>,
+    /// First source file path (for source snippets)
+    pub source_file: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

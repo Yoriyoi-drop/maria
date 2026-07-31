@@ -44,7 +44,18 @@ pub fn resolve_param_values_fn(
     module: &Module,
     instance_overrides: &HashMap<Symbol, i64>,
 ) -> Result<HashMap<Symbol, i64>, String> {
-    let mut vals = HashMap::new();
+    resolve_param_values_with_ctx(module, instance_overrides, &HashMap::new())
+}
+
+/// Resolusi nilai parameter module dengan context awal (package params dari import).
+/// `base_ctx` berisi nilai yang sudah diketahui sebelumnya (misal parameter package
+/// yang di-import ke module) dan dijadikan fallback saat mengevaluasi default param.
+pub fn resolve_param_values_with_ctx(
+    module: &Module,
+    instance_overrides: &HashMap<Symbol, i64>,
+    base_ctx: &HashMap<Symbol, i64>,
+) -> Result<HashMap<Symbol, i64>, String> {
+    let mut vals = base_ctx.clone();
     let mut positional_overrides: Vec<i64> = Vec::new();
     for (name, val) in instance_overrides {
         if name.starts_with("__param") {

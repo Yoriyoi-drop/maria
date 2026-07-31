@@ -30,7 +30,7 @@ impl Parser {
                     }
                     break;
                 }
-                Token::Eof => return Err(SimError::parse("unexpected EOF in package")),
+                Token::Eof => return Err(self.err("unexpected EOF in package")),
                 _ => {
                     match self.peek() {
                         Token::Param | Token::Parameter | Token::LocalParam => {
@@ -121,11 +121,22 @@ impl Parser {
                                         ahead,
                                         Token::Ident(_)
                                             | Token::LBrack
+                                            | Token::Scope
                                             | Token::Signed
                                             | Token::Unsigned
                                     ) {
-                                        type_ident = Some(s.clone());
+                                        let s_owned = *s;
                                         self.advance();
+                                        type_ident = Some(s_owned);
+                                        // Scoped type: pkg::type
+                                        if self.peek() == &Token::Scope {
+                                            self.advance();
+                                            let type_name = self.expect_ident()?;
+                                            type_ident = Some(Symbol::intern(&format!(
+                                                "{}::{}",
+                                                s_owned, type_name
+                                            )));
+                                        }
                                     }
                                 }
                             }

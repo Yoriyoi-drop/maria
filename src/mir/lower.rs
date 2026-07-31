@@ -426,7 +426,6 @@ fn lower_expr(
             instrs.push(MirInstr::Label(then_label));
             lower_expr(then, instrs, mir, dest);
 
-            let else_start = instrs.len() + 1;
             let else_label = generate_label(instrs);
             let end_label = generate_label(instrs);
             instrs.push(MirInstr::Jump { label: end_label });
@@ -459,7 +458,7 @@ fn lower_expr(
             });
         }
 
-        HirExpr::PartSelect { base, msb, lsb, width } => {
+        HirExpr::PartSelect { base, msb: _msb, lsb, width } => {
             // base[msb:lsb]
             let base_reg = alloc_temp(mir);
             let lsb_reg = alloc_temp(mir);

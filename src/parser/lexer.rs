@@ -1206,6 +1206,13 @@ impl Lexer {
                             'd' | 'D' => 10,
                             _ => 16,
                         };
+                        while let Some(c) = self.peek() {
+                            if c.is_ascii_whitespace() {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
                         let mut value = String::new();
                         while let Some(c) = self.peek() {
                             if c.is_ascii_alphanumeric()
@@ -1239,6 +1246,13 @@ impl Lexer {
                                     'd' | 'D' => 10,
                                     _ => 16,
                                 };
+                                while let Some(c) = self.peek() {
+                                    if c.is_ascii_whitespace() {
+                                        self.advance();
+                                    } else {
+                                        break;
+                                    }
+                                }
                                 let mut value = String::new();
                                 while let Some(c) = self.peek() {
                                     if c.is_ascii_alphanumeric()

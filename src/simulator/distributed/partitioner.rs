@@ -311,6 +311,8 @@ impl DesignPartitioner {
             udp_defs: Vec::new(),
             dpi_imports: Vec::new(),
             specify_items: Vec::new(),
+            source_lines: None,
+            source_file: None,
         }
     }
 

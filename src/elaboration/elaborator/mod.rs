@@ -348,12 +348,19 @@ _ => {}
         }
 
         // Expand generates in all modules (with resolved params)
-        // Use index-based iteration to avoid borrow conflicts
         for i in 0..self.design.modules.len() {
-            let param_vals = resolve_param_values_fn(&self.design.modules[i], &HashMap::new())?;
-            if let Some(module) = self.design.modules.get_mut(i) {
+            let ctx = self.collect_package_param_ctx(&self.design.modules[i]);
+            let param_vals =
+                resolve_param_values_with_ctx(&self.design.modules[i], &HashMap::new(), &ctx)?;
+            let module_name = self.design.modules[i].name;
+            self.current_module = Some(module_name);
+            // Process generate expansion in isolated block to release mutable borrow before elab_diag_at
+            let gen_result = {
+                let module = &mut self.design.modules[i];
                 expand_all_generates(module, &param_vals, &self.diag_sink)
-                    .map_err(|e| self.elab_diag(crate::diagnostics::diagnostic::DiagCode::ModuleNotFound, format!("generate expansion failed: {}", e)))?;
+            };
+            if let Err(e) = gen_result {
+                return Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!("generate expansion failed in '{}': {}", module_name, e.msg), e.line, e.col));
             }
         }
 
@@ -841,6 +848,16 @@ _ => {}
             specify_items,
             timescale: self.design.timescale.clone(),
             module_functions,
+            source_lines: if self.source_lines.is_empty() {
+                None
+            } else {
+                Some(self.source_lines.clone())
+            },
+            source_file: if self.source_file.is_empty() {
+                None
+            } else {
+                Some(self.source_file.clone())
+            },
         })
     }
 
@@ -956,12 +973,189 @@ _ => {}
         module: &Module,
         instance_overrides: &HashMap<Symbol, i64>,
     ) -> Result<HashMap<Symbol, i64>, SimError> {
-        resolve_param_values_fn(module, instance_overrides).map_err(|e| self.elab_diag(DiagCode::ParamMismatch, e))
+        let ctx = self.collect_package_param_ctx(module);
+        resolve_param_values_with_ctx(module, instance_overrides, &ctx)
+            .map_err(|e| self.elab_diag(DiagCode::ParamMismatch, e))
+    }
+
+    /// Kumpulkan nilai parameter package yang terlihat oleh module via
+    /// `import pkg::*`/`import pkg::item` (baik di header module maupun $unit).
+    /// Dipakai sebagai base context saat evaluasi konstanta (generate limit,
+    /// parameter default, dll.) sehingga package parameter bisa di-resolve.
+    /// Package param yang di-referensikan secara scoped (`pkg::name`) juga
+    /// didaftarkan agar `const_eval_with_params` bisa me-resolve.
+    fn collect_package_param_ctx(&self, module: &Module) -> HashMap<Symbol, i64> {
+        let mut ctx: HashMap<Symbol, i64> = HashMap::new();
+        let mut import_sets: Vec<(Symbol, Symbol)> = self.design.unit_imports.clone();
+        for item in &module.items {
+            if let ModuleItem::Import { package, item } = item {
+                import_sets.push((*package, *item));
+            }
+        }
+        // Enum member constants dari typedef di body module (e.g. LastEdnEntry)
+        let module_enums: Vec<Vec<(Symbol, Option<Expr>)>> = module
+            .items
+            .iter()
+            .filter_map(|item| {
+                if let ModuleItem::Typedef(td) = item {
+                    if let DataType::EnumType { members, .. } = &td.dtype {
+                        Some(members.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+        // Enum member constants dari package
+        let pkg_enums: Vec<(Symbol, Vec<(Symbol, Option<Expr>)>)> = self
+            .package_symbols
+            .iter()
+            .filter_map(|(pkg_name, items)| {
+                let enums: Vec<(Symbol, Option<Expr>)> = items
+                    .values()
+                    .filter_map(|item| {
+                        if let PackageItem::Typedef(td) = item {
+                            if let DataType::EnumType { members, .. } = &td.dtype {
+                                Some(members.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten()
+                    .collect();
+                if enums.is_empty() {
+                    None
+                } else {
+                    Some((*pkg_name, enums))
+                }
+            })
+            .collect();
+        // Fixed-point: beberapa package param bisa mereferensikan param lain
+        // (scoped `pkg::name` maupun plain name dari package yang di-import).
+        for _ in 0..64 {
+            let mut changed = false;
+            // Enum member constants dari body module (sequential values)
+            for members in &module_enums {
+                let mut last = 0i64;
+                for (member_name, member_expr) in members {
+                    let val = match member_expr {
+                        Some(expr) => match const_eval_with_params(expr, &ctx) {
+                            Ok(v) => v,
+                            Err(_) => last,
+                        },
+                        None => last,
+                    };
+                    if !ctx.contains_key(member_name) {
+                        ctx.insert(member_name.clone(), val);
+                        changed = true;
+                    }
+                    last = val + 1;
+                }
+            }
+            // Qualified names untuk SEMUA package (agar scoped reference resolve)
+            for (pkg_name, items) in &self.package_symbols {
+                for (name, item) in items {
+                    let PackageItem::Param(p) = item else { continue };
+                    let qualified = Symbol::intern(&format!("{}::{}", pkg_name, name));
+                    if ctx.contains_key(&qualified) {
+                        continue;
+                    }
+                    if let Some(expr) = &p.default {
+                        if let Ok(val) = const_eval_with_params(expr, &ctx) {
+                            ctx.insert(qualified, val);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            // Enum member constants di package (plain + qualified, sequential)
+            for (pkg_name, members) in &pkg_enums {
+                let mut last = 0i64;
+                for (member_name, member_expr) in members {
+                    let val = match member_expr {
+                        Some(expr) => match const_eval_with_params(expr, &ctx) {
+                            Ok(v) => v,
+                            Err(_) => last,
+                        },
+                        None => last,
+                    };
+                    if !ctx.contains_key(member_name) {
+                        ctx.insert(member_name.clone(), val);
+                        changed = true;
+                    }
+                    let qualified = Symbol::intern(&format!("{}::{}", pkg_name, member_name));
+                    if !ctx.contains_key(&qualified) {
+                        ctx.insert(qualified, val);
+                        changed = true;
+                    }
+                    last = val + 1;
+                }
+            }
+            // Plain names untuk package yang di-import module/$unit
+            for (package, import_item) in &import_sets {
+                let Some(pkg_items) = self.package_symbols.get(package) else {
+                    continue;
+                };
+                let names: Vec<Symbol> = if import_item.as_str() == "*" {
+                    pkg_items.keys().copied().collect()
+                } else {
+                    vec![*import_item]
+                };
+                for name in names {
+                    if let Some(PackageItem::Param(p)) = pkg_items.get(&name) {
+                        if ctx.contains_key(&p.name) {
+                            continue;
+                        }
+                        if let Some(expr) = &p.default {
+                            if let Ok(val) = const_eval_with_params(expr, &ctx) {
+                                ctx.insert(p.name.clone(), val);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        ctx
     }
 
     /// Buat structured diagnostic untuk elaboration error dengan error code tepat.
     fn elab_diag(&self, code: DiagCode, message: impl Into<String>) -> SimError {
         self.elab_diag_at(code, message, 0, 0)
+    }
+
+    /// Extract source file name from `line directives in source_lines for a given line.
+    /// The source_lines contain `` `line 1 "filename.sv" `` directives from preprocessing.
+    fn resolve_source_file(&self, line: usize) -> &str {
+        if line == 0 || line > self.source_lines.len() {
+            return &self.source_file;
+        }
+        // Scan backwards from the current line to find the most recent `line directive
+        // Use 0-based indexing: source_lines[i] = line i+1
+        let end = line.saturating_sub(1); // last index to check (0-based)
+        for i in (0..=end).rev() {
+            let src = &self.source_lines[i];
+            if let Some(rest) = src.strip_prefix('`') {
+                let rest = rest.trim_start();
+                if rest.starts_with("line ") {
+                    // Extract filename: `line N "filename"
+                    if let Some(start) = rest.find('"') {
+                        if let Some(end) = rest[start + 1..].find('"') {
+                            return &rest[start + 1..start + 1 + end];
+                        }
+                    }
+                }
+            }
+        }
+        &self.source_file
     }
 
     /// Buat error diagnostic dengan posisi source.
@@ -971,7 +1165,8 @@ _ => {}
             .with_code_context();
         if line > 0 && line <= self.source_lines.len() {
             let source_line = &self.source_lines[line - 1];
-            let snippet = SourceSnippet::new(&self.source_file, line, col, source_line);
+            let file = self.resolve_source_file(line);
+            let snippet = SourceSnippet::new(file, line, col, source_line);
             diag = diag.with_source_snippet(snippet);
         }
         if let Some(ref mod_name) = self.current_module {
@@ -994,7 +1189,8 @@ _ => {}
             .with_code_context();
         if line > 0 && line <= self.source_lines.len() {
             let source_line = &self.source_lines[line - 1];
-            let snippet = SourceSnippet::new(&self.source_file, line, col, source_line);
+            let file = self.resolve_source_file(line);
+            let snippet = SourceSnippet::new(file, line, col, source_line);
             diag = diag.with_source_snippet(snippet);
         }
         self.diag_sink.push(diag);
@@ -1773,7 +1969,8 @@ impl Elaborator {
             for item in &module.items {
                 match item {
                     ModuleItem::Generate(gen) => {
-                        let expanded = expand_generate_block(gen, &effective_params, &self.diag_sink)?;
+                        let expanded = expand_generate_block(gen, &effective_params, &self.diag_sink)
+                            .map_err(|e| self.elab_diag_at(DiagCode::InvalidSyntax, format!("generate block expansion failed: {}", e.msg), e.line, e.col))?;
                         // Collect params from expanded generate items too
                         for ei in &expanded {
                             if let ModuleItem::Param(p) = ei {
