@@ -216,6 +216,9 @@ pub struct IrInstance {
     pub port_map: std::sync::Arc<std::collections::HashMap<Symbol, SignalId>>,
     pub param_map: std::sync::Arc<std::collections::HashMap<Symbol, i64>>,
     pub type_param_map: std::sync::Arc<std::collections::HashMap<Symbol, usize>>,
+    /// Posisi instance di source (untuk diagnostic).
+    pub line: usize,
+    pub col: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]

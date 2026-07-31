@@ -386,6 +386,14 @@ pub fn const_eval_with_params(
             Ok(0)
         }
         Expr::BitSelect { expr, index } => {
+            // Array element lookup via flattened keys `name[idx]` (array params)
+            if let Expr::Ident { name, .. } = expr.as_ref() {
+                let idx = const_eval_with_params(index, param_vals)?;
+                let key = format!("{}[{}]", name.as_str(), idx);
+                if let Some(&v) = param_vals.get(key.as_str()) {
+                    return Ok(v);
+                }
+            }
             let base_val = const_eval_with_params(expr, param_vals)?;
             let idx = const_eval_with_params(index, param_vals)?;
             Ok((base_val >> idx) & 1)

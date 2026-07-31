@@ -35,10 +35,10 @@ impl Elaborator {
                     items: vec![],
                 }
             } else {
-                return Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
+                return Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!(
                     "module or interface '{}' not found for instance '{}'",
                     inst.module_name, inst.instance_name
-                )));
+                ), inst.line, inst.col));
             };
 
             let needs_custom_params =

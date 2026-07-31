@@ -4518,6 +4518,158 @@ endmodule
 }
 
 #[test]
+fn test_compound_assign_operators() {
+    let source = r#"
+module tb;
+    reg [15:0] a, b, c, d, e, f, g, h, i;
+    initial begin
+        a = 16'd5;   a *= 16'd4;       // 5*4 = 20
+        b = 16'd20;  b /= 16'd5;       // 20/5 = 4
+        c = 16'd17;  c %= 16'd5;       // 17%5 = 2
+        d = 16'hF0;  d &= 16'h0F;      // 0
+        e = 16'h0F;  e |= 16'hF0;      // 0xFF
+        f = 16'hAA;  f ^= 16'hFF;      // 0x55
+        g = 16'd1;   g <<= 16'd4;      // 16
+        h = 16'h80;  h >>= 16'd3;      // 16
+        i = 16'd7;   i += 16'd8; i -= 16'd2; // 13
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let get = |name: &str| {
+        sigs.iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.to_u64())
+            .unwrap()
+    };
+    assert_eq!(get("a"), 20, "*= should multiply");
+    assert_eq!(get("b"), 4, "/= should divide");
+    assert_eq!(get("c"), 2, "%= should mod");
+    assert_eq!(get("d"), 0, "&= should bitwise-and");
+    assert_eq!(get("e"), 0xFF, "|= should bitwise-or");
+    assert_eq!(get("f"), 0x55, "^= should bitwise-xor");
+    assert_eq!(get("g"), 16, "<<= should shift left");
+    assert_eq!(get("h"), 16, ">>= should shift right");
+    assert_eq!(get("i"), 13, "+= / -= should add and subtract");
+}
+
+#[test]
+fn test_assignment_pattern_concat() {
+    let source = r#"
+module tb;
+    reg [7:0] a;
+    reg [15:0] b;
+    initial begin
+        a = '{8'hA5};
+        b = '{8'hAA, 8'h55};
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let av = sigs
+        .iter()
+        .find(|(n, _)| n == "a")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    let bv = sigs
+        .iter()
+        .find(|(n, _)| n == "b")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    assert_eq!(av, 0xA5, "assignment pattern '{{v}} should equal v");
+    assert_eq!(bv, 0xAA55, "'{{a,b}} should concat to aab");
+}
+
+#[test]
+fn test_package_array_param() {
+    let source = r#"
+package cfg_pkg;
+    parameter int COEFFS[0:3] = '{8'd1, 8'd2, 8'd3, 8'd4};
+endpackage
+
+module tb;
+    import cfg_pkg::*;
+    reg [7:0] result;
+    initial begin
+        result = COEFFS[2];
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let r = sigs
+        .iter()
+        .find(|(n, _)| n == "result")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    assert_eq!(r, 3, "COEFFS[2] should resolve to 3");
+}
+
+#[test]
+fn test_parameter_type_decl() {
+    let source = r#"
+module tb;
+    parameter type T = int;
+    T x;
+    initial begin
+        x = 42;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let xv = sigs
+        .iter()
+        .find(|(n, _)| n == "x")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    assert_eq!(xv, 42, "parameter type T = int should declare 32-bit x");
+}
+
+#[test]
+fn test_parameter_type_header_decl() {
+    // Type param dari header parameter list (module m #(parameter type T))
+    // juga harus resolve: `T x;` di body jadi deklarasi, bukan instance.
+    let source = r#"
+module m #(parameter type T = int) ();
+    T x;
+    initial begin
+        x = 42;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let xv = sigs
+        .iter()
+        .find(|(n, _)| n == "x")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    assert_eq!(xv, 42, "header parameter type T should declare 32-bit x");
+}
+
+#[test]
+fn test_endmodule_colon_name_suffix() {
+    let source = r#"
+package pkg;
+    parameter int W = 8;
+endpackage : pkg
+
+module top;
+    wire a;
+endmodule : top
+
+program main;
+    initial #1 $finish;
+endprogram : main
+"#;
+    let sigs = simulate_signals(source, 2);
+    assert!(sigs.is_ok(), "endpackage/endmodule/endprogram : name suffix should parse: {:?}", sigs.err());
+}
+
+#[test]
 fn test_module_task_multiple_ports() {
     let source = r#"
 module tb;

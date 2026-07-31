@@ -504,8 +504,17 @@ impl Parser {
                     let item = self.parse_expr(0)?;
                     if self.peek() == &Token::LBrace {
                         self.advance();
-                        let inner = self.parse_expr(0)?;
+                        let mut inner_exprs = Vec::new();
+                        loop {
+                            inner_exprs.push(self.parse_expr(0)?);
+                            if self.peek() == &Token::Comma { self.advance(); } else { break; }
+                        }
                         self.expect(Token::RBrace)?;
+                        let inner = if inner_exprs.len() == 1 {
+                            inner_exprs.into_iter().next().unwrap()
+                        } else {
+                            Expr::Concat(inner_exprs)
+                        };
                         exprs.push(Expr::Replicate { count: Box::new(item), expr: Box::new(inner) });
                     } else { exprs.push(item); }
                     if self.peek() == &Token::Comma { self.advance(); } else { break; }
@@ -523,28 +532,86 @@ impl Parser {
                 self.advance();
                 if self.peek() == &Token::LBrace {
                     self.advance();
+                    let saved = self.pos.get();
+                    let mut elements = Vec::new();
+                    let mut ok = true;
+                    loop {
+                        if self.peek() == &Token::RBrace {
+                            self.advance();
+                            break;
+                        }
+                        if self.peek() == &Token::Eof {
+                            ok = false;
+                            break;
+                        }
+                        match self.parse_expr(0) {
+                            Ok(first) => {
+                                if self.peek() == &Token::Colon {
+                                    // Named-field assignment pattern: fall back to skip
+                                    ok = false;
+                                    break;
+                                }
+                                elements.push(first);
+                            }
+                            Err(_) => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                        if self.peek() == &Token::Comma {
+                            self.advance();
+                        } else if self.peek() == &Token::RBrace {
+                            self.advance();
+                            break;
+                        } else {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if ok && !elements.is_empty() {
+                        if elements.len() == 1 {
+                            return Ok(elements.into_iter().next().unwrap());
+                        }
+                        return Ok(Expr::Concat(elements));
+                    }
+                    // Fallback: skip to matching brace (behavior lama)
+                    self.pos.set(saved);
                     let mut depth = 1usize;
                     while depth > 0 && self.peek() != &Token::Eof {
                         match self.peek() {
-                            Token::LBrace => { depth += 1; self.advance(); }
-                            Token::RBrace => { depth -= 1; if depth > 0 { self.advance(); } }
-                            _ => { self.advance(); }
+                            Token::LBrace => {
+                                depth += 1;
+                                self.advance();
+                            }
+                            Token::RBrace => {
+                                depth -= 1;
+                                if depth > 0 {
+                                    self.advance();
+                                }
+                            }
+                            _ => {
+                                self.advance();
+                            }
                         }
                     }
-                    if self.peek() == &Token::RBrace { self.advance(); }
+                    if self.peek() == &Token::RBrace {
+                        self.advance();
+                    }
+                    Ok(Expr::FillLit(crate::ir::LogicVal::Zero))
+                } else {
+                    Ok(Expr::FillLit(crate::ir::LogicVal::Zero))
                 }
-                Ok(Expr::FillLit(crate::ir::LogicVal::Zero))
             }
             Token::Increment => { self.advance(); let expr = self.parse_expr(12)?; Ok(Expr::BinaryOp { op: BinaryOp::Add, lhs: Box::new(expr), rhs: Box::new(Expr::Value(Value::Decimal(1))) }) }
             Token::Decrement => { self.advance(); let expr = self.parse_expr(12)?; Ok(Expr::BinaryOp { op: BinaryOp::Sub, lhs: Box::new(expr), rhs: Box::new(Expr::Value(Value::Decimal(1))) }) }
             Token::Void | Token::Int | Token::Integer | Token::Logic | Token::Bit | Token::Byte
-            | Token::Shortint | Token::Longint | Token::Time | Token::Signed | Token::Real | Token::RealTime => {
+            | Token::Shortint | Token::Longint | Token::Time | Token::Signed | Token::Unsigned | Token::Real | Token::RealTime => {
                 self.advance();
                 let type_name = match tok {
                     Token::Void => "void", Token::Int => "int", Token::Integer => "integer",
                     Token::Logic => "logic", Token::Bit => "bit", Token::Byte => "byte",
                     Token::Shortint => "shortint", Token::Longint => "longint", Token::Time => "time",
-                    Token::Signed => "signed", Token::Real => "real", Token::RealTime => "realtime",
+                    Token::Signed => "signed", Token::Unsigned => "unsigned", Token::Real => "real", Token::RealTime => "realtime",
                     _ => unreachable!(),
                 };
                 if self.peek() == &Token::Quote {

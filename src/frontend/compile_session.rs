@@ -163,7 +163,7 @@ impl CompileSession {
         let changed_set: HashSet<PathBuf> = self.detect_changed(&files);
         let incremental = !changed_set.is_empty() || !self.prev_designs.is_empty();
 
-        // ── Phase 3-5: Parallel pipeline (skip unchanged files if incremental) ──
+        // ── Phase 3: Parallel preprocessing (skip unchanged files if incremental) ──
         let pp_start = Instant::now();
         // Counters for parallel section (extracted before closure to avoid borrow issues)
         let tokens_lexed = std::sync::atomic::AtomicU64::new(0);
@@ -181,7 +181,9 @@ impl CompileSession {
             parts.clear();
         }
 
-        let results: Vec<Result<(PathBuf, Design, u64), SimError>> = files
+        // Phase 3a: preprocess all files in parallel, collect combined sources.
+        // Cached files reuse the previously parsed design (positions already global).
+        let prepared: Vec<Result<(PathBuf, Option<Design>, u64, Option<String>), SimError>> = files
             .par_iter()
             .enumerate()
             .map(|(file_idx, path)| {
@@ -194,13 +196,13 @@ impl CompileSession {
                             let mut parts = combined_parts.lock().unwrap();
                             parts.push((file_idx, cached_combined.clone()));
                         }
-                        return Ok((path.clone(), cached.clone(), cksum));
+                        return Ok((path.clone(), Some(cached.clone()), cksum, None));
                     }
                 }
 
                 // ── Slow path: process file ──
                 let mmap = MmapFile::open(path)
-                    .map_err(SimError::from)?;
+                    .map_err(|e| SimError::Io(e.kind(), format!("{}: {}", path.to_string_lossy(), e)))?;
                 let cksum = mmap.checksum;
                 // Use mmap data directly without extra .to_string() copy
                 cache.register_file(path, mmap.as_bytes());
@@ -217,7 +219,44 @@ impl CompileSession {
                     let mut parts = combined_parts.lock().unwrap();
                     parts.push((file_idx, combined.clone()));
                 }
+                Ok((path.clone(), None, cksum, Some(combined)))
+            })
+            .collect();
+
+        // ── Phase 4: Compute per-file base line offsets ──
+        // Posisi AST bersifat per-file (relatif ke combined source masing-masing),
+        // sedangkan elaborator mengindeks source_lines GABUNGAN semua file.
+        // Tambahkan offset kumulatif agar snippet source menunjuk file/baris yang benar.
+        let mut base_offsets: Vec<usize> = vec![0; files.len()];
+        {
+            let mut parts = combined_parts.lock().unwrap();
+            parts.sort_by_key(|(idx, _)| *idx);
+            let mut cumulative: usize = 0;
+            for (idx, s) in parts.iter() {
+                base_offsets[*idx] = cumulative;
+                cumulative += s.lines().count();
+            }
+        }
+
+        // ── Phase 5: Parallel lexing + parsing dengan posisi global ──
+        let results: Vec<Result<(PathBuf, Design, u64), SimError>> = prepared
+            .into_par_iter()
+            .enumerate()
+            .map(|(file_idx, r)| {
+                let (path, cached, cksum, combined_opt) = r?;
+                // Reuse cached design as-is (sudah diparse dengan posisi global)
+                if let Some(design) = cached {
+                    return Ok((path, design, cksum));
+                }
+                let combined = combined_opt.unwrap_or_default();
+                let base = base_offsets[file_idx];
+                let path_str = path.to_string_lossy();
                 let tokens = if use_fast_lexer {
+                    // FastLexer mereset line counter ke nilai deklarasi `line directive
+                    // (biasanya 1), sehingga posisi per-file bersifat file-relative
+                    // (baris directive tidak ikut dihitung). Karena merged source
+                    // memasukkan baris directive itu, tambahkan +1 agar posisi global
+                    // menunjuk baris yang benar di source gabungan.
                     let mut lexer = FastLexer::new(&combined, &path_str);
                     let mut toks = Vec::new();
                     loop {
@@ -225,11 +264,13 @@ impl CompileSession {
                         if tok == Token::Eof {
                             break;
                         }
-                        toks.push((tok, line, col));
+                        toks.push((tok, line + base + 1, col));
                     }
                     tokens_lexed.fetch_add(toks.len() as u64, std::sync::atomic::Ordering::Relaxed);
                     toks
                 } else {
+                    // Legacy Lexer mempertahankan nomor baris kumulatif (baris
+                    // directive ikut dihitung), sehingga posisi global = base + line.
                     let mut lexer = Lexer::new(&combined);
                     let mut toks = Vec::new();
                     loop {
@@ -237,7 +278,7 @@ impl CompileSession {
                         if tok == Token::Eof {
                             break;
                         }
-                        toks.push((tok, line, col));
+                        toks.push((tok, line + base, col));
                     }
                     tokens_lexed.fetch_add(toks.len() as u64, std::sync::atomic::Ordering::Relaxed);
                     toks
@@ -253,7 +294,7 @@ impl CompileSession {
                     eprintln!("[DBG-PARSE] n_packages={} n_modules={}", design.packages.len(), design.modules.len());
                 }
 
-                Ok((path.clone(), design, cksum))
+                Ok((path, design, cksum))
             })
             .collect();
 
@@ -862,6 +903,48 @@ mod tests {
                 || session.timing.total_ms >= 0,
             "at least one phase should have timing > 0"
         );
+    }
+
+    #[test]
+    fn test_multi_file_snippet_resolves_correct_file_and_line() {
+        // Regression: di jalur CompileSession (--filelist), posisi AST harus global
+        // (base offset per-file) agar snippet source menunjuk file & baris yang benar
+        // untuk file non-pertama. Bug lama: error di b.sv menunjuk a.sv / baris kosong.
+        let dir = std::env::temp_dir().join(format!("maria_snippet_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a_path = dir.join("a.sv");
+        let b_path = dir.join("b.sv");
+        std::fs::write(&a_path, "module file_a;\n  file_b u_b ();\nendmodule\n").unwrap();
+        std::fs::write(
+            &b_path,
+            "module file_b;\n  logic clk;\n  missing_module u_inst ();\nendmodule\n",
+        )
+        .unwrap();
+
+        let config = SessionConfig {
+            sources: vec![a_path, b_path],
+            ..Default::default()
+        };
+        let mut session = CompileSession::new(config);
+        let err = match session.compile_and_elaborate(Some("file_a")) {
+            Err(e) => e,
+            Ok(_) => panic!("expected elaboration error for missing module"),
+        };
+        let diag = err.to_diagnostic();
+        let snippet = diag.source_snippet.expect("error should carry a source snippet");
+        assert!(
+            snippet.file.ends_with("b.sv"),
+            "expected file b.sv, got {}",
+            snippet.file
+        );
+        assert_eq!(snippet.line, 3, "expected file-relative line 3, got {}", snippet.line);
+        assert!(
+            snippet.source_line.contains("missing_module"),
+            "snippet content mismatch: {:?}",
+            snippet.source_line
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

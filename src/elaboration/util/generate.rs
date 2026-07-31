@@ -176,6 +176,9 @@ pub fn expand_generate_block(
                 step,
                 body_items,
             } => {
+                if std::env::var("DBG_GEN").is_ok() {
+                    eprintln!("DBG-GEN: for var={} init={:?} cond={:?} step={:?}", var.as_str(), init, cond, step);
+                }
                 let (init_line, init_col) = init.as_ref()
                     .and_then(|s| match s { Stmt::BlockingAssign { rhs, .. } => Some(expr_location(rhs)), _ => None })
                     .unwrap_or((0, 0));
@@ -326,6 +329,9 @@ fn expand_item_list(
         if let ModuleItem::Param(p) = item {
             if !extended.contains_key(&p.name) {
                 if let Some(e) = &p.default {
+                    if std::env::var("DBG_GEN").is_ok() {
+                        eprintln!("DBG-GEN: param {} default = {:?}", p.name.as_str(), e);
+                    }
                     if let Ok(v) = const_eval_with_params(e, &extended) {
                         extended.insert(p.name.clone(), v);
                     }
@@ -444,13 +450,27 @@ pub fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, v
                 substitute_genvar_in_generate_item(gi, var_name, value);
             }
         }
+        ModuleItem::Param(p) => {
+            if let Some(default) = &mut p.default {
+                let old = std::mem::replace(
+                    default,
+                    Expr::Value(crate::ast::expr::Value::Decimal(0)),
+                );
+                *default = substitute_loop_var_in_expr(&old, var_name, value);
+            }
+            if let Some((msb, lsb)) = &mut p.range {
+                let old_msb = std::mem::replace(msb, Expr::Value(crate::ast::expr::Value::Decimal(0)));
+                let old_lsb = std::mem::replace(lsb, Expr::Value(crate::ast::expr::Value::Decimal(0)));
+                *msb = substitute_loop_var_in_expr(&old_msb, var_name, value);
+                *lsb = substitute_loop_var_in_expr(&old_lsb, var_name, value);
+            }
+        }
         ModuleItem::Func(_)
         | ModuleItem::Typedef(_)
         | ModuleItem::Import { .. }
         | ModuleItem::Covergroup(_)
         | ModuleItem::DpiImport(_)
         | ModuleItem::DpiExport(_)
-        | ModuleItem::Param(_)
         | ModuleItem::Clocking(_)
         | ModuleItem::Specify(_)
         | ModuleItem::VirtualInterface { .. } => {}

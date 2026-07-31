@@ -468,6 +468,8 @@ mod tests {
             udp_defs: vec![],
             specify_items: vec![],
             timescale: None,
+            source_file: None,
+            source_lines: None,
             module_functions: HashMap::new(),
         };
         let analysis = ClockDomainAnalysis::analyze(&design);
@@ -528,6 +530,8 @@ mod tests {
             udp_defs: vec![],
             specify_items: vec![],
             timescale: None,
+            source_file: None,
+            source_lines: None,
             module_functions: HashMap::new(),
         };
 
@@ -581,6 +585,8 @@ mod tests {
             udp_defs: vec![],
             specify_items: vec![],
             timescale: None,
+            source_file: None,
+            source_lines: None,
             module_functions: HashMap::new(),
         };
 

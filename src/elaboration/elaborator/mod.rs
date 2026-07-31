@@ -61,6 +61,9 @@ pub struct Elaborator {
     pub typedef_map: HashMap<Symbol, usize>,
     pub typedef_field_map: HashMap<Symbol, Vec<StructFieldInfo>>,
     pub package_symbols: HashMap<Symbol, HashMap<Symbol, PackageItem>>,
+    /// Konstanta package ter-evaluasi (kualifikasi `pkg::name`): skalar & array.
+    pub pkg_const_scalars: HashMap<Symbol, i64>,
+    pub pkg_const_arrays: HashMap<Symbol, Vec<i64>>,
     pub specialized_classes: std::cell::RefCell<Vec<ClassDecl>>,
     pub diag_sink: DiagSink,
     pub source_lines: Vec<String>,
@@ -175,6 +178,11 @@ impl Elaborator {
             }
         }
 
+        // Evaluate package constants once (scalars + arrays)
+        // eval_package_constants menerima referensi — tidak perlu clone map.
+        let (pkg_const_scalars, pkg_const_arrays) =
+            crate::ast::const_eval_ext::eval_package_constants(&package_symbols);
+
         Elaborator {
             design,
             modules: HashMap::new(),
@@ -182,6 +190,8 @@ impl Elaborator {
             typedef_map: HashMap::new(),
             typedef_field_map: HashMap::new(),
             package_symbols,
+            pkg_const_scalars,
+            pkg_const_arrays,
             specialized_classes: std::cell::RefCell::new(Vec::new()),
             diag_sink: DiagSink::new(),
             source_lines,
@@ -195,6 +205,10 @@ impl Elaborator {
     }
 
     pub fn elaborate(&mut self, top_module: Option<&str>) -> Result<IrDesign, SimError> {
+        let elab_t0 = std::time::Instant::now();
+        if std::env::var("DBG_ELAB").is_ok() {
+            eprintln!("[DBG-ELAB] elaborate() start (n_modules={})", self.design.modules.len());
+        }
         // Process bind declarations: add bound instances to target modules
         let binds = std::mem::take(&mut self.design.binds);
         for bind in &binds {
@@ -312,6 +326,9 @@ _ => {}
             }
         }
 
+        if std::env::var("DBG_ELAB").is_ok() {
+            eprintln!("[DBG-ELAB] bind+import prepass done in {:?}", elab_t0.elapsed());
+        }
         // Inline function calls in all modules
         for module in &mut self.design.modules {
             let temps = crate::ast::inline::inline_func_calls_in_module(module)?;
@@ -347,6 +364,9 @@ _ => {}
             }
         }
 
+        if std::env::var("DBG_ELAB").is_ok() {
+            eprintln!("[DBG-ELAB] inline done in {:?}", elab_t0.elapsed());
+        }
         // Expand generates in all modules (with resolved params)
         for i in 0..self.design.modules.len() {
             let ctx = self.collect_package_param_ctx(&self.design.modules[i]);
@@ -360,10 +380,14 @@ _ => {}
                 expand_all_generates(module, &param_vals, &self.diag_sink)
             };
             if let Err(e) = gen_result {
-                return Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!("generate expansion failed in '{}': {}", module_name, e.msg), e.line, e.col));
+                let ctx_keys: Vec<&str> = param_vals.keys().map(|k| k.as_str()).collect();
+                return Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!("generate expansion failed in '{}': {} (param context has: {:?})", module_name, e.msg, ctx_keys), e.line, e.col));
             }
         }
 
+        if std::env::var("DBG_ELAB").is_ok() {
+            eprintln!("[DBG-ELAB] generate expansion done in {:?}", elab_t0.elapsed());
+        }
         // Dead module detection: find unreachable modules via reachability from top
         let top_sym = top_module.map(|s| Symbol::intern(s));
         {
@@ -405,6 +429,9 @@ _ => {}
             }
         }
 
+        if std::env::var("DBG_ELAB").is_ok() {
+            eprintln!("[DBG-ELAB] dead-module detection done in {:?}", elab_t0.elapsed());
+        }
         // ── Incremental elaboration pass ──
         // 1. Compute structural checksums for all modules
         // 2. Compute topological order (children before parents)
@@ -431,6 +458,9 @@ _ => {}
 
         let mut dep_sigs: HashMap<Symbol, u64> = HashMap::new();
 
+        if std::env::var("DBG_ELAB").is_ok() {
+            eprintln!("[DBG-ELAB] checksums+topo done in {:?} (topo_len={})", elab_t0.elapsed(), topo_order.len());
+        }
         for &mod_name in &topo_order {
             let module = snapshot_map.get(&mod_name)
                 .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound,
@@ -461,6 +491,9 @@ _ => {}
             }
         }
 
+        if std::env::var("DBG_ELAB").is_ok() {
+            eprintln!("[DBG-ELAB] module elaboration loop done in {:?} (hits={} misses={})", elab_t0.elapsed(), self.cache_hits, self.cache_misses);
+        }
         // Elaborate interfaces as signal-only modules
         for iface in &self.design.interfaces {
             let mut signals = Vec::new();
@@ -563,6 +596,9 @@ _ => {}
             );
         }
 
+        if std::env::var("DBG_ELAB").is_ok() {
+            eprintln!("[DBG-ELAB] interfaces done in {:?}", elab_t0.elapsed());
+        }
         // Find top module
         let top_name = match top_module {
             Some(name) => Symbol::intern(name),
@@ -579,6 +615,9 @@ _ => {}
             .remove(&top_name)
             .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, format!("top module '{}' not found", top_name)))?;
 
+        if std::env::var("DBG_ELAB").is_ok() {
+            eprintln!("[DBG-ELAB] top found in {:?}", elab_t0.elapsed());
+        }
         // Flatten instances: merge child module processes into the top module
         let hier_signal_map = self.flatten_instances(&mut top)?;
 
@@ -1124,6 +1163,21 @@ _ => {}
                 break;
             }
         }
+        // Merge konstanta package yang sudah dievaluasi penuh (skalar + array).
+        crate::ast::const_eval_ext::flatten_consts_into_ctx(
+            &self.pkg_const_scalars,
+            &self.pkg_const_arrays,
+            &mut ctx,
+        );
+        for (package, import_item) in &import_sets {
+            crate::ast::const_eval_ext::flatten_imported_consts_into_ctx(
+                package.as_str(),
+                import_item.as_str(),
+                &self.pkg_const_scalars,
+                &self.pkg_const_arrays,
+                &mut ctx,
+            );
+        }
         ctx
     }
 
@@ -1134,28 +1188,9 @@ _ => {}
 
     /// Extract source file name from `line directives in source_lines for a given line.
     /// The source_lines contain `` `line 1 "filename.sv" `` directives from preprocessing.
-    fn resolve_source_file(&self, line: usize) -> &str {
-        if line == 0 || line > self.source_lines.len() {
-            return &self.source_file;
-        }
-        // Scan backwards from the current line to find the most recent `line directive
-        // Use 0-based indexing: source_lines[i] = line i+1
-        let end = line.saturating_sub(1); // last index to check (0-based)
-        for i in (0..=end).rev() {
-            let src = &self.source_lines[i];
-            if let Some(rest) = src.strip_prefix('`') {
-                let rest = rest.trim_start();
-                if rest.starts_with("line ") {
-                    // Extract filename: `line N "filename"
-                    if let Some(start) = rest.find('"') {
-                        if let Some(end) = rest[start + 1..].find('"') {
-                            return &rest[start + 1..start + 1 + end];
-                        }
-                    }
-                }
-            }
-        }
-        &self.source_file
+    /// Resolve nama file + baris relatif-file untuk posisi di merged source.
+    fn resolve_source_location(&self, line: usize) -> (String, usize) {
+        crate::diagnostics::resolve_source_location(&self.source_lines, &self.source_file, line)
     }
 
     /// Buat error diagnostic dengan posisi source.
@@ -1165,8 +1200,8 @@ _ => {}
             .with_code_context();
         if line > 0 && line <= self.source_lines.len() {
             let source_line = &self.source_lines[line - 1];
-            let file = self.resolve_source_file(line);
-            let snippet = SourceSnippet::new(file, line, col, source_line);
+            let (file, display_line) = self.resolve_source_location(line);
+            let snippet = SourceSnippet::new(file, display_line, col, source_line);
             diag = diag.with_source_snippet(snippet);
         }
         if let Some(ref mod_name) = self.current_module {
@@ -1189,8 +1224,8 @@ _ => {}
             .with_code_context();
         if line > 0 && line <= self.source_lines.len() {
             let source_line = &self.source_lines[line - 1];
-            let file = self.resolve_source_file(line);
-            let snippet = SourceSnippet::new(file, line, col, source_line);
+            let (file, display_line) = self.resolve_source_location(line);
+            let snippet = SourceSnippet::new(file, display_line, col, source_line);
             diag = diag.with_source_snippet(snippet);
         }
         self.diag_sink.push(diag);
@@ -1427,6 +1462,28 @@ impl Elaborator {
                 _ => {}
             }
         }
+        // Merge konstanta package yang sudah dievaluasi (skalar + array) ke effective_params.
+        crate::ast::const_eval_ext::flatten_consts_into_ctx(
+            &self.pkg_const_scalars,
+            &self.pkg_const_arrays,
+            &mut effective_params,
+        );
+        let mut unit_import_sets = self.design.unit_imports.clone();
+        for item in &module.items {
+            if let ModuleItem::Import { package, item: import_item } = item {
+                unit_import_sets.push((*package, *import_item));
+            }
+        }
+        for (package, import_item) in &unit_import_sets {
+            crate::ast::const_eval_ext::flatten_imported_consts_into_ctx(
+                package.as_str(),
+                import_item.as_str(),
+                &self.pkg_const_scalars,
+                &self.pkg_const_arrays,
+                &mut effective_params,
+            );
+        }
+        self.param_vals = effective_params.clone();
         // Pre-pass: process $unit typedefs (top-level typedefs outside any module)
         let unit_typedefs = self.design.unit_typedefs.clone();
         for td in &unit_typedefs {
@@ -2220,6 +2277,8 @@ impl Elaborator {
                                     port_map: pm.clone(),
                                     param_map: pam.clone(),
                                     type_param_map: tpam.clone(),
+                                    line: inst.line,
+                                    col: inst.col,
                                 });
                             }
                         } else {
@@ -2229,6 +2288,8 @@ impl Elaborator {
                                 port_map: std::sync::Arc::new(port_map),
                                 param_map: std::sync::Arc::new(param_map),
                                 type_param_map: std::sync::Arc::new(type_param_map),
+                                line: inst.line,
+                                col: inst.col,
                             });
                         }
                     }

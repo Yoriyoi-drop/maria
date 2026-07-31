@@ -745,6 +745,8 @@ mod tests {
             udp_defs: Vec::new(),
             specify_items: Vec::new(),
             timescale: None,
+            source_file: None,
+            source_lines: None,
             module_functions: HashMap::new(),
         };
         let dag = SimulationDag::build(&design);
@@ -823,6 +825,8 @@ mod tests {
             udp_defs: Vec::new(),
             specify_items: Vec::new(),
             timescale: None,
+            source_file: None,
+            source_lines: None,
             module_functions: HashMap::new(),
         };
 

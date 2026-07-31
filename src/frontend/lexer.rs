@@ -658,6 +658,10 @@ impl<'a> FastLexer<'a> {
                 } else if self.peek() == b':' {
                     self.skip_byte();
                     Token::MinusColon
+                } else if self.peek() == b'=' {
+                    // -=
+                    self.skip_byte();
+                    Token::MinusAssign
                 } else {
                     Token::Minus
                 }
@@ -669,12 +673,32 @@ impl<'a> FastLexer<'a> {
                 } else if self.peek() == b'>' {
                     self.skip_byte();
                     Token::StarArrow
+                } else if self.peek() == b'=' {
+                    // *=
+                    self.skip_byte();
+                    Token::MulAssign
                 } else {
                     Token::Star
                 }
             }
-            b'/' => Token::Slash,
-            b'%' => Token::Percent,
+            b'/' => {
+                if self.peek() == b'=' {
+                    // /=
+                    self.skip_byte();
+                    Token::DivAssign
+                } else {
+                    Token::Slash
+                }
+            }
+            b'%' => {
+                if self.peek() == b'=' {
+                    // %=
+                    self.skip_byte();
+                    Token::ModAssign
+                } else {
+                    Token::Percent
+                }
+            }
             b'=' => {
                 if self.peek() == b'=' && self.peek_next() == b'=' {
                     self.skip_byte();
@@ -697,17 +721,16 @@ impl<'a> FastLexer<'a> {
             b'<' => {
                 if self.peek() == b'=' {
                     self.skip_byte();
-                    if self.peek() == b'<' {
-                        self.skip_byte();
-                        Token::Sshl
-                    } else {
-                        Token::NonBlockingAssign
-                    }
+                    Token::NonBlockingAssign
                 } else if self.peek() == b'<' {
                     self.skip_byte();
                     if self.peek() == b'<' {
                         self.skip_byte();
                         Token::Sshl
+                    } else if self.peek() == b'=' {
+                        // <<=
+                        self.skip_byte();
+                        Token::ShlAssign
                     } else {
                         Token::Shl
                     }
@@ -732,6 +755,10 @@ impl<'a> FastLexer<'a> {
                     if self.peek() == b'>' {
                         self.skip_byte();
                         Token::Sshr
+                    } else if self.peek() == b'=' {
+                        // >>=
+                        self.skip_byte();
+                        Token::ShrAssign
                     } else {
                         Token::Shr
                     }
@@ -776,6 +803,10 @@ impl<'a> FastLexer<'a> {
                 if self.peek() == b'&' {
                     self.skip_byte();
                     Token::AmpAmp
+                } else if self.peek() == b'=' {
+                    // &=
+                    self.skip_byte();
+                    Token::AndAssign
                 } else {
                     Token::Amp
                 }
@@ -784,6 +815,10 @@ impl<'a> FastLexer<'a> {
                 if self.peek() == b'|' {
                     self.skip_byte();
                     Token::PipePipe
+                } else if self.peek() == b'=' {
+                    // |=
+                    self.skip_byte();
+                    Token::OrAssign
                 } else {
                     Token::Pipe
                 }
@@ -1171,6 +1206,75 @@ endmodule";
             fast_tokens.len()
         );
 
+        for (i, (lt, ft)) in legacy_tokens.iter().zip(fast_tokens.iter()).enumerate() {
+            assert_eq!(
+                std::mem::discriminant(&lt.0),
+                std::mem::discriminant(&ft.0),
+                "Token discriminant mismatch at position {}: legacy={:?}, fast={:?}",
+                i,
+                lt.0,
+                ft.0
+            );
+        }
+    }
+
+    #[test]
+    fn test_fast_lexer_compound_assign_ops() {
+        // Semua operator compound assignment harus tokenize dengan benar.
+        // Kasus edge: <<= (bukan NonBlockingAssign), >>= (bukan Shr), -= (bukan Minus),
+        // >>> (Sshr) tetap tidak tertelan oleh >>=.
+        let input = "a += b; a -= b; a *= b; a /= b; a %= b; a &= b; a |= b; a ^= b; a <<= b; a >>= b; a <<< b; a >>> b; a <= b;";
+        let tokens = fast_tokenize(input);
+        let ops: Vec<&Token> = tokens
+            .iter()
+            .filter(|(t, _, _)| !matches!(t, Token::Ident(_) | Token::Semi))
+            .map(|(t, _, _)| t)
+            .collect();
+        let expected: Vec<Token> = vec![
+            Token::PlusAssign,
+            Token::MinusAssign,
+            Token::MulAssign,
+            Token::DivAssign,
+            Token::ModAssign,
+            Token::AndAssign,
+            Token::OrAssign,
+            Token::XorAssign,
+            Token::ShlAssign,
+            Token::ShrAssign,
+            Token::Sshl,
+            Token::Sshr,
+            Token::NonBlockingAssign,
+        ];
+        assert_eq!(ops.len(), expected.len(), "jumlah operator tidak cocok: {:?}", ops);
+        for (i, exp) in expected.iter().enumerate() {
+            assert_eq!(ops[i], exp, "operator posisi {} tidak cocok", i);
+        }
+    }
+
+    #[test]
+    fn test_fast_lexer_compound_assign_equivalence_with_legacy() {
+        // Verifikasi legacy lexer dan FastLexer menghasilkan token yang sama
+        // untuk seluruh operator compound assignment (regresi silang).
+        let input = "a += b; a -= b; a *= b; a /= b; a %= b; a &= b; a |= b; a ^= b; a <<= b; a >>= b; a <<< b; a >>> b; a <= b;";
+
+        let mut legacy = crate::parser::lexer::Lexer::new(input);
+        let mut legacy_tokens = Vec::new();
+        loop {
+            let (tok, line, col) = legacy.next_token();
+            if tok == Token::Eof {
+                break;
+            }
+            legacy_tokens.push((tok, line, col));
+        }
+
+        let fast_tokens = fast_tokenize(input);
+        assert_eq!(
+            legacy_tokens.len(),
+            fast_tokens.len(),
+            "Token count mismatch: legacy={}, fast={}",
+            legacy_tokens.len(),
+            fast_tokens.len()
+        );
         for (i, (lt, ft)) in legacy_tokens.iter().zip(fast_tokens.iter()).enumerate() {
             assert_eq!(
                 std::mem::discriminant(&lt.0),

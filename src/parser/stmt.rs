@@ -370,10 +370,63 @@ impl Parser {
         result
     }
 
+    /// Apakah token sekarang memulai deklarasi variabel dalam statement block
+    /// (tipe builtin, atau user-defined type yang diikuti nama/::).
+    fn is_decl_stmt_start(&self) -> bool {
+        match self.peek() {
+            Token::Wire
+            | Token::Wand
+            | Token::Wor
+            | Token::Tri
+            | Token::Tri0
+            | Token::Tri1
+            | Token::TriAnd
+            | Token::TriOr
+            | Token::Supply0
+            | Token::Supply1
+            | Token::Reg
+            | Token::Logic
+            | Token::Int
+            | Token::Integer
+            | Token::Bit
+            | Token::Byte
+            | Token::Shortint
+            | Token::Longint
+            | Token::Time
+            | Token::Enum
+            | Token::Struct
+            | Token::Union
+            | Token::Const
+            | Token::Var => true,
+            Token::Ident(_) => match self.peek_ahead(1) {
+                Token::Ident(_) => true,
+                // pkg::type varname;  (bukan pkg::func(...))
+                Token::Scope => matches!(
+                    self.peek_ahead(3),
+                    Token::Ident(_) | Token::LBrack
+                ),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     fn parse_stmt_impl(&mut self) -> Result<Stmt, SimError> {
         if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
             self.skip_attribute();
             return self.parse_stmt();
+        }
+        // Declaration statement in procedural block (e.g. `logic unused;`).
+        // Parsed and discarded (signals handled via module/function decl collection).
+        if self.is_decl_stmt_start() {
+            let _ = self.parse_decl()?;
+            return Ok(Stmt::Null);
+        }
+        // Procedural localparam (e.g. `localparam logic [4:0] X = ...;` inside a block).
+        // Parsed and discarded; values are resolved by the elaborator's param context.
+        if matches!(self.peek(), Token::Param | Token::Parameter | Token::LocalParam) {
+            self.parse_procedural_localparam()?;
+            return Ok(Stmt::Null);
         }
         match self.peek() {
             Token::Assert | Token::Assume | Token::Cover | Token::Expect => self.parse_immediate_assertion(),
@@ -665,10 +718,98 @@ impl Parser {
                         let lhs_copy = lhs.clone();
                         Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::BitXor, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
                     }
+                    Token::AndAssign => {
+                        self.advance();
+                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let lhs_copy = lhs.clone();
+                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::BitAnd, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                    }
+                    Token::OrAssign => {
+                        self.advance();
+                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let lhs_copy = lhs.clone();
+                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::BitOr, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                    }
+                    Token::MulAssign => {
+                        self.advance();
+                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let lhs_copy = lhs.clone();
+                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::Mul, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                    }
+                    Token::DivAssign => {
+                        self.advance();
+                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let lhs_copy = lhs.clone();
+                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::Div, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                    }
+                    Token::ModAssign => {
+                        self.advance();
+                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let lhs_copy = lhs.clone();
+                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::Mod, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                    }
+                    Token::ShlAssign => {
+                        self.advance();
+                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let lhs_copy = lhs.clone();
+                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::Shl, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                    }
+                    Token::ShrAssign => {
+                        self.advance();
+                        let rhs = self.parse_expr(0)?; self.skip_semi();
+                        let lhs_copy = lhs.clone();
+                        Ok(Stmt::BlockingAssign { lhs, rhs: Expr::BinaryOp { op: BinaryOp::Shr, lhs: Box::new(lhs_copy), rhs: Box::new(rhs) }, delay: None })
+                    }
                     _ => { self.skip_semi(); Ok(Stmt::Expr { expr: lhs }) }
                 }
             }
         }
+    }
+
+    /// Parsing deklarasi localparam di dalam procedural block.
+    /// Mendukung `localparam <type> [range] name = expr, name2 = expr2;`.
+    fn parse_procedural_localparam(&mut self) -> Result<(), SimError> {
+        self.advance(); // consume localparam/parameter/param
+        // Optional type keyword
+        match self.peek() {
+            Token::Int
+            | Token::Integer
+            | Token::Logic
+            | Token::Bit
+            | Token::Byte
+            | Token::Shortint
+            | Token::Longint
+            | Token::Time
+            | Token::Reg
+            | Token::Signed
+            | Token::Unsigned => {
+                self.advance();
+            }
+            _ => {}
+        }
+        // Optional packed range [msb:lsb]
+        if self.peek() == &Token::LBrack {
+            self.advance();
+            self.parse_expr(0)?;
+            self.expect(Token::Colon)?;
+            self.parse_expr(0)?;
+            self.expect(Token::RBrack)?;
+        }
+        // Parameter name(s) with optional default
+        loop {
+            self.expect_ident()?;
+            if self.peek() == &Token::BlockingAssign {
+                self.advance();
+                self.parse_expr(0)?;
+            }
+            if self.peek() == &Token::Comma {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.skip_semi();
+        Ok(())
     }
 
     pub(crate) fn parse_if_stmt(&mut self) -> Result<Stmt, SimError> {

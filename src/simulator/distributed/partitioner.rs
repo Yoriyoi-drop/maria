@@ -417,6 +417,8 @@ mod tests {
                         }),
                         param_map: std::sync::Arc::new(HashMap::new()),
                         type_param_map: std::sync::Arc::new(HashMap::new()),
+                        line: 0,
+                        col: 0,
                     },
                     IrInstance {
                         module_name: Symbol::intern("sub_b"),
@@ -430,6 +432,8 @@ mod tests {
                         }),
                         param_map: std::sync::Arc::new(HashMap::new()),
                         type_param_map: std::sync::Arc::new(HashMap::new()),
+                        line: 0,
+                        col: 0,
                     },
                 ],
                 inouts: vec![],
@@ -487,6 +491,8 @@ mod tests {
                 port_map: std::sync::Arc::new(HashMap::new()),
                 param_map: std::sync::Arc::new(HashMap::new()),
                 type_param_map: std::sync::Arc::new(HashMap::new()),
+                line: 0,
+                col: 0,
             });
         }
 

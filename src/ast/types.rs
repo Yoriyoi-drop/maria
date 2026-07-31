@@ -721,6 +721,9 @@ pub struct ModuleInstance {
     pub param_assigns: HashMap<Symbol, Expr>,
     pub type_param_assigns: HashMap<Symbol, DataType>,
     pub port_conns: Vec<PortConnection>,
+    /// Posisi token module name di source (untuk diagnostic).
+    pub line: usize,
+    pub col: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -219,8 +219,15 @@ impl Parser {
         self.advance();
         Some(Box::new(DataType::UserDefined(tp_name)))
     }
-            Token::Ident(_) if matches!(self.peek_ahead(1), Token::Ident(_) | Token::LBrack) => {
-                let tp_name = self.expect_ident()?;
+            Token::Ident(_) if matches!(self.peek_ahead(1), Token::Ident(_) | Token::LBrack | Token::Scope) => {
+                let first = self.expect_ident()?;
+                let tp_name = if self.peek() == &Token::Scope {
+                    self.advance();
+                    let second = self.expect_ident()?;
+                    Symbol::intern(&format!("{}::{}", first, second))
+                } else {
+                    first
+                };
                 Some(Box::new(DataType::UserDefined(tp_name)))
             }
             _ => None,
@@ -419,6 +426,20 @@ impl Parser {
                 Token::Wire | Token::Reg | Token::Logic | Token::Int | Token::Integer => {
                     let decl = self.parse_decl()?;
                     decls.push(decl);
+                }
+                Token::Bit | Token::Byte | Token::Shortint | Token::Longint | Token::Time => {
+                    let decl = self.parse_decl()?;
+                    decls.push(decl);
+                }
+                Token::Ident(_) => {
+                    // User-defined type declaration: ident followed by ident or ::
+                    match self.peek_ahead(1) {
+                        Token::Ident(_) | Token::Scope => {
+                            let decl = self.parse_decl()?;
+                            decls.push(decl);
+                        }
+                        _ => break,
+                    }
                 }
                 Token::Auto | Token::Static => {
                     // automatic/static variable declaration in function body
@@ -844,7 +865,7 @@ impl Parser {
                 let body_items = self.parse_generate_block_body()?;
                 Ok(GenerateItem::For {
                     var,
-                    init: None,
+                    init: _init,
                     cond,
                     step,
                     body_items,

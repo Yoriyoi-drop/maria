@@ -1099,16 +1099,27 @@ impl Parser {
                 _ => break,
             };
 
+            // Type param dari header (module m #(parameter type T = int))
+            // juga harus terdaftar agar `T x;` di body diparse sebagai deklarasi.
+            if is_type_param {
+                self.module_type_params.insert(Symbol::intern(&name));
+            }
+
             let mut dtype = None;
             if self.peek() == &Token::Signed {
                 self.advance();
                 dtype = Some(DataType::Signed(Box::new(DataType::Int)));
             }
 
-            // Skip unpacked array dimension after name: name [N]
-            if self.peek() == &Token::LBrack && self.peek_ahead(1) != &Token::Colon {
+            // Skip unpacked array dimension(s) after name:
+            // name [N] atau name [msb:lsb] (multi-dimensi diperbolehkan)
+            while self.peek() == &Token::LBrack {
                 self.advance(); // [
                 let _ = self.parse_expr(0);
+                if self.peek() == &Token::Colon {
+                    self.advance();
+                    let _ = self.parse_expr(0);
+                }
                 self.expect(Token::RBrack)?;
             }
 

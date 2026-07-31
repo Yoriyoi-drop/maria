@@ -1,4 +1,5 @@
 pub mod const_eval;
+pub mod const_eval_ext;
 pub mod expr;
 pub mod inline;
 pub mod inline_util;

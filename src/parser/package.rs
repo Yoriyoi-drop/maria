@@ -170,12 +170,15 @@ impl Parser {
                                     }
                                     _ => break,
                                 };
-                                // Skip unpacked array dimension after name: name [N]
-                                if self.peek() == &Token::LBrack
-                                    && self.peek_ahead(1) != &Token::Colon
-                                {
+                                // Skip unpacked array dimension(s) after name:
+                                // name [N] atau name [msb:lsb] (multi-dimensi diperbolehkan)
+                                while self.peek() == &Token::LBrack {
                                     self.advance();
                                     self.parse_expr(0)?;
+                                    if self.peek() == &Token::Colon {
+                                        self.advance();
+                                        self.parse_expr(0)?;
+                                    }
                                     self.expect(Token::RBrack)?;
                                 }
                                 let default = if self.peek() == &Token::BlockingAssign {

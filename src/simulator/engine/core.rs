@@ -168,6 +168,15 @@ impl SimulationEngine {
         self.emit_diag(DiagLevel::Warning, code, message);
     }
 
+    /// Resolve nama file sumber dari directive `` `line `` di merged source,
+    /// scan mundur dari baris error (1-based). Fallback ke `source_file`.
+    /// Resolve nama file + baris relatif-file dari directive `` `line `` di merged source.
+    fn resolve_source_location(&self, line: usize) -> (String, usize) {
+        let source_lines = self.design.source_lines.as_deref().unwrap_or(&[]);
+        let default_file = self.design.source_file.as_deref().unwrap_or("<unknown>");
+        crate::diagnostics::resolve_source_location(source_lines, default_file, line)
+    }
+
     /// Emit error diagnostic ke DiagSink dan return SimError dengan full context.
     pub fn diag_error(&self, code: DiagCode, message: impl Into<String>) -> SimError {
         self.diag_error_at(code, message, 0, 0)
@@ -184,8 +193,8 @@ impl SimulationEngine {
             if let Some(ref source_lines) = self.design.source_lines {
                 if line <= source_lines.len() {
                     let source_line = &source_lines[line - 1];
-                    let file = self.design.source_file.as_deref().unwrap_or("<unknown>");
-                    diag = diag.with_source_snippet(SourceSnippet::new(file, line, col, source_line));
+                    let (file, display_line) = self.resolve_source_location(line);
+                    diag = diag.with_source_snippet(SourceSnippet::new(file, display_line, col, source_line));
                 }
             }
         }
@@ -208,8 +217,8 @@ impl SimulationEngine {
             if let Some(ref source_lines) = self.design.source_lines {
                 if line <= source_lines.len() {
                     let source_line = &source_lines[line - 1];
-                    let file = self.design.source_file.as_deref().unwrap_or("<unknown>");
-                    diag = diag.with_source_snippet(SourceSnippet::new(file, line, col, source_line));
+                    let (file, display_line) = self.resolve_source_location(line);
+                    diag = diag.with_source_snippet(SourceSnippet::new(file, display_line, col, source_line));
                 }
             }
         }

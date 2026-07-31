@@ -164,10 +164,17 @@ pub enum Token {
     Increment, // ++
     Decrement, // --
     // Assignment
-    AssignOp, // =
+    AssignOp, // :=
     PlusAssign,
     MinusAssign,
+    MulAssign,
+    DivAssign,
+    ModAssign,
+    AndAssign,
+    OrAssign,
     XorAssign,
+    ShlAssign,
+    ShrAssign,
     // Blocking / Non-blocking
     BlockingAssign,    // =
     NonBlockingAssign, // <=
@@ -985,6 +992,10 @@ impl Lexer {
                 else if self.peek() == Some(':') {
                     self.advance();
                     Token::MinusColon
+                } else if self.peek() == Some('=') {
+                    // -=
+                    self.advance();
+                    Token::MinusAssign
                 } else {
                     Token::Minus
                 }
@@ -998,12 +1009,29 @@ impl Lexer {
                     Token::StarArrow
                 }
                 // *>
-                else {
+                else if self.peek() == Some('=') {
+                    self.advance();
+                    Token::MulAssign
+                } else {
                     Token::Star
                 }
             }
-            '/' => Token::Slash,
-            '%' => Token::Percent,
+            '/' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    Token::DivAssign
+                } else {
+                    Token::Slash
+                }
+            }
+            '%' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    Token::ModAssign
+                } else {
+                    Token::Percent
+                }
+            }
             '=' => {
                 if self.peek() == Some('=') && self.peek_next() == Some('=') {
                     // ===
@@ -1045,8 +1073,11 @@ impl Lexer {
                     if self.peek() == Some('<') {
                         self.advance();
                         Token::Sshl
+                    } else if self.peek() == Some('=') {
+                        self.advance();
+                        Token::ShlAssign
                     }
-                    // <<<
+                    // <<=
                     else {
                         Token::Shl
                     }
@@ -1073,8 +1104,11 @@ impl Lexer {
                     if self.peek() == Some('>') {
                         self.advance();
                         Token::Sshr
+                    } else if self.peek() == Some('=') {
+                        self.advance();
+                        Token::ShrAssign
                     }
-                    // >>>
+                    // >>=
                     else {
                         Token::Shr
                     }
@@ -1125,6 +1159,9 @@ impl Lexer {
                 if self.peek() == Some('&') {
                     self.advance();
                     Token::AmpAmp
+                } else if self.peek() == Some('=') {
+                    self.advance();
+                    Token::AndAssign
                 } else {
                     Token::Amp
                 }
@@ -1133,6 +1170,9 @@ impl Lexer {
                 if self.peek() == Some('|') {
                     self.advance();
                     Token::PipePipe
+                } else if self.peek() == Some('=') {
+                    self.advance();
+                    Token::OrAssign
                 } else {
                     Token::Pipe
                 }

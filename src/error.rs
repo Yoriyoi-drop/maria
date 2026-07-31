@@ -158,8 +158,12 @@ impl SimError {
     /// Jika message mengandung "[CODE] ...", extract code dan message terpisah.
     pub fn to_diagnostic(&self) -> Diagnostic {
         // Fast path: already a Diagnostic — return clone immediately
+        // (strip nested error codes juga di sini karena with_diag menghasilkan
+        //  SimError::Diagnostic langsung, yang men-bypass jalur strip di bawah)
         if let SimError::Diagnostic(diag) = self {
-            return diag.clone();
+            let mut diag = diag.clone();
+            diag.message = Self::strip_nested_error_codes(&diag.message).into();
+            return diag;
         }
 
         let msg = self.to_string();
@@ -189,6 +193,10 @@ impl SimError {
             msg.clone()
         };
 
+        // Hapus kode error nested (mis. "error[E0101]: ") dari dalam message agar
+        // tidak ada duplikasi kode saat error dibungkus berlapis (preprocessor, dll).
+        let clean_msg = Self::strip_nested_error_codes(&clean_msg);
+
         let mut diag = Diagnostic::new(level, code, clean_msg);
 
         // Try to reconstruct source snippet from flat string format like "file:line:col: message"
@@ -208,6 +216,29 @@ impl SimError {
         diag = diag.with_code_context();
 
         diag
+    }
+
+    /// Hapus kode error nested seperti "error[E0101]: " dari dalam message.
+    /// Hanya strip pattern yang valid `error[EXXXX]: ` agar tidak merusak konten lain.
+    /// Case-sensitive karena formatter kita selalu memancarkan `error[` huruf kecil.
+    fn strip_nested_error_codes(msg: &str) -> String {
+        let mut result = msg.to_string();
+        loop {
+            let Some(idx) = result.find("error[") else { break };
+            let Some(rel_end) = result[idx + 6..].find(']') else { break };
+            let end = idx + 6 + rel_end;
+            let code = &result[idx + 6..end];
+            // Validasi format kode: EXXXX (huruf E + 4 digit)
+            let valid = code.len() == 5
+                && code.as_bytes()[0] == b'E'
+                && code.as_bytes()[1..].iter().all(|b| b.is_ascii_digit());
+            if !valid {
+                break;
+            }
+            let Some(stripped) = result[end + 1..].strip_prefix(": ") else { break };
+            result = format!("{}{}", &result[..idx], stripped);
+        }
+        result
     }
 
     /// Format error sebagai string dengan konteks.

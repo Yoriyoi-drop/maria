@@ -14,6 +14,8 @@ impl Parser {
     pub(crate) fn parse_module(&mut self) -> Result<Module, SimError> {
         self.advance(); // consume 'module', 'interface', or 'program'
         self.typedef_names.clear();
+        // Type params module tidak boleh bocor antar-module.
+        self.module_type_params.clear();
 
         // Skip (* ... *) attributes before module name
         while self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
@@ -181,6 +183,13 @@ impl Parser {
             match self.peek() {
                 Token::Endmodule | Token::EndInterface | Token::EndProgram | Token::Eof => {
                     if self.peek() != &Token::Eof { self.advance(); }
+                    // Consume optional 'endmodule : name' suffix
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
                     break;
                 }
                 Token::Class => {
@@ -288,6 +297,12 @@ impl Parser {
             match self.peek() {
                 Token::EndProgram | Token::Eof => {
                     self.advance();
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
                     break;
                 }
                 _ => {
@@ -674,6 +689,9 @@ impl Parser {
 
     pub(crate) fn parse_instance(&mut self) -> Result<ModuleInstance, SimError> {
         let name_tok = self.peek().clone();
+        // Catat posisi token module name untuk diagnostic (baris/kolom source).
+        let inst_line = self.peek_line();
+        let inst_col = self.peek_col();
         let module_name = match &name_tok {
             Token::Ident(s) => {
                 self.advance();
@@ -818,6 +836,8 @@ impl Parser {
             param_assigns,
             type_param_assigns,
             port_conns,
+            line: inst_line,
+            col: inst_col,
         })
     }
 

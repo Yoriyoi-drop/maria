@@ -25,6 +25,9 @@ pub struct Parser {
     source_lines: Vec<String>,
     class_names: std::collections::HashSet<Symbol>,
     typedef_names: std::collections::HashSet<Symbol>,
+    /// Type parameter names di scope module (dari `parameter type T = ...`),
+    /// agar `T x;` diparse sebagai deklarasi, bukan instance.
+    module_type_params: std::collections::HashSet<Symbol>,
     package_tdefs: std::collections::HashMap<Symbol, Vec<Symbol>>,
     type_param_names: Vec<Symbol>,
     file_line_map: Vec<(usize, String)>,
@@ -72,6 +75,7 @@ impl Parser {
                 s
             },
             typedef_names: std::collections::HashSet::new(),
+            module_type_params: std::collections::HashSet::new(),
             package_tdefs: std::collections::HashMap::new(),
             type_param_names: Vec::new(),
             file_line_map: Vec::new(),
@@ -352,6 +356,13 @@ let saved_pos = self.pos.get();
                 }
                 if self.peek() == &Token::EndPackage {
                     self.advance();
+                    // Consume optional 'endpackage : name'
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
                 }
             } else if self.peek() == &Token::Import {
                 // Skip import statements in first pass
@@ -883,7 +894,10 @@ let mut _last_pos = self.pos.get();
                 Ok(Some(ModuleItem::Decl(decl)))
             }
             Token::Ident(name) => {
-                if self.class_names.contains(name) || self.typedef_names.contains(name) {                            let dtype = DataType::UserDefined(*name);
+                if self.class_names.contains(name)
+                    || self.typedef_names.contains(name)
+                    || self.module_type_params.contains(name)
+                {                            let dtype = DataType::UserDefined(*name);
                     self.advance();
                     // Handle parameterized class: Class #(type) varname — skip type args, use base class name
                     if self.peek() == &Token::Hash {
@@ -1030,6 +1044,30 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
             Token::Param | Token::Parameter | Token::LocalParam => {
                 let is_localparam = self.peek() == &Token::LocalParam;
                 self.advance(); // consume param/localparam/parameter
+                // Handle 'parameter type T = type_expr'
+                if self.peek() == &Token::Type {
+                    self.advance();
+                    let pname = self.expect_ident()?;
+                    let type_default = if self.peek() == &Token::BlockingAssign {
+                        self.advance();
+                        Some(self.parse_type_expr()?)
+                    } else {
+                        None
+                    };
+                    // Daftarkan sebagai type param module agar `T x;` diparse
+                    // sebagai deklarasi (UserDefined), bukan instance `T x(...)`.
+                    self.module_type_params.insert(pname);
+                    self.skip_semi();
+                    return Ok(Some(ModuleItem::Param(ParamDecl {
+                        name: pname,
+                        dtype: None,
+                        range: None,
+                        default: None,
+                        is_localparam,
+                        is_type_param: true,
+                        type_default,
+                    })));
+                }
                 let mut dtype = None;
                 match self.peek() {
                     Token::Integer => {
@@ -1052,7 +1090,40 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                         self.advance();
                         dtype = Some(DataType::Bit);
                     }
+                    Token::Byte => {
+                        self.advance();
+                        dtype = Some(DataType::Byte);
+                    }
+                    Token::Shortint => {
+                        self.advance();
+                        dtype = Some(DataType::Shortint);
+                    }
+                    Token::Longint => {
+                        self.advance();
+                        dtype = Some(DataType::Longint);
+                    }
+                    Token::Time => {
+                        self.advance();
+                        dtype = Some(DataType::Time);
+                    }
                     _ => {}
+                }
+                // User-defined type: ident followed by name, range, or :: (e.g. pkg::type)
+                if dtype.is_none() {
+                    if let Token::Ident(s) = self.peek() {
+                        let ahead = self.peek_ahead(1).clone();
+                        if matches!(ahead, Token::Ident(_) | Token::LBrack | Token::Scope) {
+                            let s_owned = *s;
+                            self.advance();
+                            let mut type_name = s_owned;
+                            if self.peek() == &Token::Scope {
+                                self.advance();
+                                let t = self.expect_ident()?;
+                                type_name = Symbol::intern(&format!("{}::{}", s_owned, t));
+                            }
+                            dtype = Some(DataType::UserDefined(type_name));
+                        }
+                    }
                 }
                 if self.peek() == &Token::Signed {
                     self.advance();
@@ -1085,6 +1156,17 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                         }
                         _ => break,
                     };
+                    // Skip unpacked array dimension(s) after name:
+                    // name [N] atau name [msb:lsb] (multi-dimensi diperbolehkan)
+                    while self.peek() == &Token::LBrack {
+                        self.advance();
+                        self.parse_expr(0)?;
+                        if self.peek() == &Token::Colon {
+                            self.advance();
+                            self.parse_expr(0)?;
+                        }
+                        self.expect(Token::RBrack)?;
+                    }
                     let default = if self.peek() == &Token::BlockingAssign {
                         self.advance();
                         Some(self.parse_expr(0)?)

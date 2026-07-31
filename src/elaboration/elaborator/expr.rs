@@ -107,6 +107,10 @@ impl Elaborator {
                 msb,
                 lsb,
             } => {
+                // Const-fold array/param range select (e.g. `pkg::ARR[3:0]`)
+                if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
+                    return Ok(folded);
+                }
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
                 if let (Ok(msb_c), Ok(lsb_c)) = (
                     const_eval_params(msb, &self.param_vals),
@@ -124,6 +128,11 @@ impl Elaborator {
                 }
             }
             Expr::BitSelect { expr: inner, index } => {
+                // Const-fold array/param element select (e.g. `pkg::ARR[2]` via
+                // flattened param_vals key `ARR[2]`). Falls through if not constant.
+                if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
+                    return Ok(folded);
+                }
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
                 if let IrExpr::Signal(sid, _) = &inner_expr {
                     let sig = &signals[*sid];
@@ -818,6 +827,12 @@ impl Elaborator {
                             args: ir_args?,
                         });
                     }
+                    // Plain-name package function via import (pkg::* / pkg::item)
+                    if let Some(ir) =
+                        self.elaborate_imported_package_func_call(name.as_str(), args, signal_map, signals)?
+                    {
+                        return Ok(ir);
+                    }
                     Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
                         "function '{}' not found (not a DPI import)",
                         name
@@ -840,7 +855,54 @@ impl Elaborator {
         let (pkg_name, func_name) = name
             .split_once("::")
             .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, format!("invalid function name '{}'", name)))?;
+        self.elaborate_package_func(pkg_name, func_name, args, signal_map, signals)
+    }
 
+    /// Cari package yang mengimpor fungsi plain-name (via `import pkg::*`/`import pkg::item`
+    /// di $unit atau body module), lalu resolve fungsi package tersebut.
+    fn elaborate_imported_package_func_call(
+        &self,
+        name: &str,
+        args: &[Expr],
+        signal_map: &HashMap<Symbol, SignalId>,
+        signals: &[SignalInfo],
+    ) -> Result<Option<IrExpr>, SimError> {
+        let mut import_sets: Vec<(Symbol, Symbol)> = self.design.unit_imports.clone();
+        if let Some(mod_name) = self.current_module {
+            if let Some(module) = self.design.modules.iter().find(|m| m.name == mod_name) {
+                for item in &module.items {
+                    if let ModuleItem::Import { package, item: import_item } = item {
+                        import_sets.push((*package, *import_item));
+                    }
+                }
+            }
+        }
+        for (package, import_item) in import_sets {
+            let Some(pkg_items) = self.package_symbols.get(&package) else {
+                continue;
+            };
+            let matched = if import_item.as_str() == "*" {
+                matches!(pkg_items.get(name), Some(PackageItem::Function(_)))
+            } else {
+                import_item == name
+                    && matches!(pkg_items.get(name), Some(PackageItem::Function(_)))
+            };
+            if matched {
+                let ir = self.elaborate_package_func(package.as_str(), name, args, signal_map, signals)?;
+                return Ok(Some(ir));
+            }
+        }
+        Ok(None)
+    }
+
+    fn elaborate_package_func(
+        &self,
+        pkg_name: &str,
+        func_name: &str,
+        args: &[Expr],
+        signal_map: &HashMap<Symbol, SignalId>,
+        signals: &[SignalInfo],
+    ) -> Result<IrExpr, SimError> {
         let func = self
             .package_symbols
             .get(pkg_name)
@@ -871,7 +933,7 @@ impl Elaborator {
                 }
             })
             .ok_or_else(|| {
-                self.elab_diag(DiagCode::ModuleNotFound, format!("function '{}' has no return expression", name))
+                self.elab_diag(DiagCode::ModuleNotFound, format!("function '{}::{}' has no return expression", pkg_name, func_name))
             })?;
 
         // Substitute formal parameters with actual arguments

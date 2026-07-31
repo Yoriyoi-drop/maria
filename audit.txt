@@ -2021,9 +2021,9 @@ FIX LOG — 2026-07-28 (Final Update)
 ═══ STATUS RINGKAS ═══
 ✅ Total FIXED:   46 items (CRIT, DEBT, PERF, PARSER, ELAB, LANG, SCHED, VPI, JIT, BENCH, CACHE, WAV, CDC, DIST, TW, ERR)
 ⚠️ Remaining:     7 critical items still open
-📊 Tests:         1171 passed, 0 failed (✅ ALL FIXED) — naik dari 1167: +4 new tests
+📊 Tests:         1180 passed, 0 failed (✅ ALL FIXED) — +8 new tests di ROUND 11
 📈 Scores:        Sim 33→34 | Comp 16→18 | Scale 27→28 | VPI 0→40 | JIT 0→25 | LINT 0→95
-🔧 Files changed: 40+ files across 20 rounds
+🔧 Files changed: 40+ files across 21 rounds
 
 Detail perbaikan per round:
 
@@ -2214,6 +2214,66 @@ Detail perbaikan per round:
 
 📊 TOTAL TESTS: 930 passed, 0 failed (dari 917 baseline)
 
+═══ ROUND 11 — PACKAGE CONSTANTS + ASSIGNMENT OPS ═══
+
+✅ LANG-43-followup: Function import via package (plain-name pkg::* / pkg::item)
+   - elaborate_imported_package_func_call() + elaborate_package_func()
+   - Files: src/elaboration/elaborator/expr.rs
+
+✅ Package constants (skalar + array) evaluasi penuh
+   - src/ast/const_eval_ext.rs (NEW): eval_package_constants,
+     flatten_consts_into_ctx, flatten_imported_consts_into_ctx
+   - src/ast/const_eval.rs: BitSelect lookup via key `name[idx]` (array params)
+   - src/elaboration/elaborator/mod.rs: pkg_const_scalars + pkg_const_arrays
+     di-merge ke effective_params + collect_package_param_ctx
+
+✅ PARSER: Unpacked array dimension `[msb:lsb]` untuk parameter
+   - parameter int COEFFS[0:3] = '{...} — sebelumnya hanya `[N]` tanpa colon
+   - while loop multi-dimensi di package.rs, decl.rs, mod.rs
+
+✅ ELAB: Const-folding di RangeSelect + BitSelect
+   - try_fold_const() ditambahkan ke arm Expr::RangeSelect dan Expr::BitSelect
+   - pkg::ARR[i] kini ter-resolve jadi konstanta (sebelumnya jatuh ke jalur
+     sinyal 1-bit → width mismatch warning + nilai 0)
+
+✅ LEXER (legacy + FastLexer): Compound assignment operators
+   - Token::MinusAssign `-=` — sebelumnya arm '-' tidak pernah produksi `-=`
+   - FastLexer disinkronkan: -= *= /= %= &= |= <<= >>= (sebelumnya tidak ada)
+   - BUG FIX: FastLexer <<= salah taruh di branch <= (NonBlockingAssign), kini
+     di branch << (<<<, <<=, <<)
+   - Files: src/parser/lexer.rs, src/frontend/lexer.rs
+
+✅ LANG: Module-level `parameter type T = int; T x;`
+   - Parser: module_type_params: HashSet<Symbol>, `T x;` diparse sebagai
+     deklarasi UserDefined (bukan instance)
+   - parser/instance.rs: module_type_params.clear() di parse_module (anti-leak
+     antar-module)
+   - parser/decl.rs: type param dari HEADER parameter list
+     (`module m #(parameter type T = int)`) juga terdaftar di module_type_params
+     → `T x;` di body resolve benar (test_parameter_type_header_decl)
+
+✅ PARSER: `endmodule : name` / `endpackage : name` / `endprogram : name` suffix
+   - Files: src/parser/mod.rs
+
+✅ ERR: Nested error code stripping
+   - strip_nested_error_codes() di src/error.rs — hapus `error[EXXXX]: `
+     berlapis agar tidak duplikasi kode saat error dibungkus
+
+✅ LOC: Source location multi-file (resolve_source_location)
+   - src/diagnostics/mod.rs: `line N "file" directive → (file, line) relatif
+   - compile_session.rs: per-file base offsets utk posisi global
+   - Elaborator: elab_diag_at dengan inst.line/col (error lokasi instance)
+
+✅ GEN: Param substitution dalam generate (default + range kena genvar)
+   - src/elaboration/util/generate.rs: ModuleItem::Param disubstitusi
+
+✅ Tests baru (8): test_compound_assign_operators, test_assignment_pattern_concat,
+   test_package_array_param, test_parameter_type_decl, test_parameter_type_header_decl,
+   test_endmodule_colon_name_suffix, test_fast_lexer_compound_assign_ops,
+   test_fast_lexer_compound_assign_equivalence_with_legacy
+
+📊 TOTAL TESTS: 1180 passed, 0 failed — +8 tests baru di ROUND 11
+
 ═══ ITEMS MASH TERBUKA (⚠️) — PRIORITAS TINGGI ═══
 (Item audit original yg belum diperbaiki, diurutkan prioritas)
 
@@ -2330,7 +2390,7 @@ END OF AUDIT REPORT
    - P0: --no-default-features build ✅ (dpi tests cfg-guarded)
 
 📊 **Metrik Saat Ini:**
-   - 1171 tests pass, 0 fail (default features) ✅ (naik dari 1126 — +45 tests)
+   - 1180 tests pass, 0 fail (default features) ✅ (+8 tests baru di ROUND 11)
    - 1092 tests pass, 0 fail (--no-default-features) ✅ (FIXED — dpi tests cfg-guarded)
    - Enterprise Readiness: 19/100
    - Simulator Score: 33/100
