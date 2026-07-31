@@ -7,6 +7,7 @@
 //!   - parse_dist_item()     — parsing dist item untuk constraint randomization
 //!   - parse_expr()          — parsing expression (Pratt parser)
 //!   - parse_primary_expr()  — parsing primary expression (literal, ident, dll.)
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use super::Parser;
@@ -72,7 +73,7 @@ impl Parser {
                     DistWeight::Range(weight),
                 ))
             } else {
-                return Err(self.err("expected := or :/ after dist range"));
+                Err(self.err("expected := or :/ after dist range"))
             }
         } else {
             // Single value: expr := weight or expr :/ weight
@@ -91,7 +92,7 @@ impl Parser {
                 let weight = const_eval_simple(&val).unwrap_or(0) as u64;
                 Ok(DistItem::Value(Box::new(expr), DistWeight::Range(weight)))
             } else {
-                return Err(self.err("expected := or :/ after dist item"));
+                Err(self.err("expected := or :/ after dist item"))
             }
         }
     }

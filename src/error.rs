@@ -223,8 +223,7 @@ impl SimError {
     /// Case-sensitive karena formatter kita selalu memancarkan `error[` huruf kecil.
     fn strip_nested_error_codes(msg: &str) -> String {
         let mut result = msg.to_string();
-        loop {
-            let Some(idx) = result.find("error[") else { break };
+        while let Some(idx) = result.find("error[") {
             let Some(rel_end) = result[idx + 6..].find(']') else { break };
             let end = idx + 6 + rel_end;
             let code = &result[idx + 6..end];

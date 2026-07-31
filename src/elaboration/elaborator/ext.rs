@@ -7,6 +7,7 @@
 //!   - elaborate_dpi_imports()         — elaborate DPI import declarations
 //!   - detect_multi_driver_signals()   — deteksi signal multi-driver
 //!   - collect_driven_signals()        — kumpulkan signal yang di-driven (static)
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use std::collections::{HashMap, HashSet};
@@ -37,7 +38,7 @@ impl Elaborator {
                 for cp in &cg.coverpoints {
                     let ir_expr = self.elaborate_expr(&cp.expr, signal_map, signals)?;
                     ir_cps.push(IrCoverpoint {
-                        name: cp.name.clone(),
+                        name: cp.name,
                         expr: ir_expr,
                     });
                 }
@@ -45,12 +46,12 @@ impl Elaborator {
                     .crosses
                     .iter()
                     .map(|c| IrCross {
-                        name: c.name.clone(),
+                        name: c.name,
                         coverpoints: c.coverpoints.clone(),
                     })
                     .collect();
                 covergroups.push(IrCovergroup {
-                    name: cg.name.clone(),
+                    name: cg.name,
                     coverpoints: ir_cps,
                     crosses: ir_crosses,
                 });
@@ -68,7 +69,7 @@ impl Elaborator {
                     let return_width = dpi.return_type.as_ref().map(|dt| dt.width()).unwrap_or(1);
                     let arg_widths: Vec<usize> = dpi.args.iter().map(|a| a.dtype.width()).collect();
                     dpi_imports.push(IrDpiImport {
-                        name: dpi.name.clone(),
+                        name: dpi.name,
                         return_width,
                         arg_widths,
                         is_task: dpi.is_task,

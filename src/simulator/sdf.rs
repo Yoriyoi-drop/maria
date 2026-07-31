@@ -729,10 +729,10 @@ fn parse_timing_checks(tokens: &[String], mut pos: usize) -> Result<(Vec<TimingC
                     }
                 }
                 "SETUPHOLD" => {
-                    let mut signal = String::new();
-                    let mut ref_signal = String::new();
-                    let mut setup = MinTypMax::single(0.0);
-                    let mut hold = MinTypMax::single(0.0);
+                    let signal = String::new();
+                    let ref_signal = String::new();
+                    let setup = MinTypMax::single(0.0);
+                    let hold = MinTypMax::single(0.0);
                     let mut inner = 0;
                     let mut p = pos + 2;
                     while p < tokens.len() {

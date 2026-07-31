@@ -118,7 +118,7 @@ pub(crate) fn stmt_has_func_call(func_name: &Symbol, stmts: &[Stmt]) -> bool {
             }
             Stmt::Return(expr) => {
                 if let Some(e) = expr {
-                    if expr_has_func_call(func_name, &e) {
+                    if expr_has_func_call(func_name, e) {
                         return true;
                     }
                 }
@@ -142,7 +142,7 @@ pub(crate) fn stmt_has_func_call(func_name: &Symbol, stmts: &[Stmt]) -> bool {
             }
             Stmt::Fork { processes, .. } => {
                 for p in processes {
-                    if stmt_has_func_call(func_name, &[p.clone()]) {
+                    if stmt_has_func_call(func_name, std::slice::from_ref(p)) {
                         return true;
                     }
                 }
@@ -652,7 +652,7 @@ pub(crate) fn rename_func_decls_in_stmt(stmt: Stmt, rename_map: &HashMap<Symbol,
                 .map(|mut d| {
                     for var in &mut d.names {
                         if let Some(new_name) = rename_map.get(&var.name) {
-                            var.name = new_name.clone();
+                            var.name = *new_name;
                         }
                     }
                     d
@@ -682,7 +682,7 @@ pub(crate) fn rename_in_expr(expr: Expr, rename_map: &HashMap<Symbol, Symbol>) -
     match expr {
         Expr::Ident { name, .. } => rename_map
             .get(&name)
-            .map_or(Expr::Ident { name, line: 0, col: 0 }, |n| Expr::Ident { name: n.clone(), line: 0, col: 0 }),
+            .map_or(Expr::Ident { name, line: 0, col: 0 }, |n| Expr::Ident { name: *n, line: 0, col: 0 }),
         Expr::BinaryOp { op, lhs, rhs } => Expr::BinaryOp {
             op,
             lhs: Box::new(rename_in_expr(*lhs, rename_map)),

@@ -10,6 +10,7 @@
 //!   - resolve_expr_signal()        — resolusi expression ke signal ID
 //!   - collect_sensitivity()        — kumpulkan sensitivity list dari expr
 //!   - detect_sync_reset()          — deteksi reset sinkron dari body process
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use std::collections::HashMap;

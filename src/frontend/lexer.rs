@@ -564,7 +564,7 @@ impl<'a> FastLexer<'a> {
         let rest = parts[1];
         if rest.is_empty() {
             return Token::Number {
-                value: Symbol::intern(&s),
+                value: Symbol::intern(s),
                 base: None,
                 width: None,
                 is_signed: false,
@@ -1254,8 +1254,10 @@ endmodule";
     #[test]
     fn test_fast_lexer_compound_assign_equivalence_with_legacy() {
         // Verifikasi legacy lexer dan FastLexer menghasilkan token yang sama
-        // untuk seluruh operator compound assignment (regresi silang).
-        let input = "a += b; a -= b; a *= b; a /= b; a %= b; a &= b; a |= b; a ^= b; a <<= b; a >>= b; a <<< b; a >>> b; a <= b;";
+        // untuk seluruh operator compound assignment + operator pembanding
+        // non-compound (regresi silang). Kelas bug <<= di branch salah sudah
+        // terjadi dua kali — test ini mencegah regresi lintas lexer.
+        let input = "a += b; a -= b; a *= b; a /= b; a %= b; a &= b; a |= b; a ^= b; a <<= b; a >>= b; a <<< b; a >>> b; a <= b; a >= b; a === b; a !== b; a == b; a != b; a << b; a >> b; a < b; a > b;";
 
         let mut legacy = crate::parser::lexer::Lexer::new(input);
         let mut legacy_tokens = Vec::new();

@@ -6,6 +6,7 @@
 //!   - is_2state_type()      — cek apakah tipe data adalah 2-state
 //!   - is_signed_type()      — cek apakah tipe data adalah signed
 //!   - parse_type_spec_str() — parse string tipe spec ke DataType
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use crate::ast::*;

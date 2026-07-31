@@ -190,7 +190,7 @@ pub async fn run_lsp_server() {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
-    let (service, messages) = LspService::new(|client| LspBackend::new(client));
+    let (service, messages) = LspService::new(LspBackend::new);
     Server::new(stdin, stdout, messages)
         .serve(service)
         .await;

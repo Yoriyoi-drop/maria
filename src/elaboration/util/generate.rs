@@ -8,6 +8,7 @@
 //!   - expand_generate_block()        — perluas satu generate block
 //!   - substitute_genvar_in_module_item() — substitusi genvar di module item
 //!   - substitute_genvar_in_generate_item() — substitusi genvar di generate item
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use std::collections::HashMap;
@@ -68,7 +69,7 @@ fn expr_location(expr: &Expr) -> (usize, usize) {
         Expr::Value(_) | Expr::FillLit(_) | Expr::String(_) | Expr::Null => (0, 0),
         Expr::FuncCall { args, .. }
         | Expr::MethodCall { args, .. } => {
-            args.first().map(|a| expr_location(a)).unwrap_or((0, 0))
+            args.first().map(expr_location).unwrap_or((0, 0))
         }
         Expr::UnaryOp { expr: inner, .. }
         | Expr::Paren(inner)
@@ -84,7 +85,7 @@ fn expr_location(expr: &Expr) -> (usize, usize) {
         Expr::TernaryOp { cond, .. } => expr_location(cond),
         Expr::Inside { expr: inner, .. } => expr_location(inner),
         Expr::Concat(items) | Expr::StreamingConcat { slices: items, .. } => {
-            items.first().map(|i| expr_location(i)).unwrap_or((0, 0))
+            items.first().map(expr_location).unwrap_or((0, 0))
         }
         Expr::Replicate { expr: inner, .. } => expr_location(inner),
         Expr::ScopedIdent { .. } | Expr::MemberAccess { .. } => (0, 0),
@@ -189,7 +190,7 @@ pub fn expand_generate_block(
                     }
                     _ => 0,
                 };
-                let (lim_line, lim_col) = cond.as_ref().map(|c| expr_location(c)).unwrap_or((0, 0));
+                let (lim_line, lim_col) = cond.as_ref().map(expr_location).unwrap_or((0, 0));
                 let limit: i64 = match cond {
                     Some(Expr::BinaryOp {
                         op: BinaryOp::Lt,
@@ -333,7 +334,7 @@ fn expand_item_list(
                         eprintln!("DBG-GEN: param {} default = {:?}", p.name.as_str(), e);
                     }
                     if let Ok(v) = const_eval_with_params(e, &extended) {
-                        extended.insert(p.name.clone(), v);
+                        extended.insert(p.name, v);
                     }
                 }
             }
@@ -397,7 +398,7 @@ pub fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, v
                 range.msb = substitute_loop_var_in_expr(&old_msb, var_name, value);
                 range.lsb = substitute_loop_var_in_expr(&old_lsb, var_name, value);
             }
-            for (_, expr) in &mut inst.param_assigns {
+            for expr in inst.param_assigns.values_mut() {
                 let old = std::mem::replace(expr, Expr::Value(crate::ast::expr::Value::Decimal(0)));
                 *expr = substitute_loop_var_in_expr(&old, var_name, value);
             }

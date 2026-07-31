@@ -64,7 +64,7 @@ fn constant_fold(instrs: &mut Vec<MirInstr>) -> bool {
                     MirBinOp::Add => lv.wrapping_add(rv),
                     MirBinOp::Sub => lv.wrapping_sub(rv),
                     MirBinOp::Mul => lv.wrapping_mul(rv),
-                    MirBinOp::Div => if rv != 0 { lv / rv } else { 0 },
+                    MirBinOp::Div => lv.checked_div(rv).unwrap_or(0),
                     MirBinOp::And => lv & rv,
                     MirBinOp::Or => lv | rv,
                     MirBinOp::Xor => lv ^ rv,
@@ -102,25 +102,22 @@ fn copy_propagate(instrs: &mut Vec<MirInstr>) -> bool {
     }).collect();
 
     for instr in instrs.iter_mut() {
-        match instr {
-            MirInstr::Unary { op, dest, operand, width } => {
-                // If operand is constant, fold: !C, -C
-                if let Some(&ov) = const_map.get(operand) {
-                    let raw_result = match op {
-                        super::mir::MirUnOp::Not => !ov,
-                        super::mir::MirUnOp::Neg => ov.wrapping_neg(),
-                    };
-                    let mask = if *width < 64 { (1u64 << *width) - 1 } else { u64::MAX };
-                    *instr = MirInstr::Const { dest: *dest, value: raw_result & mask, width: *width };
-                    changed = true;
-                }
+        if let MirInstr::Unary { op, dest, operand, width } = instr {
+            // If operand is constant, fold: !C, -C
+            if let Some(&ov) = const_map.get(operand) {
+                let raw_result = match op {
+                    super::mir::MirUnOp::Not => !ov,
+                    super::mir::MirUnOp::Neg => ov.wrapping_neg(),
+                };
+                let mask = if *width < 64 { (1u64 << *width) - 1 } else { u64::MAX };
+                *instr = MirInstr::Const { dest: *dest, value: raw_result & mask, width: *width };
+                changed = true;
             }
-            // Note: Binary identity ops (x|0, x&all-ones) are intentionally
-            // NOT folded here — the subsequent constant_fold pass in the
-            // fixed-point pipeline handles them when the constant operand
-            // is detected via find_const_value.
-            _ => {}
         }
+        // Note: Binary identity ops (x|0, x&all-ones) are intentionally
+        // NOT folded here — the subsequent constant_fold pass in the
+        // fixed-point pipeline handles them when the constant operand
+        // is detected via find_const_value.
     }
     changed
 }

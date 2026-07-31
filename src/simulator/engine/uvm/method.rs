@@ -17,7 +17,7 @@ impl SimulationEngine {
         let class_name = self
             .state
             .get_object(obj_id)
-            .map(|o| o.class_name.clone())
+            .map(|o| o.class_name)
             .unwrap_or_default();
         if class_name.is_empty() {
             return Err(SimError::with_diag(
@@ -44,112 +44,112 @@ impl SimulationEngine {
             }
         }
         // Check uvm_callbacks hierarchy (must be before general object dispatch)
-        if self.is_uvm_callbacks_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_callbacks_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_callbacks_add(obj_id, method, args);
             }
         }
         // Check uvm_callback hierarchy
-        if self.is_uvm_callback_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_callback_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_callback_method(obj_id, method, args);
             }
         }
         // Check uvm_driver hierarchy (most specific first)
-        if self.is_uvm_driver_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_driver_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_driver_method(obj_id, method, args);
             }
         }
         // Check uvm_sequencer hierarchy
-        if self.is_uvm_sequencer_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_sequencer_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_sequencer_method(obj_id, method, args);
             }
         }
         // Check uvm_sequence hierarchy
-        if self.is_uvm_sequence_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_sequence_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_sequence_method(obj_id, method, args);
             }
         }
         // Check uvm_monitor hierarchy
-        if self.is_uvm_monitor_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_monitor_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_monitor_method(obj_id, method, args);
             }
         }
         // Check uvm_analysis_port hierarchy
-        if self.is_uvm_analysis_port_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_analysis_port_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_analysis_port_method(obj_id, method, args);
             }
         }
         // Check uvm_analysis_imp hierarchy
-        if self.is_uvm_analysis_imp_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_analysis_imp_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_analysis_imp_method(obj_id, method, args);
             }
         }
         // Check uvm_reg_block hierarchy (most specific reg layer first)
-        if self.is_uvm_reg_block_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_reg_block_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_reg_block_method(obj_id, method, args);
             }
         }
         // Check uvm_reg_map hierarchy
-        if self.is_uvm_reg_map_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_reg_map_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_reg_map_method(obj_id, method, args);
             }
         }
         // Check uvm_reg hierarchy
-        if self.is_uvm_reg_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_reg_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_reg_method(obj_id, method, args);
             }
         }
         // Check uvm_reg_field hierarchy
-        if self.is_uvm_reg_field_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_reg_field_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_reg_field_method(obj_id, method, args);
             }
         }
         // Check uvm_sequence_item hierarchy
-        if self.is_uvm_sequence_item_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_sequence_item_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_sequence_item_method(obj_id, method, args);
             }
         }
         // Check for uvm_component hierarchy methods — only intercept if class doesn't override
-        if self.is_uvm_component_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_component_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_component_method(obj_id, method, args);
             }
         }
         // Check for uvm_report_object hierarchy methods — only intercept if class doesn't override
-        if self.is_uvm_report_object_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_report_object_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_report_object_method(obj_id, method, args);
             }
         }
         // Check for uvm_object hierarchy methods — only intercept if class doesn't override
-        if self.is_uvm_object_hierarchy(&class_name.as_str()) {
+        if self.is_uvm_object_hierarchy(class_name.as_str()) {
             let has_override = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
             if !has_override {
                 return self.execute_uvm_object_method(obj_id, method, args);
@@ -244,7 +244,7 @@ impl SimulationEngine {
                         for later in &vars[1..] {
                             before_map
                                 .entry(*first)
-                                .or_insert_with(HashSet::new)
+                                .or_default()
                                 .insert(*later);
                         }
                     }
@@ -268,7 +268,7 @@ impl SimulationEngine {
         }
 
         let max_attempts = 10_000;
-        let mut seed = self.current_time as u64;
+        let mut seed = self.current_time;
         for _ in 0..max_attempts {
             // Generate random values for each rand field
             for fname in &ordered_fields {

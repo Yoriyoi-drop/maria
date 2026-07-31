@@ -359,8 +359,8 @@ impl CompileSession {
                             .range
                             .as_ref()
                             .map(|r| {
-                                let lo = r.lsb as usize;
-                                let hi = r.msb as usize;
+                    let lo = r.lsb;
+                    let hi = r.msb;
                                 hi.abs_diff(lo) + 1
                             })
                             .unwrap_or(1);
@@ -721,8 +721,8 @@ impl CompileSession {
                             .range
                             .as_ref()
                             .map(|r| {
-                                let lo = r.lsb as usize;
-                                let hi = r.msb as usize;
+                    let lo = r.lsb;
+                    let hi = r.msb;
                                 hi.abs_diff(lo) + 1
                             })
                             .unwrap_or(1);

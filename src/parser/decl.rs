@@ -14,14 +14,14 @@ impl Parser {
         // Check if the next tokens are Ident(::Ident)? — a user-defined type name
         // that should be treated as the type of a declaration (e.g., wire pkg::type varname)
         if let Token::Ident(s) = self.peek() {
-            let s = s.clone();
+            let s = *s;
             let ahead = self.peek_ahead(1).clone();
             if ahead == Token::Scope {
                 let pkg = s;
                 self.advance(); // consume package name
                 self.advance(); // consume ::
                 if let Token::Ident(t) = self.peek() {
-                    let type_name = t.clone();
+                    let type_name = *t;
                     self.advance();
                     Some(DataType::UserDefined(Symbol::intern(&format!("{}::{}", pkg, type_name))))
                 } else {
@@ -467,15 +467,51 @@ impl Parser {
         loop {
             match self.peek() {
                 Token::Ident(name) => {
-                    let name = name.clone();
+                    let name = *name;
                     self.advance();
+                    let range: Option<(i64, Option<i64>)> = if self.peek() == &Token::LBrack {
+                        self.advance();
+                        let lo = self.parse_enum_range_literal()?;
+                        let hi = if self.peek() == &Token::Colon {
+                            self.advance();
+                            Some(self.parse_enum_range_literal()?)
+                        } else {
+                            None
+                        };
+                        self.expect(Token::RBrack)?;
+                        Some((lo, hi))
+                    } else {
+                        None
+                    };
                     let val = if matches!(self.peek(), Token::Eq | Token::BlockingAssign) {
                         self.advance();
                         Some(self.parse_expr(0)?)
                     } else {
                         None
                     };
-                    members.push((name, val));
+                    match range {
+                        None => members.push((name, val)),
+                        Some((lo, hi)) => {
+                            let indices: Vec<i64> = match hi {
+                                // name[N] -> name0 .. nameN-1
+                                None => (0..lo).collect(),
+                                // name[N:M] -> nameN .. nameM (inclusive, direction follows N->M)
+                                Some(m) => {
+                                    if lo <= m {
+                                        (lo..=m).collect()
+                                    } else {
+                                        (m..=lo).rev().collect()
+                                    }
+                                }
+                            };
+                            for (k, idx) in indices.into_iter().enumerate() {
+                                let member_val = if k == 0 { val.clone() } else { None };
+                                let member_name =
+                                    Symbol::intern(&format!("{}{}", name.as_str(), idx));
+                                members.push((member_name, member_val));
+                            }
+                        }
+                    }
                 }
                 _ => {
                     return Err(self.err("expected identifier in enum"))
@@ -489,6 +525,24 @@ impl Parser {
         }
         self.expect(Token::RBrace)?;
         Ok(members)
+    }
+
+    /// Parse integer literal untuk enum range (hanya literal konstan per LRM).
+    fn parse_enum_range_literal(&mut self) -> Result<i64, SimError> {
+        match self.peek().clone() {
+            Token::Number { value, base, .. } => {
+                let s = value.as_str().to_string();
+                self.advance();
+                let n = match base {
+                    None => s.parse::<i64>(),
+                    Some(10) => s.parse::<i64>(),
+                    Some(b) => i64::from_str_radix(&s, b as u32),
+                }
+                .map_err(|_| self.err("invalid integer literal in enum range"))?;
+                Ok(n)
+            }
+            _ => Err(self.err("expected integer literal in enum range")),
+        }
     }
 
     pub(crate) fn parse_struct_body(&mut self) -> Result<Vec<StructMember>, SimError> {
@@ -592,7 +646,7 @@ impl Parser {
                     }
                 }
                 Token::Ident(name) => {
-                    let name = name.clone();
+                    let name = *name;
                     self.advance();
                     // Handle scoped type: pkg::type
                     if self.peek() == &Token::Scope {
@@ -672,7 +726,7 @@ impl Parser {
                     // User-defined base type: typedef enum lc_state_t {...} or
                     // typedef enum pkg::type {...}
                     Token::Ident(name) => {
-                        let name = name.clone();
+                        let name = *name;
                         self.advance();
                         let dtype = if self.peek() == &Token::Scope {
                             self.advance();
@@ -694,7 +748,7 @@ impl Parser {
                 }
                 let members = self.parse_enum_members()?;
                 if let Token::Ident(name) = self.peek() {
-                    let name = name.clone();
+                    let name = *name;
                     self.advance();
                     (name, DataType::EnumType { base, members }, None)
                 } else {
@@ -718,7 +772,7 @@ impl Parser {
                 };
                 self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
-                    let name = name.clone();
+                    let name = *name;
                     self.advance();
                     (name, dtype, range)
                 } else {
@@ -742,7 +796,7 @@ impl Parser {
                 };
                 self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
-                    let name = name.clone();
+                    let name = *name;
                     self.advance();
                     (name, dtype, range)
                 } else {
@@ -766,7 +820,7 @@ impl Parser {
                 };
                 self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
-                    let name = name.clone();
+                    let name = *name;
                     self.advance();
                     (name, dtype, range)
                 } else {
@@ -790,7 +844,7 @@ impl Parser {
                 };
                 self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
-                    let name = name.clone();
+                    let name = *name;
                     self.advance();
                     (name, dtype, range)
                 } else {
@@ -806,7 +860,7 @@ impl Parser {
                 };
                 self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
-                    let name = name.clone();
+                    let name = *name;
                     self.advance();
                     (name, DataType::Time, range)
                 } else {
@@ -830,7 +884,7 @@ impl Parser {
                 };
                 self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
-                    let name = name.clone();
+                    let name = *name;
                     self.advance();
                     (name, dtype, range)
                 } else {
@@ -854,7 +908,7 @@ impl Parser {
                 };
                 self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
-                    let name = name.clone();
+                    let name = *name;
                     self.advance();
                     (name, dtype, range)
                 } else {
@@ -878,7 +932,7 @@ impl Parser {
                 };
                 self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
-                    let name = name.clone();
+                    let name = *name;
                     self.advance();
                     (name, dtype, range)
                 } else {
@@ -895,7 +949,7 @@ impl Parser {
                 };
                 self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
-                    let name = name.clone();
+                    let name = *name;
                     self.advance();
                     (name, dtype, range)
                 } else {
@@ -909,7 +963,7 @@ impl Parser {
                 }
                 let members = self.parse_struct_body()?;
                 if let Token::Ident(name) = self.peek() {
-                    let name = name.clone();
+                    let name = *name;
                     self.advance();
                     (name, DataType::StructType { members }, None)
                 } else {
@@ -923,7 +977,7 @@ impl Parser {
                 }
                 let members = self.parse_struct_body()?;
                 if let Token::Ident(name) = self.peek() {
-                    let name = name.clone();
+                    let name = *name;
                     self.advance();
                     (name, DataType::UnionType { members }, None)
                 } else {
@@ -954,7 +1008,7 @@ impl Parser {
                 };
                 self.skip_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
-                    let name = name.clone();
+                    let name = *name;
                     self.advance();
                     (name, dtype, range)
                 } else {
@@ -1032,7 +1086,7 @@ impl Parser {
                 {
                     // User-defined type: ident followed by name, range, or ::
                     if let Token::Ident(s) = self.peek() {
-                        type_ident = Some(s.clone());
+                        type_ident = Some(*s);
                         self.advance();
                         // Handle scoped type: pkg::type
                         if self.peek() == &Token::Scope {

@@ -8,6 +8,7 @@
 //!   - substitute_loop_var_in_stmt()  — substitusi loop var di satu statement
 //!   - substitute_loop_var_in_expr()  — substitusi loop var di expression
 //!   - substitute_sensitivity_event() — substitusi loop var di sensitivity event
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use std::collections::HashMap;
@@ -161,7 +162,7 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
             stmt: Box::new(substitute_loop_var_in_stmt(stmt, var_name, value)),
         },
         Stmt::SysCall { name, args } => Stmt::SysCall {
-            name: name.clone(),
+            name: *name,
             args: args
                 .iter()
                 .map(|a| substitute_loop_var_in_expr(a, var_name, value))
@@ -267,7 +268,7 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
                 .as_ref()
                 .map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
         },
-        Stmt::Disable { name } => Stmt::Disable { name: name.clone() },
+        Stmt::Disable { name } => Stmt::Disable { name: *name },
         Stmt::Force { lhs, rhs } => Stmt::Force {
             lhs: substitute_loop_var_in_expr(lhs, var_name, value),
             rhs: substitute_loop_var_in_expr(rhs, var_name, value),
@@ -293,18 +294,18 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
                 .as_ref()
                 .map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
         },
-        Stmt::EventTrigger { name } => Stmt::EventTrigger { name: name.clone() },
+        Stmt::EventTrigger { name } => Stmt::EventTrigger { name: *name },
         Stmt::ForeachLoop {
             array_var,
             index_vars,
             stmts,
         } => Stmt::ForeachLoop {
-            array_var: array_var.clone(),
+            array_var: *array_var,
             index_vars: index_vars.clone(),
             stmts: substitute_loop_var_in_stmts(stmts, var_name, value),
         },
         Stmt::NamedBlock { name, stmts, decls } => Stmt::NamedBlock {
-            name: name.clone(),
+            name: *name,
             stmts: substitute_loop_var_in_stmts(stmts, var_name, value),
             decls: decls.clone(),
         },
@@ -384,7 +385,7 @@ pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> E
                 .collect(),
         ),
         Expr::FuncCall { name, args } => Expr::FuncCall {
-            name: name.clone(),
+            name: *name,
             args: args
                 .iter()
                 .map(|a| substitute_loop_var_in_expr(a, var_name, value))
@@ -422,7 +423,7 @@ pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> E
             with_clause,
         } => Expr::MethodCall {
             obj: Box::new(substitute_loop_var_in_expr(obj, var_name, value)),
-            method: method.clone(),
+            method: *method,
             args: args
                 .iter()
                 .map(|a| substitute_loop_var_in_expr(a, var_name, value))
@@ -433,7 +434,7 @@ pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> E
         },
         Expr::MemberAccess { obj, field } => Expr::MemberAccess {
             obj: Box::new(substitute_loop_var_in_expr(obj, var_name, value)),
-            field: field.clone(),
+            field: *field,
         },
         Expr::FillLit(val) => Expr::FillLit(*val),
         Expr::Inside {
@@ -465,12 +466,12 @@ pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> E
             items: items.clone(),
         },
         Expr::Cast { dtype, expr: inner } => Expr::Cast {
-            dtype: dtype.clone(),
+            dtype: *dtype,
             expr: Box::new(substitute_loop_var_in_expr(inner, var_name, value)),
         },
         Expr::ScopedIdent { package, item } => Expr::ScopedIdent {
-            package: package.clone(),
-            item: item.clone(),
+            package: *package,
+            item: *item,
         },
     }
 }

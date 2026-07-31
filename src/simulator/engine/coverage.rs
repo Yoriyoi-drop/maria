@@ -69,7 +69,7 @@ impl SimulationEngine {
         if !self.coverage_enabled {
             return;
         }
-        let branches = self.cover_branches.entry(branch_key).or_insert_with(HashMap::new);
+        let branches = self.cover_branches.entry(branch_key).or_default();
         *branches.entry(Symbol::intern(label)).or_insert(0) += 1;
     }
 
@@ -80,7 +80,7 @@ impl SimulationEngine {
         if !self.coverage_enabled {
             return;
         }
-        let toggles = self.cover_toggle.entry(sig_id).or_insert_with(HashSet::new);
+        let toggles = self.cover_toggle.entry(sig_id).or_default();
         for i in 0..old_val.width.min(new_val.width).min(64) {
             let old_bit = old_val.bits.get(i).copied().unwrap_or(LogicVal::X);
             let new_bit = new_val.bits.get(i).copied().unwrap_or(LogicVal::X);
@@ -98,7 +98,7 @@ impl SimulationEngine {
             return;
         }
         let uval = val.to_u64();
-        self.cover_fsm.entry(sig_id).or_insert_with(HashSet::new).insert(uval);
+        self.cover_fsm.entry(sig_id).or_default().insert(uval);
     }
 
     // ─── Reporting ─────────────────────────────────────────────────
@@ -113,7 +113,7 @@ impl SimulationEngine {
             .iter()
             .map(|(k, v)| (k.as_str(), *v))
             .collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|a| std::cmp::Reverse(a.1));
         for (key, hits) in sorted.iter().take(20) {
             eprintln!("  {}: {} hits", key, hits);
         }
@@ -192,7 +192,7 @@ impl SimulationEngine {
         if !self.cover_toggle.is_empty() {
             let mut total_signal_bits = 0usize;
             let mut covered_bits = 0usize;
-            for (_, toggles) in &self.cover_toggle {
+            for toggles in self.cover_toggle.values() {
                 let n_transitions = toggles.len();
                 // Each bit can transition 0→1, 1→0, 0→X, X→0, etc (max 12 possible transitions per bit)
                 covered_bits += n_transitions;
@@ -212,8 +212,8 @@ impl SimulationEngine {
         if !self.cover_branches.is_empty() {
             let mut total_branches = 0u64;
             let mut covered_branches = 0u64;
-            for (_, branches) in &self.cover_branches {
-                for (_, count) in branches {
+            for branches in self.cover_branches.values() {
+                for count in branches.values() {
                     total_branches += 1;
                     if *count > 0 {
                         covered_branches += 1;
@@ -233,7 +233,7 @@ impl SimulationEngine {
         // FSM coverage percentage
         if !self.cover_fsm.is_empty() {
             let mut total_states = 0usize;
-            for (_, states) in &self.cover_fsm {
+            for states in self.cover_fsm.values() {
                 total_states += states.len();
             }
             eprintln!("  FSM:      {} states visited across {} signals", total_states, self.cover_fsm.len());
@@ -268,8 +268,8 @@ impl SimulationEngine {
         // Branch coverage
         let mut total_branches = 0u64;
         let mut covered_branches = 0u64;
-        for (_, branches) in &self.cover_branches {
-            for (_, count) in branches {
+        for branches in self.cover_branches.values() {
+            for count in branches.values() {
                 total_branches += 1;
                 if *count > 0 {
                     covered_branches += 1;
@@ -345,7 +345,7 @@ impl SimulationEngine {
                 let bins = self
                     .cover_bins
                     .entry(key_sym)
-                    .or_insert_with(HashMap::new);
+                    .or_default();
                 let entry = bins.entry(bin_key_sym).or_insert(0);
                 *entry += 1;
                 let hits = self.cover_hits.entry(key_sym).or_insert(0);
@@ -367,7 +367,7 @@ impl SimulationEngine {
                 let bins = self
                     .cover_bins
                     .entry(key_sym)
-                    .or_insert_with(HashMap::new);
+                    .or_default();
                 let entry = bins.entry(bin_key_sym).or_insert(0);
                 *entry += 1;
                 let hits = self.cover_hits.entry(key_sym).or_insert(0);
@@ -553,8 +553,8 @@ impl SimulationEngine {
             xml.push_str("    <branchCoverage>\n");
             let mut total_br = 0u64;
             let mut covered_br = 0u64;
-            for (_, branches) in &self.cover_branches {
-                for (_, count) in branches {
+            for branches in self.cover_branches.values() {
+                for count in branches.values() {
                     total_br += 1;
                     if *count > 0 { covered_br += 1; }
                 }

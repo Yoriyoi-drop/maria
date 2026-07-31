@@ -65,24 +65,21 @@ impl Elaborator {
                             SensitivityEvent::PosEdge(_) | SensitivityEvent::NegEdge(_)
                         )
                     }) {
-                        match self.extract_clock_reset(&always.sensitivity, signal_map) {
-                            Ok((clock, reset)) => {
-                                let body = self.elaborate_stmt_block(
-                                    &always.stmts,
-                                    signal_map,
-                                    &[],
-                                    signals,
-                                )?;
-                                let reset = reset.or_else(|| detect_sync_reset(&body));
-                                return Ok(Process::Sequential {
-                                    name,
-                                    clock,
-                                    reset,
-                                    body,
-                                });
-                            }
-                            Err(_) => {} // fall through to combinational
-                        }
+                        if let Ok((clock, reset)) = self.extract_clock_reset(&always.sensitivity, signal_map) {
+                            let body = self.elaborate_stmt_block(
+                                &always.stmts,
+                                signal_map,
+                                &[],
+                                signals,
+                            )?;
+                            let reset = reset.or_else(|| detect_sync_reset(&body));
+                            return Ok(Process::Sequential {
+                                name,
+                                clock,
+                                reset,
+                                body,
+                            });
+                        } // fall through to combinational
                     }
                 }
                 let body = self.elaborate_stmt_block(&always.stmts, signal_map, &[], signals)?;

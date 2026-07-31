@@ -145,7 +145,7 @@ impl SimulationEngine {
                 let sig_info = self.design.top.signals.get(*sig_id);
                 if sig_info.map(|s| s.is_associative).unwrap_or(false) {
                     sanitize_for_2state(&self.design.top.signals, *sig_id, &mut val);
-                    let assoc_map = self.assoc_data.entry(*sig_id).or_insert_with(HashMap::new);
+                    let assoc_map = self.assoc_data.entry(*sig_id).or_default();
                     assoc_map.insert(key_val, val);
                     return Ok(());
                 }
@@ -312,7 +312,7 @@ impl SimulationEngine {
                 let obj_val = self.evaluate_ast_expr(obj)?;
                 let obj_id = obj_val.to_u64() as ObjId;
                 if let Some(obj_data) = self.state.get_object_mut(obj_id) {
-                    obj_data.fields.insert(field.clone(), val);
+                    obj_data.fields.insert(*field, val);
                     Ok(())
                 } else {
                     Err(self.diag_error(crate::diagnostics::DiagCode::NullHandle, format!(

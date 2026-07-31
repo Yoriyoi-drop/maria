@@ -648,11 +648,7 @@ impl SimulationEngine {
             None
         };
         let elem_width = sig_info.map(|s| s.elem_width).unwrap_or(1);
-        let count = if elem_width > 0 {
-            lv.width / elem_width
-        } else {
-            0
-        };
+        let count = lv.width.checked_div(elem_width).unwrap_or(0);
         for i in 0..count {
             if self.disable_pending.is_some() {
                 break;
@@ -663,7 +659,7 @@ impl SimulationEngine {
             }
             let idx_val = LogicVec::from_u64(i as u64, 32);
             let mut scope = HashMap::new();
-            scope.insert(index_var.clone(), idx_val);
+            scope.insert(*index_var, idx_val);
             let depth = self.method_locals.len();
             self.method_locals.push(scope);
             if !self.evaluate_block_with_delay_fork(body, fork_id)? {
@@ -696,11 +692,7 @@ impl SimulationEngine {
             None
         };
         let elem_width = sig_info.map(|s| s.elem_width).unwrap_or(1);
-        let count = if elem_width > 0 {
-            lv.width / elem_width
-        } else {
-            0
-        };
+        let count = lv.width.checked_div(elem_width).unwrap_or(0);
         for i in 0..count {
             if self.disable_pending.is_some() {
                 break;
@@ -711,7 +703,7 @@ impl SimulationEngine {
             }
             let idx_val = LogicVec::from_u64(i as u64, 32);
             let mut scope = HashMap::new();
-            scope.insert(index_var.clone(), idx_val);
+            scope.insert(*index_var, idx_val);
             let depth = self.method_locals.len();
             self.method_locals.push(scope);
             self.evaluate_stmt_block(body)?;

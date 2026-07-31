@@ -4,6 +4,7 @@
 //!
 //! Fungsi:
 //!   - parse_config_decl() — parsing konfigurasi library binding
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use super::Parser;

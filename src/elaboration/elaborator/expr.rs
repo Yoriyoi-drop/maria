@@ -57,7 +57,7 @@ impl Elaborator {
             Expr::Ident { name, line, col } => {
                 if name.starts_with("$") {
                     return Ok(IrExpr::SysFunc {
-                        name: name.clone(),
+                        name: *name,
                         args: vec![],
                     });
                 }
@@ -97,10 +97,10 @@ impl Elaborator {
                         }
                     }
                 }
-                return Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
+                Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
                     "'{}' not found in package '{}'",
                     item, package
-                )));
+                )))
             }
             Expr::RangeSelect {
                 expr: inner,
@@ -330,11 +330,15 @@ impl Elaborator {
                 }
                 "$bits" => {
                     if let Some(arg) = args.first() {
+                        // Signal: SignalInfo.width ALREADY includes unpacked array
+                        // depth (total_width = elem_width * depth di-set saat elaborasi).
+                        // Jangan kalikan lagi dgn array_depth — itu double-count.
                         let width = resolve_expr_signal(arg, signal_map)
                                 .map(|sig_id| {
                                     let info = &signals[sig_id];
-                                    info.width * if info.array_depth > 0 { info.array_depth } else { 1 }
+                                    info.width
                                 })
+                                .or_else(|| self.try_array_param_bits(arg))
                                 .or_else(|| compute_expr_width(arg, signal_map, signals, &self.param_vals, &self.package_symbols).ok())
                                 .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, "$bits argument must resolve to a signal or computable expression"))?;
                         Ok(IrExpr::Const(LogicVec::from_u64(width as u64, 32)))
@@ -394,7 +398,17 @@ impl Elaborator {
                             self.elab_diag(DiagCode::ModuleNotFound, "$size argument must resolve to a signal")
                         })?;
                         let info = &signals[sig_id];
-                        Ok(IrExpr::Const(LogicVec::from_u64(info.width as u64, 32)))
+                        // $size mengembalikan jumlah elemen pada dimensi pertama.
+                        // Prioritas: unpacked array (array_depth) > packed
+                        // multi-dimensi (packed_dims[0]) > lebar total.
+                        let size = if info.array_depth > 1 {
+                            info.array_depth
+                        } else if info.packed_dims.len() > 1 {
+                            info.packed_dims[0]
+                        } else {
+                            info.width
+                        };
+                        Ok(IrExpr::Const(LogicVec::from_u64(size as u64, 32)))
                     } else {
                         Err(self.elab_diag(DiagCode::ParamMismatch, "$size requires one argument"))
                     }
@@ -492,7 +506,7 @@ impl Elaborator {
                 };
                 Ok(IrExpr::MethodCall {
                     obj: Box::new(ir_obj),
-                    method: method.clone(),
+                    method: *method,
                     args: ir_args?,
                     with_clause: ir_with,
                 })
@@ -532,8 +546,8 @@ impl Elaborator {
                                 1
                             };
                             return Ok(IrExpr::VirtualIfaceAccess {
-                                vif_name: sig_info.name.clone(),
-                                field: field.clone(),
+                                vif_name: sig_info.name,
+                                field: *field,
                                 field_width,
                             });
                         }
@@ -552,12 +566,12 @@ impl Elaborator {
                         }
                         Ok(IrExpr::MemberAccess {
                             obj: Box::new(IrExpr::Signal(sig_id, 0)),
-                            field: field.clone(),
+                            field: *field,
                         })
                     }
                     Ok(ir_obj) => Ok(IrExpr::MemberAccess {
                         obj: Box::new(ir_obj),
-                        field: field.clone(),
+                        field: *field,
                     }),
                     Err(_) => {
             // If obj can't be elaborated (e.g., instance name), emit a HierRef
@@ -574,7 +588,7 @@ impl Elaborator {
                 let inner_ir = self.elaborate_expr(inner, signal_map, signals)?;
                 let mut list_ir = Vec::with_capacity(range_list.len());
                 for item in range_list {
-                    list_ir.push(self.elaborate_expr(&item, signal_map, signals)?);
+                    list_ir.push(self.elaborate_expr(item, signal_map, signals)?);
                 }
                 Ok(IrExpr::Inside {
                     expr: Box::new(inner_ir),
@@ -692,7 +706,7 @@ impl Elaborator {
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
                     .collect();
                 Ok(IrExpr::SysFunc {
-                    name: name.clone(),
+                    name: *name,
                     args: ir_args?,
                 })
             }
@@ -723,7 +737,7 @@ impl Elaborator {
                     if !exists_in_design && !exists_in_spec {
                         let orig = self.design.classes.iter().find(|c| c.name == base).cloned();
                         if let Some(mut spec) = orig {
-                            let tp_name = spec.type_params.first().map(|tp| tp.name.clone());
+                            let tp_name = spec.type_params.first().map(|tp| tp.name);
                             spec.name = Symbol::intern(&specialized);
                             if let Some(ref param_name) = tp_name {
                                 let type_dt = parse_type_spec_str(type_spec);
@@ -755,7 +769,7 @@ impl Elaborator {
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
                     .collect();
                 Ok(IrExpr::SysFunc {
-                    name: name.clone(),
+                    name: *name,
                     args: ir_args?,
                 })
             }
@@ -771,7 +785,7 @@ impl Elaborator {
                     .collect();
                 // Use SysFunc variant for engine dispatch
                 Ok(IrExpr::SysFunc {
-                    name: name.clone(),
+                    name: *name,
                     args: ir_args?,
                 })
             }                    Expr::FuncCall { name, args } if name != "new" && name.contains("::") => {
@@ -806,7 +820,7 @@ impl Elaborator {
                         .map(|dt| dt.width())
                         .unwrap_or(32);
                     Ok(IrExpr::DpiCall {
-                        name: name.clone(),
+                        name: *name,
                         args: ir_args?,
                         return_width,
                     })
@@ -823,7 +837,7 @@ impl Elaborator {
                             .map(|a| self.elaborate_expr(a, signal_map, signals))
                             .collect();
                         return Ok(IrExpr::FuncCall {
-                            func_name: name.clone(),
+                            func_name: *name,
                             args: ir_args?,
                         });
                     }
@@ -838,10 +852,7 @@ impl Elaborator {
                         name
                     )))
                 }
-            }
-            _ => Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
-                "expression type not yet supported"
-            ))),
+            }              _ => Err(self.elab_diag(DiagCode::ModuleNotFound, "expression type not yet supported".to_string())),
         }
     }
 
@@ -858,15 +869,10 @@ impl Elaborator {
         self.elaborate_package_func(pkg_name, func_name, args, signal_map, signals)
     }
 
-    /// Cari package yang mengimpor fungsi plain-name (via `import pkg::*`/`import pkg::item`
-    /// di $unit atau body module), lalu resolve fungsi package tersebut.
-    fn elaborate_imported_package_func_call(
-        &self,
-        name: &str,
-        args: &[Expr],
-        signal_map: &HashMap<Symbol, SignalId>,
-        signals: &[SignalInfo],
-    ) -> Result<Option<IrExpr>, SimError> {
+    /// Kumpulkan set import aktif: import $unit (`design.unit_imports`) + import
+    /// di body module saat ini (`ModuleItem::Import`). Dipakai oleh resolusi
+    /// plain-name package (fungsi & konstanta/array).
+    fn collect_import_sets(&self) -> Vec<(Symbol, Symbol)> {
         let mut import_sets: Vec<(Symbol, Symbol)> = self.design.unit_imports.clone();
         if let Some(mod_name) = self.current_module {
             if let Some(module) = self.design.modules.iter().find(|m| m.name == mod_name) {
@@ -877,6 +883,19 @@ impl Elaborator {
                 }
             }
         }
+        import_sets
+    }
+
+    /// Cari package yang mengimpor fungsi plain-name (via `import pkg::*`/`import pkg::item`
+    /// di $unit atau body module), lalu resolve fungsi package tersebut.
+    fn elaborate_imported_package_func_call(
+        &self,
+        name: &str,
+        args: &[Expr],
+        signal_map: &HashMap<Symbol, SignalId>,
+        signals: &[SignalInfo],
+    ) -> Result<Option<IrExpr>, SimError> {
+        let import_sets = self.collect_import_sets();
         for (package, import_item) in import_sets {
             let Some(pkg_items) = self.package_symbols.get(&package) else {
                 continue;
@@ -893,6 +912,61 @@ impl Elaborator {
             }
         }
         Ok(None)
+    }
+
+    /// Hitung total bit untuk referensi array utuh (param package) dalam `$bits`,
+    /// mis. `$bits(pkg::ARR)` atau `$bits(ARR)` via `import pkg::*`.
+    /// Mengembalikan `elem_width * num_elements` bila ter-resolve, selain itu None.
+    fn try_array_param_bits(&self, arg: &Expr) -> Option<usize> {
+        let candidates: Vec<(Symbol, Symbol)> = match arg {
+            Expr::ScopedIdent { package, item } => vec![(*package, *item)],
+            Expr::Ident { name, .. } => {
+                let mut out = Vec::new();
+                for (package, import_item) in self.collect_import_sets() {
+                    let Some(pkg_items) = self.package_symbols.get(&package) else {
+                        continue;
+                    };
+                    let matched = if import_item.as_str() == "*" {
+                        matches!(pkg_items.get(name), Some(PackageItem::Param(_)))
+                    } else {
+                        import_item == *name
+                            && matches!(pkg_items.get(name), Some(PackageItem::Param(_)))
+                    };
+                    if matched {
+                        out.push((package, *name));
+                    }
+                }
+                out
+            }
+            _ => return None,
+        };
+
+        for (package, item) in candidates {
+            let qname = Symbol::intern(&format!("{}::{}", package.as_str(), item.as_str()));
+            let Some(elems) = self.pkg_const_arrays.get(&qname) else { continue };
+            if elems.is_empty() {
+                continue;
+            }
+            let Some(pkg_items) = self.package_symbols.get(&package) else { continue };
+            let elem_width: usize = match pkg_items.get(&item) {
+                Some(PackageItem::Param(p)) => {
+                    if let Some((msb, lsb)) = &p.range {
+                        match (
+                            const_eval_with_params(msb, &self.param_vals),
+                            const_eval_with_params(lsb, &self.param_vals),
+                        ) {
+                            (Ok(m), Ok(l)) => m.abs_diff(l) as usize + 1,
+                            _ => p.dtype.as_ref().map(|d| d.width()).unwrap_or(32),
+                        }
+                    } else {
+                        p.dtype.as_ref().map(|d| d.width()).unwrap_or(32)
+                    }
+                }
+                _ => continue,
+            };
+            return Some(elem_width * elems.len());
+        }
+        None
     }
 
     fn elaborate_package_func(
@@ -949,7 +1023,7 @@ impl Elaborator {
                     if let DataType::EnumType { members, .. } = &td.dtype {
                         for (member_name, member_expr) in members {
                             if let Some(expr) = member_expr {
-                                enum_member_values.insert(member_name.clone(), expr.clone());
+                                enum_member_values.insert(*member_name, expr.clone());
                             }
                         }
                     }
@@ -1085,7 +1159,7 @@ impl Elaborator {
                 if package == target {
                     match &replacement {
                         Expr::Ident { name, .. } => Expr::ScopedIdent {
-                            package: name.clone(),
+                            package: *name,
                             item,
                         },
                         _ => Expr::ScopedIdent { package, item },

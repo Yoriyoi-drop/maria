@@ -13,6 +13,7 @@
 //!   - operator.rs        — operator mapping & gate expression building
 //!   - width.rs           — expression width computation
 //!   - type_subst.rs      — type parameter substitution
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 pub mod type_util;

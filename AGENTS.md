@@ -4,6 +4,18 @@
 1 file = 1 tanggung jawab tidak boleh lebih dari 1
 Rust-based SystemVerilog simulator. Pipeline: preprocessor → lexer → parser → AST → elaborator → IR → simulation engine → VCD output.
 
+### 🚫 LARANGAN TOTAL: SCRIPT UNTUK MEMODIFIKASI PROJECT
+**DILARANG TOTAL, TANPA TOLERANSI** — dilarang menggunakan script apa pun (Python, Perl, Ruby, Bash/sed/awk mass-edit, `python -c` one-liner, dan sejenisnya) untuk mengubah/memodifikasi file di project ini.
+
+**Berlaku untuk SEMUA agent dan subagent yang bekerja di project ini, tanpa terkecuali.**
+
+Aturan:
+1. **Semua perubahan file WAJIB manual** via editor (str_replace / write_file), satu per satu, dengan konteks yang diverifikasi.
+2. **Tidak boleh menulis script** (apa pun bahasanya) untuk melakukan mass-edit, batch-replace, atau transformasi kode otomatis.
+3. **Tidak boleh menjalankan script** yang menulis ke file project (mis. `cargo fix`, `cargo clippy --fix`, `rustfmt`, formatter otomatis massal, sed/awk `-i`, python write). Tidak ada pengecualian dari agent/subagent mana pun. Satu-satunya jalur penggunaan script adalah jika user memerintahkannya secara eksplisit dan tertulis di percakapan; jika instruksinya ambigu, konfirmasi dulu sebelum eksekusi. Script temporer di `/tmp` yang hasilnya disalin ke project juga termasuk pelanggaran.
+4. Alasan: script mass-edit merusak tipe/borrow-check (mis. menghapus `.clone()` pada `Symbol`/Copy yang butuh deref, menambahkan `*` di receiver yang salah) dan menimbulkan 100+ error build yang butuh waktu lama dipulihkan.
+5. Boleh digunakan untuk **membaca/menganalisis** (grep, awk print, sed read-only) — tidak boleh untuk **menulis**.
+
 ## Build & Test
 
 ```shell
@@ -13,7 +25,7 @@ cargo test --lib              # same, excludes main.rs
 cargo test <test_name>        # single test (no --lib needed if unique)
 ```
 
-No CI, no lint, no typecheck shortcuts. Just `cargo test`. 577 tests pass.
+No CI, no lint, no typecheck shortcuts. Just `cargo test`. 1185 tests pass.
 
 ## Pipeline architecture
 

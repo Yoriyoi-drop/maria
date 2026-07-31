@@ -379,8 +379,8 @@ fn parse_number_or_ident(s: &str) -> LibToken {
         return LibToken::Number(val);
     }
     // Also try with leading minus
-    if s.starts_with('-') {
-        if let Ok(val) = s[1..].parse::<f64>() {
+    if let Some(rest) = s.strip_prefix('-') {
+        if let Ok(val) = rest.parse::<f64>() {
             return LibToken::Number(-val);
         }
     }

@@ -104,6 +104,12 @@ pub fn is_all_whitespace(buf: &[u8]) -> bool {
 /// Memproses 32 bytes per iterasi. Menggunakan `_mm256_loadu_si256` untuk
 /// load unaligned, `_mm256_cmpeq_epi8` untuk comparison, dan
 /// `_mm256_movemask_epi8` untuk extract bitmask.
+///
+/// # Safety
+///
+/// Hanya boleh dipanggil pada CPU dengan dukungan AVX2 (verifikasi via
+/// [`detect_simd_level`] sebelum memanggil). `buf` harus valid untuk dibaca
+/// sepanjang `buf.len()`.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 pub unsafe fn count_whitespace_avx2(buf: &[u8]) -> usize {
@@ -166,6 +172,12 @@ pub unsafe fn count_whitespace_avx2(buf: &[u8]) -> usize {
 /// Count leading whitespace using SSE4.2 intrinsics.
 ///
 /// Memproses 16 bytes per iterasi via `_mm_loadu_si128`.
+///
+/// # Safety
+///
+/// Hanya boleh dipanggil pada CPU dengan dukungan SSE4.2 (verifikasi via
+/// [`detect_simd_level`] sebelum memanggil). `buf` harus valid untuk dibaca
+/// sepanjang `buf.len()`.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.2")]
 pub unsafe fn count_whitespace_sse42(buf: &[u8]) -> usize {

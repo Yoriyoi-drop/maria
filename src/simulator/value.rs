@@ -370,13 +370,12 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
             } else {
                 let l = lhs_ext.to_u64();
                 let r = rhs_ext.to_u64();
-                if r == 0 {
-                    LogicVec {
+                match l.checked_div(r) {
+                    Some(q) => LogicVec::from_u64(q, max_width),
+                    None => LogicVec {
                         bits: vec![LogicVal::X; max_width],
                         width: max_width,
-                    }
-                } else {
-                    LogicVec::from_u64(l / r, max_width)
+                    },
                 }
             }
         }
@@ -431,10 +430,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         BinaryIrOp::Eq | BinaryIrOp::CaseEq => {
             // Pessimistic: X/Z in either operand → X result
             let mode = get_xprop_mode();
-            if mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere {
-                if has_xz(&lhs_ext) || has_xz(&rhs_ext) {
-                    return LogicVec { bits: vec![LogicVal::X], width: 1 };
-                }
+            if (mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere)
+                && (has_xz(&lhs_ext) || has_xz(&rhs_ext))
+            {
+                return LogicVec { bits: vec![LogicVal::X], width: 1 };
             }
             let eq = if max_width <= 64 {
                 // Fast path: O(1) u64 bitmask comparison
@@ -448,10 +447,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         }
         BinaryIrOp::Neq | BinaryIrOp::CaseNeq => {
             let mode = get_xprop_mode();
-            if mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere {
-                if has_xz(&lhs_ext) || has_xz(&rhs_ext) {
-                    return LogicVec { bits: vec![LogicVal::X], width: 1 };
-                }
+            if (mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere)
+                && (has_xz(&lhs_ext) || has_xz(&rhs_ext))
+            {
+                return LogicVec { bits: vec![LogicVal::X], width: 1 };
             }
             let eq = if max_width <= 64 {
                 // Fast path: O(1) u64 bitmask comparison
@@ -473,10 +472,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         }
         BinaryIrOp::Lt => {
             let mode = get_xprop_mode();
-            if mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere {
-                if has_xz(&lhs_ext) || has_xz(&rhs_ext) {
-                    return LogicVec { bits: vec![LogicVal::X], width: 1 };
-                }
+            if (mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere)
+                && (has_xz(&lhs_ext) || has_xz(&rhs_ext))
+            {
+                return LogicVec { bits: vec![LogicVal::X], width: 1 };
             }
             let l = lhs_ext.to_u64();
             let r = rhs_ext.to_u64();
@@ -484,10 +483,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         }
         BinaryIrOp::Le => {
             let mode = get_xprop_mode();
-            if mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere {
-                if has_xz(&lhs_ext) || has_xz(&rhs_ext) {
-                    return LogicVec { bits: vec![LogicVal::X], width: 1 };
-                }
+            if (mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere)
+                && (has_xz(&lhs_ext) || has_xz(&rhs_ext))
+            {
+                return LogicVec { bits: vec![LogicVal::X], width: 1 };
             }
             let l = lhs_ext.to_u64();
             let r = rhs_ext.to_u64();
@@ -495,10 +494,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         }
         BinaryIrOp::Gt => {
             let mode = get_xprop_mode();
-            if mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere {
-                if has_xz(&lhs_ext) || has_xz(&rhs_ext) {
-                    return LogicVec { bits: vec![LogicVal::X], width: 1 };
-                }
+            if (mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere)
+                && (has_xz(&lhs_ext) || has_xz(&rhs_ext))
+            {
+                return LogicVec { bits: vec![LogicVal::X], width: 1 };
             }
             let l = lhs_ext.to_u64();
             let r = rhs_ext.to_u64();
@@ -506,10 +505,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         }
         BinaryIrOp::Ge => {
             let mode = get_xprop_mode();
-            if mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere {
-                if has_xz(&lhs_ext) || has_xz(&rhs_ext) {
-                    return LogicVec { bits: vec![LogicVal::X], width: 1 };
-                }
+            if (mode == XPropagationMode::Pessimistic || mode == XPropagationMode::XAnywhere)
+                && (has_xz(&lhs_ext) || has_xz(&rhs_ext))
+            {
+                return LogicVec { bits: vec![LogicVal::X], width: 1 };
             }
             let l = lhs_ext.to_u64();
             let r = rhs_ext.to_u64();

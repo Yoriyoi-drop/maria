@@ -316,6 +316,11 @@ pub const vpiSetInteractiveScope: i32 = 5;
 
 /// Convert a `*const c_char` C string to a Rust &str.
 /// Returns "" on null or invalid UTF-8.
+///
+/// # Safety
+///
+/// `ptr` harus menunjuk ke C string null-terminated yang valid selama
+/// pemanggilan, atau null (yang mengembalikan "").
 pub unsafe fn cstr_to_str<'a>(ptr: *const c_char) -> &'a str {
     if ptr.is_null() {
         return "";

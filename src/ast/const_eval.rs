@@ -18,15 +18,15 @@ pub fn const_eval_simple(expr: &Expr) -> Result<i64, String> {
     match expr {
         Expr::Value(Value::Decimal(n)) => Ok(*n),
         Expr::Value(Value::Binary { bits, .. }) => {
-            i64::from_str_radix(&bits.replace('x', "0").replace('z', "0"), 2)
+            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 2)
                 .map_err(|_| "bad binary".to_string())
         }
         Expr::Value(Value::Hex { bits, .. }) => {
-            i64::from_str_radix(&bits.replace('x', "0").replace('z', "0"), 16)
+            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 16)
                 .map_err(|_| "bad hex".to_string())
         }
         Expr::Value(Value::Octal { bits, .. }) => {
-            i64::from_str_radix(&bits.replace('x', "0").replace('z', "0"), 8)
+            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 8)
                 .map_err(|_| "bad octal".to_string())
         }
         Expr::Ident { name: ref s, .. } if s == "1" => Ok(1),
@@ -43,15 +43,15 @@ pub fn const_eval_with_params(
     match expr {
         Expr::Value(Value::Decimal(n)) => Ok(*n),
         Expr::Value(Value::Binary { bits, .. }) => {
-            i64::from_str_radix(&bits.replace('x', "0").replace('z', "0"), 2)
+            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 2)
                 .map_err(|_| "bad binary".to_string())
         }
         Expr::Value(Value::Hex { bits, .. }) => {
-            i64::from_str_radix(&bits.replace('x', "0").replace('z', "0"), 16)
+            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 16)
                 .map_err(|_| "bad hex".to_string())
         }
         Expr::Value(Value::Octal { bits, .. }) => {
-            i64::from_str_radix(&bits.replace('x', "0").replace('z', "0"), 8)
+            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 8)
                 .map_err(|_| "bad octal".to_string())
         }
         Expr::String(s) => Ok(string_to_i64(s)),

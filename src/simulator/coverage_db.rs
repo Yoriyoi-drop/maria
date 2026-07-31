@@ -65,7 +65,7 @@ fn read_str<R: Read>(r: &mut R) -> io::Result<String> {
     let len = read_usize(r)?;
     let mut buf = vec![0u8; len];
     r.read_exact(&mut buf)?;
-    Ok(String::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?)
+    String::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
 fn write_logic_val<W: Write>(w: &mut W, val: &LogicVal) -> io::Result<()> {
@@ -248,7 +248,7 @@ impl CoverageDatabase {
                 let total = engine.cover_total.get(&key_sym).copied().unwrap_or(0);
                 let hits = engine.cover_hits.get(&key_sym).copied().unwrap_or(0);
                 let bins = engine.cover_bins.get(&key_sym)
-                    .map(|b| b.clone())
+                    .cloned()
                     .unwrap_or_default();
                 let cp_name = cp.name.to_string();
 
@@ -275,7 +275,7 @@ impl CoverageDatabase {
                 let total = engine.cover_total.get(&key_sym).copied().unwrap_or(0);
                 let hits = engine.cover_hits.get(&key_sym).copied().unwrap_or(0);
                 let bins = engine.cover_bins.get(&key_sym)
-                    .map(|b| b.clone())
+                    .cloned()
                     .unwrap_or_default();
                 let cross_name = cross.name.to_string();
 
@@ -316,7 +316,7 @@ impl CoverageDatabase {
         // Merge branch coverage
         for (key, branches) in &engine.cover_branches {
             let entry = self.branch_data.entry(*key)
-                .or_insert_with(HashMap::new);
+                .or_default();
             for (label, count) in branches {
                 *entry.entry(*label).or_insert(0) += count;
             }
@@ -325,7 +325,7 @@ impl CoverageDatabase {
         // Merge FSM coverage
         for (sig_id, states) in &engine.cover_fsm {
             let entry = self.fsm_data.entry(*sig_id)
-                .or_insert_with(HashMap::new);
+                .or_default();
             for state in states {
                 *entry.entry(*state).or_insert(0) += 1;
             }
@@ -736,7 +736,7 @@ impl CoverageDatabase {
         // Merge branch coverage
         for (key, branches) in &other.branch_data {
             let entry = self.branch_data.entry(*key)
-                .or_insert_with(HashMap::new);
+                .or_default();
             for (label, count) in branches {
                 *entry.entry(*label).or_insert(0) += count;
             }
@@ -745,7 +745,7 @@ impl CoverageDatabase {
         // Merge FSM coverage
         for (sig_id, states) in &other.fsm_data {
             let entry = self.fsm_data.entry(*sig_id)
-                .or_insert_with(HashMap::new);
+                .or_default();
             for (state, count) in states {
                 *entry.entry(*state).or_insert(0) += count;
             }
@@ -874,8 +874,8 @@ impl CoverageDatabase {
         if !self.branch_data.is_empty() {
             let mut total_br = 0u64;
             let mut covered_br = 0u64;
-            for (_, branches) in &self.branch_data {
-                for (_, count) in branches {
+            for branches in self.branch_data.values() {
+                for count in branches.values() {
                     total_br += 1;
                     if *count > 0 { covered_br += 1; }
                 }
@@ -923,8 +923,8 @@ impl CoverageDatabase {
         // Branch percentage
         let mut total_br = 0u64;
         let mut covered_br = 0u64;
-        for (_, branches) in &self.branch_data {
-            for (_, count) in branches {
+        for branches in self.branch_data.values() {
+            for count in branches.values() {
                 total_br += 1;
                 if *count > 0 { covered_br += 1; }
             }
@@ -934,7 +934,7 @@ impl CoverageDatabase {
         // Coverpoint percentage
         let mut total_cp_hits = 0u64;
         let mut total_cp_total = 0u64;
-        for (_, entry) in &self.covergroups {
+        for entry in self.covergroups.values() {
             for cp in &entry.coverpoints {
                 total_cp_hits += cp.hits;
                 total_cp_total += cp.total;
@@ -942,7 +942,7 @@ impl CoverageDatabase {
         }
         let cp_pct = if total_cp_total > 0 { (total_cp_hits as f64 / total_cp_total as f64 * 100.0) as u64 } else { 0 };
 
-        html.push_str(&format!("<div class=\"summary\">\n"));
+        html.push_str("<div class=\"summary\">\n");
         html.push_str(&format!("  <div class=\"card\"><div class=\"val\">{}</div><div class=\"label\">Covergroups</div></div>\n", total_cg));
         html.push_str(&format!("  <div class=\"card\"><div class=\"val {} \">{}%</div><div class=\"label\">Coverpoints</div></div>\n", 
             if cp_pct >= 90 { "good" } else if cp_pct >= 50 { "warn" } else { "bad" },

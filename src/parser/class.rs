@@ -4,6 +4,7 @@
 //!
 //! Fungsi:
 //!   - parse_class() — parsing deklarasi class dengan type params, extends, members
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use super::Parser;
@@ -127,7 +128,7 @@ impl Parser {
             None
         };
         self.expect(Token::Semi)?;
-        self.type_param_names = type_params.iter().map(|tp| tp.name.clone()).collect();
+        self.type_param_names = type_params.iter().map(|tp| tp.name).collect();
         let mut members = Vec::new();
         loop {
             match self.peek() {
@@ -267,8 +268,8 @@ impl Parser {
                         Err(_) => { let _ = self.skip_until_semi_or_end(); }
                     }
                 }
-                Token::Ident(name) if self.type_param_names.contains(&name) => {
-                    let tp_name = name.clone();
+                Token::Ident(name) if self.type_param_names.contains(name) => {
+                    let tp_name = *name;
                     self.advance();
                     let decl_expr_range = if self.peek() == &Token::LBrack {
                         self.parse_range()?

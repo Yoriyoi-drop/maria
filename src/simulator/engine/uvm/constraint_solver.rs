@@ -15,7 +15,7 @@ pub(crate) enum SolveResult {
 }
 
 /// Analyzed domains for rand variables
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct VarDomain {
     /// Fixed value (from equality constraint like `a == 5`)
     fixed: Option<u64>,
@@ -27,18 +27,6 @@ struct VarDomain {
     inside: Vec<InsideRange>,
     /// Excluded values (from `a != val`)
     exclude: HashSet<u64>,
-}
-
-impl Default for VarDomain {
-    fn default() -> Self {
-        VarDomain {
-            fixed: None,
-            min: None,
-            max: None,
-            inside: Vec::new(),
-            exclude: HashSet::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -84,7 +72,7 @@ impl VarDomain {
 
         *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
         let range_size = hi.saturating_sub(lo) + 1;
-        let mut val = lo + (*seed % range_size);
+        let val = lo + (*seed % range_size);
 
         // Ensure exclusion
         if self.exclude.contains(&val) && range_size > self.exclude.len() as u64 {
@@ -154,7 +142,7 @@ impl SimulationEngine {
 
         // Step 4: Guided generation with bounded backtracking
         let max_attempts = 10_000u32;
-        let mut seed = self.current_time as u64;
+        let mut seed = self.current_time;
 
         for _ in 0..max_attempts {
             // Generate values for rand fields in order
@@ -216,7 +204,7 @@ fn extract_before_order(class_def: &IrClassDef) -> HashMap<Symbol, HashSet<Symbo
                     let first = &vars[0];
                     for later in &vars[1..] {
                         before_map.entry(*first)
-                            .or_insert_with(HashSet::new)
+                            .or_default()
                             .insert(*later);
                     }
                 }

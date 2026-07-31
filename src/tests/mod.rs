@@ -4651,6 +4651,266 @@ endmodule
 }
 
 #[test]
+fn test_negative_const_signed_assign() {
+    // Konstanta negatif hasil const-fold (two's complement 32-bit) yang muat
+    // di lebar LHS signed tidak boleh error — dan tidak memicu width mismatch
+    // false-positive (fix check_width_mismatch value-aware utk nilai negatif).
+    let source = r#"
+module tb;
+    reg signed [7:0] a;
+    reg signed [7:0] b;
+    reg signed [15:0] c;
+    initial begin
+        a = -1;
+        b = -128;
+        c = -300;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let av = sigs.iter().find(|(n, _)| n == "a").map(|(_, v)| v.to_u64()).unwrap();
+    let bv = sigs.iter().find(|(n, _)| n == "b").map(|(_, v)| v.to_u64()).unwrap();
+    let cv = sigs.iter().find(|(n, _)| n == "c").map(|(_, v)| v.to_u64()).unwrap();
+    assert_eq!(av, 0xFF, "-1 in signed [7:0] should be 0xFF");
+    assert_eq!(bv, 0x80, "-128 in signed [7:0] should be 0x80");
+    assert_eq!(cv, 0xFED4, "-300 in signed [15:0] should be 0xFED4");
+}
+
+#[test]
+fn test_negative_const_width_warning_suppression() {
+    // Verifikasi fix check_width_mismatch value-aware: konstanta negatif yang
+    // muat di lebar LHS signed (a=-1, b=-128) TIDAK memicu WidthMismatchWarning,
+    // sedangkan konstanta yang benar-benar tidak muat (d=-200 dalam signed [7:0])
+    // TETAP memicu warning. Memeriksa diag_sink elaborator, bukan nilai sim.
+    let source = r#"
+module tb;
+    reg signed [7:0] a;
+    reg signed [7:0] b;
+    reg signed [7:0] d;
+    initial begin
+        a = -1;
+        b = -128;
+        d = -200;
+        #1 $finish;
+    end
+endmodule
+"#;
+
+    // Pipeline lengkap seperti compile_str, tapi tangkap diagnostics elaborator.
+    let mut pp = crate::parser::preprocessor::Preprocessor::new();
+    let preprocessed = pp.preprocess(source, None).unwrap();
+    let mut lexer = crate::parser::lexer::Lexer::new(&preprocessed);
+    let mut tokens = Vec::new();
+    loop {
+        let (tok, line, col) = lexer.next_token();
+        if tok == crate::parser::lexer::Token::Eof {
+            break;
+        }
+        tokens.push((tok, line, col));
+    }
+    let mut parser = crate::parser::Parser::new(tokens, "<string>").with_source_lines(&preprocessed);
+    let design = parser.parse_design().unwrap();
+    let source_lines: Vec<String> = preprocessed.lines().map(|s| s.to_string()).collect();
+    let mut elaborator =
+        crate::elaboration::Elaborator::with_source(design, source_lines, "<string>".to_string());
+    elaborator.elaborate(None).unwrap();
+
+    let diags = elaborator.flush_diagnostics();
+    let warn_msgs: Vec<String> = diags
+        .iter()
+        .filter(|d| matches!(d.code, crate::diagnostics::DiagCode::WidthMismatchWarning))
+        .map(|d| d.message.to_string())
+        .collect();
+
+    // -1 dan -128 muat di signed [7:0] → tidak boleh ada width warning utk a/b
+    assert!(
+        !warn_msgs.iter().any(|m| m.contains("assignment to 'a'")),
+        "a=-1 should not warn, got: {:?}",
+        warn_msgs
+    );
+    assert!(
+        !warn_msgs.iter().any(|m| m.contains("assignment to 'b'")),
+        "b=-128 should not warn, got: {:?}",
+        warn_msgs
+    );
+    // -200 tidak muat di signed [7:0] → harus tetap warning (total tepat 1)
+    assert_eq!(
+        warn_msgs.len(),
+        1,
+        "expected exactly 1 width mismatch warning (only d), got: {:?}",
+        warn_msgs
+    );
+    assert!(
+        warn_msgs.iter().any(|m| m.contains("assignment to 'd'")),
+        "d=-200 should still warn, got: {:?}",
+        warn_msgs
+    );
+}
+
+#[test]
+fn test_bits_package_array_param() {
+    // Verifikasi `$bits` pada referensi array utuh (param package):
+    //   - plain name via `import pkg::*`  → `$bits(COEFFS)`
+    //   - qualified name                  → `$bits(pkg::COEFFS)`
+    // Keduanya harus 128 (4 elemen int × 32 bit). Ini menghapus documented
+    // limitation lama di audit.txt yang menyebut $bits(COEFFS) tidak ter-resolve.
+    let source = r#"
+package cfg_pkg;
+    parameter int COEFFS[0:3] = '{8'd1, 8'd2, 8'd3, 8'd4};
+endpackage
+
+module tb;
+    import cfg_pkg::*;
+    reg [7:0] arr[0:3];
+    reg [3:0][7:0] p;  // packed multi-dim: 4 elemen x 8 bit = 32
+    reg [31:0] b1;
+    reg [31:0] b2;
+    reg [31:0] b3;
+    reg [31:0] b4;
+    reg [31:0] s1;
+    reg [31:0] s2;
+    initial begin
+        b1 = $bits(COEFFS);
+        b2 = $bits(cfg_pkg::COEFFS);
+        b3 = $bits(arr);
+        b4 = $bits(p);
+        s1 = $size(arr);
+        s2 = $size(p);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let b1 = sigs
+        .iter()
+        .find(|(n, _)| n == "b1")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    let b2 = sigs
+        .iter()
+        .find(|(n, _)| n == "b2")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    let b3 = sigs
+        .iter()
+        .find(|(n, _)| n == "b3")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    let b4 = sigs
+        .iter()
+        .find(|(n, _)| n == "b4")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    let s1 = sigs
+        .iter()
+        .find(|(n, _)| n == "s1")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    let s2 = sigs
+        .iter()
+        .find(|(n, _)| n == "s2")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    assert_eq!(b1, 128, "$bits(COEFFS) via import should be 4 ints * 32 = 128");
+    assert_eq!(b2, 128, "$bits(cfg_pkg::COEFFS) should be 4 ints * 32 = 128");
+    // Signal array lokal: SignalInfo.width sudah lebar total (elem * depth),
+    // jadi $bits(arr) = 32 (4 elemen x 8), bukan 128 (double-count lama).
+    assert_eq!(b3, 32, "$bits(arr) on local signal array should be 4 * 8 = 32");
+    // $bits tetap lebar total untuk packed multi-dimensi (4 x 8 = 32),
+    // tidak terpengaruh fix $size.
+    assert_eq!(b4, 32, "$bits(p) on packed [3:0][7:0] should be 32");
+    // $size mengembalikan jumlah elemen dimensi pertama (array_depth=4),
+    // bukan lebar total (bug lama: mengembalikan info.width = 32).
+    assert_eq!(s1, 4, "$size(arr) should return first-dimension size (4)");
+    // Packed multi-dimensi [3:0][7:0]: $size = packed_dims[0] = 4 (bukan 32).
+    assert_eq!(s2, 4, "$size(p) on packed [3:0][7:0] should be 4");
+}
+
+#[test]
+fn test_port_unpacked_array_end_to_end() {
+    // Verifikasi dukungan port unpacked-array:
+    //   - parser menerima `output logic [7:0] arr[0:3]` (sebelumnya error
+    //     'expected RBrack, found Colon')
+    //   - elaborator melipat array depth ke lebar total port + set
+    //     array_depth/elem_width dengan benar
+    //   - flatten check lebar membandingkan width TOTAL + elem_width
+    //   - nilai continuous assign di child mengalir ke parent array signal
+    let source = r#"
+module tb;
+    logic [7:0] a[0:3];
+    reg [31:0] w;
+    reg [31:0] s;
+    child c(.arr(a));
+    initial begin
+        w = $bits(a);
+        s = $size(a);
+        #1 $finish;
+    end
+endmodule
+
+module child(output logic [7:0] arr[0:3]);
+    assign arr[0] = 8'h01;
+    assign arr[1] = 8'h02;
+    assign arr[2] = 8'h03;
+    assign arr[3] = 8'h04;
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let w = sigs
+        .iter()
+        .find(|(n, _)| n == "w")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    let s = sigs
+        .iter()
+        .find(|(n, _)| n == "s")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    let a = sigs
+        .iter()
+        .find(|(n, _)| n == "a")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    // Port [7:0] x [0:3]: total 4 elemen x 8 bit = 32 bit, bukan elem_width 8.
+    assert_eq!(w, 32, "$bits(port array) should be 4 elems * 8 = 32");
+    // $size = jumlah elemen dimensi pertama (array_depth=4).
+    assert_eq!(s, 4, "$size(port array) should return first-dimension size 4");
+    // arr[0]=8'h01 ... arr[3]=8'h04 mengalir ke parent: lsb-first 0x04030201.
+    assert_eq!(a, 0x04030201, "child assigns should flow through the array port");
+}
+
+#[test]
+fn test_port_array_elem_width_mismatch_rejected() {
+    // Guard di flatten: dua array bisa punya total width sama tapi elem_width
+    // beda (mis. child [15:0][0:1] width 32 elem 16 vs parent [7:0][0:3]
+    // width 32 elem 8) — tanpa guard ini check lolos tapi indexing engine salah.
+    let source = r#"
+module tb;
+    logic [7:0] a[0:3];
+    child c(.arr(a));
+    initial #1 $finish;
+endmodule
+
+module child(output logic [15:0] arr[0:1]);
+    assign arr[0] = 16'h1111;
+    assign arr[1] = 16'h2222;
+endmodule
+"#;
+    let result = compile_str(source);
+    assert!(
+        result.is_err(),
+        "expected elem width mismatch to be rejected, but design compiled ok"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("element width mismatch"),
+        "expected array element width mismatch error, got: {}",
+        err
+    );
+}
+
+#[test]
 fn test_endmodule_colon_name_suffix() {
     let source = r#"
 package pkg;
@@ -6818,16 +7078,20 @@ fn test_dpi_export_task() {
 fn test_dpi_bit_vector_helpers() {
     use crate::simulator::dpi::*;
     
-    // Test svGetBitsel and svPutBitsel
+    // Test svGetBitsel and svPutBitsel (helpers are unsafe fn — pointer args)
     let mut vec_bits: [svBitVecVal; 2] = [0, 0];
-    sv_put_bitsel(&mut vec_bits as *mut svBitVecVal, 3, 1);
-    assert_eq!(sv_get_bitsel(&vec_bits as *const svBitVecVal, 3), 1);
-    assert_eq!(sv_get_bitsel(&vec_bits as *const svBitVecVal, 2), 0);
+    unsafe {
+        sv_put_bitsel(&mut vec_bits as *mut svBitVecVal, 3, 1);
+        assert_eq!(sv_get_bitsel(&vec_bits as *const svBitVecVal, 3), 1);
+        assert_eq!(sv_get_bitsel(&vec_bits as *const svBitVecVal, 2), 0);
+    }
     
     // Test svPutPartSelect and svGetPartSelect
     let mut vec2: [svBitVecVal; 2] = [0, 0];
-    sv_put_part_select(&mut vec2 as *mut svBitVecVal, 0, 8, 0xAB);
-    let val = sv_get_part_select(&vec2 as *const svBitVecVal, 0, 8);
+    let val = unsafe {
+        sv_put_part_select(&mut vec2 as *mut svBitVecVal, 0, 8, 0xAB);
+        sv_get_part_select(&vec2 as *const svBitVecVal, 0, 8)
+    };
     assert_eq!(val, 0xAB, "part select should round-trip 0xAB");
 }
 
@@ -6836,19 +7100,21 @@ fn test_dpi_bit_vector_helpers() {
 fn test_dpi_logic_vector_helpers() {
     use crate::simulator::dpi::*;
     
-    // Test svGetLogicBitsel with 4-state encoding
+    // Test svGetLogicBitsel with 4-state encoding (helpers are unsafe fn)
     let mut logic_vec: [svLogicVecVal; 4] = [0, 0, 0, 0];
-    // Set bit 0 to '1' (aval=1, bval=0)
-    sv_put_logic_bitsel(&mut logic_vec as *mut svLogicVecVal, 0, 1);
-    assert_eq!(sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 0), 1);
-    
-    // Set bit 1 to 'X' (aval=0, bval=1)
-    sv_put_logic_bitsel(&mut logic_vec as *mut svLogicVecVal, 1, 2);
-    assert_eq!(sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 1), 2);
-    
-    // Set bit 2 to 'Z' (aval=1, bval=1)
-    sv_put_logic_bitsel(&mut logic_vec as *mut svLogicVecVal, 2, 3);
-    assert_eq!(sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 2), 3);
+    unsafe {
+        // Set bit 0 to '1' (aval=1, bval=0)
+        sv_put_logic_bitsel(&mut logic_vec as *mut svLogicVecVal, 0, 1);
+        assert_eq!(sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 0), 1);
+        
+        // Set bit 1 to 'X' (aval=0, bval=1)
+        sv_put_logic_bitsel(&mut logic_vec as *mut svLogicVecVal, 1, 2);
+        assert_eq!(sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 1), 2);
+        
+        // Set bit 2 to 'Z' (aval=1, bval=1)
+        sv_put_logic_bitsel(&mut logic_vec as *mut svLogicVecVal, 2, 3);
+        assert_eq!(sv_get_logic_bitsel(&logic_vec as *const svLogicVecVal, 2), 3);
+    }
 }
 
 #[cfg(feature = "dpi")]

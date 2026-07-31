@@ -125,6 +125,8 @@ pub struct Port {
     pub range: Option<Range>,
     pub expr_range: Option<ExprRange>,
     pub dtype_name: Option<Symbol>,
+    /// Unpacked array dimension `[msb:lsb]` (atau `[N]` → [N-1:0]) pada port.
+    pub array_range: Option<Range>,
 }
 
 impl Port {

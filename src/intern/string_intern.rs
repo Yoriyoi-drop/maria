@@ -45,6 +45,12 @@ impl Symbol {
     }
 
     /// Create a symbol from a raw index (unsafe — only for deserialization).
+    ///
+    /// # Safety
+    ///
+    /// `idx` must be a valid index previously returned by [`Symbol::intern`] or
+    /// [`Symbol::index`]. Passing an arbitrary value may produce a symbol whose
+    /// string cannot be looked up (`as_str` will panic on out-of-bounds).
     pub unsafe fn from_index(idx: u32) -> Self {
         Symbol(idx)
     }

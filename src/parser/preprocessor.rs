@@ -347,16 +347,16 @@ impl Preprocessor {
                 s
             )));
         }
-        if s.starts_with('"') {
-            let end = s[1..]
+        if let Some(rest) = s.strip_prefix('"') {
+            let end = rest
                 .find('"')
                 .ok_or_else(|| SimError::preprocessor("unterminated include path"))?;
-            Ok(s[1..=end].to_string())
-        } else if s.starts_with('<') {
-            let end = s[1..]
+            Ok(rest[..end].to_string())
+        } else if let Some(rest) = s.strip_prefix('<') {
+            let end = rest
                 .find('>')
                 .ok_or_else(|| SimError::preprocessor("unterminated include path"))?;
-            Ok(s[1..=end].to_string())
+            Ok(rest[..end].to_string())
         } else {
             Err(SimError::preprocessor(format!(
                 "invalid include syntax: {}",
@@ -526,7 +526,7 @@ impl Preprocessor {
                         while pos < val_bytes.len() {
                             let mut matched = false;
                             for (param, arg) in mdef.params.iter().zip(expanded_args.iter()) {
-                                if param.len() > 0 && pos + param.len() <= val_bytes.len()
+                                if !param.is_empty() && pos + param.len() <= val_bytes.len()
                                     && &val_bytes[pos..pos + param.len()] == param.as_bytes()
                                 {
                                     expanded.push_str(arg);

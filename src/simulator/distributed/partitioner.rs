@@ -120,7 +120,7 @@ impl DesignPartitioner {
         // Multiple partitions: distribute instances round-robin
         let instances = &top.sub_instances;
         let num_instances = instances.len();
-        let _instances_per_partition = (num_instances + num_partitions - 1) / num_partitions;
+        let _instances_per_partition = num_instances.div_ceil(num_partitions);
 
         // Assign instances to partitions (round-robin for load balancing)
         let mut instance_to_partition: HashMap<Symbol, usize> = HashMap::new();
@@ -259,10 +259,10 @@ impl DesignPartitioner {
 
         // 2. Add cross-partition signals as additional signals
         for cs in &partition_info.cross_signals {
-            if !old_to_new.contains_key(&cs.signal_id) {
+            if let std::collections::hash_map::Entry::Vacant(e) = old_to_new.entry(cs.signal_id) {
                 if let Some(sig) = top.signals.get(cs.signal_id) {
                     let new_id = sub_signals.len();
-                    old_to_new.insert(cs.signal_id, new_id);
+                    e.insert(new_id);
                     let mut sub_sig = sig.clone();
                     sub_sig.name = Symbol::intern(&format!("__cross_{}", sig.name.as_str()));
                     sub_signals.push(sub_sig);

@@ -6,6 +6,7 @@
 //!   - const_eval_params()   — evaluasi konstanta dengan parameter
 //!   - try_fold_const()      — coba fold expression ke IrExpr::Const
 //!   - value_to_logicvec()   — konversi Value AST ke LogicVec IR
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use std::collections::HashMap;

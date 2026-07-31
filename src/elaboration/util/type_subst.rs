@@ -6,6 +6,7 @@
 //!   - substitute_class_types()   — substitusi tipe di class declaration
 //!   - substitute_data_type()     — substitusi tipe di DataType
 //!   - substitute_expr_types()    — substitusi tipe di expression
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use crate::ast::*;

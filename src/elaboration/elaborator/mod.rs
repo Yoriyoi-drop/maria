@@ -132,9 +132,7 @@ impl Elaborator {
                     };
                     for name in names {
                         if let Some(source_item) = source_items.get(&name) {
-                            if !pkg_items.contains_key(&name) {
-                                pkg_items.insert(name, source_item.clone());
-                            }
+                            pkg_items.entry(name).or_insert(source_item.clone());
                         }
                     }
                 }
@@ -169,9 +167,7 @@ impl Elaborator {
                     };
                     for name in names {
                         if let Some(source_item) = source_items.get(&name) {
-                            if !pkg_items.contains_key(&name) {
-                                pkg_items.insert(name, source_item.clone());
-                            }
+                            pkg_items.entry(name).or_insert(source_item.clone());
                         }
                     }
                 }
@@ -277,7 +273,7 @@ impl Elaborator {
                                 PackageItem::Task(t) => {
                                     if !module.items.iter().any(|mi| matches!(mi, ModuleItem::Func(fd) if fd.name == t.name)) {
                                         module.items.push(ModuleItem::Func(FunctionDecl {
-                                            name: t.name.clone(),
+                                            name: t.name,
                                             range: None,
                                             return_type: None,
                                             ports: t.ports.clone(),
@@ -313,7 +309,7 @@ _ => {}
                     .any(|mi| matches!(mi, ModuleItem::Func(fd) if fd.name == task.name))
                 {
                     module.items.push(ModuleItem::Func(FunctionDecl {
-                        name: task.name.clone(),
+                        name: task.name,
                         range: None,
                         return_type: None,
                         ports: task.ports.clone(),
@@ -374,6 +370,9 @@ _ => {}
                 resolve_param_values_with_ctx(&self.design.modules[i], &HashMap::new(), &ctx)?;
             let module_name = self.design.modules[i].name;
             self.current_module = Some(module_name);
+            if std::env::var("DBG_ELAB").is_ok() {
+                eprintln!("[DBG-ELAB] expanding generates in module '{}' ({}/{})", module_name.as_str(), i + 1, self.design.modules.len());
+            }
             // Process generate expansion in isolated block to release mutable borrow before elab_diag_at
             let gen_result = {
                 let module = &mut self.design.modules[i];
@@ -389,7 +388,7 @@ _ => {}
             eprintln!("[DBG-ELAB] generate expansion done in {:?}", elab_t0.elapsed());
         }
         // Dead module detection: find unreachable modules via reachability from top
-        let top_sym = top_module.map(|s| Symbol::intern(s));
+        let top_sym = top_module.map(Symbol::intern);
         {
             use std::collections::{HashSet, VecDeque};
             let module_map: HashMap<Symbol, &Module> =
@@ -506,9 +505,9 @@ _ => {}
                     if is_real || decl.dtype == DataType::String {
                         let sid = next_id;
                         next_id += 1;
-                        signal_map.insert(var.name.clone(), sid);
+                        signal_map.insert(var.name, sid);
                         signals.push(SignalInfo {
-                            name: var.name.clone(),
+                            name: var.name,
                             width: if is_real { 64 } else { 0 },
                             kind: SignalKind::Wire,
                             net_type: NetType::Wire,
@@ -549,9 +548,9 @@ _ => {}
                         .max(decl.kind.default_width());
                     let sid = next_id;
                     next_id += 1;
-                    signal_map.insert(var.name.clone(), sid);
+                    signal_map.insert(var.name, sid);
                     signals.push(SignalInfo {
-                        name: var.name.clone(),
+                        name: var.name,
                         width: elem_width,
                         kind: SignalKind::Wire,
                         net_type: NetType::Wire,
@@ -583,9 +582,9 @@ _ => {}
                 }
             }
             self.modules.insert(
-                iface.name.clone(),
+                iface.name,
                 IrModule {
-                    name: iface.name.clone(),
+                    name: iface.name,
                     signals,
                     inputs: vec![],
                     outputs: vec![],
@@ -871,7 +870,7 @@ _ => {}
         for module in &self.design.modules {
             for item in &module.items {
                 if let ModuleItem::Func(f) = item {
-                    module_functions.insert(f.name.clone(), f.clone());
+                    module_functions.insert(f.name, f.clone());
                 }
             }
         }
@@ -1090,7 +1089,7 @@ _ => {}
                         None => last,
                     };
                     if !ctx.contains_key(member_name) {
-                        ctx.insert(member_name.clone(), val);
+                        ctx.insert(*member_name, val);
                         changed = true;
                     }
                     last = val + 1;
@@ -1124,12 +1123,12 @@ _ => {}
                         None => last,
                     };
                     if !ctx.contains_key(member_name) {
-                        ctx.insert(member_name.clone(), val);
+                        ctx.insert(*member_name, val);
                         changed = true;
                     }
                     let qualified = Symbol::intern(&format!("{}::{}", pkg_name, member_name));
-                    if !ctx.contains_key(&qualified) {
-                        ctx.insert(qualified, val);
+                    if let std::collections::hash_map::Entry::Vacant(e) = ctx.entry(qualified) {
+                        e.insert(val);
                         changed = true;
                     }
                     last = val + 1;
@@ -1152,7 +1151,7 @@ _ => {}
                         }
                         if let Some(expr) = &p.default {
                             if let Ok(val) = const_eval_with_params(expr, &ctx) {
-                                ctx.insert(p.name.clone(), val);
+                                ctx.insert(p.name, val);
                                 changed = true;
                             }
                         }
@@ -1270,7 +1269,7 @@ _ => {}
                     return Ok(64);
                 }
                 // Check package symbols for typedefs
-                for (_, pkg_items) in &self.package_symbols {
+                for pkg_items in self.package_symbols.values() {
                     if let Some(PackageItem::Typedef(td)) = pkg_items.get(name.as_str()) {
                         let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
                         if width > 0 {
@@ -1298,7 +1297,7 @@ _ => {}
                 .map(|m| {
                     let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
                     StructFieldInfo {
-                        name: m.name.clone(),
+                        name: m.name,
                         offset: 0,
                         width: w,
                     }
@@ -1311,7 +1310,7 @@ _ => {}
                 for m in &members_rev {
                     let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
                     fields.push(StructFieldInfo {
-                        name: m.name.clone(),
+                        name: m.name,
                         offset,
                         width: w,
                     });
@@ -1377,7 +1376,7 @@ impl Elaborator {
             if !effective_params.contains_key(&param.name) {
                 if let Some(expr) = &param.default {
                     if let Ok(val) = const_eval_with_params(expr, &effective_params) {
-                        effective_params.insert(param.name.clone(), val);
+                        effective_params.insert(param.name, val);
                     }
                 }
             }
@@ -1398,7 +1397,7 @@ impl Elaborator {
                                 if let Some(expr) = &p.default {
                                     if let Ok(val) = const_eval_with_params(expr, &effective_params)
                                     {
-                                        effective_params.insert(p.name.clone(), val);
+                                        effective_params.insert(p.name, val);
                                     }
                                 }
                             }
@@ -1429,7 +1428,7 @@ impl Elaborator {
                                         if !effective_params.contains_key(&p.name) {
                                             if let Some(expr) = &p.default {
                                                 if let Ok(val) = const_eval_with_params(expr, &effective_params) {
-                                                    effective_params.insert(p.name.clone(), val);
+                                                    effective_params.insert(p.name, val);
                                                 }
                                             }
                                         }
@@ -1454,7 +1453,7 @@ impl Elaborator {
                 }
                 ModuleItem::Typedef(td) => {
                     let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
-                    self.typedef_map.insert(td.name.clone(), width);
+                    self.typedef_map.insert(td.name, width);
                     if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. }) {
                         self.store_typedef_fields(td.name, &td.dtype);
                     }
@@ -1488,7 +1487,7 @@ impl Elaborator {
         let unit_typedefs = self.design.unit_typedefs.clone();
         for td in &unit_typedefs {
             let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
-            self.typedef_map.insert(td.name.clone(), width);
+            self.typedef_map.insert(td.name, width);
             if matches!(
                 &td.dtype,
                 DataType::StructType { .. } | DataType::UnionType { .. }
@@ -1508,7 +1507,7 @@ impl Elaborator {
                     if let Some(pkg_item) = pkg_items.get(name) {
                         if let PackageItem::Typedef(td) = pkg_item {
                             let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
-                            self.typedef_map.insert(td.name.clone(), width);
+                            self.typedef_map.insert(td.name, width);
                         }
                     }
                 }
@@ -1530,7 +1529,7 @@ impl Elaborator {
                                 &td.dtype,
                                 DataType::StructType { .. } | DataType::UnionType { .. }
                             ) {
-                                Some((td.name.clone(), td.dtype.clone()))
+                                Some((td.name, td.dtype.clone()))
                             } else {
                                 None
                             }
@@ -1569,7 +1568,7 @@ impl Elaborator {
                                     &td.dtype,
                                     DataType::StructType { .. } | DataType::UnionType { .. }
                                 ) {
-                                    Some((td.name.clone(), td.dtype.clone()))
+                                    Some((td.name, td.dtype.clone()))
                                 } else {
                                     None
                                 }
@@ -1586,7 +1585,7 @@ impl Elaborator {
         for (name, dtype) in &import_typedefs {
             let fields = Self::compute_struct_fields(dtype);
             if !fields.is_empty() {
-                self.typedef_field_map.entry(name.clone()).or_insert(fields);
+                self.typedef_field_map.entry(*name).or_insert(fields);
             }
         }
 
@@ -1602,7 +1601,7 @@ impl Elaborator {
                         None => 1,
                     }
                 };
-                type_param_widths.insert(param.name.clone(), width);
+                type_param_widths.insert(param.name, width);
             }
         }
 
@@ -1710,18 +1709,30 @@ impl Elaborator {
                 PortDirection::Inout => NetType::Tri,
                 _ => NetType::Wire,
             };
+            // Unpacked array port: lipat dimensi array ke lebar total.
+            let (array_depth, total_width, port_msb, port_lsb) =
+                if let Some(ar) = &port.array_range {
+                    let depth = if ar.msb >= ar.lsb {
+                        ar.msb - ar.lsb + 1
+                    } else {
+                        ar.lsb - ar.msb + 1
+                    };
+                    (depth, width * depth, width * depth - 1, 0)
+                } else {
+                    (1, width, p_msb, p_lsb)
+                };
             let sid = get_or_create_signal(
                 port.name,
-                width,
+                total_width,
                 kind.clone(),
                 net_type,
                 &mut signals,
                 &mut signal_map,
                 &mut next_id,
-                1,
+                array_depth,
                 width,
-                p_msb,
-                p_lsb,
+                port_msb,
+                port_lsb,
                 false,
                 false,
             );
@@ -1746,9 +1757,9 @@ impl Elaborator {
                 if is_real || decl.dtype == DataType::String {
                     let sid = next_id;
                     next_id += 1;
-                    signal_map.insert(var.name.clone(), sid);
+                    signal_map.insert(var.name, sid);
                     signals.push(SignalInfo {
-                        name: var.name.clone(),
+                        name: var.name,
                         width: if is_real { 64 } else { 0 },
                         kind: SignalKind::Reg,
                         net_type: NetType::Wire,
@@ -1786,9 +1797,9 @@ impl Elaborator {
                         .max(decl.kind.default_width());
                     let sid = next_id;
                     next_id += 1;
-                    signal_map.insert(var.name.clone(), sid);
+                    signal_map.insert(var.name, sid);
                     signals.push(SignalInfo {
-                        name: var.name.clone(),
+                        name: var.name,
                         width: 0,
                         kind: SignalKind::Reg,
                         net_type: NetType::Wire,
@@ -1971,7 +1982,7 @@ impl Elaborator {
                                     for m in members {
                                         let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
                                         sig.struct_fields.push(StructFieldInfo {
-                                            name: m.name.clone(),
+                                            name: m.name,
                                             offset: 0,
                                             width: w,
                                         });
@@ -1983,7 +1994,7 @@ impl Elaborator {
                                     for m in &members_rev {
                                         let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
                                         sig.struct_fields.push(StructFieldInfo {
-                                            name: m.name.clone(),
+                                            name: m.name,
                                             offset,
                                             width: w,
                                         });
@@ -2013,7 +2024,7 @@ impl Elaborator {
                 if !effective_params.contains_key(&p.name) {
                     if let Some(expr) = &p.default {
                         if let Ok(val) = const_eval_with_params(expr, &effective_params) {
-                            effective_params.insert(p.name.clone(), val);
+                            effective_params.insert(p.name, val);
                         }
                     }
                 }
@@ -2036,7 +2047,7 @@ impl Elaborator {
                                         if let Ok(val) =
                                             const_eval_with_params(expr, &effective_params)
                                         {
-                                            effective_params.insert(p.name.clone(), val);
+                                            effective_params.insert(p.name, val);
                                         }
                                     }
                                 }
@@ -2058,14 +2069,14 @@ impl Elaborator {
         for item in &expanded_items {
             match item {
                 ModuleItem::Always(always) => {
-                    let process = self.elaborate_always(&always, &signal_map, &signals)?;
+                    let process = self.elaborate_always(always, &signal_map, &signals)?;
                     processes.push(process);
                 }
                 ModuleItem::Initial(initial) => {
                     let body = self.elaborate_stmt_block(
                         &initial.stmts,
                         &signal_map,
-                        &known_modules,
+                        known_modules,
                         &signals,
                     )?;
                     let name = format_sym(b"initial_", proc_counter);
@@ -2076,7 +2087,7 @@ impl Elaborator {
                     let body = self.elaborate_stmt_block(
                         &final_block.stmts,
                         &signal_map,
-                        &known_modules,
+                        known_modules,
                         &signals,
                     )?;
                     let name = format_sym(b"final_", proc_counter);
@@ -2105,7 +2116,7 @@ impl Elaborator {
                     let width = self.typedef_map.get(&td.name).copied().unwrap_or_else(|| {
                         self.resolve_typedef_width(&td.dtype, td.range.as_ref())
                     });
-                    self.typedef_map.insert(td.name.clone(), width);
+                    self.typedef_map.insert(td.name, width);
                     // Store struct/union field info for member access
                     match &td.dtype {
                         DataType::StructType { members } | DataType::UnionType { members } => {
@@ -2115,7 +2126,7 @@ impl Elaborator {
                                     for m in members {
                                         let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
                                         fields.push(StructFieldInfo {
-                                            name: m.name.clone(),
+                                            name: m.name,
                                             offset: 0,
                                             width: w,
                                         });
@@ -2127,7 +2138,7 @@ impl Elaborator {
                                     for m in &members_rev {
                                         let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
                                         fields.push(StructFieldInfo {
-                                            name: m.name.clone(),
+                                            name: m.name,
                                             offset,
                                             width: w,
                                         });
@@ -2136,7 +2147,7 @@ impl Elaborator {
                                     fields.reverse();
                                 }
                             }
-                            self.typedef_field_map.insert(td.name.clone(), fields);
+                            self.typedef_field_map.insert(td.name, fields);
                         }
                         _ => {}
                     }
@@ -2192,7 +2203,7 @@ impl Elaborator {
                             body: vec![IrStmt::BlockingAssign {
                                 lhs: IrLValue::Signal(out_id, 0),
                                 rhs: IrExpr::UdpLookup {
-                                    udp_name: udp.name.clone(),
+                                    udp_name: udp.name,
                                     args: in_exprs,
                                 },
                                 delay: None,
@@ -2234,7 +2245,7 @@ impl Elaborator {
                                                 &mut processes,
                                                 &format!("{}.{}", inst.instance_name, port.name),
                                             )?;
-                                            port_map.insert(port.name.clone(), sig_id);
+                                            port_map.insert(port.name, sig_id);
                                         }
                                     }
                                 }
@@ -2247,7 +2258,7 @@ impl Elaborator {
                                         &mut processes,
                                         &format!("{}.{}", inst.instance_name, port),
                                     )?;
-                                    port_map.insert(port.clone(), sig_id);
+                                    port_map.insert(*port, sig_id);
                                 }
                             }
                         }
@@ -2255,11 +2266,11 @@ impl Elaborator {
                         let mut param_map = HashMap::new();
                         for (pname, pexpr) in &inst.param_assigns {
                             let val = const_eval_with_params(pexpr, &effective_params).unwrap_or(0);
-                            param_map.insert(pname.clone(), val);
+                            param_map.insert(*pname, val);
                         }
                         let mut type_param_map: HashMap<Symbol, usize> = HashMap::new();
                         for (pname, dt) in &inst.type_param_assigns {
-                            type_param_map.insert(pname.clone(), dt.width());
+                            type_param_map.insert(*pname, dt.width());
                         }
 
                         if let Some(range) = &inst.range {
@@ -2272,7 +2283,7 @@ impl Elaborator {
                             for idx in start..=end {
                                 let inst_name = format!("{}[{}]", inst.instance_name, idx);
                                 sub_instances.push(IrInstance {
-                                    module_name: inst.module_name.clone(),
+                                    module_name: inst.module_name,
                                     instance_name: Symbol::intern(&inst_name),
                                     port_map: pm.clone(),
                                     param_map: pam.clone(),
@@ -2283,8 +2294,8 @@ impl Elaborator {
                             }
                         } else {
                             sub_instances.push(IrInstance {
-                                module_name: inst.module_name.clone(),
-                                instance_name: inst.instance_name.clone(),
+                                module_name: inst.module_name,
+                                instance_name: inst.instance_name,
                                 port_map: std::sync::Arc::new(port_map),
                                 param_map: std::sync::Arc::new(param_map),
                                 type_param_map: std::sync::Arc::new(type_param_map),
@@ -2302,9 +2313,9 @@ impl Elaborator {
                     // Create a signal for the virtual interface variable
                     let sid = next_id;
                     next_id += 1;
-                    signal_map.insert(vif_name.clone(), sid);
+                    signal_map.insert(*vif_name, sid);
                     signals.push(SignalInfo {
-                        name: vif_name.clone(),
+                        name: *vif_name,
                         width: 64,
                         kind: SignalKind::Reg,
                         net_type: NetType::Wire,
@@ -2313,7 +2324,7 @@ impl Elaborator {
                         array_depth: 1,
                         elem_width: 64,
                         array_dims: vec![],
-                        class_name: Some(iface_type.clone()),
+                        class_name: Some(*iface_type),
                         is_string: false,
                         is_mailbox: false,
                         is_semaphore: false,
@@ -2330,8 +2341,8 @@ impl Elaborator {
                         packed_dims: vec![],
                         delay_rise: None,
                         delay_fall: None,
-                        iface_type: Some(iface_type.clone()),
-                        iface_modport: modport.clone(),
+                        iface_type: Some(*iface_type),
+                        iface_modport: *modport,
                     });
                 }
                 ModuleItem::Gate(gate) => {
@@ -2400,7 +2411,7 @@ impl Elaborator {
             for var in &decl.names {
                 if let Some(init_expr) = &var.expr {
                     let lhs = self.elaborate_lvalue(
-                        &Expr::Ident { name: var.name.clone(), line: 0, col: 0 },
+                        &Expr::Ident { name: var.name, line: 0, col: 0 },
                         &signal_map,
                         &signals,
                     )?;
@@ -2433,7 +2444,7 @@ impl Elaborator {
         }
 
         Ok(IrModule {
-            name: module.name.clone(),
+            name: module.name,
             signals,
             inputs,
             outputs,
@@ -2466,7 +2477,7 @@ impl Elaborator {
                         };
                         let total_width = array_depth * actual_elem_width;
                         fields.push(IrClassField {
-                            name: dv.name.clone(),
+                            name: dv.name,
                             width: total_width,
                             array_depth,
                             elem_width: actual_elem_width,
@@ -2479,7 +2490,7 @@ impl Elaborator {
                 .iter()
                 .filter_map(|m| match m {
                     ClassMember::Function(fd) => Some(IrClassMethod {
-                        name: fd.name.clone(),
+                        name: fd.name,
                         is_task: false,
                         virtual_flag: fd.virtual_flag,
                         is_static: fd.is_static,
@@ -2488,7 +2499,7 @@ impl Elaborator {
                         stmts: fd.stmts.clone(),
                     }),
                     ClassMember::Task(td) => Some(IrClassMethod {
-                        name: td.name.clone(),
+                        name: td.name,
                         is_task: true,
                         virtual_flag: td.virtual_flag,
                         is_static: td.is_static,
@@ -2549,14 +2560,14 @@ impl Elaborator {
                     }
                     for anc in ancestors.iter().rev() {
                         for f in &anc.fields {
-                            if seen.insert(f.name.clone()) {
+                            if seen.insert(f.name) {
                                 merged.push(f.clone());
                             }
                         }
                     }
                 }
                 for f in &fields {
-                    if seen.insert(f.name.clone()) {
+                    if seen.insert(f.name) {
                         merged.push(f.clone());
                     } else if let Some(pos) = merged.iter().position(|pf| pf.name == f.name) {
                         merged[pos] = f.clone();
@@ -2568,15 +2579,15 @@ impl Elaborator {
             };
 
             classes.insert(
-                cd.name.clone(),
+                cd.name,
                 IrClassDef {
-                    name: cd.name.clone(),
-                    extends: cd.extends.clone(),
+                    name: cd.name,
+                    extends: cd.extends,
                     type_params: cd
                         .type_params
                         .iter()
                         .map(|tp| IrTypeParam {
-                            name: tp.name.clone(),
+                            name: tp.name,
                             default_type: tp.default_type.clone(),
                         })
                         .collect(),

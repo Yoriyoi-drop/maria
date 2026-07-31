@@ -40,7 +40,7 @@ impl SimulationEngine {
         let depth = self.method_locals.len();
         self.method_locals.push(local_signals);
 
-        let old_method = self.current_method.clone();
+        let old_method = self.current_method;
         self.current_method = Some(Symbol::intern(method));
 
         if !method_def.stmts.is_empty() {
@@ -130,16 +130,12 @@ impl SimulationEngine {
         method: &str,
     ) -> Result<IrClassMethod, SimError> {
         let mut current = class_name;
-        loop {
-            if let Some(cls) = self.design.classes.get::<str>(current) {
-                if let Some(m) = cls.methods.iter().find(|m| m.name == method) {
-                    return Ok(m.clone());
-                }
-                if let Some(parent) = &cls.extends {
-                    current = parent.as_str();
-                } else {
-                    break;
-                }
+        while let Some(cls) = self.design.classes.get::<str>(current) {
+            if let Some(m) = cls.methods.iter().find(|m| m.name == method) {
+                return Ok(m.clone());
+            }
+            if let Some(parent) = &cls.extends {
+                current = parent.as_str();
             } else {
                 break;
             }
@@ -184,7 +180,7 @@ impl SimulationEngine {
                 .iter()
                 .map(|a| self.evaluate_expr(a))
                 .collect::<Result<Vec<_>, SimError>>()?;
-            let assoc_map = self.assoc_data.entry(sig_id).or_insert_with(HashMap::new);
+            let assoc_map = self.assoc_data.entry(sig_id).or_default();
             match method {
                 "num" => {
                     let n = assoc_map.len();
@@ -252,11 +248,7 @@ impl SimulationEngine {
         match method {
             "size" => {
                 let lv = self.state.read_signal(sig_id);
-                let count = if sig.elem_width > 0 {
-                    lv.width / sig.elem_width
-                } else {
-                    0
-                };
+                let count = lv.width.checked_div(sig.elem_width).unwrap_or(0);
                 Ok(LogicVec::from_u64(count as u64, 32))
             }
             "delete" => {
@@ -265,11 +257,7 @@ impl SimulationEngine {
                     let idx = idx_val.to_u64() as usize;
                     let lv = self.state.read_signal(sig_id);
                     let elem_width = sig.elem_width;
-                    let count = if elem_width > 0 {
-                        lv.width / elem_width
-                    } else {
-                        0
-                    };
+                    let count = lv.width.checked_div(elem_width).unwrap_or(0);
                     if idx >= count {
                         return Err(SimError::with_diag(
                             DiagCode::MemoryOutOfBounds,
@@ -373,11 +361,7 @@ impl SimulationEngine {
                 let idx = idx_val.to_u64() as usize;
                 let lv = self.state.read_signal(sig_id);
                 let elem_width = sig.elem_width;
-                let count = if elem_width > 0 {
-                    lv.width / elem_width
-                } else {
-                    0
-                };
+                let count = lv.width.checked_div(elem_width).unwrap_or(0);
                 Ok(LogicVec::from_u64(if idx < count { 1 } else { 0 }, 1))
             }
             "push_back" => {
@@ -430,11 +414,7 @@ impl SimulationEngine {
                     }
                 };
                 let mut existing = self.state.read_signal(sig_id).clone();
-                let count = if elem_width > 0 {
-                    existing.width / elem_width
-                } else {
-                    0
-                };
+                let count = existing.width.checked_div(elem_width).unwrap_or(0);
                 let pos = idx.min(count);
                 let mut new_bits = Vec::with_capacity(existing.width + elem_width);
                 new_bits.extend(existing.bits[..pos * elem_width].iter().copied());
@@ -449,7 +429,7 @@ impl SimulationEngine {
                 let mut lv = self.state.read_signal(sig_id).clone();
                 let elem_width = sig.elem_width;
                 if elem_width > 0 {
-                    let count = lv.width / elem_width;
+                    let count = lv.width.checked_div(elem_width).unwrap_or(0);
                     let mut new_bits = Vec::with_capacity(lv.width);
                     for i in (0..count).rev() {
                         for j in 0..elem_width {
@@ -465,7 +445,7 @@ impl SimulationEngine {
                 let lv = self.state.read_signal(sig_id).clone();
                 let elem_width = sig.elem_width;
                 if elem_width > 0 {
-                    let count = lv.width / elem_width;
+                    let count = lv.width.checked_div(elem_width).unwrap_or(0);
                     let mut elems: Vec<LogicVec> = (0..count)
                         .map(|i| {
                             let mut bits = Vec::with_capacity(elem_width);
@@ -478,7 +458,7 @@ impl SimulationEngine {
                             }
                         })
                         .collect();
-                    elems.sort_by(|a, b| a.to_u64().cmp(&b.to_u64()));
+                    elems.sort_by_key(|a| a.to_u64());
                     let mut new_bits = Vec::with_capacity(lv.width);
                     for e in &elems {
                         new_bits.extend(e.bits.iter().copied());
@@ -495,7 +475,7 @@ impl SimulationEngine {
                 let lv = self.state.read_signal(sig_id).clone();
                 let elem_width = sig.elem_width;
                 if elem_width > 0 {
-                    let count = lv.width / elem_width;
+                    let count = lv.width.checked_div(elem_width).unwrap_or(0);
                     let mut elems: Vec<LogicVec> = (0..count)
                         .map(|i| {
                             let mut bits = Vec::with_capacity(elem_width);
@@ -508,7 +488,7 @@ impl SimulationEngine {
                             }
                         })
                         .collect();
-                    elems.sort_by(|a, b| b.to_u64().cmp(&a.to_u64()));
+                    elems.sort_by_key(|a| std::cmp::Reverse(a.to_u64()));
                     let mut new_bits = Vec::with_capacity(lv.width);
                     for e in &elems {
                         new_bits.extend(e.bits.iter().copied());
@@ -525,7 +505,7 @@ impl SimulationEngine {
                 let lv = self.state.read_signal(sig_id).clone();
                 let elem_width = sig.elem_width;
                 if elem_width > 0 {
-                    let count = lv.width / elem_width;
+                    let count = lv.width.checked_div(elem_width).unwrap_or(0);
                     let mut elems: Vec<LogicVec> = (0..count)
                         .map(|i| {
                             let mut bits = Vec::with_capacity(elem_width);
@@ -557,7 +537,7 @@ impl SimulationEngine {
                 let lv = self.state.read_signal(sig_id).clone();
                 let elem_width = sig.elem_width;
                 if elem_width > 0 {
-                    let count = lv.width / elem_width;
+                    let count = lv.width.checked_div(elem_width).unwrap_or(0);
                     let mut result: u64 = 0;
                     for i in 0..count {
                         let mut bits = Vec::with_capacity(elem_width);
@@ -582,7 +562,7 @@ impl SimulationEngine {
                 let lv = self.state.read_signal(sig_id).clone();
                 let elem_width = sig.elem_width;
                 if elem_width > 0 {
-                    let count = lv.width / elem_width;
+                    let count = lv.width.checked_div(elem_width).unwrap_or(0);
                     let mut result: u64 = 1;
                     for i in 0..count {
                         let mut bits = Vec::with_capacity(elem_width);

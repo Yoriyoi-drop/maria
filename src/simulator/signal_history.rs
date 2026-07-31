@@ -55,7 +55,7 @@ fn read_str<R: Read>(r: &mut R) -> io::Result<String> {
     let len = read_usize(r)?;
     let mut buf = vec![0u8; len];
     r.read_exact(&mut buf)?;
-    Ok(String::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?)
+    String::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
 fn write_logic_val<W: Write>(w: &mut W, val: &LogicVal) -> io::Result<()> {

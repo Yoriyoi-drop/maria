@@ -21,6 +21,7 @@
 //!   - parse_repeat_stmt()         — parsing repeat loop
 //!   - parse_fork_join()           — parsing fork...join/join_any/join_none
 //!   - parse_syscall()             — parsing $system calls
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use super::Parser;

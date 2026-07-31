@@ -7,6 +7,7 @@
 //!   - map_binary_op()    — mapping BinaryOp → BinaryIrOp
 //!   - build_gate_expr()  — buat IR expression untuk gate primitif
 //!   - fold_binary()      — fold binary operation tree
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use crate::ir::*;

@@ -247,7 +247,7 @@ impl DistributedMaster {
                                     0x16 => {
                                         // Heartbeat response — update timestamp
                                         if let Ok(ts) = decode_heartbeat(&payload) {
-                                            if self.config.verbose && delta_id % 1000 == 0 {
+                                            if self.config.verbose && delta_id.is_multiple_of(1000) {
                                                 eprintln!("[Master] Heartbeat from slave {} at ts={}", idx, ts);
                                             }
                                         }
@@ -290,15 +290,12 @@ impl DistributedMaster {
                         if other_idx == slave_idx || faulty_slaves.contains(&other_idx) {
                             continue;
                         }
-                        match other.stream.lock() {
-                            Ok(mut s) => {
-                                let exchange_payload = encode_signal_exchange(&[SignalValue {
-                                    signal_id: sv.signal_id,
-                                    value_bytes: sv.value_bytes.clone(),
-                                }]);
-                                let _ = write_message(&mut *s, 0x14, &exchange_payload);
-                            }
-                            Err(_) => {}
+                        if let Ok(mut s) = other.stream.lock() {
+                            let exchange_payload = encode_signal_exchange(&[SignalValue {
+                                signal_id: sv.signal_id,
+                                value_bytes: sv.value_bytes.clone(),
+                            }]);
+                            let _ = write_message(&mut *s, 0x14, &exchange_payload);
                         }
                     }
                 }
@@ -307,7 +304,7 @@ impl DistributedMaster {
             delta_id += 1;
             current_time += 1;
 
-            if self.config.verbose && delta_id % 1000 == 0 {
+            if self.config.verbose && delta_id.is_multiple_of(1000) {
                 eprintln!("[Master] Delta {} completed (time={}, slaves={})",
                     delta_id, current_time, self.slaves.len() - faulty_slaves.len());
             }

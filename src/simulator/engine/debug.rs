@@ -13,7 +13,7 @@ impl SimulationEngine {
         let time = self.state.time;
 
         // Save snapshot for reverse debug
-        if self.debug_mode == DebugMode::DeepDebug && time % self.snapshot_interval == 0 {
+        if self.debug_mode == DebugMode::DeepDebug && time.is_multiple_of(self.snapshot_interval) {
             self.snapshots.push(StateSnapshot {
                 time,
                 signals: self.state.signals.clone(),

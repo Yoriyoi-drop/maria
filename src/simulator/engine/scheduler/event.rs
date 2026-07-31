@@ -346,7 +346,7 @@ impl SimulationEngine {
 
     pub(crate) fn is_forced(&self, lvalue: &IrLValue) -> bool {
         self.signal_id_from_lvalue(lvalue)
-            .map_or(false, |id| self.forced_signals.contains(&id))
+            .is_some_and(|id| self.forced_signals.contains(&id))
     }
 
 }

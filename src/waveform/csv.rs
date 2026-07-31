@@ -85,13 +85,13 @@ impl CsvWaveWriter {
             } else {
                 // Up to 4 bits: use hex
                 let u64_val = val.to_u64();
-                let hex_width = (val.width + 3) / 4;
+                let hex_width = val.width.div_ceil(4);
                 format!("{:0width$x}", u64_val, width = hex_width)
             }
         } else {
             // Multi-bit: use hex
             let u64_val = val.to_u64();
-            let hex_width = (val.width + 3) / 4;
+            let hex_width = val.width.div_ceil(4);
             format!("{:0width$x}", u64_val, width = hex_width)
         }
     }

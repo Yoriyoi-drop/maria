@@ -364,7 +364,7 @@ impl SimulationEngine {
                     && Self::is_expr_jit_safe(t)
                     && Self::is_expr_jit_safe(f)
             }
-            IrExpr::Concat(exprs) => exprs.iter().all(|e| Self::is_expr_jit_safe(e)),
+            IrExpr::Concat(exprs) => exprs.iter().all(Self::is_expr_jit_safe),
             IrExpr::Cast { expr: inner, .. } => Self::is_expr_jit_safe(inner),
             IrExpr::Signed(inner) => Self::is_expr_jit_safe(inner),
             _ => false,
@@ -1116,7 +1116,7 @@ impl SimulationEngine {
                 Some(tw.max(fw))
             }
             IrExpr::Concat(exprs) => {
-                let total: usize = exprs.iter().filter_map(|e| Self::compute_expr_width(e)).sum();
+                let total: usize = exprs.iter().filter_map(Self::compute_expr_width).sum();
                 if total == 0 { Some(1) } else { Some(total) }
             }
             IrExpr::Cast { width, .. } => Some(*width),
@@ -1435,7 +1435,7 @@ impl SimulationEngine {
                     ));
                 }
                 let report_interval = if self.delta_limit >= 100_000 { 100_000 } else { self.delta_limit / 10 }.max(1);
-                if delta_count > 0 && delta_count % report_interval == 0 {
+                if delta_count > 0 && delta_count.is_multiple_of(report_interval) {
                     eprintln!(
                         "warning: {} delta cycles at time {} (limit {})",
                         delta_count, self.state.time, self.delta_limit
@@ -1445,17 +1445,17 @@ impl SimulationEngine {
                 self.current_delta = delta_count;
 
                 // Check pending $wait conditions
-                if !self.pending_waits.is_empty() && !deltas.is_empty() {
-                    if self.process_pending_waits(&deltas)? {
-                        activity = true;
-                    }
+                if !self.pending_waits.is_empty() && !deltas.is_empty()
+                    && self.process_pending_waits(&deltas)?
+                {
+                    activity = true;
                 }
 
                 // Check pending wait_order conditions
-                if !self.pending_wait_orders.is_empty() && !deltas.is_empty() {
-                    if self.process_pending_wait_orders(&deltas)? {
-                        activity = true;
-                    }
+                if !self.pending_wait_orders.is_empty() && !deltas.is_empty()
+                    && self.process_pending_wait_orders(&deltas)?
+                {
+                    activity = true;
                 }
 
                 // Re-circulate if any events remain or NBA is pending
@@ -1503,7 +1503,7 @@ impl SimulationEngine {
             if let Some(ref mut pi) = self.power_intent {
                 if pi.enabled {
                     // Auto-bind supply net values from design signals with matching names
-                    for (net_name, _) in &pi.supply_nets {
+                    for net_name in pi.supply_nets.keys() {
                         if let Some(sig_id) = self.design.top.signals.iter().position(|s| s.name.as_str() == *net_name) {
                             let val = self.state.read_signal(sig_id);
                             let is_high = val.to_bool().unwrap_or(false);
@@ -1697,7 +1697,7 @@ impl SimulationEngine {
             // We check if the signal was ever written AFTER time 0 (init = time 0)
             if clock_sigs.contains(&sig_id) {
                 let last_change_time = self.signal_last_change.get(&sig_id).copied();
-                let has_real_change = last_change_time.map_or(false, |t| t > 0);
+                let has_real_change = last_change_time.is_some_and(|t| t > 0);
                 if !has_real_change {
                     self.emit_warning(
                         DiagCode::ClockNeverToggles,
@@ -1710,7 +1710,7 @@ impl SimulationEngine {
             // Reset signal was never de-asserted (only written at init time or never)
             if reset_sigs.contains(&sig_id) {
                 let last_change_time = self.signal_last_change.get(&sig_id).copied();
-                let has_real_change = last_change_time.map_or(false, |t| t > 0);
+                let has_real_change = last_change_time.is_some_and(|t| t > 0);
                 if !has_real_change {
                     let val = self.state.read_signal(sig_id);
                     if !val.all_x() && !val.all_z() {

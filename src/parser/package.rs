@@ -4,6 +4,7 @@
 //!
 //! Fungsi:
 //!   - parse_package_decl() — parsing deklarasi package
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use super::Parser;
@@ -166,7 +167,7 @@ impl Parser {
                                 let pname = match &pk {
                                     Token::Ident(s) => {
                                         self.advance();
-                                        s.clone()
+                                        *s
                                     }
                                     _ => break,
                                 };
@@ -225,11 +226,11 @@ impl Parser {
                                 self.skip_semi();
                             } else {
                                 let td = self.parse_typedef()?;
-                                self.typedef_names.insert(td.name.clone());
+                                self.typedef_names.insert(td.name);
                                 self.package_tdefs
-                                    .entry(name.clone())
+                                    .entry(name)
                                     .or_default()
-                                    .push(td.name.clone());
+                                    .push(td.name);
                                 items.push(PackageItem::Typedef(td));
                             }
                         }

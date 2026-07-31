@@ -330,11 +330,7 @@ pub fn evaluate_stmt_block_parallel(
                     }
                     _ => 1,
                 };
-                let num_elems = if elem_width > 0 {
-                    arr_val.width / elem_width
-                } else {
-                    0
-                };
+                let num_elems = arr_val.width.checked_div(elem_width).unwrap_or(0);
                 let idx_sig = signals.len();
                 signals.push(LogicVec::from_u64(0, 32));
                 for i in 0..num_elems.min(10_000) {

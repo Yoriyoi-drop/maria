@@ -139,12 +139,9 @@ impl Scheduler {
             }
 
             // 2. Try global queue
-            match global.pop() {
-                Some(task) => {
-                    Self::execute_task(task, completed, pending);
-                    continue;
-                }
-                None => {}
+            if let Some(task) = global.pop() {
+                Self::execute_task(task, completed, pending);
+                continue;
             }
 
             // 3. No tasks — check if all pending tasks done

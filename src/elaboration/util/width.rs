@@ -4,6 +4,7 @@
 //!
 //! Fungsi:
 //!   - compute_expr_width() — hitung lebar expression (dalam bit)
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use std::collections::HashMap;
@@ -27,13 +28,11 @@ pub fn compute_expr_width(
     match expr {
         Expr::Ident { name, .. } => {
             if let Some(sig_id) = signal_map.get(name) {
+                // SignalInfo.width ALREADY includes unpacked array depth
+                // (total_width = elem_width * depth di-set saat elaborasi),
+                // jadi jangan kalikan lagi dgn array_depth (double-count).
                 let info = &signals[*sig_id];
-                Ok(info.width
-                    * if info.array_depth > 0 {
-                        info.array_depth
-                    } else {
-                        1
-                    })
+                Ok(info.width)
             } else if let Some(&val) = param_vals.get(name) {
                 let abs = val.unsigned_abs();
                 Ok(if val == 0 {

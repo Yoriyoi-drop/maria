@@ -54,7 +54,7 @@ impl PackedLogicVec {
     /// Create a new packed vector initialized to X (unknown).
     pub fn new(width: usize) -> Self {
         let w = width.max(1);
-        let num_chunks = (w + CELLS_PER_CHUNK - 1) / CELLS_PER_CHUNK;
+        let num_chunks = w.div_ceil(CELLS_PER_CHUNK);
         // X = known:0, value:0
         let chunks = vec![(0u64, 0u64); num_chunks];
         PackedLogicVec { chunks, width: w }
@@ -63,7 +63,7 @@ impl PackedLogicVec {
     /// Create from a single bit value with given width.
     pub fn fill(val: LogicVal, width: usize) -> Self {
         let w = width.max(1);
-        let num_chunks = (w + CELLS_PER_CHUNK - 1) / CELLS_PER_CHUNK;
+        let num_chunks = w.div_ceil(CELLS_PER_CHUNK);
         let mut chunks = Vec::with_capacity(num_chunks);
         for c in 0..num_chunks {
             let chunk_width = (w - c * CELLS_PER_CHUNK).min(CELLS_PER_CHUNK);
@@ -83,7 +83,7 @@ impl PackedLogicVec {
     /// Untuk sinyal >64 bit, hanya lower 64 bit yang diisi; sisanya X.
     pub fn from_u64(val: u64, width: usize) -> Self {
         let w = width.max(1);
-        let num_chunks = (w + CELLS_PER_CHUNK - 1) / CELLS_PER_CHUNK;
+        let num_chunks = w.div_ceil(CELLS_PER_CHUNK);
         let mut chunks = Vec::with_capacity(num_chunks);
         for c in 0..num_chunks {
             let bit_offset = c * CELLS_PER_CHUNK;
@@ -100,7 +100,7 @@ impl PackedLogicVec {
     /// Convert from a traditional LogicVec (Vec<LogicVal> based).
     pub fn from_logicvec(lv: &LogicVec) -> Self {
         let w = lv.width.max(1);
-        let num_chunks = (w + CELLS_PER_CHUNK - 1) / CELLS_PER_CHUNK;
+        let num_chunks = w.div_ceil(CELLS_PER_CHUNK);
         let mut chunks = vec![(0u64, 0u64); num_chunks];
         for i in 0..lv.width {
             let (k, v) = match lv.bits[i] {
@@ -259,7 +259,7 @@ impl PackedLogicVec {
             return self.clone();
         }
         let w = new_width.max(1);
-        let new_chunks = (w + CELLS_PER_CHUNK - 1) / CELLS_PER_CHUNK;
+        let new_chunks = w.div_ceil(CELLS_PER_CHUNK);
         let mut chunks = self.chunks.clone();
         chunks.resize(new_chunks, (0u64, 0u64));
         // Truncate the last chunk if needed

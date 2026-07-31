@@ -83,6 +83,32 @@ impl Elaborator {
         let lhs_w = lhs_sig.width;
         let rhs_w = expr_approx_width(rhs, signals);
         if lhs_w != rhs_w && rhs_w > 0 {
+            // Jangan warning bila RHS adalah konstanta hasil const-fold yang
+            // nilainya muat di lebar LHS (mis. `result = COEFFS[2]` di mana
+            // COEFFS[2] = 3 dalam reg [7:0]). Konstanta fold default 32-bit
+            // sehingga tanpa cek nilai akan memicu false-positive.
+            if let IrExpr::Const(lv) = rhs {
+                let cw = lv.width.min(64);
+                let cw_mask = if cw >= 64 { u64::MAX } else { (1u64 << cw) - 1 };
+                let raw = lv.to_u64() & cw_mask;
+                let max_val = if lhs_w >= 64 { u64::MAX } else { (1u64 << lhs_w) - 1 };
+                if raw <= max_val {
+                    return;
+                }
+                // Konstanta negatif (two's complement): nilai low bits bila
+                // di-sign-extend kembali menghasilkan nilai asli yang sama
+                // (mis. -1 = 0xFFFFFFFF muat di reg signed [7:0]).
+                if lhs_sig.is_signed && lhs_w > 0 && lhs_w < 64 {
+                    let low = raw & max_val;
+                    let sign_bit = 1u64 << (lhs_w - 1);
+                    if low & sign_bit != 0 {
+                        let sign_ext = (low | !max_val) & cw_mask;
+                        if sign_ext == raw {
+                            return;
+                        }
+                    }
+                }
+            }
             self.elab_warn(
                 DiagCode::WidthMismatchWarning,
                 format!("width mismatch in assignment to '{}' (lhs={}, rhs={})", lhs_sig.name, lhs_w, rhs_w),
@@ -132,7 +158,7 @@ impl Elaborator {
                         Expr::Ident { name, .. } if !signal_map.contains_key(name) => {
                             // Vif binding: store instance name for runtime resolution
                             IrExpr::VifBinding {
-                                instance_name: name.clone(),
+                                instance_name: *name,
                             }
                         }
                         _ => self.elaborate_expr(rhs, signal_map, signals)?,
@@ -149,7 +175,7 @@ impl Elaborator {
                         if let IrLValue::Signal(sid, _) = ir_lhs {
                             if let Some(sig) = signals.get(sid) {
                                 if let Some(cn) = &sig.class_name {
-                                    *class_name = cn.clone();
+                                    *class_name = *cn;
                                 }
                             }
                         }
@@ -176,7 +202,7 @@ impl Elaborator {
                 let mut ir_rhs = if ir_is_vif {
                     match rhs {
                         Expr::Ident { name, .. } if !signal_map.contains_key(name) => IrExpr::VifBinding {
-                            instance_name: name.clone(),
+                            instance_name: *name,
                         },
                         _ => self.elaborate_expr(rhs, signal_map, signals)?,
                     }
@@ -191,7 +217,7 @@ impl Elaborator {
                         if let IrLValue::Signal(sid, _) = ir_lhs {
                             if let Some(sig) = signals.get(sid) {
                                 if let Some(cn) = &sig.class_name {
-                                    *class_name = cn.clone();
+                                    *class_name = *cn;
                                 }
                             }
                         }
@@ -317,7 +343,7 @@ impl Elaborator {
                                 signals,
                             )?,
                             other => self.elaborate_stmt_block(
-                                &[other.clone()],
+                                std::slice::from_ref(other),
                                 signal_map,
                                 known_modules,
                                 signals,
@@ -369,7 +395,7 @@ impl Elaborator {
                         };
                         Ok(IrStmt::MethodCallStmt {
                             obj: ir_obj,
-                            method: method.clone(),
+                            method: *method,
                             args: ir_args,
                             with_clause: ir_with,
                         })
@@ -416,7 +442,7 @@ impl Elaborator {
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
                     .collect::<Result<_, _>>()?;
                 Ok(IrStmt::SysCall {
-                    name: name.clone(),
+                    name: *name,
                     args: ir_args,
                 })
             }
@@ -447,9 +473,7 @@ impl Elaborator {
                                 body,
                             })
                         } else {
-                            Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
-                                "cannot resolve signal in @(...)"
-                            )))
+                Err(self.elab_diag(DiagCode::ModuleNotFound, "cannot resolve signal in @(...)".to_string()))
                         }
                     }
                     SensitivityEvent::Level(expr) => {
@@ -460,9 +484,7 @@ impl Elaborator {
                                 body,
                             })
                         } else {
-                            Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
-                                "cannot resolve signal in @(...)"
-                            )))
+                Err(self.elab_diag(DiagCode::ModuleNotFound, "cannot resolve signal in @(...)".to_string()))
                         }
                     }
                     SensitivityEvent::Wildcard => {
@@ -512,7 +534,7 @@ impl Elaborator {
                             self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?
                         }
                         other => self.elaborate_stmt_block(
-                            &[other.clone()],
+                            std::slice::from_ref(other),
                             signal_map,
                             known_modules,
                             signals,
@@ -548,7 +570,7 @@ impl Elaborator {
                             self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?
                         }
                         other => self.elaborate_stmt_block(
-                            &[other.clone()],
+                            std::slice::from_ref(other),
                             signal_map,
                             known_modules,
                             signals,
@@ -570,7 +592,7 @@ impl Elaborator {
             Stmt::NamedBlock { name, stmts, decls } => {
                 let body = self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
                 Ok(IrStmt::NamedBlock {
-                    name: name.clone(),
+                    name: *name,
                     stmts: body,
                     decls: decls.clone(),
                 })
@@ -736,7 +758,7 @@ impl Elaborator {
                             self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?
                         }
                         other => self.elaborate_stmt_block(
-                            &[other.clone()],
+                            std::slice::from_ref(other),
                             signal_map,
                             known_modules,
                             signals,
@@ -757,7 +779,7 @@ impl Elaborator {
             }
             Stmt::Break => Ok(IrStmt::Break),
             Stmt::Continue => Ok(IrStmt::Continue),
-            Stmt::Disable { name } => Ok(IrStmt::Disable { name: name.clone() }),
+            Stmt::Disable { name } => Ok(IrStmt::Disable { name: *name }),
             Stmt::Repeat { count, stmts } => {
                 if let Ok(n) = const_eval_params(count, &self.param_vals) {
                     let mut all = Vec::new();
@@ -859,7 +881,7 @@ impl Elaborator {
                     None => vec![],
                 };
                 let ir_disable = match disable_iff {
-                    Some(e) => Some(Box::new(self.elaborate_expr(&*e, signal_map, signals)?)),
+                    Some(e) => Some(Box::new(self.elaborate_expr(e, signal_map, signals)?)),
                     None => None,
                 };
                 Ok(IrStmt::Assert {
@@ -888,7 +910,7 @@ impl Elaborator {
                     None => vec![],
                 };
                 let ir_disable = match disable_iff {
-                    Some(e) => Some(Box::new(self.elaborate_expr(&*e, signal_map, signals)?)),
+                    Some(e) => Some(Box::new(self.elaborate_expr(e, signal_map, signals)?)),
                     None => None,
                 };
                 Ok(IrStmt::Assume {
@@ -912,7 +934,7 @@ impl Elaborator {
                     None => vec![],
                 };
                 let ir_disable = match disable_iff {
-                    Some(e) => Some(Box::new(self.elaborate_expr(&*e, signal_map, signals)?)),
+                    Some(e) => Some(Box::new(self.elaborate_expr(e, signal_map, signals)?)),
                     None => None,
                 };
                 Ok(IrStmt::Cover {
@@ -938,7 +960,7 @@ impl Elaborator {
                 }
                 let failure = match fail_stmt {
                     Some(s) => {
-                        vec![self.elaborate_stmt(&*s, signal_map, known_modules, signals)?]
+                        vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?]
                     }
                     None => vec![],
                 };
@@ -970,7 +992,7 @@ impl Elaborator {
                 let new_items: Result<Vec<(IrExpr, Vec<IrStmt>)>, SimError> = items
                     .iter()
                     .map(|rc| {
-                        let weight_expr = IrExpr::Const(LogicVec::from_u64(rc.weight as u64, 32));
+                        let weight_expr = IrExpr::Const(LogicVec::from_u64(rc.weight, 32));
                         let body = self.elaborate_stmt_block(
                             &[*rc.stmt.clone()],
                             signal_map,
@@ -1000,7 +1022,7 @@ impl Elaborator {
                         )?;
                         ir_items.push((weight_expr, body));
                     }
-                    ir_productions.push((prod.name.clone(), ir_items));
+                    ir_productions.push((prod.name, ir_items));
                 }
                 Ok(IrStmt::RandSequence {
                     productions: ir_productions,

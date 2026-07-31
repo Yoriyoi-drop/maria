@@ -499,7 +499,7 @@ impl SimulationEngine {
                                     let obj_val = self.state.read_signal(*id);
                                     let obj_id = obj_val.to_u64() as ObjId;
                                     if obj_id == 0
-                                        && self.state.objects.len() > 0
+                                        && !self.state.objects.is_empty()
                                         && self.state.objects[0].class_name.is_empty()
                                     {
                                         let class_for_obj = if is_cg {
@@ -551,7 +551,7 @@ impl SimulationEngine {
                                     }
                                 } else {
                                     let all_consumed =
-                                        self.evaluate_block_with_delay_fork(&p, Some(fid))?;
+                                        self.evaluate_block_with_delay_fork(p, Some(fid))?;
                                     if all_consumed && self.fork_groups[fid].remaining > 0 {
                                         self.fork_groups[fid].remaining -= 1;
                                     }
@@ -570,7 +570,7 @@ impl SimulationEngine {
                                     any_immediate = true;
                                 } else {
                                     let all_consumed =
-                                        self.evaluate_block_with_delay_fork(&p, Some(fid))?;
+                                        self.evaluate_block_with_delay_fork(p, Some(fid))?;
                                     if all_consumed {
                                         any_immediate = true;
                                     }
@@ -587,7 +587,7 @@ impl SimulationEngine {
                         IrJoinType::JoinNone => {
                             for p in processes {
                                 if !p.is_empty() {
-                                    self.evaluate_block_with_delay_fork(&p, Some(fid))?;
+                                    self.evaluate_block_with_delay_fork(p, Some(fid))?;
                                 }
                             }
                             if !remaining.is_empty() {
@@ -1047,7 +1047,7 @@ impl SimulationEngine {
                     }
                 }
                 crate::ast::Stmt::Disable { name } => {
-                    self.disable_pending = Some(name.clone());
+                    self.disable_pending = Some(*name);
                     return Ok(true);
                 }
                 crate::ast::Stmt::Fork {
@@ -1070,7 +1070,7 @@ impl SimulationEngine {
                     // This is a simplification — full fork support in AST tasks would need more work
                     // processes is Vec<Stmt> (each branch is a Stmt::Block or single stmt)
                     for p in processes {
-                        self.evaluate_ast_block_with_delay_fork(&[p.clone()], Some(fid))?;
+                        self.evaluate_ast_block_with_delay_fork(std::slice::from_ref(p), Some(fid))?;
                     }
                     if !remaining.is_empty() {
                         self.evaluate_ast_block_with_delay_fork(&remaining, None)?;
@@ -1399,7 +1399,7 @@ impl SimulationEngine {
                                     let obj_val = self.state.read_signal(*id);
                                     let obj_id = obj_val.to_u64() as ObjId;
                                     if obj_id == 0
-                                        && self.state.objects.len() > 0
+                                        && !self.state.objects.is_empty()
                                         && self.state.objects[0].class_name.is_empty()
                                     {
                                         let class_for_obj = if is_cg {
@@ -1497,7 +1497,7 @@ impl SimulationEngine {
                     return Ok(());
                 }
                 IrStmt::Disable { name } => {
-                    self.disable_pending = Some(name.clone());
+                    self.disable_pending = Some(*name);
                     return Ok(());
                 }
                 IrStmt::Release { lvalue } => {
@@ -1530,7 +1530,7 @@ impl SimulationEngine {
                                     }
                                 } else {
                                     let all_consumed =
-                                        self.evaluate_block_with_delay_fork(&p, Some(fid))?;
+                                        self.evaluate_block_with_delay_fork(p, Some(fid))?;
                                     if all_consumed && self.fork_groups[fid].remaining > 0 {
                                         self.fork_groups[fid].remaining -= 1;
                                     }
@@ -1549,7 +1549,7 @@ impl SimulationEngine {
                                     any_immediate = true;
                                 } else {
                                     let all_consumed =
-                                        self.evaluate_block_with_delay_fork(&p, Some(fid))?;
+                                        self.evaluate_block_with_delay_fork(p, Some(fid))?;
                                     if all_consumed {
                                         any_immediate = true;
                                     }
@@ -1566,7 +1566,7 @@ impl SimulationEngine {
                         IrJoinType::JoinNone => {
                             for p in processes {
                                 if !p.is_empty() {
-                                    self.evaluate_block_with_delay_fork(&p, Some(fid))?;
+                                    self.evaluate_block_with_delay_fork(p, Some(fid))?;
                                 }
                             }
                             if !remaining.is_empty() {

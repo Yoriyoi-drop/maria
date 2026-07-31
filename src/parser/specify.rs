@@ -6,6 +6,7 @@
 //!   - parse_clocking_block()  — parsing clocking ... endclocking
 //!   - parse_specify_item()    — parsing specify item ($setup, $hold, dll.)
 //!   - parse_specify_block()   — parsing specify ... endspecify
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use super::Parser;

@@ -195,8 +195,10 @@ impl<V> Default for CacheStore<V> {
 
 /// How aggressively to sync cache entries with remote backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum RemoteSyncMode {
     /// Never sync (local-only, default)
+    #[default]
     None,
     /// Sync on explicit request only
     Manual,
@@ -228,12 +230,6 @@ impl RemoteSyncMode {
             RemoteSyncMode::WriteThrough => "write-through",
             RemoteSyncMode::ReadWrite => "read-write",
         }
-    }
-}
-
-impl Default for RemoteSyncMode {
-    fn default() -> Self {
-        RemoteSyncMode::None
     }
 }
 

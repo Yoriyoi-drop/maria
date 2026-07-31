@@ -717,7 +717,7 @@ impl PowerIntent {
     /// Build signal-to-domain mapping from design signals.
     pub fn build_signal_mapping(&mut self, signals: &[SignalInfo]) {
         self.signal_domain_map.clear();
-        for (_, sig) in signals.iter().enumerate() {
+        for sig in signals.iter() {
             let sig_name = sig.name.as_str();
             for (dname, domain) in &self.domains {
                 for elem in &domain.elements {

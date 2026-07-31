@@ -324,7 +324,7 @@ impl CdcAnalysis {
         // For signals written by multiple domains, assign to the one that writes most often.
         let mut signal_owner_counts: HashMap<(SignalId, usize), usize> = HashMap::new();
 
-        for (_pid, process) in processes.iter().enumerate() {
+        for process in processes.iter() {
             if let Process::Sequential { .. } = process {
                 let clock_sig = get_clock_signal_id(process).unwrap_or(0);
                 if let Some(&domain_id) = clock_to_domain.get(&clock_sig) {
@@ -363,7 +363,7 @@ impl CdcAnalysis {
         let mut crossings: Vec<CdcSignalCrossing> = Vec::new();
         let mut crossing_set: HashSet<(SignalId, usize, usize)> = HashSet::new(); // (signal, src_domain, dst_domain)
 
-        for (pid, process) in processes.iter().enumerate() {
+        for process in processes.iter() {
             if let Process::Sequential { .. } = process {
                 let clock_sig = get_clock_signal_id(process).unwrap_or(0);
                 let dst_domain_opt = clock_to_domain.get(&clock_sig).copied();
@@ -381,11 +381,8 @@ impl CdcAnalysis {
 
                     // Also find signals read via expressions in the body
                     let mut all_reads = HashSet::new();
-                    match process {
-                        Process::Sequential { body, .. } => {
-                            collect_stmt_signal_reads(body, &mut all_reads);
-                        }
-                        _ => {}
+                    if let Process::Sequential { body, .. } = process {
+                        collect_stmt_signal_reads(body, &mut all_reads);
                     }
 
                     // Add body writes as potential crossing sources too
@@ -445,7 +442,7 @@ impl CdcAnalysis {
         // We'll use this to find synchronizer chains.
 
         // Count how many sequential processes in a domain write to each signal
-        for (pid, process) in processes.iter().enumerate() {
+        for process in processes.iter() {
             if let Process::Sequential { .. } = process {
                 let clock_sig = get_clock_signal_id(process).unwrap_or(0);
                 if let Some(&domain_id) = clock_to_domain.get(&clock_sig) {
@@ -567,7 +564,7 @@ impl CdcAnalysis {
         }
 
         // Sort violations: critical first, then high, then medium, then low
-        violations.sort_by(|a, b| b.severity.cmp(&a.severity));
+        violations.sort_by_key(|a| std::cmp::Reverse(a.severity));
 
         let total_crossings = crossings.len();
 
@@ -677,7 +674,7 @@ impl CdcAnalysis {
                 "  {:<6} {:<30} {:<15} {:<15} {:<12} {}\n",
                 "Domain", "Signal", "Clock (src)", "Clock (dst)", "Sync?", "Flops"
             ));
-            report.push_str(&"  ──────────────────────────────────────────────────────────────────────────\n");
+            report.push_str("  ──────────────────────────────────────────────────────────────────────────\n");
             report.push('\n');
 
             for crossing in &self.crossings {

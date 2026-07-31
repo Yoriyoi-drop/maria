@@ -214,8 +214,8 @@ impl Parser {
                 self.advance();
                 Some(Box::new(DataType::Signed(Box::new(DataType::Logic))))
             }
-    Token::Ident(name) if self.type_param_names.contains(&name) => {
-        let tp_name = name.clone();
+    Token::Ident(name) if self.type_param_names.contains(name) => {
+        let tp_name = *name;
         self.advance();
         Some(Box::new(DataType::UserDefined(tp_name)))
     }
@@ -336,20 +336,15 @@ impl Parser {
                 };
                 self.skip_extra_packed_dims()?;
                 // Parse port name(s)
-                loop {
-                    match self.peek() {
-                        Token::Ident(pname) => {
-                            let pn = pname.clone();
-                            self.advance();
-                            ports.push(FunctionPort {
-                                name: pn,
-                                range: range.clone(),
-                                expr_range: None,
-                                direction: last_direction,
-                            });
-                        }
-                        _ => break,
-                    }
+                while let Token::Ident(pname) = self.peek() {
+                    let pn = *pname;
+                    self.advance();
+                    ports.push(FunctionPort {
+                        name: pn,
+                        range: range.clone(),
+                        expr_range: None,
+                        direction: last_direction,
+                    });
                     if self.peek() == &Token::Comma {
                         self.advance();
                     } else {
@@ -401,20 +396,15 @@ impl Parser {
                     } else {
                         None
                     };
-                    loop {
-                        match self.peek() {
-                        Token::Ident(pname) => {
-                            let pn = pname.clone();
-                            self.advance();
-                            ports.push(FunctionPort {
-                                name: pn,
-                                range: port_range.clone(),
-                                expr_range: None,
-                                direction: Some(direction),
-                            });
-                        }
-                            _ => break,
-                        }
+                    while let Token::Ident(pname) = self.peek() {
+                        let pn = *pname;
+                        self.advance();
+                        ports.push(FunctionPort {
+                            name: pn,
+                            range: port_range.clone(),
+                            expr_range: None,
+                            direction: Some(direction),
+                        });
                         if self.peek() == &Token::Comma {
                             self.advance();
                         } else {
@@ -615,20 +605,15 @@ impl Parser {
                 } else {
                     None
                 };
-                loop {
-                    match self.peek() {
-                        Token::Ident(pname) => {
-                            let pn = pname.clone();
-                            self.advance();
-                            ports.push(FunctionPort {
-                                name: pn,
-                                range: range.clone(),
-                                expr_range: None,
-                                direction: last_direction,
-                            });
-                        }
-                        _ => break,
-                    }
+                while let Token::Ident(pname) = self.peek() {
+                    let pn = *pname;
+                    self.advance();
+                    ports.push(FunctionPort {
+                        name: pn,
+                        range: range.clone(),
+                        expr_range: None,
+                        direction: last_direction,
+                    });
                     if self.peek() == &Token::Comma {
                         self.advance();
                     } else {
@@ -681,20 +666,15 @@ impl Parser {
                     } else {
                         None
                     };
-                    loop {
-                        match self.peek() {
-                        Token::Ident(pname) => {
-                            let pn = pname.clone();
-                            self.advance();
-                            ports.push(FunctionPort {
-                                name: pn,
-                                range: port_range.clone(),
-                                expr_range: None,
-                                direction: Some(direction),
-                            });
-                        }
-                            _ => break,
-                        }
+                    while let Token::Ident(pname) = self.peek() {
+                        let pn = *pname;
+                        self.advance();
+                        ports.push(FunctionPort {
+                            name: pn,
+                            range: port_range.clone(),
+                            expr_range: None,
+                            direction: Some(direction),
+                        });
                         if self.peek() == &Token::Comma {
                             self.advance();
                         } else {
@@ -929,7 +909,7 @@ impl Parser {
                 let item = self.parse_module_item()?;
                 match item {
                     Some(mi) => Ok(GenerateItem::Items(vec![mi])),
-                    None => return Err(self.err("expected generate item")),
+                    None => Err(self.err("expected generate item")),
                 }
             }
         }

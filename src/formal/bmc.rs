@@ -42,7 +42,7 @@ impl FormalEngine {
         // sig_id_d = { name: "sig_{id}_{d}", width }
         let signal_widths: Vec<u32> = design.top.signals
             .iter()
-            .map(|s| s.width.max(1).min(64) as u32)
+            .map(|s| s.width.clamp(1, 64) as u32)
             .collect();
 
         // Collect initial values for each signal
@@ -97,7 +97,7 @@ impl FormalEngine {
             let width = *signal_widths.get(i).unwrap_or(&64);
             let init_z3 = z3::ast::BV::from_u64(init, width);
             let sig_var = &sig_vars[0][i];
-            solver.assert(&sig_var.eq(&init_z3));
+            solver.assert(sig_var.eq(&init_z3));
         }
 
         // STEP 3: Add next-state constraints for each depth d ≥ 1
@@ -118,7 +118,7 @@ impl FormalEngine {
                     if let Some(rhs_val) = rhs_z3 {
                         let lhs_var = &sig_vars[d as usize][*sig_id];
                         let (lhs_mw, rhs_mw) = self.zero_extend_match(lhs_var, &rhs_val);
-                        solver.assert(&lhs_mw.eq(&rhs_mw));
+                        solver.assert(lhs_mw.eq(&rhs_mw));
                     }
                 }
             }
@@ -128,7 +128,7 @@ impl FormalEngine {
                 if !all_assigned.contains(&i) {
                     let prev = &sig_vars[(d - 1) as usize][i];
                     let curr = &sig_vars[d as usize][i];
-                    solver.assert(&prev.eq(curr));
+                    solver.assert(prev.eq(curr));
                 }
             }
         }
@@ -244,7 +244,7 @@ impl FormalEngine {
                 if let Some(rhs_val) = rhs_z3 {
                     let lhs_var = &sig_vars[1][*sig_id];
                     let (lhs_mw, rhs_mw) = self.zero_extend_match(lhs_var, &rhs_val);
-                    solver.assert(&lhs_mw.eq(&rhs_mw));
+                    solver.assert(lhs_mw.eq(&rhs_mw));
                 }
             }
         }
@@ -254,7 +254,7 @@ impl FormalEngine {
             if !all_assigned.contains(&i) {
                 let prev = &sig_vars[0][i];
                 let curr = &sig_vars[1][i];
-                solver.assert(&prev.eq(curr));
+                solver.assert(prev.eq(curr));
             }
         }
 
@@ -267,7 +267,7 @@ impl FormalEngine {
 
         // Check ¬P(1) (property fails at post-state)
         if let Some(p_at_1) = self.expr_to_z3_bool_at(cond, 1, &sig_vars) {
-            solver.assert(&p_at_1.not());
+            solver.assert(p_at_1.not());
         } else {
             return FormalResult::Unknown;
         }
@@ -298,7 +298,7 @@ impl FormalEngine {
         match expr {
             IrExpr::Const(lv) => {
                 let val = lv.to_u64();
-                let width = lv.width.max(1).min(64) as u32;
+                let width = lv.width.clamp(1, 64) as u32;
                 Some(z3::ast::BV::from_u64(val, width))
             }
             IrExpr::FillLit(v) => {

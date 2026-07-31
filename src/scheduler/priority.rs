@@ -13,21 +13,17 @@ use super::work_stealing::Task;
 
 /// Priority levels untuk task scheduling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default)]
 pub enum Priority {
     /// Low priority — cache eviction, diagnostics flush
     Low = 0,
     /// Normal priority — type checking, elaboration
+    #[default]
     Normal = 1,
     /// High priority — parsing, lexing
     High = 2,
     /// Critical priority — filesystem operations
     Critical = 3,
-}
-
-impl Default for Priority {
-    fn default() -> Self {
-        Priority::Normal
-    }
 }
 
 // ─── Prioritized Task ───

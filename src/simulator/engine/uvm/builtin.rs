@@ -237,8 +237,8 @@ impl SimulationEngine {
             "add" => {
                 // uvm_callbacks#add(cb_obj, comp_type)
                 let cb_obj_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
-                let comp_type = args.get(1).map(|a| logicvec_to_string(a)).unwrap_or_default();
-                let cb_name = args.get(2).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                let comp_type = args.get(1).map(logicvec_to_string).unwrap_or_default();
+                let cb_name = args.get(2).map(logicvec_to_string).unwrap_or_default();
                 // Store by (component_type, cb_type_name)
                 let cb_type = if let Some(obj) = self.state.get_object(cb_obj_id) {
                     obj.class_name.to_string()
@@ -258,7 +258,7 @@ impl SimulationEngine {
             }
             "delete" => {
                 let cb_obj_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
-                let comp_type = args.get(1).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                let comp_type = args.get(1).map(logicvec_to_string).unwrap_or_default();
                 let cb_type = if let Some(obj) = self.state.get_object(cb_obj_id) {
                     obj.class_name.to_string()
                 } else {
@@ -340,7 +340,7 @@ impl SimulationEngine {
 
             // Walk up component hierarchy for inherited callback registrations
             current = self.design.classes.get::<str>(&ct)
-                .and_then(|c| c.extends.clone())
+                .and_then(|c| c.extends)
                 .map(|s| s.to_string());
         }
         Ok(())
@@ -384,7 +384,7 @@ impl SimulationEngine {
                 let class_name = self
                     .state
                     .get_object(obj_id)
-                    .map(|o| o.class_name.clone())
+                    .map(|o| o.class_name)
                     .unwrap_or_default();
                 Ok(string_to_logicvec(class_name.as_str()))
             }
@@ -396,7 +396,7 @@ impl SimulationEngine {
                 let class_name = self
                     .state
                     .get_object(obj_id)
-                    .map(|o| o.class_name.clone())
+                    .map(|o| o.class_name)
                     .unwrap_or_default();
                 println!(
                     "UVM_INFO @ {}: {} [{}]",
@@ -454,48 +454,48 @@ impl SimulationEngine {
         match method {
             "uvm_report_info" => {
                 let id = args
-                    .get(0)
-                    .map(|a| logicvec_to_string(a))
+                    .first()
+                    .map(logicvec_to_string)
                     .unwrap_or_default();
                 let msg = args
                     .get(1)
-                    .map(|a| logicvec_to_string(a))
+                    .map(logicvec_to_string)
                     .unwrap_or_default();
                 eprintln!("UVM_INFO @ {}: {} [{}]", self.current_time, msg, id);
                 Ok(LogicVec::from_u64(1, 1))
             }
             "uvm_report_warning" => {
                 let id = args
-                    .get(0)
-                    .map(|a| logicvec_to_string(a))
+                    .first()
+                    .map(logicvec_to_string)
                     .unwrap_or_default();
                 let msg = args
                     .get(1)
-                    .map(|a| logicvec_to_string(a))
+                    .map(logicvec_to_string)
                     .unwrap_or_default();
                 eprintln!("UVM_WARNING @ {}: {} [{}]", self.current_time, msg, id);
                 Ok(LogicVec::from_u64(1, 1))
             }
             "uvm_report_error" => {
                 let id = args
-                    .get(0)
-                    .map(|a| logicvec_to_string(a))
+                    .first()
+                    .map(logicvec_to_string)
                     .unwrap_or_default();
                 let msg = args
                     .get(1)
-                    .map(|a| logicvec_to_string(a))
+                    .map(logicvec_to_string)
                     .unwrap_or_default();
                 eprintln!("UVM_ERROR @ {}: {} [{}]", self.current_time, msg, id);
                 Ok(LogicVec::from_u64(1, 1))
             }
             "uvm_report_fatal" => {
                 let id = args
-                    .get(0)
-                    .map(|a| logicvec_to_string(a))
+                    .first()
+                    .map(logicvec_to_string)
                     .unwrap_or_default();
                 let msg = args
                     .get(1)
-                    .map(|a| logicvec_to_string(a))
+                    .map(logicvec_to_string)
                     .unwrap_or_default();
                 eprintln!("UVM_FATAL @ {}: {} [{}]", self.current_time, msg, id);
                 self.running = false;
@@ -579,7 +579,7 @@ impl SimulationEngine {
             "has_child" => {
                 let name = args
                     .first()
-                    .map(|a| logicvec_to_string(a))
+                    .map(logicvec_to_string)
                     .unwrap_or_default();
                 let found = self
                     .uvm_component_data
@@ -637,7 +637,7 @@ impl SimulationEngine {
                 let class_name = self
                     .state
                     .get_object(obj_id)
-                    .map(|o| o.class_name.clone())
+                    .map(|o| o.class_name)
                     .unwrap_or_default();
                 Ok(string_to_logicvec(class_name.as_str()))
             }
@@ -725,13 +725,13 @@ impl SimulationEngine {
             "create" => {
                 let name = args
                     .first()
-                    .map(|a| logicvec_to_string(a))
+                    .map(logicvec_to_string)
                     .unwrap_or_default();
                 // Create a new object of the sequence's type
                 let class_name = self
                     .state
                     .get_object(obj_id)
-                    .map(|o| o.class_name.clone())
+                    .map(|o| o.class_name)
                     .unwrap_or_default();
                 let child = self.state.alloc_object(Symbol::intern(class_name.as_str()));
                 // Set name on the new object
@@ -743,7 +743,7 @@ impl SimulationEngine {
                     if let Some(obj) = self.state.get_object_mut(child) {
                         for field in &cls.fields {
                             obj.fields
-                                .entry(field.name.clone())
+                                .entry(field.name)
                                 .or_insert_with(|| LogicVec::from_u64(0, field.width));
                         }
                     }
@@ -1053,14 +1053,14 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "set_access" => {
-                let access = args.get(0).map(|a| logicvec_to_string(a)).unwrap_or_default();
+                let access = args.first().map(logicvec_to_string).unwrap_or_default();
                 if let Some(fd) = self.uvm_reg_field_data.get_mut(&obj_id) {
                     fd.access = access;
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
             "set" => {
-                let val = args.get(0).cloned().unwrap_or(LogicVec::new(1));
+                let val = args.first().cloned().unwrap_or(LogicVec::new(1));
                 if let Some(fd) = self.uvm_reg_field_data.get_mut(&obj_id) {
                     fd.value = val.clone();
                     fd.desired = val;
@@ -1081,7 +1081,7 @@ impl SimulationEngine {
                 Ok(val)
             }
             "set_desired" => {
-                let val = args.get(0).cloned().unwrap_or(LogicVec::new(1));
+                let val = args.first().cloned().unwrap_or(LogicVec::new(1));
                 if let Some(fd) = self.uvm_reg_field_data.get_mut(&obj_id) {
                     fd.desired = val;
                     fd.modified = true;
@@ -1113,7 +1113,7 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "predict" => {
-                let val = args.get(0).cloned().unwrap_or(LogicVec::new(1));
+                let val = args.first().cloned().unwrap_or(LogicVec::new(1));
                 if let Some(fd) = self.uvm_reg_field_data.get_mut(&obj_id) {
                     fd.value = val;
                     fd.modified = false;
@@ -1129,7 +1129,7 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "set_bit_pos" => {
-                let pos = args.get(0).map(|a| a.to_u64() as usize).unwrap_or(0);
+                let pos = args.first().map(|a| a.to_u64() as usize).unwrap_or(0);
                 if let Some(fd) = self.uvm_reg_field_data.get_mut(&obj_id) {
                     fd.bit_pos = pos;
                 }
@@ -1193,7 +1193,7 @@ impl SimulationEngine {
             }
             "configure" => {
                 // configure(parent_block, regfile_path, offset)
-                let block_id = args.get(0).map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                let block_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
                 let offset = args.get(2).map(|a| a.to_u64()).unwrap_or(0);
                 if block_id != 0 {
                     if let Some(rd) = self.uvm_reg_data.get_mut(&obj_id) {
@@ -1243,7 +1243,7 @@ impl SimulationEngine {
                 Ok(val)
             }
             "set" => {
-                let val = args.get(0).cloned().unwrap_or(LogicVec::new(32));
+                let val = args.first().cloned().unwrap_or(LogicVec::new(32));
                 if let Some(rd) = self.uvm_reg_data.get_mut(&obj_id) {
                     rd.desired = val.clone();
                     rd.modified = true;
@@ -1376,7 +1376,7 @@ impl SimulationEngine {
                     .or_insert_with(|| UvmObjectData { name });
                 self.uvm_reg_block_data
                     .entry(obj_id)
-                    .or_insert_with(|| UvmRegBlockData::new());
+                    .or_insert_with(UvmRegBlockData::new);
                 Ok(LogicVec::from_u64(1, 1))
             }
             "build" => {
@@ -1392,14 +1392,14 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(default_map as u64, 64))
             }
             "set_default_map" => {
-                let map_id = args.get(0).map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                let map_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
                 if let Some(bd) = self.uvm_reg_block_data.get_mut(&obj_id) {
                     bd.default_map = Some(map_id);
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get_reg_by_offset" => {
-                let offset = args.get(0).map(|a| a.to_u64()).unwrap_or(0);
+                let offset = args.first().map(|a| a.to_u64()).unwrap_or(0);
                 let reg_id = self.uvm_reg_block_data.get(&obj_id)
                     .and_then(|bd| bd.regs_by_offset.get(&offset).copied())
                     .unwrap_or(0);
@@ -1429,7 +1429,7 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(addr, 64))
             }
             "set_base_address" => {
-                let addr = args.get(0).map(|a| a.to_u64()).unwrap_or(0);
+                let addr = args.first().map(|a| a.to_u64()).unwrap_or(0);
                 if let Some(bd) = self.uvm_reg_block_data.get_mut(&obj_id) {
                     bd.base_address = addr;
                 }
@@ -1457,11 +1457,11 @@ impl SimulationEngine {
                     .or_insert_with(|| UvmObjectData { name });
                 self.uvm_reg_map_data
                     .entry(obj_id)
-                    .or_insert_with(|| UvmRegMapData::new());
+                    .or_insert_with(UvmRegMapData::new);
                 Ok(LogicVec::from_u64(1, 1))
             }
             "add_reg" => {
-                let reg_id = args.get(0).map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                let reg_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
                 let offset = args.get(1).map(|a| a.to_u64()).unwrap_or(0);
                 if let Some(md) = self.uvm_reg_map_data.get_mut(&obj_id) {
                     md.regs_by_offset.insert(offset, reg_id);
@@ -1469,14 +1469,14 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             "get_reg_by_offset" => {
-                let offset = args.get(0).map(|a| a.to_u64()).unwrap_or(0);
+                let offset = args.first().map(|a| a.to_u64()).unwrap_or(0);
                 let reg_id = self.uvm_reg_map_data.get(&obj_id)
                     .and_then(|md| md.regs_by_offset.get(&offset).copied())
                     .unwrap_or(0);
                 Ok(LogicVec::from_u64(reg_id as u64, 64))
             }
             "set_base_addr" => {
-                let addr = args.get(0).map(|a| a.to_u64()).unwrap_or(0);
+                let addr = args.first().map(|a| a.to_u64()).unwrap_or(0);
                 if let Some(md) = self.uvm_reg_map_data.get_mut(&obj_id) {
                     md.base_address = addr;
                 }
@@ -1503,13 +1503,13 @@ impl SimulationEngine {
         let class_name = self
             .state
             .get_object(obj_id)
-            .map(|o| o.class_name.clone())
+            .map(|o| o.class_name)
             .unwrap_or_default();
         let parent = self
             .design
             .classes
             .get(&class_name)
-            .and_then(|c| c.extends.clone())
+            .and_then(|c| c.extends)
             .ok_or_else(|| {
                 self.diag_error(DiagCode::DpiError, format!(
                     "class '{}' has no parent for super call",
@@ -1518,49 +1518,49 @@ impl SimulationEngine {
             })?;
         // Check hierarchy from most specific to least
         // ── Reg layer (check before uvm_component since uvm_reg_block extends uvm_component) ──
-        if parent == "__uvm_reg_block" || self.is_uvm_reg_block_hierarchy(&parent.as_str()) {
+        if parent == "__uvm_reg_block" || self.is_uvm_reg_block_hierarchy(parent.as_str()) {
             return self.execute_uvm_reg_block_method(obj_id, method, args);
         }
-        if parent == "__uvm_reg_map" || self.is_uvm_reg_map_hierarchy(&parent.as_str()) {
+        if parent == "__uvm_reg_map" || self.is_uvm_reg_map_hierarchy(parent.as_str()) {
             return self.execute_uvm_reg_map_method(obj_id, method, args);
         }
-        if parent == "__uvm_reg" || self.is_uvm_reg_hierarchy(&parent.as_str()) {
+        if parent == "__uvm_reg" || self.is_uvm_reg_hierarchy(parent.as_str()) {
             return self.execute_uvm_reg_method(obj_id, method, args);
         }
-        if parent == "__uvm_reg_field" || self.is_uvm_reg_field_hierarchy(&parent.as_str()) {
+        if parent == "__uvm_reg_field" || self.is_uvm_reg_field_hierarchy(parent.as_str()) {
             return self.execute_uvm_reg_field_method(obj_id, method, args);
         }
-        if parent == "__uvm_driver" || self.is_uvm_driver_hierarchy(&parent.as_str()) {
+        if parent == "__uvm_driver" || self.is_uvm_driver_hierarchy(parent.as_str()) {
             return self.execute_uvm_driver_method(obj_id, method, args);
         }
-        if parent == "__uvm_monitor" || self.is_uvm_monitor_hierarchy(&parent.as_str()) {
+        if parent == "__uvm_monitor" || self.is_uvm_monitor_hierarchy(parent.as_str()) {
             return self.execute_uvm_monitor_method(obj_id, method, args);
         }
-        if parent == "__uvm_sequencer" || self.is_uvm_sequencer_hierarchy(&parent.as_str()) {
+        if parent == "__uvm_sequencer" || self.is_uvm_sequencer_hierarchy(parent.as_str()) {
             return self.execute_uvm_sequencer_method(obj_id, method, args);
         }
-        if parent == "__uvm_sequence" || self.is_uvm_sequence_hierarchy(&parent.as_str()) {
+        if parent == "__uvm_sequence" || self.is_uvm_sequence_hierarchy(parent.as_str()) {
             return self.execute_uvm_sequence_method(obj_id, method, args);
         }
-        if parent == "__uvm_sequence_item" || self.is_uvm_sequence_item_hierarchy(&parent.as_str()) {
+        if parent == "__uvm_sequence_item" || self.is_uvm_sequence_item_hierarchy(parent.as_str()) {
             return self.execute_uvm_sequence_item_method(obj_id, method, args);
         }
-        if parent == "__uvm_analysis_port" || self.is_uvm_analysis_port_hierarchy(&parent.as_str()) {
+        if parent == "__uvm_analysis_port" || self.is_uvm_analysis_port_hierarchy(parent.as_str()) {
             return self.execute_uvm_analysis_port_method(obj_id, method, args);
         }
-        if parent == "__uvm_analysis_imp" || self.is_uvm_analysis_imp_hierarchy(&parent.as_str()) {
+        if parent == "__uvm_analysis_imp" || self.is_uvm_analysis_imp_hierarchy(parent.as_str()) {
             return self.execute_uvm_analysis_imp_method(obj_id, method, args);
         }
         // Check if parent is uvm_component hierarchy
-        if parent == "__uvm_component" || self.is_uvm_component_hierarchy(&parent.as_str()) {
+        if parent == "__uvm_component" || self.is_uvm_component_hierarchy(parent.as_str()) {
             return self.execute_uvm_component_method(obj_id, method, args);
         }
         // Check if parent is uvm_report_object hierarchy
-        if parent == "__uvm_report_object" || self.is_uvm_report_object_hierarchy(&parent.as_str()) {
+        if parent == "__uvm_report_object" || self.is_uvm_report_object_hierarchy(parent.as_str()) {
             return self.execute_uvm_report_object_method(obj_id, method, args);
         }
         // Check if parent is uvm_object hierarchy
-        if parent == "__uvm_object" || self.is_uvm_object_hierarchy(&parent.as_str()) {
+        if parent == "__uvm_object" || self.is_uvm_object_hierarchy(parent.as_str()) {
             return self.execute_uvm_object_method(obj_id, method, args);
         }
         // Super dispatch: start search from parent class, skipping current class override

@@ -77,7 +77,7 @@ impl Parser {
         let mut _mod_tokens = 0u64;
         loop {
             // Progress tracking
-            if _mod_tokens > 0 && _mod_tokens % 1000 == 0 {
+            if _mod_tokens > 0 && _mod_tokens.is_multiple_of(1000000) {
                 eprintln!("[DBG-MODULE-BODY] {} items parsed, token {}/{}, elapsed {:?}", _mod_tokens, self.pos.get(), self.tokens.len(), _mod_start.elapsed());
             }
             // Stuck detection: if pos hasn't changed for too many iterations, abort
@@ -340,6 +340,9 @@ impl Parser {
     pub(crate) fn parse_interface(&mut self) -> Result<Interface, SimError> {
         self.advance(); // consume 'interface'
         self.typedef_names.clear();
+        // Hygiene defensif: simetris dgn parse_module, cegah kejutan bila
+        // interface kelak mulai memakai type param.
+        self.module_type_params.clear();
 
         let name = match self.peek() {
             Token::Ident(s) => {
@@ -640,13 +643,55 @@ impl Parser {
                         match &name_tok {
                             Token::Ident(name) => {
                                 self.advance();
-                                // Skip unpacked array dimensions after port name: data_i [N]
-                                while self.peek() == &Token::LBrack
-                                    && self.peek_ahead(1) != &Token::Colon
-                                {
+                                // Parse unpacked array dimension(s) after port name:
+                                //   data_i [N]          — ukuran tunggal (→ [N-1:0])
+                                //   data_i [msb:lsb]    — rentang eksplisit
+                                // (multi-dimensi diperbolehkan, dimensi ekstra di-skip)
+                                let mut array_range = None;
+                                if self.peek() == &Token::LBrack {
                                     self.advance(); // [
-                                    self.parse_expr(0)?;
-                                    self.expect(Token::RBrack)?;
+                                    if self.peek() != &Token::RBrack {
+                                        // Parse ekspresi pertama, lalu putuskan:
+                                        //   [N]        — ukuran tunggal (→ [N-1:0])
+                                        //   [msb:lsb]  — rentang eksplisit
+                                        let first = self.parse_expr(0)?;
+                                        if self.peek() == &Token::Colon {
+                                            self.advance();
+                                            let second = self.parse_expr(0)?;
+                                            self.expect(Token::RBrack)?;
+                                            if let (Ok(m), Ok(l)) = (
+                                                const_eval_simple(&first),
+                                                const_eval_simple(&second),
+                                            ) {
+                                                array_range = Some(Range {
+                                                    msb: m as usize,
+                                                    lsb: l as usize,
+                                                });
+                                            }
+                                        } else {
+                                            self.expect(Token::RBrack)?;
+                                            if let Ok(n) = const_eval_simple(&first) {
+                                                if n > 0 {
+                                                    array_range = Some(Range {
+                                                        msb: (n - 1) as usize,
+                                                        lsb: 0,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        self.advance(); // ]
+                                    }
+                                    // Skip additional dims (multi-dimensi)
+                                    while self.peek() == &Token::LBrack {
+                                        self.advance(); // [
+                                        let _ = self.parse_expr(0)?;
+                                        if self.peek() == &Token::Colon {
+                                            self.advance();
+                                            let _ = self.parse_expr(0)?;
+                                        }
+                                        self.expect(Token::RBrack)?;
+                                    }
                                 }
                                 ports.push(Port {
                                     name: *name,
@@ -654,6 +699,7 @@ impl Parser {
                                     range: range.clone(),
                                     expr_range: expr_range.clone(),
                                     dtype_name: dtype_name.as_ref().map(|s| Symbol::intern(s)),
+                                    array_range,
                                 });
                             }
                             _ => break,

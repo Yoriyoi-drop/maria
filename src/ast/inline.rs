@@ -30,7 +30,7 @@ pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(Symbol, u
     let prefix = module.name;
     let mut temp_signals: Vec<(Symbol, usize)> = Vec::new();
 
-    let old_items = std::mem::replace(&mut module.items, Vec::new());
+    let old_items = std::mem::take(&mut module.items);
     let mut new_items: Vec<ModuleItem> = Vec::new();
     for item in old_items {
         match item {
@@ -695,7 +695,7 @@ fn inline_funcs_in_stmt(
                         temp_signals,
                         recursive_funcs,
                     );
-                    preamble.extend(preamble2.drain(..));
+                    preamble.append(preamble2);
 
                     if preamble.len() == 1 {
                         preamble.into_iter().next().unwrap()

@@ -770,9 +770,9 @@ impl LogicVec {
         if all_x_or_z {
             return None;
         }
-        let any_one = self.bits.iter().any(|b| *b == LogicVal::One);
+        let any_one = self.bits.contains(&LogicVal::One);
         // In Verilog, X/Z in a conditional is treated as false
-        let any_zero_or_x_or_z = self.bits.iter().any(|b| *b == LogicVal::Zero);
+        let any_zero_or_x_or_z = self.bits.contains(&LogicVal::Zero);
         Some(any_one && (!any_zero_or_x_or_z || any_one))
     }
 

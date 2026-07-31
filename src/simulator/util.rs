@@ -245,7 +245,7 @@ pub fn eval_display_arg(
         | IrExpr::RangeSelect(id, _, _)
         | IrExpr::BitSelect(id, _)
         | IrExpr::ArrayIndex { sig_id: id, .. } => {
-            return match arg {
+            match arg {
                 IrExpr::RangeSelect(id, msb, lsb) => {
                     let val = state.read_signal(*id);
                     let (start, end) = if msb > lsb {

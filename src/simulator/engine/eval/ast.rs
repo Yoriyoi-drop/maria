@@ -235,7 +235,7 @@ impl SimulationEngine {
                                 let obj_val = self.evaluate_ast_expr(obj)?;
                                 let obj_id = obj_val.to_u64() as ObjId;
                                 if let Some(obj) = self.state.get_object_mut(obj_id) {
-                                    obj.fields.insert(field.clone(), val.clone());
+                                    obj.fields.insert(*field, val.clone());
                                 }
                             }
                             _ => {}
@@ -296,7 +296,7 @@ impl SimulationEngine {
                                 let obj_val = self.evaluate_ast_expr(obj)?;
                                 let obj_id = obj_val.to_u64() as ObjId;
                                 if let Some(obj) = self.state.get_object_mut(obj_id) {
-                                    obj.fields.insert(field.clone(), val.clone());
+                                    obj.fields.insert(*field, val.clone());
                                 }
                             }
                             _ => {}
@@ -644,7 +644,7 @@ impl SimulationEngine {
                         let obj_val = self.evaluate_ast_expr(obj)?;
                         let obj_id = obj_val.to_u64() as ObjId;
                         if let Some(obj) = self.state.get_object_mut(obj_id) {
-                            obj.fields.insert(field.clone(), val);
+                            obj.fields.insert(*field, val);
                             Ok(())
                         } else {
                             Err(SimError::with_diag(
@@ -677,7 +677,7 @@ impl SimulationEngine {
                                     let ov = self.evaluate_ast_expr(obj)?;
                                     let oid = ov.to_u64() as ObjId;
                                     if let Some(o) = self.state.get_object_mut(oid) {
-                                        o.fields.insert(field.clone(), new_val);
+                                        o.fields.insert(*field, new_val);
                                     }
                                 }
                                 _ => {}
@@ -700,7 +700,7 @@ impl SimulationEngine {
                                     let ov = self.evaluate_ast_expr(obj)?;
                                     let oid = ov.to_u64() as ObjId;
                                     if let Some(o) = self.state.get_object_mut(oid) {
-                                        o.fields.insert(field.clone(), new_val);
+                                        o.fields.insert(*field, new_val);
                                     }
                                 }
                                 _ => {}
@@ -738,7 +738,7 @@ impl SimulationEngine {
                                 let ov = self.evaluate_ast_expr(obj)?;
                                 let oid = ov.to_u64() as ObjId;
                                 if let Some(o) = self.state.get_object_mut(oid) {
-                                    o.fields.insert(field.clone(), new_val);
+                                    o.fields.insert(*field, new_val);
                                 }
                             }
                             _ => {}
@@ -759,7 +759,7 @@ impl SimulationEngine {
                         let obj_val = self.evaluate_ast_expr(obj)?;
                         let obj_id = obj_val.to_u64() as ObjId;
                         if let Some(obj) = self.state.get_object_mut(obj_id) {
-                            obj.fields.insert(field.clone(), val);
+                            obj.fields.insert(*field, val);
                             Ok(())
                         } else {
                             Err(SimError::with_diag(
@@ -792,7 +792,7 @@ impl SimulationEngine {
                                     let ov = self.evaluate_ast_expr(obj)?;
                                     let oid = ov.to_u64() as ObjId;
                                     if let Some(o) = self.state.get_object_mut(oid) {
-                                        o.fields.insert(field.clone(), new_val);
+                                        o.fields.insert(*field, new_val);
                                     }
                                 }
                                 _ => {}
@@ -815,7 +815,7 @@ impl SimulationEngine {
                                     let ov = self.evaluate_ast_expr(obj)?;
                                     let oid = ov.to_u64() as ObjId;
                                     if let Some(o) = self.state.get_object_mut(oid) {
-                                        o.fields.insert(field.clone(), new_val);
+                                        o.fields.insert(*field, new_val);
                                     }
                                 }
                                 _ => {}
@@ -853,7 +853,7 @@ impl SimulationEngine {
                                 let ov = self.evaluate_ast_expr(obj)?;
                                 let oid = ov.to_u64() as ObjId;
                                 if let Some(o) = self.state.get_object_mut(oid) {
-                                    o.fields.insert(field.clone(), new_val);
+                                    o.fields.insert(*field, new_val);
                                 }
                             }
                             _ => {}
@@ -980,7 +980,7 @@ impl SimulationEngine {
                     self.evaluate_ast_stmt(init_stmt)?;
                 }
                 while self.disable_pending.is_none()
-                    && cond.as_ref().map_or(true, |c| {
+                    && cond.as_ref().is_none_or(|c| {
                         self.evaluate_ast_expr(c)
                             .ok()
                             .map(|v| v.to_bool().unwrap_or(false))
@@ -1058,7 +1058,7 @@ impl SimulationEngine {
             }
             Stmt::Null => Ok(()),
             Stmt::Disable { name } => {
-                self.disable_pending = Some(name.clone());
+                self.disable_pending = Some(*name);
                 Ok(())
             }
             Stmt::ForeachLoop {
@@ -1074,7 +1074,7 @@ impl SimulationEngine {
                 for i in 0..count {
                     let idx_val = LogicVec::from_u64(i as u64, 32);
                     let mut scope = HashMap::new();
-                    scope.insert(iv.clone(), idx_val);
+                    scope.insert(iv, idx_val);
                     let depth = self.method_locals.len();
                     self.method_locals.push(scope);
                     for s in stmts {
@@ -1086,7 +1086,7 @@ impl SimulationEngine {
             }
             Stmt::Return(Some(expr)) => {
                 let val = self.evaluate_ast_expr(expr)?;
-                if let Some(ref method) = self.current_method.clone() {
+                if let Some(ref method) = self.current_method {
                     self.set_local(method.as_str(), val);
                 }
                 Ok(())
@@ -1100,7 +1100,7 @@ impl SimulationEngine {
                         let obj_val = self.evaluate_ast_expr(obj)?;
                         let obj_id = obj_val.to_u64() as ObjId;
                         if let Some(obj) = self.state.get_object_mut(obj_id) {
-                            obj.fields.insert(field.clone(), val);
+                            obj.fields.insert(*field, val);
                             Ok(())
                         } else {
                             Err(SimError::with_diag(

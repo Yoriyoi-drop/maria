@@ -105,7 +105,7 @@ impl ClockDomainAnalysis {
         // that is written by a sequential process in this clock group.
         let seq_writes: Vec<HashSet<SignalId>> = processes
             .iter()
-            .map(|p| get_process_writes(p))
+            .map(get_process_writes)
             .collect();
 
         for ((clock_signal, edge), seq_pids) in clock_groups {

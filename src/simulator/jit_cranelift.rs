@@ -96,7 +96,7 @@ impl CraneliftEngine {
         let module = JITModule::new(builder);
         let ctx = FunctionBuilderContext::new();
 
-        let mut engine = CraneliftEngine {
+        let engine = CraneliftEngine {
             module,
             ctx,
             cache: Mutex::new(HashMap::new()),
@@ -760,7 +760,7 @@ impl CraneliftEngine {
                 Err(_) => continue,
             };
 
-            if !cache.contains_key(&hash) {
+            if let std::collections::hash_map::Entry::Vacant(e) = cache.entry(hash) {
                 let placeholder = CraneliftCompiledFn {
                     name,
                     code_ptr: std::ptr::null(),
@@ -768,7 +768,7 @@ impl CraneliftEngine {
                     width,
                     hit_count: 0,
                 };
-                cache.insert(hash, placeholder);
+                e.insert(placeholder);
                 loaded_count += 1;
             }
         }

@@ -1081,15 +1081,21 @@ CRIT-039: ✅ Workspace configuration in Cargo.toml added
            no workspace-level test
            Fix: Define [workspace] with member crates
 
-CRIT-040: ✅ Clippy errors: 9→0 (100% fixed); warnings: 757→💥496 (34%↓)
-           AGENTS.md: "No CI, no lint, no typecheck shortcuts"
+CRIT-040: ✅ Clippy errors: 0; warnings 716→199 (ROUND 13: +20 error
+           not_unsafe_ptr_arg_deref fixed → 0 total; ROUND 14: −302;
+           ROUND 15: −157; ROUND 16: −22; ROUND 17: −19; ROUND 18: −17)
            Impact: ✅ Code quality enforced — 0 clippy errors, 0 test failures
            Fix: ✅ Added allow for result_large_err (crate-level) + mut_from_ref
                 (arena allocators) + removed dead loop in parse_interface_fast.
                 Note: cargo clippy --fix auto-removed needed imports (broke 50 files),
-                reverted. Manual fix of 495 lib + 1 bin warnings left as style debt.
-           STATUS: ✅ FIXED (Phase 1 — errors eliminated); ⚠️ 496 warnings remain (style)
+                reverted. Manual fix of warnings left as style debt.
+           ROUND 13: 9 fungsi DPI di src/simulator/dpi.rs ditandai `unsafe fn`
+                (not_unsafe_ptr_arg_deref) + doc `# Safety`; call site tests
+                dibungkus `unsafe {}`. Konsisten konvensi vpi/ffi.rs.
+           STATUS: ✅ FIXED (errors 0); ⚠️ 716 warnings remain (style debt)
            ⚠️ SAFETY: cargo clippy --fix DILARANG — pernah hapus import, break 50 files.
+           ⚠️ LARANGAN BARU (AGENTS.md): script apa pun (Python/Perl/sed -i) untuk
+              mengubah file project DILARANG TOTAL — pernah rusak 100+ error build.
 
 CRIT-041: ✅ MIR optimization — 5-pass pipeline (142→412 lines)
            src/mir/opt.rs — NEW passes:
@@ -2021,9 +2027,9 @@ FIX LOG — 2026-07-28 (Final Update)
 ═══ STATUS RINGKAS ═══
 ✅ Total FIXED:   46 items (CRIT, DEBT, PERF, PARSER, ELAB, LANG, SCHED, VPI, JIT, BENCH, CACHE, WAV, CDC, DIST, TW, ERR)
 ⚠️ Remaining:     7 critical items still open
-📊 Tests:         1180 passed, 0 failed (✅ ALL FIXED) — +8 new tests di ROUND 11
+📊 Tests:         1185 passed, 0 failed (✅ ALL FIXED) — +13 new tests (+11 ROUND 11, +2 ROUND 12)
 📈 Scores:        Sim 33→34 | Comp 16→18 | Scale 27→28 | VPI 0→40 | JIT 0→25 | LINT 0→95
-🔧 Files changed: 40+ files across 21 rounds
+🔧 Files changed: 40+ files across 23 rounds
 
 Detail perbaikan per round:
 
@@ -2241,7 +2247,60 @@ Detail perbaikan per round:
    - FastLexer disinkronkan: -= *= /= %= &= |= <<= >>= (sebelumnya tidak ada)
    - BUG FIX: FastLexer <<= salah taruh di branch <= (NonBlockingAssign), kini
      di branch << (<<<, <<=, <<)
+   - FastLexer parity test diperluas: + operator non-compound >=, ===, !==, ==,
+     !=, <<, >>, <, > (guard regresi lintas-lexer)
    - Files: src/parser/lexer.rs, src/frontend/lexer.rs
+
+✅ ELAB: Width mismatch warning value-aware utk konstanta hasil const-fold
+   - check_width_mismatch: bila RHS adalah IrExpr::Const yang nilainya muat di
+     lebar LHS (lv.to_u64() <= max_val), tidak emit warning false-positive
+   - Memperbaiki noise `width mismatch (lhs=8, rhs=32)` untuk `result = COEFFS[2]`
+   - Overflow tetap warning (mis. 300 dalam reg [7:0])
+   - ENHANCED: konstanta negatif two's complement yang muat di LHS signed juga
+     di-skip (reg signed [7:0] x = -1 → 0xFF, x = -128 → 0x80, TANPA warning);
+     konstanta yang benar-benar tidak muat (mis. -200 dalam signed [7:0]) tetap
+     warning — diverifikasi via flush_diagnostics (test_negative_const_width_warning_suppression)
+   - Files: src/elaboration/elaborator/stmt.rs
+   - DOCUMENTED LIMITATION: konstanta unsigned besar ber-MSB-set (mis.
+     32'hFFFFFF80) akan terdeteksi sebagai negatif karena fold tidak menyimpan
+     info tanda (inheren two's complement)
+   - DOCUMENTED LIMITATION: `$bits` pada signal array unpacked lokal (mis.
+     `reg [7:0] arr[0:3]`) over-count (128 bukan 32) — info.width sudah
+     termasuk dimensi array, lalu dikali array_depth lagi di jalur
+     resolve_expr_signal (bug PRE-EXISTING, di luar scope fix param package;
+     diverifikasi via test: $bits(arr) = 128 vs 32 yang benar)
+
+✅ ELAB: `$bits` referensi array utuh (param package)
+   - try_array_param_bits() di expr.rs: resolve `Expr::ScopedIdent`
+     (`$bits(pkg::ARR)`) atau plain-name via import (`$bits(ARR)` dengan
+     `import pkg::*`) ke param array package, lalu hitung
+     elem_width × jumlah elemen (dari pkg_const_arrays + ParamDecl dtype/range)
+   - `$bits(COEFFS)` = `$bits(cfg_pkg::COEFFS)` = 128 (4 int × 32 bit) —
+     menghapus documented limitation lama "nama array utuh tidak ter-resolve"
+   - DRY: collect_import_sets() diekstrak, dipakai try_array_param_bits dan
+     elaborate_imported_package_func_call (hilangkan duplikasi blok identik)
+   - Files: src/elaboration/elaborator/expr.rs
+
+✅ ELAB: $bits/$size signal array — hapus double-count + $size dimensi pertama
+   - $bits pada signal: SignalInfo.width sudah lebar total (elem_width × depth
+     di-set saat elaborasi), jadi `info.width * array_depth` double-count.
+     Kini cukup `info.width` — `$bits(reg [7:0] arr[0:3])` = 32 (bukan 128)
+   - $size pada unpacked array: kini mengembalikan jumlah elemen dimensi
+     pertama (array_depth, = 4 untuk [0:3]), bukan lebar total (32)
+   - compute_expr_width (width.rs) disamakan: Expr::Ident → info.width (konsisten
+     dengan handler $bits, perbaiki koneksi port array yang over-size)
+   - Files: src/elaboration/elaborator/expr.rs, src/elaboration/util/width.rs
+   - ENHANCED: $size packed multi-dimensi kini packed_dims[0] —
+     `$size(reg [3:0][7:0] p)` = 4 (jumlah elemen dimensi pertama), bukan 32
+     (lebar total). Prioritas: array_depth (unpacked) > packed_dims[0] > width
+   - DOCUMENTED LIMITATION: $size pada array 1-elemen [0:0] (array_depth=1)
+     kembali ke lebar total (8) karena tak bisa dibedakan dari non-array
+     (array_dims selalu kosong)
+   - DOCUMENTED LIMITATION: $size pada kombinasi packed multi-dimensi + unpacked
+     array (mis. `reg [7:0][3:0] arr[0:3]`) memprioritaskan array_depth (4),
+     padahal IEEE 1800 mengharuskan dimensi paling kiri ([7:0] → 8) — edge jarang
+     (catatan: limitation $bits PORT unpacked-array telah DIHAPUS — fixed di
+      ROUND 12 via fold array depth di jalur port)
 
 ✅ LANG: Module-level `parameter type T = int; T x;`
    - Parser: module_type_params: HashSet<Symbol>, `T x;` diparse sebagai
@@ -2267,12 +2326,66 @@ Detail perbaikan per round:
 ✅ GEN: Param substitution dalam generate (default + range kena genvar)
    - src/elaboration/util/generate.rs: ModuleItem::Param disubstitusi
 
-✅ Tests baru (8): test_compound_assign_operators, test_assignment_pattern_concat,
+✅ Tests baru (11): test_compound_assign_operators, test_assignment_pattern_concat,
    test_package_array_param, test_parameter_type_decl, test_parameter_type_header_decl,
    test_endmodule_colon_name_suffix, test_fast_lexer_compound_assign_ops,
-   test_fast_lexer_compound_assign_equivalence_with_legacy
+   test_fast_lexer_compound_assign_equivalence_with_legacy,
+   test_negative_const_signed_assign, test_negative_const_width_warning_suppression,
+   test_bits_package_array_param
 
-📊 TOTAL TESTS: 1180 passed, 0 failed — +8 tests baru di ROUND 11
+📊 TOTAL TESTS: 1185 passed, 0 failed — +13 tests baru (+11 ROUND 11, +2 ROUND 12)
+
+═══ ROUND 12 — UNPACKED ARRAY PORTS ═══
+
+✅ PARSER: Unpacked array port `[msb:lsb]` / `[N]` di port list
+   - src/parser/instance.rs: parse_port_list kini parse `[0:3]` (sebelumnya
+     error 'expected RBrack, found Colon' karena deteksi `peek_ahead(1)==Colon`
+     gagal untuk range yang dimulai konstanta). Pola baru: parse expr pertama,
+     lalu `:` → range [msb:lsb], `]` → single size [N] → [N-1:0].
+
+✅ ELAB: Port unpacked-array dilipat ke width total
+   - src/ast/types.rs: struct Port + field `array_range: Option<Range>`
+   - src/elaboration/elaborator/mod.rs: jalur port kini melipat array depth ke
+     total_width dan set array_depth + elem_width (sebelumnya hardcode depth=1,
+     penyebab $bits port array under-count)
+
+✅ FLATTEN: Check lebar port pakai width TOTAL + guard elem_width
+   - src/elaboration/elaborator/flatten.rs: untuk child port array bandingkan
+     parent.width (bukan elem_width); guard baru menolak total width sama tapi
+     elem_width beda (mis. [15:0][0:1] vs [7:0][0:3]) — tanpa guard, indexing
+     array di engine salah.
+
+✅ Tests baru (2): test_port_unpacked_array_end_to_end (w=$bits=32, s=$size=4,
+   a=0x04030201 mengalir via port array), test_port_array_elem_width_mismatch_rejected
+
+📊 TOTAL TESTS: 1185 passed, 0 failed — +13 tests baru (+11 ROUND 11, +2 ROUND 12)
+
+═══ ROUND 13 — CLIPPY ERRORS 0 + ATURAN ANTI-SCRIPT ═══
+
+✅ CLIPPY: 20 error `not_unsafe_ptr_arg_deref` (deny by default) dihilangkan
+   - src/simulator/dpi.rs: 9 fungsi DPI yang dereference raw pointer kini
+     `pub unsafe fn` (sv_get_bitsel, sv_put_bitsel, sv_get_logic_bitsel,
+     sv_put_logic_bitsel, sv_get_part_select, sv_put_part_select, sv_left,
+     sv_get_bit, sv_put_bit) + doc `# Safety` (memenuhi missing_safety_doc).
+     Konsisten dengan konvensi existing di src/vpi/ffi.rs.
+   - src/tests/mod.rs: call site di test_dpi_bit_vector_helpers dan
+     test_dpi_logic_vector_helpers dibungkus blok `unsafe { ... }`.
+   - Hasil: clippy errors 9→0 (lama) + 20 baru → **0 errors total**.
+
+✅ AGENTS.md: ATURAN LARANGAN TOTAL SCRIPT (perintah user)
+   - Dilarang total menggunakan script (Python, Perl, Ruby, Bash/sed/awk mass-edit,
+     `cargo fix`, formatter massal) untuk MENGUBAH/MEMODIFIKASI file di project.
+   - Semua perubahan file wajib manual (str_replace/write_file), satu per satu.
+   - Alasan: script mass-edit pernah merusak build 100+ error (menghapus `.clone()`
+     pada Symbol/Copy yang butuh deref `*`, menambahkan `*` di receiver salah) —
+     butuh waktu lama untuk memulihkan. Boleh untuk membaca/menganalisis saja.
+
+⚠️ PEMULIHAN BUILD (dari kerusakan script):
+   - 12 file pure-script direstore dari git, 8 file campuran diperbaiki manual
+     (str_replace): hapus `*` deref salah di mod.rs/package.rs/decl.rs/proc.rs,
+     kembalikan bentuk asli. Build hijau kembali.
+
+📊 TOTAL TESTS: 1185 passed, 0 failed — build 0 error, clippy errors 0
 
 ═══ ITEMS MASH TERBUKA (⚠️) — PRIORITAS TINGGI ═══
 (Item audit original yg belum diperbaiki, diurutkan prioritas)
@@ -2390,7 +2503,7 @@ END OF AUDIT REPORT
    - P0: --no-default-features build ✅ (dpi tests cfg-guarded)
 
 📊 **Metrik Saat Ini:**
-   - 1180 tests pass, 0 fail (default features) ✅ (+8 tests baru di ROUND 11)
+   - 1185 tests pass, 0 fail (default features) ✅ (+13 tests: +11 ROUND 11, +2 ROUND 12)
    - 1092 tests pass, 0 fail (--no-default-features) ✅ (FIXED — dpi tests cfg-guarded)
    - Enterprise Readiness: 19/100
    - Simulator Score: 33/100
@@ -2411,13 +2524,19 @@ END OF AUDIT REPORT
    - DEBT-16 (unsafe audit) — ✅ `from_utf8_unchecked` di io.rs fixed.
      Remaining 64 unsafe = mmap, SIMD, Cranelift, arena (inherent).    - CRIT-019 (signal history) — ✅ SignalHistoryStore + disk spill,
       memory ring buffer, --signal-history-spill CLI, query merge. DONE.
-   - CRIT-040 (linting) — ✅ errors fixed (9→0); ⚠️ 496→💥16 warnings remain
-     (2026-07-30: ~275 warnings manually fixed across 20+ files:
-      unused imports, unused variables, unnecessary mut, unreachable patterns,
-      non-camel-case types, dead code. Scheduler test modules: added
-      `use crate::intern::Symbol` and `use std::collections::HashMap` inside
-      #[cfg(test)] blocks. Event scheduler: removed duplicate unreachable arm.
-      Remaining ~16 warnings are pre-existing in vpi unsafe FFI and tests.)
+   - CRIT-040 (linting) — ✅ errors fixed (9→0, +20 via ROUND 13 → 0 total);
+     ✅ warnings 716 → 199 (ROUND 14: −302, ROUND 15: −157, ROUND 16: −22, ROUND 17: −19, ROUND 18: −17)
+     ⚠️ 235 warnings remain (structural lints: if-let collapse, if/match
+        collapse, complex types; build tetap hakim)
+     (ROUND 13: 9 fungsi DPI → `unsafe fn` + `# Safety` doc, test call sites
+      dibungkus `unsafe {}`; build 0 error, 1185 tests pass.
+      ROUND 14: batch unneeded-return/div_ceil/str::replace/doc-list/map_or +
+      116 Symbol-clone dihapus via `*x` deref; prinsip build-over-clippy.
+      ROUND 15: Symbol-clone 71→0, checked-div 15→0, from_ref 6→0,
+      is_multiple_of 8→0, while_let 6→0, map-values 16→0,
+      contains_key+insert 9→0, unused_mut 6→0, cast 9→0, deref 4→0.
+      ROUND 16: sort_by_key 5→0, clamp 4→0, contains 3→0, Ok+? 3→0,
+      Some+ok() 3→0, manual_strip 4→0 — fix off-by-one di preprocessor.)
    - 🔧 **Parser fix (hang):** First pass `else` dan second pass `_` kini
      pakai `skip_to_next_top_level()` bukan `advance()` 1 token/kali.
      Untuk OpenTitan-scale, dulu hang/jam, sekarang cepat.
@@ -2425,6 +2544,183 @@ END OF AUDIT REPORT
      `parse_module_item` — skip body sampai `endsequence`.
    - ✅ **2 failing tests fixed:** `test_line_directive_updates_error_line`
      dan `test_sequence_keyword_parse` — keduanya pre-existing failure.
+
+═══ ROUND 14 — CLIPPY WARNINGS 716→414 + PRINSIP BUILD-OVER-CLIPPY ═══
+
+✅ CLIPPY: 302 warnings dihilangkan (716→414), 0 error, build hijau
+   Batch per kategori (semua manual str_replace, TANPA script):
+   - unneeded return (10), div_ceil (10), str::replace (7)
+   - doc list item tanpa indentation (19 file — tambah `//!` kosong sebelum footer)
+   - useless format! (5), map_or (6), extend_with_drain (1)
+   - Symbol clone (Copy trait): 187 → 71 (−116) di ~20 file
+     (flatten.rs, loop_unroll.rs, eval/ast.rs, eval/expr.rs, builtin.rs,
+      block.rs, block_control.rs, class.rs, param_util.rs, inline_util.rs,
+      generate.rs, lvalue.rs, method.rs, uvm/util.rs, proc.rs, package.rs,
+      ext.rs, decl.rs, elaborator/expr.rs, mod.rs)
+
+📐 PRINSIP BARU (keputusan user): BUILD ADALAH HAKIM, CLIPPY PEMBERI SARAN
+   - `cargo build` = penentu kebenaran; clippy hanya alat review.
+   - Saran clippy yang memicu error borrow/move/mismatched types → DITOLAK.
+   - Untuk receiver `&Symbol` (Copy), fix yang benar adalah `*x` (dereference),
+     BUKAN menghapus `.clone()` — menghapus memunculkan 81 error E0308.
+   - Jika saran membuat kode lebih rumit/berubah semantik → `#[allow(...)]`.
+
+🔧 PERBAIKAN: 81 error E0308 dari batch sebelumnya diperbaiki dengan `*x`
+   dereference (bukan hapus `.clone()`) di 15 file. Build hijau kembali.
+
+📊 VERIFIKASI ROUND 14:
+   - cargo build: 0 error
+   - cargo test: 1185 passed, 0 failed
+   - clippy warnings: 716 → 414 (Symbol clone 187 → 71)
+   - clippy errors: 0
+
+═══ ROUND 15 — CLIPPY WARNINGS 414→257 + BATCH MEKANIS TAMBAHAN ═══
+
+✅ CLIPPY: 157 warnings dihilangkan (414→257), 0 error, build hijau
+   Batch per kategori (semua manual str_replace, TANPA script):
+   (kategori utama tercantum di bawah = 154; sisa 3 dari kategori minor
+    lain yang ikut ter-resolve, mis. manual Option::map, matching Some+ok(),
+    enclosing Ok+? di beberapa file)
+   - Symbol clone (Copy trait): 71 → 0 — sisa 58 di elaborator/mod.rs,
+     9 di stmt.rs, 4 di package.rs + Option<Symbol> (2). Owned Symbol hapus
+     `.clone()`, receiver `&Symbol` pakai `*x` dereference.
+   - manual checked division: 15 → 0 — `if X > 0 { a / X } else { 0 }` jadi
+     `a.checked_div(X).unwrap_or(0)` di block_control.rs, uvm/util.rs,
+     parallel.rs, mir/opt.rs; value.rs pakai `match l.checked_div(r)` agar
+     semantik X-vector (r==0) tetap terjaga.
+   - std::slice::from_ref: 6 → 0 — `&[x.clone()]` jadi `std::slice::from_ref(x)`
+     di inline_util.rs, elaborator/stmt.rs (4x), block.rs.
+   - manual is_multiple_of: 8 → 0 — `x % N == 0` jadi `x.is_multiple_of(N)`
+     di instance.rs, master.rs (2x), dpi.rs, debug.rs, core.rs, timing_wheel.rs (2x).
+   - while_let loop: 6 → 0 — `loop { match .. }` jadi `while let` di error.rs
+     (strip_nested_error_codes), parser/proc.rs (4x parse port names),
+     uvm/util.rs (find_method_in_hierarchy).
+   - map values (for_kv_map): 16 → 0 — `for (_, v) in &map` jadi
+     `for v in map.values()` / `.keys()` / `.values_mut()` di coverage.rs,
+     coverage_db.rs, mod.rs, dpi.rs, core.rs, generate.rs.
+   - contains_key+insert (map_entry): 9 → 0 — `if !map.contains_key(k) {..}`
+     jadi `map.entry(k).or_insert(v)` / `Entry::Vacant` di const_eval_ext.rs (4x),
+     mod.rs (3x), partitioner.rs, jit_cranelift.rs. `Entry::Vacant` dipakai saat
+     ada flag `changed = true` / guard kompleks agar semantik terjaga.
+   - unused_mut: 6 → 0 (constraint_solver.rs, jit_cranelift.rs, sdf.rs).
+   - unnecessary_cast: 9 → 0 (`as u64`/`as usize`/`as u32` redundant).
+   - borrow_deref_ref: 4 → 0 (`&*e` → `e` di stmt.rs).
+   - len_zero: 4 → 0 (`.len() > 0` → `!.is_empty()`).
+
+📐 PRINSIP DIPERTAHANKAN: BUILD ADALAH HAKIM, CLIPPY PEMBERI SARAN
+   - Saran clippy yang mengubah semantik ditolak. Contoh: value.rs division
+     pakai `match checked_div` (bukan `unwrap_or(0)`) karena r==0 harus
+     menghasilkan X-vector, bukan 0.
+   - Setiap batch diverifikasi: cargo build 0 error + cargo test 1185 pass.
+
+📊 VERIFIKASI ROUND 15:
+   - cargo build: 0 error
+   - cargo test: 1185 passed, 0 failed
+   - clippy warnings: 414 → 257 (Symbol clone 71 → 0, checked-div 15 → 0,
+     from_ref 6 → 0, is_multiple_of 8 → 0, while_let 6 → 0, map-values 16 → 0,
+     contains_key 9 → 0, unused_mut 6 → 0, cast 9 → 0, deref 4 → 0)
+   - clippy errors: 0
+
+═══ ROUND 16 — CLIPPY WARNINGS 257→235 + FIX OFF-BY-ONE PREPROCESSOR ═══
+
+✅ CLIPPY: 22 warnings dihilangkan (257→235), 0 error, build hijau
+   Batch per kategori (semua manual str_replace, TANPA script):
+   - sort_by_key: 5 → 0 — `sort_by(|a,b| b.X.cmp(&a.X))` jadi
+     `sort_by_key(|a| std::cmp::Reverse(a.X))` di coverage.rs, uvm/util.rs (2x),
+     statistics.rs, cdc.rs (sort descending tetap dipertahankan via Reverse).
+   - clamp: 4 → 0 — `.max(1).min(64/8)` jadi `.clamp(1, 64/8)` di sat.rs,
+     bmc.rs (2x), dpi.rs.
+   - contains: 3 → 0 — `.iter().any(|b| *b == X)` jadi `.contains(&X)` di
+     ir.rs (2x), eval/expr.rs.
+   - enclosing Ok+?: 3 → 0 — `Ok(expr?)` jadi `expr` (return type
+     Result<String, io::Error>) di coverage_db.rs, checkpoint.rs, signal_history.rs.
+   - Some+ok(): 3 → 0 — `if let Some(pos) = f.stream_position().ok()` jadi
+     `if let Ok(pos) = f.stream_position()` di block_syscall.rs (2x), eval/expr.rs.
+   - manual_strip: 4 → 0 — `s.starts_with(X) + s[1..]` jadi `s.strip_prefix(X)`
+     di preprocessor.rs (2x), liberty.rs, diagnostics/mod.rs.
+
+🔧 FIX BUG OFF-BY-ONE (ditemukan code-reviewer):
+   - preprocessor.rs manual_strip: `Ok(rest[..=end])` → `Ok(rest[..end])`.
+     Karena `rest = s[1..]`, indeks `end` relatif terhadap `rest`, jadi slice
+     eksklusif `[..end]` mereproduksi `s[1..=end]` asli. Versi `[..=end]`
+     menyimpan delimiter penutup (`"`/`>`) pada include path → 2 test FAILED
+     (1183 passed). Setelah fix: 1185 passed, 0 failed.
+
+📊 VERIFIKASI ROUND 16:
+   - cargo build: 0 error
+   - cargo test: 1185 passed, 0 failed (2 failure off-by-one teratasi)
+   - clippy warnings: 257 → 235
+   - clippy errors: 0
+   - Tersisa 235 warnings: structural lints (if-let collapse 19, if/match
+     collapse 18, complex types 10, dsb) — memerlukan refactor struktural,
+     diserahkan pada keputusan user (bisa `#[allow]` atau biarkan).
+
+═══ ROUND 17 — CLIPPY WARNINGS 235→216 + SINGLE_MATCH/COLLAPSIBLE_IF ═══
+
+✅ CLIPPY: 19 warnings dihilangkan (235→216), 0 error, build hijau
+   Batch per kategori (semua manual str_replace, TANPA script):
+   - needless_borrows_for_generic_args: 6 → 0 — hapus `&` redundant di
+     `solver.assert(&x.eq(&y))` jadi `solver.assert(x.eq(&y))` di
+     formal/bmc.rs (6 lokasi).
+   - collapsible_if: 8 → 0 — `if A { if B {...} }` jadi `if A && B {...}`
+     di value.rs (6x, pola XPropagationMode) dan core.rs (2x, pending_waits
+     + process_pending_waits dengan `?` di kondisi — short-circuit tetap
+     sama: fungsi hanya dipanggil jika kondisi awal benar).
+   - single_match: 5 → 0 — `match x { Some/Ok => {...}, _ => {} }` jadi
+     `if let Some/Ok = x {...}` di master.rs (stream.lock), mir/opt.rs
+     (MirInstr::Unary), cdc.rs (Process::Sequential), work_stealing.rs
+     (global.pop), always.rs (extract_clock_reset).
+
+📊 VERIFIKASI ROUND 17:
+   - cargo build: 0 error
+   - cargo test: 1185 passed, 0 failed
+   - clippy warnings: 235 → 216
+   - clippy errors: 0
+   - Reviewer: konversi match→if-let ekuivalen (arm None/Err no-op atau
+     logika dipertahankan setelah if-let — diverifikasi di work_stealing.rs:
+     `p == 0 break` dan `yield_now()` tetap ada setelah if-let).
+   - Tersisa 216 warnings: structural lints (if-let collapse 19, if/match
+     collapse 18, complex types 10, &mut Vec 4, dsb) — memerlukan
+     refactor struktural, diserahkan pada keputusan user.
+
+═══ ROUND 18 — CLIPPY WARNINGS 216→199 + DERIVED/DEFAULT/ABS_DIFF ═══
+
+✅ CLIPPY: 17 warnings dihilangkan (216→199), 0 error, build hijau
+   Batch per kategori (semua manual str_replace, TANPA script):
+   - derivable_impls: 3 → 0 — impl Default manual diganti
+     `#[derive(Default)]` + `#[default]` di cache_manager.rs RemoteSyncMode
+     (None), priority.rs Priority (Normal, enum ber-discriminant
+     Low=0..Critical=3), constraint_solver.rs VarDomain (struct, semua
+     field Default). Blok impl Default dihapus.
+   - clone closure: 2 → 0 — `.map(|b| b.clone())` jadi `.cloned()` di
+     coverage_db.rs (2x, coverpoint bins + cross bins).
+   - unnecessary_parens: 2 → 0 — `((l != 0 && r != 0))` jadi
+     `(l != 0 && r != 0)` di const_eval_ext.rs (LogicalAnd/LogicalOr).
+   - abs_diff: 2 → 0 — manual `if data_change > ref_change {...} else {...}`
+     jadi `data_change.abs_diff(ref_change)` di syscall.rs ($skew dan
+     $timeskew; u64, abs_diff anti-overflow).
+   - write_literal: 2 → 0 — string literal di-inline ke format string di
+     emitter.rs (`" {0}── {1}{2}", "─", ...` jadi `" ─── {0}{1}"`).
+   - mem_replace: 2 → 0 — `std::mem::replace(&mut x, Vec::new()/new())`
+     jadi `std::mem::take` di ast/inline.rs (module.items) dan
+     debugger/mod.rs (diag_sink — DiagSink::default() = Self::new(),
+     ekuivalen diverifikasi).
+   - unused_variables pid (2) + enumerate_discard (2): loop
+     `(pid/_pid, process) in processes.iter().enumerate()` jadi
+     `for process in processes.iter()` di cdc.rs (3x) dan upf.rs (1x).
+
+📊 VERIFIKASI ROUND 18:
+   - cargo build: 0 error
+   - cargo test: 1185 passed, 0 failed
+   - clippy warnings: 216 → 199
+   - clippy errors: 0
+   - Reviewer: derive Default pada enum ber-discriminant valid (Rust 1.62+),
+     abs_diff aman (tidak overflow), write_literal output string identik
+     (dicek karakter per karakter), mem::take aman (DiagSink::default()
+     = Self::new() diverifikasi langsung).
+   - Tersisa 199 warnings: structural lints (if-let collapse 19, if/match
+     collapse 18, complex types 10, &mut Vec 4, vpi const pattern 6, dsb)
+     — memerlukan refactor struktural, diserahkan pada keputusan user.
 
 //=======================================================================\\
 ATURAN

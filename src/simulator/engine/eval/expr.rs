@@ -218,7 +218,7 @@ impl SimulationEngine {
                 // Check if this is an associative array
                 let sig_info = self.design.top.signals.get(*sig_id);
                 if sig_info.map(|s| s.is_associative).unwrap_or(false) {
-                    let assoc_map = self.assoc_data.entry(*sig_id).or_insert_with(HashMap::new);
+                    let assoc_map = self.assoc_data.entry(*sig_id).or_default();
                     if let Some(val) = assoc_map.get(&key_val) {
                         return Ok(val.clone());
                     }
@@ -631,7 +631,7 @@ impl SimulationEngine {
                                     _ => SeekFrom::Start(off as u64),
                                 };
                                 let _ = f.seek(seek_from);
-                                if let Some(pos) = f.stream_position().ok() {
+                                if let Ok(pos) = f.stream_position() {
                                     self.file_read_pos.insert(h, pos);
                                 }
                             }
@@ -874,7 +874,7 @@ impl SimulationEngine {
                             Ok(LogicVec::from_u64(0, 32))
                         }
                     }
-                    "$time" => Ok(LogicVec::from_u64(self.state.time as u64, 64)),
+                    "$time" => Ok(LogicVec::from_u64(self.state.time, 64)),
                     "$realtime" => {
                         let t = self.state.time as f64;
                         Ok(LogicVec::from_u64(t.to_bits(), 64))
@@ -1142,7 +1142,7 @@ impl SimulationEngine {
                             let hist = self
                                 .sysfunc_history
                                 .entry(Symbol::intern(&key))
-                                .or_insert_with(Vec::new);
+                                .or_default();
                             hist.push(val);
                             if hist.len() > n {
                                 let past = hist[hist.len() - 1 - n].clone();
@@ -1200,7 +1200,7 @@ impl SimulationEngine {
                         if let Some(obj) = self.state.get_object_mut(obj_id) {
                             for field in &cls.fields {
                                 obj.fields
-                                    .entry(field.name.clone())
+                                    .entry(field.name)
                                     .or_insert_with(|| LogicVec::from_u64(0, field.width));
                             }
                         }
@@ -1317,7 +1317,7 @@ impl SimulationEngine {
                                     let obj_val = self.state.read_signal(*id);
                                     let obj_id = obj_val.to_u64() as ObjId;
                                     if obj_id == 0
-                                        && self.state.objects.len() > 0
+                                        && !self.state.objects.is_empty()
                                         && self.state.objects[0].class_name.is_empty()
                                     {
                                         let class_for_obj = if is_cg {
@@ -1369,7 +1369,7 @@ impl SimulationEngine {
                     let class_name = self
                         .state
                         .get_object(obj_id)
-                        .map(|o| o.class_name.clone())
+                        .map(|o| o.class_name)
                         .unwrap_or_default();
                     return self.execute_randomize_with(
                         obj_id,
@@ -1587,7 +1587,7 @@ impl SimulationEngine {
                     };
                     // Store current arg values for next evaluation
                     self.udp_prev_args
-                        .insert(udp_name.clone(), arg_vals.clone());
+                        .insert(*udp_name, arg_vals.clone());
                     return Ok(result);
                 }
                 // No match — return X (or retain current value for sequential)
@@ -1600,7 +1600,7 @@ impl SimulationEngine {
                     LogicVec::fill(LogicVal::X, 1)
                 };
                 self.udp_prev_args
-                    .insert(udp_name.clone(), arg_vals.clone());
+                    .insert(*udp_name, arg_vals.clone());
                 Ok(result)
             }
             IrExpr::FuncCall { func_name, args } => {
@@ -1617,7 +1617,7 @@ impl SimulationEngine {
                         name, self.max_recursion_depth
                     )));
                 }
-                self.recursion_depth.insert(name.clone(), depth + 1);
+                self.recursion_depth.insert(*name, depth + 1);
 
                 // Find the function declaration
                 let func = self
@@ -1677,7 +1677,7 @@ impl SimulationEngine {
                 // Bind arguments to port names
                 for (i, arg_val) in arg_vals.into_iter().enumerate() {
                     if let Some(port) = func.ports.get(i) {
-                        locals.insert(port.name.clone(), arg_val);
+                        locals.insert(port.name, arg_val);
                     }
                 }
 
@@ -1690,7 +1690,7 @@ impl SimulationEngine {
                             } else {
                                 1
                             };
-                            locals.insert(var.name.clone(), LogicVec::new(width));
+                            locals.insert(var.name, LogicVec::new(width));
                         }
                     }
                 }
@@ -1716,7 +1716,7 @@ impl SimulationEngine {
 
                 // Restore scope
                 self.method_locals.truncate(depth_idx);
-                self.recursion_depth.insert(name.clone(), depth);
+                self.recursion_depth.insert(*name, depth);
 
                 Ok(return_val)
             }
@@ -1738,7 +1738,7 @@ impl SimulationEngine {
                 let target = instance_name.as_str();
                 for (sid, sig) in self.design.top.signals.iter().enumerate() {
                     let parts: Vec<&str> = sig.name.as_str().split('.').collect();
-                    if parts.iter().any(|p| *p == target) {
+                    if parts.contains(&target) {
                         binding_handle = Some(sid);
                         break;
                     }

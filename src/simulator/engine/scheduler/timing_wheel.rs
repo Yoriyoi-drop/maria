@@ -166,7 +166,7 @@ impl HierarchicalTimingWheel {
         // Level 2 remainder is a 16-bit value: [high 8 bits = Level 1 bucket, low 8 bits = Level 1 sub-offset]
         for (rem, ev) in events {
             let l1_idx = ((rem >> LEVEL1_SHIFT as u32) as usize) & WHEEL_MASK;
-            let l1_rem = (rem & (WHEEL_MASK as u32)) as u32;
+            let l1_rem = rem & (WHEEL_MASK as u32);
             self.levels[1][l1_idx].events.push((l1_rem, ev));
             self.levels[1][l1_idx].populated = true;
         }
@@ -227,13 +227,13 @@ impl HierarchicalTimingWheel {
             // events with offsets [(current_time >> 8) * 256, ...] from the
             // original current_time. Since current_time is now at this boundary,
             // these events' remaining offsets are in [0, 256) — perfect for Level 0.
-            if self.current_time > 0 && self.current_time % WHEEL_SIZE == 0 {
+            if self.current_time > 0 && self.current_time.is_multiple_of(WHEEL_SIZE) {
                 let l1_idx = (self.current_time >> LEVEL1_SHIFT) & WHEEL_MASK;
                 self.cascade_l1_to_l0(l1_idx);
             }
 
             // Cascade Level 2 → Level 1 at level 1 wrap-around (every 65536 time units)
-            if self.current_time > 0 && self.current_time % (WHEEL_SIZE * WHEEL_SIZE) == 0 {
+            if self.current_time > 0 && self.current_time.is_multiple_of(WHEEL_SIZE * WHEEL_SIZE) {
                 let l2_idx = (self.current_time >> LEVEL2_SHIFT) & WHEEL_MASK;
                 self.cascade_l2_to_l1(l2_idx);
             }

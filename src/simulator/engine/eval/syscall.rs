@@ -181,11 +181,7 @@ impl SimulationEngine {
                                     {
                                         if let Some(&ref_change) = self.signal_last_change.get(rsid)
                                         {
-                                            let skew = if data_change > ref_change {
-                                                data_change - ref_change
-                                            } else {
-                                                ref_change - data_change
-                                            };
+                                            let skew = data_change.abs_diff(ref_change);
                                             if skew > limit_val {
                                                 eprintln!("TIMING WARNING: $skew violation: skew {}ns > max {}ns between '{}' and '{}'", skew, limit_val, data_sig, ref_sig);
                                             }
@@ -212,11 +208,7 @@ impl SimulationEngine {
                                     {
                                         if let Some(&ref_change) = self.signal_last_change.get(rsid)
                                         {
-                                            let skew = if data_change > ref_change {
-                                                data_change - ref_change
-                                            } else {
-                                                ref_change - data_change
-                                            };
+                                            let skew = data_change.abs_diff(ref_change);
                                             if skew > limit_val {
                                                 eprintln!("TIMING WARNING: $timeskew violation: skew {}ns > max {}ns between '{}' and '{}'", skew, limit_val, data_sig, ref_sig);
                                             }
@@ -284,31 +276,31 @@ impl SimulationEngine {
                 if let Some(val) = arg_vals.first() {
                     return Ok(LogicVec::from_u64(val.to_u64(), return_width));
                 }
-                return Ok(LogicVec::from_u64(0, return_width));
+                Ok(LogicVec::from_u64(0, return_width))
             }
             "svBitToLong" | "svToLong" => {
                 if let Some(val) = arg_vals.first() {
                     return Ok(LogicVec::from_u64(val.to_u64(), return_width));
                 }
-                return Ok(LogicVec::from_u64(0, return_width));
+                Ok(LogicVec::from_u64(0, return_width))
             }
             "svToShortReal" | "svToReal" => {
                 if let Some(val) = arg_vals.first() {
                     return Ok(val.clone());
                 }
-                return Ok(LogicVec::from_u64(0, return_width));
+                Ok(LogicVec::from_u64(0, return_width))
             }
             "svIntToBit" | "svToBit" | "svToLogic" => {
                 if let Some(val) = arg_vals.first() {
                     return Ok(val.clone());
                 }
-                return Ok(LogicVec::from_u64(0, return_width));
+                Ok(LogicVec::from_u64(0, return_width))
             }
             "svBitToBitVal" | "svBitToLogicVal" => {
                 if let Some(val) = arg_vals.first() {
                     return Ok(val.clone());
                 }
-                return Ok(LogicVec::from_u64(0, return_width));
+                Ok(LogicVec::from_u64(0, return_width))
             }
             "svRandomize" | "sv$random" | "svUrandom" | "svUrandomRange" => {
                 let r: u64 = self.rng.gen();

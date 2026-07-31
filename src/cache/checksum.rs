@@ -33,7 +33,7 @@ pub fn checksum_fold(checksums: &[u64]) -> u64 {
     checksums
         .iter()
         .copied()
-        .fold(0u64, |acc, h| combine_checksum(acc, h))
+        .fold(0u64, combine_checksum)
 }
 
 // ─── Tests ───

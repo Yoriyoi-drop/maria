@@ -137,7 +137,7 @@ impl SignalStats {
 
         // Sort by toggle count descending
         let mut sorted: Vec<&SignalStat> = self.stats.iter().collect();
-        sorted.sort_by(|a, b| b.toggle_count.cmp(&a.toggle_count));
+        sorted.sort_by_key(|a| std::cmp::Reverse(a.toggle_count));
 
         let total_toggles: u64 = sorted.iter().map(|s| s.toggle_count).sum();
 

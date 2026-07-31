@@ -29,7 +29,7 @@ pub struct PkgCtx<'a> {
 }
 
 fn parse_base(s: &str, radix: u32) -> Result<CVal, String> {
-    let cleaned = s.replace('x', "0").replace('z', "0").replace('_', "");
+    let cleaned = s.replace(['x', 'z'], "0").replace('_', "");
     i64::from_str_radix(&cleaned, radix)
         .map(CVal::Scalar)
         .map_err(|_| format!("bad {} literal", radix))
@@ -77,8 +77,8 @@ fn apply_bin(op: BinaryOp, l: i64, r: i64) -> Result<i64, String> {
         BinaryOp::Le => (l <= r) as i64,
         BinaryOp::Gt => (l > r) as i64,
         BinaryOp::Ge => (l >= r) as i64,
-        BinaryOp::LogicalAnd => ((l != 0 && r != 0)) as i64,
-        BinaryOp::LogicalOr => ((l != 0 || r != 0)) as i64,
+        BinaryOp::LogicalAnd => (l != 0 && r != 0) as i64,
+        BinaryOp::LogicalOr => (l != 0 || r != 0) as i64,
         BinaryOp::BitAnd => l & r,
         BinaryOp::BitOr => l | r,
         BinaryOp::BitXor => l ^ r,
@@ -570,9 +570,7 @@ pub fn flatten_imported_consts_into_ctx(
     if import_item == "*" {
         for (qname, v) in scalars {
             if let Some(rest) = qname.as_str().strip_prefix(&prefix) {
-                if !ctx.contains_key(&Symbol::intern(rest)) {
-                    ctx.insert(Symbol::intern(rest), *v);
-                }
+                ctx.entry(Symbol::intern(rest)).or_insert(*v);
             }
         }
         for (qname, elems) in arrays {
@@ -582,27 +580,21 @@ pub fn flatten_imported_consts_into_ctx(
                     ctx.insert(Symbol::intern(&format!("{}::{}[{}]", pkg_name, rest, i)), *v);
                 }
                 if let Some(&first) = elems.first() {
-                    if !ctx.contains_key(&Symbol::intern(rest)) {
-                        ctx.insert(Symbol::intern(rest), first);
-                    }
+                    ctx.entry(Symbol::intern(rest)).or_insert(first);
                 }
             }
         }
     } else {
         let qname = Symbol::intern(&format!("{}{}", prefix, import_item));
         if let Some(&v) = scalars.get(&qname) {
-            if !ctx.contains_key(&Symbol::intern(import_item)) {
-                ctx.insert(Symbol::intern(import_item), v);
-            }
+            ctx.entry(Symbol::intern(import_item)).or_insert(v);
         }
         if let Some(elems) = arrays.get(&qname) {
             for (i, v) in elems.iter().enumerate() {
                 ctx.insert(Symbol::intern(&format!("{}[{}]", import_item, i)), *v);
             }
             if let Some(&first) = elems.first() {
-                if !ctx.contains_key(&Symbol::intern(import_item)) {
-                    ctx.insert(Symbol::intern(import_item), first);
-                }
+                ctx.entry(Symbol::intern(import_item)).or_insert(first);
             }
         }
     }

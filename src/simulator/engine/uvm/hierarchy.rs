@@ -15,7 +15,7 @@ impl SimulationEngine {
                 .iter()
                 .filter(|pm| cls.methods.iter().any(|m| &m.name == *pm))
                 .count();
-            if count > 0 && best.as_ref().map_or(true, |b| count > b.1) {
+            if count > 0 && best.as_ref().is_none_or(|b| count > b.1) {
                 best = Some((name.to_string(), count));
             }
         }
@@ -26,7 +26,7 @@ impl SimulationEngine {
                     .iter()
                     .filter(|pm| cls.methods.iter().any(|m| &m.name == *pm))
                     .count();
-                if count > 0 && best.as_ref().map_or(true, |b| count > b.1) {
+                if count > 0 && best.as_ref().is_none_or(|b| count > b.1) {
                     best = Some((name.to_string(), count));
                 }
             }

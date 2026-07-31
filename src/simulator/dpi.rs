@@ -182,7 +182,7 @@ impl DpiEngine {
         let name = dpi.name.as_str();
         if self.resolved.contains_key(name) { return Ok(()); }
 
-        for (_lib_path, lib) in &self.libraries {
+        for lib in self.libraries.values() {
             // Try symbol as-is
             let sym_bytes = name.as_bytes();
             let ptr: *mut std::ffi::c_void = match unsafe { lib.get::<unsafe extern "C" fn()>(sym_bytes) } {
@@ -235,7 +235,7 @@ impl DpiEngine {
         }
 
         // Call function with marshalled args and get return bytes
-        let mut ret_bytes = vec![0u8; func.return_width.max(1).min(8)];
+        let mut ret_bytes = vec![0u8; func.return_width.clamp(1, 8)];
         unsafe {
             call_dpi_ffi_with_return(func.func_ptr, &marshalled, &mut ret_bytes);
         }
@@ -349,7 +349,7 @@ unsafe fn call_dpi_ffi_with_return(func_ptr: *mut std::ffi::c_void, marshalled: 
 
 fn marshal_arg(val: &LogicVec, width: usize) -> (DpiType, Vec<u8>) {
     // Check if value looks like a string (detect by checking if it's all ASCII printable)
-    let is_string_like = val.width > 0 && val.width % 8 == 0 && {
+    let is_string_like = val.width > 0 && val.width.is_multiple_of(8) && {
         let bytes = val.to_u64();
         let n_chars = (val.width / 8).min(8);
         let mut all_printable = true;
@@ -381,7 +381,7 @@ fn marshal_arg(val: &LogicVec, width: usize) -> (DpiType, Vec<u8>) {
         let long_val = val.to_u64() as i64;
         (DpiType::LongLong, long_val.to_ne_bytes().to_vec())
     } else {
-        let n_words = (width + 31) / 32;
+        let n_words = width.div_ceil(32);
         let int_val = val.to_u64() as i32;
         let mut bytes = int_val.to_ne_bytes().to_vec();
         bytes.resize(n_words * 4, 0u8);
@@ -471,92 +471,101 @@ pub fn sv_get_time_precision(_scope: svScope) -> i32 {
 // ─── svGet/svPut Logic Vector Helpers (complete IEEE set) ───
 
 /// svGetBitsel — get a single bit from a logic vector.
-pub fn sv_get_bitsel(vec: *const svBitVecVal, idx: i32) -> svBit {
+///
+/// # Safety
+/// `vec` must point to a valid `svBitVecVal` array of sufficient length for `idx/32` words.
+pub unsafe fn sv_get_bitsel(vec: *const svBitVecVal, idx: i32) -> svBit {
     if vec.is_null() { return 0; }
-    unsafe {
-        let word = idx as usize / 32;
-        let bit = idx as usize % 32;
-        if (*vec.add(word) >> bit) & 1 == 1 { 1 } else { 0 }
-    }
+    let word = idx as usize / 32;
+    let bit = idx as usize % 32;
+    if (*vec.add(word) >> bit) & 1 == 1 { 1 } else { 0 }
 }
 
 /// svPutBitsel — set a single bit in a logic vector.
-pub fn sv_put_bitsel(vec: *mut svBitVecVal, idx: i32, bit: svBit) {
+///
+/// # Safety
+/// `vec` must point to a valid mutable `svBitVecVal` array of sufficient length for `idx/32` words.
+pub unsafe fn sv_put_bitsel(vec: *mut svBitVecVal, idx: i32, bit: svBit) {
     if vec.is_null() { return; }
-    unsafe {
-        let word = idx as usize / 32;
-        let bit_pos = idx as usize % 32;
-        if bit != 0 { *vec.add(word) |= 1 << bit_pos; }
-        else { *vec.add(word) &= !(1 << bit_pos); }
-    }
+    let word = idx as usize / 32;
+    let bit_pos = idx as usize % 32;
+    if bit != 0 { *vec.add(word) |= 1 << bit_pos; }
+    else { *vec.add(word) &= !(1 << bit_pos); }
 }
 
 /// svGetLogicBitsel — get a single 4-state logic bit.
-pub fn sv_get_logic_bitsel(vec: *const svLogicVecVal, idx: i32) -> svLogic {
+///
+/// # Safety
+/// `vec` must point to a valid `svLogicVecVal` array (2 words per element) of sufficient length.
+pub unsafe fn sv_get_logic_bitsel(vec: *const svLogicVecVal, idx: i32) -> svLogic {
     if vec.is_null() { return 0; }
-    unsafe {
-        let word = idx as usize / 32;
-        let bit = idx as usize % 32;
-        let aval = *vec.add(word * 2) >> bit & 1;
-        let bval = *vec.add(word * 2 + 1) >> bit & 1;
-        if aval == 0 && bval == 0 { 0 }      // 0
-        else if aval == 1 && bval == 0 { 1 }  // 1
-        else if aval == 0 && bval == 1 { 2 }  // X
-        else { 3 }                            // Z
-    }
+    let word = idx as usize / 32;
+    let bit = idx as usize % 32;
+    let aval = *vec.add(word * 2) >> bit & 1;
+    let bval = *vec.add(word * 2 + 1) >> bit & 1;
+    if aval == 0 && bval == 0 { 0 }      // 0
+    else if aval == 1 && bval == 0 { 1 }  // 1
+    else if aval == 0 && bval == 1 { 2 }  // X
+    else { 3 }                            // Z
 }
 
 /// svPutLogicBitsel — set a single 4-state logic bit.
-pub fn sv_put_logic_bitsel(vec: *mut svLogicVecVal, idx: i32, logic: svLogic) {
+///
+/// # Safety
+/// `vec` must point to a valid mutable `svLogicVecVal` array (2 words per element) of sufficient length.
+pub unsafe fn sv_put_logic_bitsel(vec: *mut svLogicVecVal, idx: i32, logic: svLogic) {
     if vec.is_null() { return; }
-    unsafe {
-        let word = idx as usize / 32;
-        let bit = idx as usize % 32;
-        let mask = 1u32 << bit;
-        match logic {
-            0 => { *vec.add(word * 2) &= !mask; *vec.add(word * 2 + 1) &= !mask; }
-            1 => { *vec.add(word * 2) |= mask; *vec.add(word * 2 + 1) &= !mask; }
-            2 => { *vec.add(word * 2) &= !mask; *vec.add(word * 2 + 1) |= mask; }
-            _ => { *vec.add(word * 2) |= mask; *vec.add(word * 2 + 1) |= mask; }
-        }
+    let word = idx as usize / 32;
+    let bit = idx as usize % 32;
+    let mask = 1u32 << bit;
+    match logic {
+        0 => { *vec.add(word * 2) &= !mask; *vec.add(word * 2 + 1) &= !mask; }
+        1 => { *vec.add(word * 2) |= mask; *vec.add(word * 2 + 1) &= !mask; }
+        2 => { *vec.add(word * 2) &= !mask; *vec.add(word * 2 + 1) |= mask; }
+        _ => { *vec.add(word * 2) |= mask; *vec.add(word * 2 + 1) |= mask; }
     }
 }
 
 /// svGetPartSelect — get a contiguous range of bits from a 2-state vector.
-pub fn sv_get_part_select(vec: *const svBitVecVal, idx: i32, width: i32) -> svBitVecVal {
+///
+/// # Safety
+/// `vec` must point to a valid `svBitVecVal` array of sufficient length to cover `idx+width` bits.
+pub unsafe fn sv_get_part_select(vec: *const svBitVecVal, idx: i32, width: i32) -> svBitVecVal {
     if vec.is_null() || width <= 0 { return 0; }
-    unsafe {
-        let mut result = 0u32;
-        for i in 0..width.min(32) {
-            let w = (idx + i) as usize / 32;
-            let b = (idx + i) as usize % 32;
-            if *vec.add(w) >> b & 1 == 1 {
-                result |= 1 << i;
-            }
+    let mut result = 0u32;
+    for i in 0..width.min(32) {
+        let w = (idx + i) as usize / 32;
+        let b = (idx + i) as usize % 32;
+        if *vec.add(w) >> b & 1 == 1 {
+            result |= 1 << i;
         }
-        result
     }
+    result
 }
 
 /// svPutPartSelect — set a contiguous range of bits in a 2-state vector.
-pub fn sv_put_part_select(vec: *mut svBitVecVal, idx: i32, width: i32, val: svBitVecVal) {
+///
+/// # Safety
+/// `vec` must point to a valid mutable `svBitVecVal` array of sufficient length to cover `idx+width` bits.
+pub unsafe fn sv_put_part_select(vec: *mut svBitVecVal, idx: i32, width: i32, val: svBitVecVal) {
     if vec.is_null() || width <= 0 { return; }
-    unsafe {
-        for i in 0..width.min(32) {
-            let w = (idx + i) as usize / 32;
-            let b = (idx + i) as usize % 32;
-            let bit = (val >> i) & 1;
-            if bit != 0 { *vec.add(w) |= 1 << b; }
-            else { *vec.add(w) &= !(1 << b); }
-        }
+    for i in 0..width.min(32) {
+        let w = (idx + i) as usize / 32;
+        let b = (idx + i) as usize % 32;
+        let bit = (val >> i) & 1;
+        if bit != 0 { *vec.add(w) |= 1 << b; }
+        else { *vec.add(w) &= !(1 << b); }
     }
 }
 
 /// svLeft — get the left bound of a range.
-pub fn sv_left(vec: *const svBitVecVal, _width: i32) -> i32 {
+///
+/// # Safety
+/// `vec` must be a valid pointer (may be null, which yields 0).
+pub unsafe fn sv_left(vec: *const svBitVecVal, _width: i32) -> i32 {
     // Simplified: assume [width-1:0]
     if vec.is_null() { return 0; }
-    unsafe { *vec as i32 }
+    *vec as i32
 }
 
 /// svRight — get the right bound of a range.
@@ -612,23 +621,27 @@ pub type svLogicVecVal = u32;
 pub fn sv_bit_to_logic(b: svBit) -> svLogic { b }
 pub fn sv_logic_to_bit(l: svLogic) -> svBit { match l { 0 | 1 => l, _ => 0 } }
 
-pub fn sv_get_bit(vec: *const svBitVecVal, idx: i32) -> svBit {
+/// svGetBit — get a single bit from a 2-state vector.
+///
+/// # Safety
+/// `vec` must point to a valid `svBitVecVal` array of sufficient length for `idx/32` words.
+pub unsafe fn sv_get_bit(vec: *const svBitVecVal, idx: i32) -> svBit {
     if vec.is_null() { return 0; }
-    unsafe {
-        let word = idx as usize / 32;
-        let bit = idx as usize % 32;
-        if (*vec.add(word) >> bit) & 1 == 1 { 1 } else { 0 }
-    }
+    let word = idx as usize / 32;
+    let bit = idx as usize % 32;
+    if (*vec.add(word) >> bit) & 1 == 1 { 1 } else { 0 }
 }
 
-pub fn sv_put_bit(vec: *mut svBitVecVal, idx: i32, bit: svBit) {
+/// svPutBit — set a single bit in a 2-state vector.
+///
+/// # Safety
+/// `vec` must point to a valid mutable `svBitVecVal` array of sufficient length for `idx/32` words.
+pub unsafe fn sv_put_bit(vec: *mut svBitVecVal, idx: i32, bit: svBit) {
     if vec.is_null() { return; }
-    unsafe {
-        let word = idx as usize / 32;
-        let bit_pos = idx as usize % 32;
-        if bit != 0 { *vec.add(word) |= 1 << bit_pos; }
-        else { *vec.add(word) &= !(1 << bit_pos); }
-    }
+    let word = idx as usize / 32;
+    let bit_pos = idx as usize % 32;
+    if bit != 0 { *vec.add(word) |= 1 << bit_pos; }
+    else { *vec.add(word) &= !(1 << bit_pos); }
 }
 
 // ─── DPI Export Framework (C-callable SV functions) ───

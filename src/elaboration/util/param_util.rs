@@ -5,6 +5,7 @@
 //! Fungsi:
 //!   - collect_body_params()    — kumpulkan parameter dari body module
 //!   - resolve_param_values_fn() — resolusi nilai parameter dengan override
+//!
 //! ──────────────────────────────────────────────────────────────────────────────
 
 use std::collections::HashMap;
@@ -79,10 +80,10 @@ pub fn resolve_param_values_with_ctx(
             match &param.default {
                 Some(e) => {
                     let v = eval_param_default(e, &vals);
-                    vals.insert(param.name.clone(), v);
+                    vals.insert(param.name, v);
                 }
                 None => {
-                    vals.insert(param.name.clone(), 0);
+                    vals.insert(param.name, 0);
                 }
             }
         }

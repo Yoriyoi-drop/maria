@@ -28,7 +28,7 @@ impl Elaborator {
                 .find(|i| i.name == inst.module_name)
             {
                 Module {
-                    name: iface.name.clone(),
+                    name: iface.name,
                     ports: vec![],
                     params: vec![],
                     decls: iface.decls.clone(),
@@ -75,13 +75,38 @@ impl Elaborator {
             // Map port connections
             for (port_name, &parent_sig) in inst.port_map.iter() {
                 if let Some(child_sig) = child.signals.iter().position(|s| s.name == *port_name) {
-                    let child_width = child.signals[child_sig].width;
-                    let parent_width = top.signals[parent_sig].elem_width;
+                    let child_sig_info = &child.signals[child_sig];
+                    let parent_sig_info = &top.signals[parent_sig];
+                    let child_width = child_sig_info.width;
+                    // Bandingkan lebar yang relevan: bila child port adalah
+                    // unpacked array (array_depth > 1), bandingkan lebar TOTAL
+                    // (parent.width sudah termasuk array depth). Bila child port
+                    // scalar, bandingkan elem_width parent — ini menjaga kompat
+                    // dengan pola lama (array signal → scalar port) yang tetap
+                    // diterima.
+                    let parent_width = if child_sig_info.array_depth > 1 {
+                        parent_sig_info.width
+                    } else {
+                        parent_sig_info.elem_width
+                    };
                     if child_width != parent_width {
                         return Err(self.elab_diag(DiagCode::ParamMismatch, format!(
                             "port width mismatch on instance '{}': port '{}' expects width {}, connected signal '{}' has width {}",
                             inst.instance_name, port_name, child_width,
-                            top.signals[parent_sig].name, parent_width
+                            parent_sig_info.name, parent_width
+                        )));
+                    }
+                    // Untuk port unpacked-array, pastikan lebar ELEMEN juga cocok.
+                    // Dua kasus bisa punya total width sama tapi elemen beda
+                    // (mis. [15:0][0:1] vs [7:0][0:3]) — tanpa guard ini check lolos
+                    // namun indexing array di engine salah.
+                    if child_sig_info.array_depth > 1
+                        && child_sig_info.elem_width != parent_sig_info.elem_width
+                    {
+                        return Err(self.elab_diag(DiagCode::ParamMismatch, format!(
+                            "port array element width mismatch on instance '{}': port '{}' expects element width {}, connected signal '{}' has element width {}",
+                            inst.instance_name, port_name, child_sig_info.elem_width,
+                            parent_sig_info.name, parent_sig_info.elem_width
                         )));
                     }
                     // Port type checking: inout must connect to tri
@@ -118,7 +143,7 @@ impl Elaborator {
                         array_depth: sig.array_depth,
                         elem_width: sig.elem_width,
                         array_dims: sig.array_dims.clone(),
-                        class_name: sig.class_name.clone(),
+                        class_name: sig.class_name,
                         is_string: sig.is_string,
                         is_mailbox: sig.is_mailbox,
                         is_semaphore: sig.is_semaphore,
@@ -169,7 +194,7 @@ impl Elaborator {
                 let new_sens = sensitivity.iter().map(|s| map_sig(*s)).collect();
                 let new_body = self.translate_stmts(body, map_sig)?;
                 Ok(Process::Combinational {
-                    name: name.clone(),
+                    name: *name,
                     sensitivity: new_sens,
                     body: new_body,
                 })
@@ -182,7 +207,7 @@ impl Elaborator {
                 let new_sens = sensitivity.iter().map(|s| map_sig(*s)).collect();
                 let new_body = self.translate_stmts(body, map_sig)?;
                 Ok(Process::CombReactive {
-                    name: name.clone(),
+                    name: *name,
                     sensitivity: new_sens,
                     body: new_body,
                 })
@@ -205,7 +230,7 @@ impl Elaborator {
                 });
                 let new_body = self.translate_stmts(body, map_sig)?;
                 Ok(Process::Sequential {
-                    name: name.clone(),
+                    name: *name,
                     clock: new_clock,
                     reset: new_reset,
                     body: new_body,
@@ -214,14 +239,14 @@ impl Elaborator {
             Process::Initial { name, body } => {
                 let new_body = self.translate_stmts(body, map_sig)?;
                 Ok(Process::Initial {
-                    name: name.clone(),
+                    name: *name,
                     body: new_body,
                 })
             }
             Process::AlwaysWithDelay { name, delay, body } => {
                 let new_body = self.translate_stmts(body, map_sig)?;
                 Ok(Process::AlwaysWithDelay {
-                    name: name.clone(),
+                    name: *name,
                     delay: *delay,
                     body: new_body,
                 })
@@ -229,7 +254,7 @@ impl Elaborator {
             Process::Final { name, body } => {
                 let new_body = self.translate_stmts(body, map_sig)?;
                 Ok(Process::Final {
-                    name: name.clone(),
+                    name: *name,
                     body: new_body,
                 })
             }
@@ -260,7 +285,7 @@ impl Elaborator {
             IrStmt::NamedBlock { name, stmts, decls } => {
                 let new = self.translate_stmts(stmts, map_sig)?;
                 Ok(IrStmt::NamedBlock {
-                    name: name.clone(),
+                    name: *name,
                     stmts: new,
                     decls: decls.clone(),
                 })
@@ -378,7 +403,7 @@ impl Elaborator {
                 let new_body = self.translate_stmts(body, map_sig)?;
                 Ok(IrStmt::Foreach {
                     array_var: new_var,
-                    index_var: index_var.clone(),
+                    index_var: *index_var,
                     body: new_body,
                 })
             }
@@ -403,7 +428,7 @@ impl Elaborator {
                     .map(|a| self.translate_expr(a, map_sig))
                     .collect();
                 Ok(IrStmt::SysCall {
-                    name: name.clone(),
+                    name: *name,
                     args: new_args,
                 })
             }
@@ -427,7 +452,7 @@ impl Elaborator {
                 with_clause,
             } => Ok(IrStmt::MethodCallStmt {
                 obj: self.translate_expr(obj, map_sig),
-                method: method.clone(),
+                method: *method,
                 args: args
                     .iter()
                     .map(|a| self.translate_expr(a, map_sig))
@@ -438,7 +463,7 @@ impl Elaborator {
             }),
             IrStmt::Break => Ok(IrStmt::Break),
             IrStmt::Continue => Ok(IrStmt::Continue),
-            IrStmt::Disable { name } => Ok(IrStmt::Disable { name: name.clone() }),
+            IrStmt::Disable { name } => Ok(IrStmt::Disable { name: *name }),
             IrStmt::Force { lvalue, rhs } => Ok(IrStmt::Force {
                 lvalue: self.translate_lvalue(lvalue, map_sig),
                 rhs: self.translate_expr(rhs, map_sig),
@@ -662,14 +687,14 @@ impl Elaborator {
             IrExpr::Signed(inner) => IrExpr::Signed(Box::new(self.translate_expr(inner, map_sig))),
             IrExpr::String(s) => IrExpr::String(s.clone()),
             IrExpr::SysFunc { name, args } => IrExpr::SysFunc {
-                name: name.clone(),
+                name: *name,
                 args: args
                     .iter()
                     .map(|a| self.translate_expr(a, map_sig))
                     .collect(),
             },
             IrExpr::NewCall { class_name, args } => IrExpr::NewCall {
-                class_name: class_name.clone(),
+                class_name: *class_name,
                 args: args
                     .iter()
                     .map(|a| self.translate_expr(a, map_sig))
@@ -683,7 +708,7 @@ impl Elaborator {
                 with_clause,
             } => IrExpr::MethodCall {
                 obj: Box::new(self.translate_expr(obj, map_sig)),
-                method: method.clone(),
+                method: *method,
                 args: args
                     .iter()
                     .map(|a| self.translate_expr(a, map_sig))
@@ -694,7 +719,7 @@ impl Elaborator {
             },
             IrExpr::MemberAccess { obj, field } => IrExpr::MemberAccess {
                 obj: Box::new(self.translate_expr(obj, map_sig)),
-                field: field.clone(),
+                field: *field,
             },
             IrExpr::ExprRangeSelect(inner, msb, lsb) => {
                 IrExpr::ExprRangeSelect(Box::new(self.translate_expr(inner, map_sig)), *msb, *lsb)
@@ -712,14 +737,14 @@ impl Elaborator {
                 args,
                 return_width,
             } => IrExpr::DpiCall {
-                name: name.clone(),
+                name: *name,
                 args: args
                     .iter()
                     .map(|a| self.translate_expr(a, map_sig))
                     .collect(),
                 return_width: *return_width,
             },
-            IrExpr::HierRef(name) => IrExpr::HierRef(name.clone()),
+            IrExpr::HierRef(name) => IrExpr::HierRef(*name),
             IrExpr::Inside { expr, list } => IrExpr::Inside {
                 expr: Box::new(self.translate_expr(expr, map_sig)),
                 list: list
@@ -748,26 +773,26 @@ impl Elaborator {
                 items: items.clone(),
             },
             IrExpr::UdpLookup { udp_name, args } => IrExpr::UdpLookup {
-                udp_name: udp_name.clone(),
+                udp_name: *udp_name,
                 args: args
                     .iter()
                     .map(|a| self.translate_expr(a, map_sig))
                     .collect(),
             },
             IrExpr::VifBinding { instance_name } => IrExpr::VifBinding {
-                instance_name: instance_name.clone(),
+                instance_name: *instance_name,
             },
             IrExpr::VirtualIfaceAccess {
                 vif_name,
                 field,
                 field_width,
             } => IrExpr::VirtualIfaceAccess {
-                vif_name: vif_name.clone(),
-                field: field.clone(),
+                vif_name: *vif_name,
+                field: *field,
                 field_width: *field_width,
             },
             IrExpr::FuncCall { func_name, args } => IrExpr::FuncCall {
-                func_name: func_name.clone(),
+                func_name: *func_name,
                 args: args
                     .iter()
                     .map(|a| self.translate_expr(a, map_sig))

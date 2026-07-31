@@ -161,7 +161,7 @@ impl TerminalEmitter {
             write!(self.writer, "^")?;
 
             if let Some(label) = &snippet.pointer_label {
-                write!(self.writer, " {0}── {1}{2}", "─", label, RESET)?;
+                write!(self.writer, " ─── {0}{1}", label, RESET)?;
             } else {
                 write!(self.writer, "{}", RESET)?;
             }
@@ -278,7 +278,7 @@ impl TerminalEmitter {
             }
             write!(self.writer, "^")?;
             if let Some(label) = &snippet.pointer_label {
-                write!(self.writer, " {} {}", "──", label)?;
+                write!(self.writer, " ── {}", label)?;
             }
             writeln!(self.writer)?;
             writeln!(self.writer)?;

@@ -448,7 +448,7 @@ impl SimulationEngine {
                         _ => SeekFrom::Start(off as u64),
                     };
                     let _ = f.seek(seek_from);
-                    if let Some(pos) = f.stream_position().ok() {
+                    if let Ok(pos) = f.stream_position() {
                         self.file_read_pos.insert(h, pos);
                     }
                 }
@@ -583,7 +583,7 @@ impl SimulationEngine {
                     } else {
                         let h = self.next_coverage_model_handle;
                         self.next_coverage_model_handle += 1;
-                        self.coverage_model_handles.insert(h, Symbol::intern(&name));
+                        self.coverage_model_handles.insert(h, Symbol::intern(name));
                         h as u32
                     }
                 } else {
@@ -1119,7 +1119,7 @@ impl SimulationEngine {
                         _ => SeekFrom::Start(off as u64),
                     };
                     let _ = f.seek(seek_from);
-                    if let Some(pos) = f.stream_position().ok() {
+                    if let Ok(pos) = f.stream_position() {
                         self.file_read_pos.insert(h, pos);
                     }
                 }
@@ -1246,7 +1246,7 @@ impl SimulationEngine {
                     } else {
                         let h = self.next_coverage_model_handle;
                         self.next_coverage_model_handle += 1;
-                        self.coverage_model_handles.insert(h, Symbol::intern(&name));
+                        self.coverage_model_handles.insert(h, Symbol::intern(name));
                         h as u32
                     }
                 } else {

@@ -46,7 +46,7 @@ impl Debugger {
         let snapshot_interval = self.engine.snapshot_interval;
 
         // Preserve diag_sink across reset so diagnostics are not lost
-        let diag_sink = std::mem::replace(&mut self.engine.diag_sink, crate::diagnostics::DiagSink::new());
+        let diag_sink = std::mem::take(&mut self.engine.diag_sink);
 
         self.engine = SimulationEngine::new(design, max_time);
         self.engine.debug_mode = debug_mode;
@@ -237,7 +237,7 @@ impl Debugger {
         let mut regions: Vec<MemRegion> = Vec::new();
         let mut cur_base: u64 = 0;
         for (i, sig) in self.engine.design.top.signals.iter().enumerate() {
-            let byte_count = (sig.width + 7) / 8;
+            let byte_count = sig.width.div_ceil(8);
             if byte_count > 1 || sig.array_depth > 0 {
                 regions.push(MemRegion {
                     sig_id: i,

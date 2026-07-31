@@ -35,7 +35,7 @@ pub fn resolve_source_location(
             if rest.starts_with("line ") {
                 // Parse angka baris deklarasi: `line N "filename"
                 let mut declared: usize = 1;
-                let digits = rest["line ".len()..].trim_start();
+                let digits = rest.strip_prefix("line ").unwrap_or(rest).trim_start();
                 let digits_end = digits
                     .find(|c: char| !c.is_ascii_digit())
                     .unwrap_or(digits.len());

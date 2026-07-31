@@ -90,7 +90,7 @@ impl FormalEngine {
         match expr {
             IrExpr::Const(lv) => {
                 let val = lv.to_u64();
-                let width = lv.width.max(1).min(64) as u32;
+                let width = lv.width.clamp(1, 64) as u32;
                 Some(z3::ast::BV::from_u64(val, width))
             }
             IrExpr::FillLit(v) => {
