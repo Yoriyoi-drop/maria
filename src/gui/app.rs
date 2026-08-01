@@ -15,7 +15,7 @@ use std::time::Duration;
 use std::sync::atomic::Ordering;
 
 use super::backend::{scan_tree, spawn_compile, spawn_sim};
-use super::panels::{bottom, editor, sidebar, statusbar, toolbar};
+use super::panels::{bottom, command_palette, editor, outline, sidebar, statusbar, toolbar};
 use super::state::{DiagEntry, DiagLevel, GuiEvent, GuiState};
 
 pub struct MariaApp {
@@ -46,16 +46,43 @@ impl MariaApp {
                             self.state.compile_info.as_ref().map(|i| i.total_time_ms).unwrap_or(0.0)
                         ));
                     }
-                    Err(e) => {
-                        self.state.diagnostics.push(DiagEntry {
-                            file: String::new(),
-                            line: 0,
-                            message: format!("Compile error: {}", e),
-                            level: DiagLevel::Error,
-                        });
-                        self.state.log(format!("❌ Compile gagal: {}", e));
+                    Err(diags) => {
+                        // Diagnostics sudah punya file/line (dari source snippet) —
+                        // langsung masuk Problems tab + Mini Map editor.
+                        for d in &diags {
+                            let loc = if d.file.is_empty() {
+                                String::new()
+                            } else {
+                                format!("{}:{}", d.file, d.line)
+                            };
+                            self.state.log(format!("❌ [{}] {}", loc, d.message));
+                        }
+                        self.state.diagnostics.extend(diags);
                     }
                 },
+                GuiEvent::TermOutput(text, is_err) => {
+                    self.state.term_lines.push(crate::gui::state::TermLine {
+                        text,
+                        is_err,
+                    });
+                    if self.state.term_lines.len() > crate::gui::state::MAX_TERM_LINES {
+                        let overflow =
+                            self.state.term_lines.len() - crate::gui::state::MAX_TERM_LINES;
+                        self.state.term_lines.drain(0..overflow);
+                    }
+                }
+                GuiEvent::TermExit(code) => {
+                    self.state.term_running = false;
+                    let status = if code == 0 {
+                        "✅ selesai".to_string()
+                    } else {
+                        format!("❌ exit code {}", code)
+                    };
+                    self.state.term_lines.push(crate::gui::state::TermLine {
+                        text: status,
+                        is_err: code != 0,
+                    });
+                }
                 GuiEvent::SimDone(result) => {
                     self.state.is_running = false;
                     match result {
@@ -63,6 +90,13 @@ impl MariaApp {
                             self.state.signals = info.signals;
                             self.state.cycles = info.cycles;
                             self.state.sim_time_ms = info.sim_time_ms;
+                            self.state.delta_cycles = info.delta_cycles;
+                            self.state.events_processed = info.events_processed;
+                            self.state.processes_evaluated = info.processes_evaluated;
+                            self.state.nba_commits = info.nba_commits;
+                            self.state.sensitive_triggers = info.sensitive_triggers;
+                            self.state.events_per_delta = info.events_per_delta;
+                            self.state.coverage = info.coverage;
                             self.state.log(format!(
                                 "✅ Simulasi selesai — t={} ({} signal, {:.2}ms)",
                                 info.cycles,
@@ -110,6 +144,18 @@ impl MariaApp {
             }
             if cmd && i.key_pressed(Key::O) {
                 trigger_open_project(&mut self.state);
+            }
+            if cmd && i.modifiers.shift && i.key_pressed(Key::P) {
+                let opening = !self.state.palette_open;
+                self.state.palette_open = opening;
+                if opening {
+                    self.state.palette_just_opened = true;
+                    self.state.palette_filter.clear();
+                    self.state.palette_selected = 0;
+                }
+            }
+            if cmd && i.modifiers.shift && i.key_pressed(Key::O) {
+                self.state.show_outline = !self.state.show_outline;
             }
 
             if editor_typing {
@@ -262,14 +308,32 @@ impl eframe::App for MariaApp {
                 });
         }
 
+        // ── Outline (kanan) ──
+        if self.state.show_outline {
+            egui::Panel::right(egui::Id::new("outline_panel"))
+                .resizable(true)
+                .default_size(230.0)
+                .size_range(160.0..=400.0)
+                .show(ui, |ui| {
+                    outline::show(ui, &mut self.state);
+                });
+        }
+
         // ── Editor (tengah) ──
         egui::CentralPanel::default().show(ui, |ui| {
             editor::show(ui, &mut self.state);
         });
 
-        // Repaint terus jika worker sibuk
+        // ── Command Palette (overlay, di atas semua panel) ──
+        if self.state.palette_open {
+            command_palette::show(ui, &mut self.state);
+        }
+
+        // Repaint terus jika worker sibuk (simulasi)
         if self.state.is_running {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
+        // Repaint berkala untuk resource monitor (CPU/RAM realtime di status bar)
+        ctx.request_repaint_after(Duration::from_millis(1000));
     }
 }

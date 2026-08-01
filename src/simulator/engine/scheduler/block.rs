@@ -124,13 +124,8 @@ impl SimulationEngine {
                     if let Some(lc) = &self.loop_continuation {
                         later.extend(lc.clone());
                     }
-                    let armed_vals: Vec<LogicVec> = sigs
-                        .iter()
-                        .map(|(sid, _)| self.state.read_signal(*sid).clone())
-                        .collect();
                     self.pending_events.push(PendingEventControl {
                         sigs: sigs.clone(),
-                        armed_vals,
                         continuation: later,
                     });
                     return Ok(false);
@@ -1037,13 +1032,8 @@ impl SimulationEngine {
                     }
                     later.extend(stmts[i + 1..].iter().cloned());
                     let base_len = self.method_locals.len();
-                    let armed_vals: Vec<LogicVec> = sigs
-                        .iter()
-                        .map(|(sid, _)| self.state.read_signal(*sid).clone())
-                        .collect();
                     self.pending_ast_events.push(PendingAstEventControl {
                         sigs,
-                        armed_vals,
                         continuation: later,
                         this: self.current_this,
                         method: self.current_method,
@@ -1541,13 +1531,8 @@ impl SimulationEngine {
                     if let Some(lc) = &self.loop_continuation {
                         later.extend(lc.clone());
                     }
-                    let armed_vals: Vec<LogicVec> = sigs
-                        .iter()
-                        .map(|(sid, _)| self.state.read_signal(*sid).clone())
-                        .collect();
                     self.pending_events.push(PendingEventControl {
                         sigs: sigs.clone(),
-                        armed_vals,
                         continuation: later,
                     });
                     return Ok(());

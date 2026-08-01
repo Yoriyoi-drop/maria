@@ -2,6 +2,10 @@
 
 use eframe::egui;
 
+use super::benchmark;
+use super::coverage;
+use super::terminal;
+use super::waveform;
 use super::super::state::{BottomTab, DiagLevel, GuiState};
 
 pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
@@ -12,11 +16,19 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             (BottomTab::Problems, "Problems"),
             (BottomTab::Console, "Console"),
             (BottomTab::Signals, "Signals"),
+            (BottomTab::Waveform, "Waveform"),
+            (BottomTab::Benchmark, "Benchmark"),
+            (BottomTab::Coverage, "Coverage"),
+            (BottomTab::Terminal, "Terminal"),
         ] {
             let count = match tab {
                 BottomTab::Problems => state.diagnostics.len(),
                 BottomTab::Console => state.console.len(),
                 BottomTab::Signals => state.signals.len(),
+                BottomTab::Waveform => state.waveform.len(),
+                BottomTab::Benchmark => 0,
+                BottomTab::Coverage => state.coverage.branch_total as usize,
+                BottomTab::Terminal => state.term_lines.len(),
             };
             let text = egui::RichText::new(format!("{} ({})", label, count)).size(12.0);
             if ui.selectable_label(state.bottom_tab == tab, text).clicked() {
@@ -29,6 +41,13 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     });
     ui.separator();
 
+    // Waveform punya ScrollArea sendiri (horizontal+vertikal) — jangan dibungkus
+    // ScrollArea vertikal di sini (scroll bersarang).
+    if state.bottom_tab == BottomTab::Waveform {
+        waveform::show(ui, state);
+        return;
+    }
+
     let height = ui.available_height().max(80.0);
     egui::ScrollArea::vertical()
         .id_salt("bottom_scroll")
@@ -37,6 +56,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             BottomTab::Problems => problems_tab(ui, state),
             BottomTab::Console => console_tab(ui, state),
             BottomTab::Signals => signals_tab(ui, state),
+            BottomTab::Waveform => unreachable!("handled above"),
+            BottomTab::Benchmark => benchmark::show(ui, state),
+            BottomTab::Coverage => coverage::show(ui, state),
+            BottomTab::Terminal => terminal::show(ui, state),
         });
 }
 

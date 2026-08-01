@@ -152,46 +152,57 @@ impl SimulationEngine {
         Ok(matched)
     }
 
+    /// Nilai sinyal di AWAL delta berjalan — baseline "sebelum perubahan".
+    /// `signal_snapshot` di-refresh tiap delta pass (Sched-04), jadi saat
+    /// `process_pending_events` dipanggil nilainya = state sebelum write pada
+    /// delta ini. Dipakai untuk deteksi level & edge blocking event control.
+    fn snapshot_value(&self, id: SignalId) -> LogicVec {
+        self.signal_snapshot
+            .as_ref()
+            .and_then(|s| s.get(id).cloned())
+            .unwrap_or_else(|| LogicVec::new(1))
+    }
+
     /// Resume blocking event control `@(sig)` saat signal berubah.
-    /// - Level (edge None): perubahan nilai apa pun membangunkan.
-    /// - Edge: hanya edge yang sesuai (via snapshot delta) yang membangunkan.
+    /// - Level (edge None): nilai BERUBAH pada delta ini membangunkan.
+    /// - Edge: hanya edge yang sesuai (via snapshot awal-delta) yang membangunkan.
+    ///
+    /// Baseline = nilai awal delta (`signal_snapshot`), BUKAN nilai saat arm:
+    /// - `@(posedge clk)` yang di-arm saat clk sudah 1 tetap menangkap posedge
+    ///   berikutnya (0→1) — nilai saat arm (1) tidak membatalkan deteksi edge.
+    /// - `@(ev)` yang di-arm setelah `-> ev` pada delta yang sama tetap fire
+    ///   karena snapshot awal-delta (x) != nilai saat ini (1).
     pub(crate) fn process_pending_events(&mut self, deltas: &[SignalId]) -> Result<bool, SimError> {
         let mut matched = false;
         let mut remaining = Vec::new();
         let pending = std::mem::take(&mut self.pending_events);
         for pe in pending {
-            let fire = pe.sigs.iter().enumerate().any(|(i, (sid, edge))| {
-                if !deltas.contains(sid) {
-                    return false;
-                }
+            let fire = pe.sigs.iter().any(|(sid, edge)| {
                 match edge {
                     None => {
-                        // Level event: fire hanya jika nilai BERUBAH sejak arm —
-                        // mencegah re-fire untuk perubahan yang sama di delta berikutnya.
-                        let armed = pe
-                            .armed_vals
-                            .get(i)
-                            .cloned()
-                            .unwrap_or_else(|| LogicVec::new(1));
-                        armed != *self.state.read_signal(*sid)
+                        // Level: fire hanya jika nilai BERUBAH dalam delta ini
+                        // (snapshot awal != sekarang). Cegah re-fire untuk write
+                        // nilai sama; tetap memenuhi `@(ev)` pada delta yang sama.
+                        if !deltas.contains(sid) {
+                            return false;
+                        }
+                        self.snapshot_value(*sid) != *self.state.read_signal(*sid)
                     }
                     Some(ClockEdge::PosEdge(id)) => {
-                        let armed = pe
-                            .armed_vals
-                            .get(i)
-                            .cloned()
-                            .unwrap_or_else(|| LogicVec::new(1));
+                        if !deltas.contains(id) {
+                            return false;
+                        }
                         let new = self.state.read_signal(*id);
-                        armed.to_bool() != Some(true) && new.to_bool() == Some(true)
+                        self.snapshot_value(*id).to_bool() != Some(true)
+                            && new.to_bool() == Some(true)
                     }
                     Some(ClockEdge::NegEdge(id)) => {
-                        let armed = pe
-                            .armed_vals
-                            .get(i)
-                            .cloned()
-                            .unwrap_or_else(|| LogicVec::new(1));
+                        if !deltas.contains(id) {
+                            return false;
+                        }
                         let new = self.state.read_signal(*id);
-                        armed.to_bool() != Some(false) && new.to_bool() == Some(false)
+                        self.snapshot_value(*id).to_bool() != Some(false)
+                            && new.to_bool() == Some(false)
                     }
                 }
             });
@@ -221,24 +232,29 @@ impl SimulationEngine {
         let mut remaining = Vec::new();
         let pending = std::mem::take(&mut self.pending_ast_events);
         for pe in pending {
-            let fire = pe.sigs.iter().enumerate().any(|(i, (sid, edge))| {
-                if !deltas.contains(sid) {
-                    return false;
-                }
+            let fire = pe.sigs.iter().any(|(sid, edge)| {
                 match edge {
                     None => {
-                        let armed = pe.armed_vals.get(i).cloned().unwrap_or_else(|| LogicVec::new(1));
-                        armed != *self.state.read_signal(*sid)
+                        if !deltas.contains(sid) {
+                            return false;
+                        }
+                        self.snapshot_value(*sid) != *self.state.read_signal(*sid)
                     }
                     Some(ClockEdge::PosEdge(id)) => {
-                        let armed = pe.armed_vals.get(i).cloned().unwrap_or_else(|| LogicVec::new(1));
+                        if !deltas.contains(id) {
+                            return false;
+                        }
                         let new = self.state.read_signal(*id);
-                        armed.to_bool() != Some(true) && new.to_bool() == Some(true)
+                        self.snapshot_value(*id).to_bool() != Some(true)
+                            && new.to_bool() == Some(true)
                     }
                     Some(ClockEdge::NegEdge(id)) => {
-                        let armed = pe.armed_vals.get(i).cloned().unwrap_or_else(|| LogicVec::new(1));
+                        if !deltas.contains(id) {
+                            return false;
+                        }
                         let new = self.state.read_signal(*id);
-                        armed.to_bool() != Some(false) && new.to_bool() == Some(false)
+                        self.snapshot_value(*id).to_bool() != Some(false)
+                            && new.to_bool() == Some(false)
                     }
                 }
             });

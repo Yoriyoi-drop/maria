@@ -51,8 +51,10 @@ tokio = { version = "1", features = ["full"], optional = true }
 z3 = { version = "0.20", optional = true }
 
 # ── Opsional: GUI native (egui) — pengganti Tauri ──
-eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"], optional = true }
-egui_code_editor = { version = "0.3", optional = true }
+# Backend rendering: wgpu (GPU/Vulkan) sebagai utama untuk performa 60-144 FPS
+# saat compiler bekerja, glow (OpenGL) tetap dikompilasi sebagai fallback bila
+# GPU/driver wgpu bermasalah. Renderer dipilih saat runtime (Renderer::Wgpu).
+eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow", "wgpu", "wayland", "x11"], optional = true }
 rfd = { version = "0.17", optional = true }
 
 [features]
@@ -73,7 +75,7 @@ formal = ["z3"]
 dpi = ["libloading"]
 
 # Native GUI (egui) — menggantikan frontend Tauri/React
-gui = ["dep:eframe", "dep:egui_code_editor", "dep:rfd"]
+gui = ["dep:eframe", "dep:rfd"]
 
 [[bin]]
 name = "maria-gui"

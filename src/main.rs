@@ -92,6 +92,21 @@ fn main() {
 
     let cli = Cli::parse();
 
+    // ── GUI mode: launch the native egui application ──
+    #[cfg(feature = "gui")]
+    if cli.gui {
+        if let Err(e) = maria::gui::run() {
+            eprintln!("GUI error: {}", e);
+            process::exit(1);
+        }
+        return;
+    }
+    #[cfg(not(feature = "gui"))]
+    if cli.gui {
+        eprintln!("GUI tidak tersedia: compile dengan --features gui");
+        process::exit(1);
+    }
+
     // ── LSP mode: start language server (stdio transport) ──
     #[cfg(feature = "lsp")]
     if cli.lsp {

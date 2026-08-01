@@ -1,7 +1,10 @@
-//! Sidebar kiri: tab Project (file tree) dan Symbols (module/package/interface).
+//! Sidebar kiri: tab Project (file tree), Symbols, Architecture, dan Search.
 
 use eframe::egui;
 
+use super::architecture;
+use super::dependency;
+use super::search;
 use super::super::state::{GuiState, SidebarTab};
 
 pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
@@ -19,12 +22,33 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
         {
             state.sidebar_tab = SidebarTab::Symbols;
         }
+        if ui
+            .selectable_label(state.sidebar_tab == SidebarTab::Architecture, "Architecture")
+            .clicked()
+        {
+            state.sidebar_tab = SidebarTab::Architecture;
+        }
+        if ui
+            .selectable_label(state.sidebar_tab == SidebarTab::Dependency, "Dependency")
+            .clicked()
+        {
+            state.sidebar_tab = SidebarTab::Dependency;
+        }
+        if ui
+            .selectable_label(state.sidebar_tab == SidebarTab::Search, "Search")
+            .clicked()
+        {
+            state.sidebar_tab = SidebarTab::Search;
+        }
     });
     ui.separator();
 
     match state.sidebar_tab {
         SidebarTab::Project => project_tab(ui, state),
         SidebarTab::Symbols => symbols_tab(ui, state),
+        SidebarTab::Architecture => architecture::show(ui, state),
+        SidebarTab::Dependency => dependency::show(ui, state),
+        SidebarTab::Search => search::show(ui, state),
     }
 }
 
