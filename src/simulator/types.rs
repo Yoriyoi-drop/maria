@@ -127,11 +127,17 @@ pub struct RegionEvent {
 /// Blocking event control `@(sig)` / `@(posedge sig)` yang sedang menunggu
 /// perubahan/edge pada suatu signal. Continuation di-resume saat signal berubah
 /// (level) atau edge yang sesuai terdeteksi (via snapshot delta).
+/// Blocking event control `@(sig)` / `@(posedge sig)` yang sedang menunggu
+/// perubahan/edge pada satu atau lebih signal. SATU entry mewakili SATU `@(...)`:
+/// fire sekali saat sinyal mana pun berubah, cegah double-fire / event stale.
 #[derive(Debug, Clone)]
 pub struct PendingEventControl {
-    pub sig_id: SignalId,
-    /// None = level (tunggu perubahan nilai apa pun); Some(edge) = edge tertentu.
-    pub edge: Option<ClockEdge>,
+    /// Semua (signal, edge) dari satu `@(a or b)` — None edge = level.
+    pub sigs: Vec<(SignalId, Option<ClockEdge>)>,
+    /// Nilai tiap sinyal saat event di-arm (paralel dgn `sigs`). Event hanya fire
+    /// jika nilainya BERUBAH setelah arm — mencegah re-fire pada time step yang
+    /// sama untuk perubahan yang sama (semantik `@(sig)` yang benar).
+    pub armed_vals: Vec<LogicVec>,
     /// Statement yang dilanjutkan setelah event terpenuhi (body + sisa + loop_cont).
     pub continuation: Vec<IrStmt>,
 }
@@ -143,6 +149,8 @@ pub struct PendingEventControl {
 pub struct PendingAstEventControl {
     /// Semua (signal, edge) dari satu `@(a or b)` — SATU entry, cegah double-fire.
     pub sigs: Vec<(SignalId, Option<ClockEdge>)>,
+    /// Nilai tiap sinyal saat arm — fire hanya jika nilai berubah setelah arm.
+    pub armed_vals: Vec<LogicVec>,
     pub continuation: Vec<crate::ast::Stmt>,
     pub this: Option<ObjId>,
     pub method: Option<Symbol>,

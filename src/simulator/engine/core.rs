@@ -23,6 +23,7 @@ impl SimulationEngine {
             design,
             max_time,
             running: true,
+            cancel_flag: None,
             events: Vec::new(),
             events_base: 0,
             nba_pending: Vec::new(),
@@ -1266,6 +1267,13 @@ impl SimulationEngine {
         }
     }
 
+    /// Cek flag pembatalan eksternal (GUI "Stop"). Dipanggil di run loop.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_flag
+            .as_ref()
+            .is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
     pub fn run(&mut self) -> Result<(), SimError> {
         // ── VPI: Register engine for VPI callbacks ──
         crate::vpi::set_vpi_engine(self);
@@ -1337,7 +1345,10 @@ impl SimulationEngine {
             }
         }
 
-        while self.running && self.state.time <= self.max_time {
+        while self.running
+            && self.state.time <= self.max_time
+            && !self.is_cancelled()
+        {
             let t = self.state.time as usize;
             // events_base konstan selama satu time step (hanya berubah di
             // retire_events, yang dipanggil setelah step selesai).
@@ -2060,14 +2071,29 @@ impl SimulationEngine {
         let t = 0usize;
         let processes = self.design.top.processes.clone();
 
-        // IEEE 1800: initial blocks execute FIRST, then always_comb evaluates.
-        // Schedule initial blocks and always-with-delay first,
-        // then combinational/reactive processes AFTER.
-        // All in Active region, processed in FIFO order by the event loop.
+        // IEEE 1800: declaration assignments (decl-init) happen at time 0
+        // BEFORE any initial/always block runs.
 
-        // Pass 1: Initial blocks (execute first at time 0)
+        // Pass 0: declaration initializers (wire a = 1; reg b = 0; etc.)
+        for (pid, process) in processes.iter().enumerate() {
+            if let Process::Initial { name, .. } = process {
+                if name.as_str().starts_with("decl_init_") {
+                    self.push_event(t, RegionEvent {
+                        region: EventRegion::Active,
+                        event: EventKind::EvalProcess(pid),
+                    });
+                }
+            }
+        }
+
+        // Pass 1: Initial blocks (execute after declaration assignments)
         for (pid, process) in processes.iter().enumerate() {
             if matches!(process, Process::Initial { .. }) {
+                if let Process::Initial { name, .. } = process {
+                    if name.as_str().starts_with("decl_init_") {
+                        continue;
+                    }
+                }
                 self.push_event(t, RegionEvent {
                     region: EventRegion::Active,
                     event: EventKind::EvalProcess(pid),

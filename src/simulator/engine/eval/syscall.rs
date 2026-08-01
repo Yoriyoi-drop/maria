@@ -584,7 +584,11 @@ impl SimulationEngine {
                 &self.assoc_data,
                 &ir_args,
             );
-            print!("{}", msg);
+            if name == "display" {
+                println!("{}", msg);
+            } else {
+                print!("{}", msg);
+            }
         } else if name == "finish" {
             self.running = false;
         }

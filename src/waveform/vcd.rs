@@ -253,6 +253,11 @@ impl VcdWriter {
 
         let mut scope_map: HashMap<Vec<String>, Vec<(String, usize, usize)>> = HashMap::new();
         for sig in &design.top.signals {
+            // Class handle (objek/covergroup/virtual interface) BUKAN nilai 4-state —
+            // Questa tidak pernah dump ke VCD. Skip biar VCD bersih.
+            if sig.class_name.is_some() {
+                continue;
+            }
             let (scope_parts, bare_name) = Self::parse_scope(sig.name.as_str());
             scope_map
                 .entry(scope_parts)
@@ -282,6 +287,9 @@ impl VcdWriter {
         self.write_raw(b"$dumpvars\n")?;
 
         for sig in &design.top.signals {
+            if sig.class_name.is_some() {
+                continue;
+            }
             let (sig_scope, sig_bare) = Self::parse_scope(sig.name.as_str());
             if sig.array_depth > 1 {
                 for elem in 0..sig.array_depth {
@@ -316,6 +324,9 @@ impl VcdWriter {
             return Ok(());
         }
         for (sig_val, sig) in state.iter().zip(design.top.signals.iter()) {
+            if sig.class_name.is_some() {
+                continue;
+            }
             let (sig_scope, sig_bare) = Self::parse_scope(sig.name.as_str());
             if sig.array_depth > 1 {
                 for elem in 0..sig.array_depth {

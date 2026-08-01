@@ -118,18 +118,21 @@ impl SimulationEngine {
                     // Blocking event control `@(a or posedge b)`:
                     // SELALU suspend — tunggu perubahan/edge berikutnya. Event
                     // yang sudah lewat (mis. clk sudah high) TIDAK dihitung.
+                    // SATU entry mewakili SATU `@(...)` — fire sekali.
                     let mut later: Vec<IrStmt> = body.clone();
                     later.extend(stmts[i + 1..].to_vec());
                     if let Some(lc) = &self.loop_continuation {
                         later.extend(lc.clone());
                     }
-                    for (sig_id, edge) in sigs {
-                        self.pending_events.push(PendingEventControl {
-                            sig_id: *sig_id,
-                            edge: edge.clone(),
-                            continuation: later.clone(),
-                        });
-                    }
+                    let armed_vals: Vec<LogicVec> = sigs
+                        .iter()
+                        .map(|(sid, _)| self.state.read_signal(*sid).clone())
+                        .collect();
+                    self.pending_events.push(PendingEventControl {
+                        sigs: sigs.clone(),
+                        armed_vals,
+                        continuation: later,
+                    });
                     return Ok(false);
                 }
                 IrStmt::EventTrigger { sig_id } => {
@@ -289,9 +292,16 @@ impl SimulationEngine {
                                         }
                                     }
                                 }
+                                continue;
                             }
+                            // System function lain (mis. $display/$write) yang
+                            // dibungkus elaborator sbg SysCall{name:"", args:[...]}:
+                            // dispatch dgn nama asli (tanpa '$') biar tak tercecer.
+                            let dispatch_name = fn_name.as_str().trim_start_matches('$');
+                            self.evaluate_syscall(dispatch_name, fn_args, fork_id, stmts, i)?;
                             continue;
                         }
+                        continue;
                     }
                     self.evaluate_syscall(name.as_str(), ir_args, fork_id, stmts, i)?;
                 }
@@ -1027,8 +1037,13 @@ impl SimulationEngine {
                     }
                     later.extend(stmts[i + 1..].iter().cloned());
                     let base_len = self.method_locals.len();
+                    let armed_vals: Vec<LogicVec> = sigs
+                        .iter()
+                        .map(|(sid, _)| self.state.read_signal(*sid).clone())
+                        .collect();
                     self.pending_ast_events.push(PendingAstEventControl {
                         sigs,
+                        armed_vals,
                         continuation: later,
                         this: self.current_this,
                         method: self.current_method,
@@ -1232,6 +1247,19 @@ impl SimulationEngine {
                     name,
                     args: ir_args,
                 } => {
+                    if name.is_empty() {
+                        if let Some(IrExpr::SysFunc {
+                            name: fn_name,
+                            args: fn_args,
+                        }) = ir_args.first()
+                        {
+                            self.evaluate_syscall_stmt(
+                                fn_name.as_str().trim_start_matches('$'),
+                                fn_args,
+                            )?;
+                        }
+                        continue;
+                    }
                     self.evaluate_syscall_stmt(name.as_str(), ir_args)?;
                 }
                 IrStmt::SysFinish => {
@@ -1507,18 +1535,21 @@ impl SimulationEngine {
                 IrStmt::EventControl { sigs, body } => {
                     // Blocking event control (evaluate_stmt_block context):
                     // daftarkan pending wake-up dan berhenti memproses blok ini.
+                    // SATU entry mewakili SATU `@(...)` — fire sekali.
                     let mut later: Vec<IrStmt> = body.clone();
                     later.extend(stmts[i + 1..].to_vec());
                     if let Some(lc) = &self.loop_continuation {
                         later.extend(lc.clone());
                     }
-                    for (sig_id, edge) in sigs {
-                        self.pending_events.push(PendingEventControl {
-                            sig_id: *sig_id,
-                            edge: edge.clone(),
-                            continuation: later.clone(),
-                        });
-                    }
+                    let armed_vals: Vec<LogicVec> = sigs
+                        .iter()
+                        .map(|(sid, _)| self.state.read_signal(*sid).clone())
+                        .collect();
+                    self.pending_events.push(PendingEventControl {
+                        sigs: sigs.clone(),
+                        armed_vals,
+                        continuation: later,
+                    });
                     return Ok(());
                 }
                 IrStmt::EventTrigger { sig_id } => {

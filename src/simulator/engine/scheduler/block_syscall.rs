@@ -38,7 +38,11 @@ impl SimulationEngine {
                 &self.assoc_data,
                 ir_args,
             );
-            print!("{}", msg);
+            if name == "display" {
+                println!("{}", msg);
+            } else {
+                print!("{}", msg);
+            }
         } else if name == "strobe" {
             self.strobe_events.push(ir_args.to_vec());
         } else if name == "fstrobe" {
@@ -924,7 +928,11 @@ impl SimulationEngine {
                 &self.assoc_data,
                 ir_args,
             );
-            print!("{}", msg);
+            if name == "display" {
+                println!("{}", msg);
+            } else {
+                print!("{}", msg);
+            }
         } else if name == "strobe" {
             self.strobe_events.push(ir_args.to_vec());
         } else if name == "fstrobe" {

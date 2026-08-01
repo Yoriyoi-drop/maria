@@ -1,5 +1,5 @@
 [workspace]
-members = ["src-tauri"]
+# src-tauri dipindah ke legacy/ (digantikan GUI egui di src/gui/)
 resolver = "2"
 
 [package]
@@ -50,6 +50,11 @@ tokio = { version = "1", features = ["full"], optional = true }
 # ── Opsional: Formal Verification (Z3 SMT) ──
 z3 = { version = "0.20", optional = true }
 
+# ── Opsional: GUI native (egui) — pengganti Tauri ──
+eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"], optional = true }
+egui_code_editor = { version = "0.3", optional = true }
+rfd = { version = "0.17", optional = true }
+
 [features]
 # Semua fitur diaktifkan secara default
 # Untuk build minimal: cargo build --no-default-features
@@ -66,6 +71,14 @@ formal = ["z3"]
 
 # DPI-C foreign language interface
 dpi = ["libloading"]
+
+# Native GUI (egui) — menggantikan frontend Tauri/React
+gui = ["dep:eframe", "dep:egui_code_editor", "dep:rfd"]
+
+[[bin]]
+name = "maria-gui"
+path = "src/bin/maria_gui.rs"
+required-features = ["gui"]
 
 [profile.release]
 opt-level = 3

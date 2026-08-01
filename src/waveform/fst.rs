@@ -65,6 +65,9 @@ impl FstWaveWriter {
         // Step 1: Group signals by scope
         let mut scope_map: HashMap<Vec<String>, Vec<(String, usize, usize)>> = HashMap::new();
         for sig in &design.top.signals {
+            if sig.class_name.is_some() {
+                continue;
+            }
             let (scope_parts, bare_name) = Self::parse_scope(sig.name.as_str());
             scope_map
                 .entry(scope_parts)

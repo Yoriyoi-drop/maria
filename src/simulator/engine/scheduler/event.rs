@@ -160,31 +160,41 @@ impl SimulationEngine {
         let mut remaining = Vec::new();
         let pending = std::mem::take(&mut self.pending_events);
         for pe in pending {
-            if !deltas.contains(&pe.sig_id) {
-                remaining.push(pe);
-                continue;
-            }
-            let fire = match &pe.edge {
-                None => true,
-                Some(ClockEdge::PosEdge(id)) => {
-                    let new = self.state.read_signal(*id);
-                    let old = self
-                        .signal_snapshot
-                        .as_ref()
-                        .and_then(|s| s.get(*id).cloned())
-                        .unwrap_or_else(|| LogicVec::new(1));
-                    old.to_bool() != Some(true) && new.to_bool() == Some(true)
+            let fire = pe.sigs.iter().enumerate().any(|(i, (sid, edge))| {
+                if !deltas.contains(sid) {
+                    return false;
                 }
-                Some(ClockEdge::NegEdge(id)) => {
-                    let new = self.state.read_signal(*id);
-                    let old = self
-                        .signal_snapshot
-                        .as_ref()
-                        .and_then(|s| s.get(*id).cloned())
-                        .unwrap_or_else(|| LogicVec::new(1));
-                    old.to_bool() != Some(false) && new.to_bool() == Some(false)
+                match edge {
+                    None => {
+                        // Level event: fire hanya jika nilai BERUBAH sejak arm —
+                        // mencegah re-fire untuk perubahan yang sama di delta berikutnya.
+                        let armed = pe
+                            .armed_vals
+                            .get(i)
+                            .cloned()
+                            .unwrap_or_else(|| LogicVec::new(1));
+                        armed != *self.state.read_signal(*sid)
+                    }
+                    Some(ClockEdge::PosEdge(id)) => {
+                        let armed = pe
+                            .armed_vals
+                            .get(i)
+                            .cloned()
+                            .unwrap_or_else(|| LogicVec::new(1));
+                        let new = self.state.read_signal(*id);
+                        armed.to_bool() != Some(true) && new.to_bool() == Some(true)
+                    }
+                    Some(ClockEdge::NegEdge(id)) => {
+                        let armed = pe
+                            .armed_vals
+                            .get(i)
+                            .cloned()
+                            .unwrap_or_else(|| LogicVec::new(1));
+                        let new = self.state.read_signal(*id);
+                        armed.to_bool() != Some(false) && new.to_bool() == Some(false)
+                    }
                 }
-            };
+            });
             if fire {
                 matched = true;
                 self.evaluate_block_with_delay_fork(&pe.continuation, None)?;
@@ -211,29 +221,24 @@ impl SimulationEngine {
         let mut remaining = Vec::new();
         let pending = std::mem::take(&mut self.pending_ast_events);
         for pe in pending {
-            let fire = pe.sigs.iter().any(|(sid, edge)| {
+            let fire = pe.sigs.iter().enumerate().any(|(i, (sid, edge))| {
                 if !deltas.contains(sid) {
                     return false;
                 }
                 match edge {
-                    None => true,
+                    None => {
+                        let armed = pe.armed_vals.get(i).cloned().unwrap_or_else(|| LogicVec::new(1));
+                        armed != *self.state.read_signal(*sid)
+                    }
                     Some(ClockEdge::PosEdge(id)) => {
+                        let armed = pe.armed_vals.get(i).cloned().unwrap_or_else(|| LogicVec::new(1));
                         let new = self.state.read_signal(*id);
-                        let old = self
-                            .signal_snapshot
-                            .as_ref()
-                            .and_then(|s| s.get(*id).cloned())
-                            .unwrap_or_else(|| LogicVec::new(1));
-                        old.to_bool() != Some(true) && new.to_bool() == Some(true)
+                        armed.to_bool() != Some(true) && new.to_bool() == Some(true)
                     }
                     Some(ClockEdge::NegEdge(id)) => {
+                        let armed = pe.armed_vals.get(i).cloned().unwrap_or_else(|| LogicVec::new(1));
                         let new = self.state.read_signal(*id);
-                        let old = self
-                            .signal_snapshot
-                            .as_ref()
-                            .and_then(|s| s.get(*id).cloned())
-                            .unwrap_or_else(|| LogicVec::new(1));
-                        old.to_bool() != Some(false) && new.to_bool() == Some(false)
+                        armed.to_bool() != Some(false) && new.to_bool() == Some(false)
                     }
                 }
             });

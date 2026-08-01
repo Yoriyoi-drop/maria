@@ -46,6 +46,9 @@ pub struct SimulationEngine {
     pub state: SimulationState,
     pub max_time: u64,
     pub running: bool,
+    /// Flag pembatalan eksternal (GUI "Stop"). Diperiksa setiap time step di
+    /// run loop — jika bernilai true, simulasi berhenti lebih awal.
+    pub cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// Event queue per time step. Di-index RELATIF terhadap `events_base`:
     /// slot `i` menyimpan event untuk waktu `events_base + i`. Slot yang sudah
     /// diproses dibuang secara periodik (lihat `retire_events`) sehingga

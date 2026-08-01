@@ -37,6 +37,10 @@ pub mod plugin;
 pub mod profiling;
 pub mod scheduler;
 
+// ── Native GUI (egui) — pengganti frontend Tauri ──
+#[cfg(feature = "gui")]
+pub mod gui;
+
 pub use arena::{BumpArena, TypedArena};
 pub use error::SimError;
 pub use diagnostics::{DiagCode, DiagLevel, Diagnostic, DiagSink, RuntimeContext, SourceSnippet};

@@ -10,3 +10,5 @@
 /gui/dist/
 /src-tauri/target/
 /graphify-out/
+/legacy/gui/
+/legacy/src-tauri/
