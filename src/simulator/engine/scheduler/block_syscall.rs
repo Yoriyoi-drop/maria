@@ -27,6 +27,9 @@ impl SimulationEngine {
         _stmts: &[IrStmt],
         _i: usize,
     ) -> Result<bool, SimError> {
+        if self.evaluate_lang_syscall(name, ir_args)? {
+            return Ok(true);
+        }
         if name == "display" || name == "write" {
             let msg = format_display(
                 &self.state,
@@ -122,10 +125,12 @@ impl SimulationEngine {
             };
             self.state.write_signal(sig_id, packed);
         } else if name == "random" {
+            self.rand_call_count += 1;
             if let Some(seed_arg) = ir_args.get(1) {
                 if let Ok(seed_val) = self.evaluate_expr(seed_arg) {
                     let seed = seed_val.to_u64();
                     self.rng = rand::rngs::StdRng::seed_from_u64(seed);
+                    self.rand_seed = seed;
                 }
             }
             let val: i32 = self.rng.gen();
@@ -141,6 +146,7 @@ impl SimulationEngine {
                     .write_signal(sid, LogicVec::from_u64(val as u64, 32));
             }
         } else if name == "urandom" {
+            self.rand_call_count += 1;
             let val: u32 = self.rng.gen();
             let sig_id = ir_args.first().and_then(|a| {
                 if let IrExpr::Signal(id, _) = a {
@@ -154,6 +160,7 @@ impl SimulationEngine {
                     .write_signal(sid, LogicVec::from_u64(val as u64, 32));
             }
         } else if name == "urandom_range" {
+            self.rand_call_count += 1;
             let args_eval: Vec<LogicVec> = ir_args
                 .iter()
                 .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
@@ -517,8 +524,7 @@ impl SimulationEngine {
             if let Some(arg) = ir_args.first() {
                 if let Ok(val) = self.evaluate_expr(arg) {
                     let bitmask = val.to_u64();
-                    self.coverage_enabled = (bitmask & 1) == 0;
-                    self.coverage_options.insert("control".to_string(), bitmask.to_string());
+                    self.apply_coverage_control(bitmask);
                 }
             }
         } else if name == "coverage_get" {
@@ -749,6 +755,157 @@ impl SimulationEngine {
         Ok(true)
     }
 
+    /// Handler bersama syscall bahasa (LANG-xx): $timeformat, $printtimescale,
+    /// $scope/$showscopes, $deposit/$assign, $get_randcount/$get_randstate,
+    /// $sdf_annotate. Dipanggil dari evaluate_syscall dan evaluate_syscall_stmt.
+    /// Returns Ok(true) jika syscall ditangani di sini (synced, tidak yield),
+    /// Ok(false) jika bukan tanggung jawab handler ini.
+    fn evaluate_lang_syscall(
+        &mut self,
+        name: &str,
+        ir_args: &[IrExpr],
+    ) -> Result<bool, SimError> {
+        match name {
+            "timeformat" => {
+                // $timeformat(units, precision, suffix, min_width) — IEEE 1800
+                let mut units = -9i64;
+                let mut precision = 0i64;
+                let mut suffix = String::new();
+                let mut min_width = 0usize;
+                if let Some(a) = ir_args.get(0) {
+                    if let Ok(v) = self.evaluate_expr(a) {
+                        units = v.to_u64() as i64;
+                    }
+                }
+                if let Some(a) = ir_args.get(1) {
+                    if let Ok(v) = self.evaluate_expr(a) {
+                        precision = v.to_u64() as i64;
+                    }
+                }
+                if let Some(a) = ir_args.get(2) {
+                    if let IrExpr::String(s) = a {
+                        suffix = s.clone();
+                    }
+                }
+                if let Some(a) = ir_args.get(3) {
+                    if let Ok(v) = self.evaluate_expr(a) {
+                        min_width = v.to_u64() as usize;
+                    }
+                }
+                self.state.timeformat = crate::simulator::types::TimeFormat {
+                    units,
+                    precision,
+                    suffix,
+                    min_field_width: min_width,
+                    base_units: self.state.timeformat.base_units,
+                };
+                Ok(true)
+            }
+            "printtimescale" => {
+                // $printtimescale[(module)] — format LRM: "Time scale of (scope) is 1ns / 1ps"
+                let ts = self
+                    .design
+                    .timescale
+                    .clone()
+                    .unwrap_or_else(|| ("1ns".to_string(), "1ps".to_string()));
+                let scope = self
+                    .current_scope_name
+                    .clone()
+                    .unwrap_or_else(|| self.design.top.name.to_string());
+                println!("Time scale of ({}) is {} / {}", scope, ts.0, ts.1);
+                Ok(true)
+            }
+            "showscopes" => {
+                // $showscopes — print all hierarchical scopes (module names)
+                let mut scopes: Vec<String> = self
+                    .design
+                    .modules
+                    .keys()
+                    .map(|s| s.to_string())
+                    .collect();
+                scopes.sort();
+                for s in &scopes {
+                    println!("{}", s);
+                }
+                Ok(true)
+            }
+            "scope" => {
+                // $scope(name) — set current scope for $showscopes
+                if let Some(a) = ir_args.first() {
+                    if let Ok(v) = self.evaluate_expr(a) {
+                        self.current_scope_name = Some(logicvec_to_string(&v));
+                    }
+                }
+                Ok(true)
+            }
+            "deposit" => {
+                // $deposit(sig, value) — deposit sekali, tidak persistent override.
+                // Driver berikutnya tetap bisa menimpa (beda dgn $assign).
+                if let (Some(sig_arg), Some(val_arg)) = (ir_args.first(), ir_args.get(1)) {
+                    if let IrExpr::Signal(id, _) = sig_arg {
+                        let val = self.evaluate_expr(val_arg)?;
+                        self.state.write_signal(*id, val);
+                    }
+                }
+                Ok(true)
+            }
+            "assign" => {
+                // $assign(sig, value) — procedural continuous assignment.
+                // Override nilai signal; write berikutnya ditekan sampai $deassign
+                // (dicek di write_lvalue via forced_signals).
+                if let (Some(sig_arg), Some(val_arg)) = (ir_args.first(), ir_args.get(1)) {
+                    if let IrExpr::Signal(id, _) = sig_arg {
+                        let val = self.evaluate_expr(val_arg)?;
+                        self.state.write_signal(*id, val);
+                        self.forced_signals.insert(*id);
+                    }
+                }
+                Ok(true)
+            }
+            "deassign" => {
+                if let Some(sig_arg) = ir_args.first() {
+                    if let IrExpr::Signal(id, _) = sig_arg {
+                        self.forced_signals.remove(id);
+                    }
+                }
+                Ok(true)
+            }
+            "get_randcount" => {
+                if let Some(sig_arg) = ir_args.first() {
+                    if let IrExpr::Signal(id, _) = sig_arg {
+                        self.state
+                            .write_signal(*id, LogicVec::from_u64(self.rand_call_count, 32));
+                    }
+                }
+                Ok(true)
+            }
+            "get_randstate" => {
+                // Konsisten dengan expression-form di expr.rs (64-bit).
+                if let Some(sig_arg) = ir_args.first() {
+                    if let IrExpr::Signal(id, _) = sig_arg {
+                        self.state
+                            .write_signal(*id, LogicVec::from_u64(self.rand_seed, 64));
+                    }
+                }
+                Ok(true)
+            }
+            "sdf_annotate" => {
+                // $sdf_annotate("file.sdf") — runtime SDF annotation
+                if let Some(IrExpr::String(path)) = ir_args.first() {
+                    let sdf_data = crate::simulator::sdf::SdfData::parse_file(path).map_err(|e| {
+                        self.diag_error(
+                            DiagCode::DpiError,
+                            format!("$sdf_annotate: SDF parse failed: {}", e),
+                        )
+                    })?;
+                    self.annotate_sdf(&sdf_data)?;
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
     /// Handle a SysCall statement during evaluate_stmt_block (no delay/fork context).
     /// Simpler version that doesn't handle continuation-related syscalls.
     pub(crate) fn evaluate_syscall_stmt(
@@ -756,6 +913,9 @@ impl SimulationEngine {
         name: &str,
         ir_args: &[IrExpr],
     ) -> Result<(), SimError> {
+        if self.evaluate_lang_syscall(name, ir_args)? {
+            return Ok(());
+        }
         if name == "display" || name == "write" {
             let msg = format_display(
                 &self.state,
@@ -793,6 +953,7 @@ impl SimulationEngine {
             self.monitor_args = Some(ir_args.to_vec());
             self.monitor_last_values = Some(vals);
         } else if name == "urandom" {
+            self.rand_call_count += 1;
             let val: u32 = self.rng.gen();
             let sig_id = ir_args.first().and_then(|a| {
                 if let IrExpr::Signal(id, _) = a {
@@ -806,6 +967,7 @@ impl SimulationEngine {
                     .write_signal(sid, LogicVec::from_u64(val as u64, 32));
             }
         } else if name == "urandom_range" {
+            self.rand_call_count += 1;
             let args_eval: Vec<LogicVec> = ir_args
                 .iter()
                 .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
@@ -833,10 +995,12 @@ impl SimulationEngine {
                 self.state.write_signal(sid, LogicVec::from_u64(val, 32));
             }
         } else if name == "random" {
+            self.rand_call_count += 1;
             if let Some(seed_arg) = ir_args.get(1) {
                 if let Ok(seed_val) = self.evaluate_expr(seed_arg) {
                     let seed = seed_val.to_u64();
                     self.rng = rand::rngs::StdRng::seed_from_u64(seed);
+                    self.rand_seed = seed;
                 }
             }
             let val: i32 = self.rng.gen();
@@ -1188,8 +1352,7 @@ impl SimulationEngine {
             if let Some(arg) = ir_args.first() {
                 if let Ok(val) = self.evaluate_expr(arg) {
                     let bitmask = val.to_u64();
-                    self.coverage_enabled = (bitmask & 1) == 0;
-                    self.coverage_options.insert("control".to_string(), bitmask.to_string());
+                    self.apply_coverage_control(bitmask);
                 }
             }
         } else if name == "coverage_get" {

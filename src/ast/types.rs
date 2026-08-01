@@ -618,6 +618,7 @@ pub enum PackageItem {
     Task(TaskDecl),
     Typedef(TypedefDecl),
     Param(ParamDecl),
+    Class(ClassDecl),
     Import { package: Symbol, item: Symbol },
     Export { package: Symbol, item: Symbol },
 }
@@ -741,6 +742,13 @@ pub struct Delay {
     pub turnoff: Option<Expr>,
 }
 
+/// Arah edge pada timing-check reference event (SIM-24).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeKind {
+    PosEdge,
+    NegEdge,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum SpecifyItem {
     PathDelay {
@@ -756,15 +764,18 @@ pub enum SpecifyItem {
     SetupCheck {
         data: Expr,
         ref_event: Expr,
+        ref_edge: Option<EdgeKind>,
         limit: Expr,
     },
     HoldCheck {
         ref_event: Expr,
+        ref_edge: Option<EdgeKind>,
         data: Expr,
         limit: Expr,
     },
     SetupHoldCheck {
         ref_event: Expr,
+        ref_edge: Option<EdgeKind>,
         data: Expr,
         setup_limit: Expr,
         hold_limit: Expr,
@@ -772,41 +783,49 @@ pub enum SpecifyItem {
     RecoveryCheck {
         data: Expr,
         ref_event: Expr,
+        ref_edge: Option<EdgeKind>,
         limit: Expr,
     },
     RemovalCheck {
         ref_event: Expr,
+        ref_edge: Option<EdgeKind>,
         data: Expr,
         limit: Expr,
     },
     RecoveryRemovalCheck {
         ref_event: Expr,
+        ref_edge: Option<EdgeKind>,
         data: Expr,
         recovery_limit: Expr,
         removal_limit: Expr,
     },
     PeriodCheck {
         ref_event: Expr,
+        ref_edge: Option<EdgeKind>,
         limit: Expr,
     },
     WidthCheck {
         ref_event: Expr,
+        ref_edge: Option<EdgeKind>,
         limit: Expr,
         threshold: Option<Expr>,
     },
     NochangeCheck {
         ref_event: Expr,
+        ref_edge: Option<EdgeKind>,
         data: Expr,
         start_limit: Expr,
         end_limit: Expr,
     },
     SkewCheck {
         ref_event: Expr,
+        ref_edge: Option<EdgeKind>,
         data: Expr,
         limit: Expr,
     },
     TimeskewCheck {
         ref_event: Expr,
+        ref_edge: Option<EdgeKind>,
         data: Expr,
         limit: Expr,
         threshold: Option<Expr>,

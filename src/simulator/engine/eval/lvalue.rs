@@ -6,6 +6,39 @@ use crate::Symbol;
 use std::collections::HashMap;
 
 impl SimulationEngine {
+    /// Catat perubahan sinyal: geser `signal_last_change` ke `signal_prev_change`,
+    /// set last_change = waktu kini, dan catat arah edge (PosEdge/NegEdge) dari
+    /// transisi LSB old→new (SIM-24: dipakai setup/hold edge-aware + dedupe
+    /// width/period agar tidak spam).
+    fn record_signal_change(&mut self, id: usize, old: &LogicVec, new: &LogicVec) {
+        // Skip same-value write: pulse timer width/period TIDAK boleh reset oleh
+        // write nilai yang sama (mis. `clk = 1` saat clk sudah 1) — kalau tidak,
+        // satu pulse nyata terpecah jadi segmen pendek → false positive width
+        // violation (SIM-24). Gunakan bit-wise comparison (bukan to_u64 yang
+        // menganggap X/Z = 0) supaya transisi partial X→0/X→1 tetap tercatat.
+        if old.bits == new.bits && old.width == new.width {
+            return;
+        }
+        if let Some(prev) = self.signal_last_change.get(&id) {
+            self.signal_prev_change.insert(id, *prev);
+        }
+        self.signal_last_change.insert(id, self.state.time);
+        let old_lsb = old.bits.first().copied();
+        let new_lsb = new.bits.first().copied();
+        let dir = match (old_lsb, new_lsb) {
+            (Some(LogicVal::Zero), Some(LogicVal::One)) => {
+                Some(crate::ast::types::EdgeKind::PosEdge)
+            }
+            (Some(LogicVal::One), Some(LogicVal::Zero)) => {
+                Some(crate::ast::types::EdgeKind::NegEdge)
+            }
+            _ => None,
+        };
+        if let Some(d) = dir {
+            self.signal_last_dir.insert(id, d);
+        }
+    }
+
     pub(crate) fn write_lvalue(&mut self, lvalue: &IrLValue, mut val: LogicVec) -> Result<(), SimError> {
         // Check for const violation
         if let Some(id) = self.signal_id_from_lvalue(lvalue) {
@@ -18,6 +51,14 @@ impl SimulationEngine {
                 }
             }
         }
+        // ── Forced override ($assign): tahan write sampai $deassign ──
+        // $deposit TIDAK masuk map ini — ia sekali tulis dan bisa ditimpa driver.
+        if let Some(id) = self.signal_id_from_lvalue(lvalue) {
+            if self.forced_signals.contains(&id) {
+                return Ok(());
+            }
+        }
+
         // ── Race detection: Write-Write check ──
         // Cegah false positive untuk multi-driver nets yang intentional
         if let Some(id) = self.signal_id_from_lvalue(lvalue) {
@@ -51,6 +92,38 @@ impl SimulationEngine {
 
         match lvalue {
             IrLValue::Signal(id, _) => {
+                // ── Glitch detection (SIM-23): pulse A→B→A dalam glitch_window ──
+                // Hanya untuk full-signal write (bukan RangeSelect/BitSelect partial),
+                // supaya update bit parsial tidak memicu false positive. Skip untuk
+                // multi-driver nets: nilai yang benar-benar ter-commit adalah hasil
+                // resolve_net_values(), bukan val mentah → glitch bisa false positive.
+                if self.glitch_window > 0 {
+                    let is_multi_driver = self.design.top.signals.get(*id)
+                        .map(|s| s.multi_driver)
+                        .unwrap_or(false);
+                    if !is_multi_driver {
+                        let old = self.state.read_signal(*id).clone();
+                        if old.to_u64() != val.to_u64() {
+                            if let Some(&(t_prev, ref val_before)) = self.glitch_prev.get(id) {
+                                let dt = self.state.time.saturating_sub(t_prev);
+                                if dt <= self.glitch_window && val.to_u64() == val_before.to_u64() {
+                                    let sig_name = self.design.top.signals.get(*id)
+                                        .map(|s| s.name.as_str())
+                                        .unwrap_or("<unknown>");
+                                    self.emit_warning(
+                                        crate::diagnostics::DiagCode::SignalGlitch,
+                                        format!(
+                                            "glitch detected on signal '{}' at time {}: value reverted within {} time units",
+                                            sig_name, self.state.time, dt
+                                        ),
+                                    );
+                                }
+                            }
+                            self.glitch_prev.insert(*id, (self.state.time, old));
+                        }
+                    }
+                }
+
                 sanitize_for_2state(&self.design.top.signals, *id, &mut val);
                 let is_str = self
                     .design
@@ -85,8 +158,9 @@ impl SimulationEngine {
                         return Ok(());
                     }
                 }
-                self.state.write_signal(*id, resized);
-                self.signal_last_change.insert(*id, self.state.time);
+                let old_val = self.state.read_signal(*id).clone();
+                self.state.write_signal(*id, resized.clone());
+                self.record_signal_change(*id, &old_val, &resized);
             }
             IrLValue::RangeSelect(sig_id, msb, lsb) => {
                 sanitize_for_2state(&self.design.top.signals, *sig_id, &mut val);
@@ -121,8 +195,9 @@ impl SimulationEngine {
                         }
                     }
                 }
-                self.state.write_signal(*sig_id, existing);
-                self.signal_last_change.insert(*sig_id, self.state.time);
+                let old_val = self.state.read_signal(*sig_id).clone();
+                self.state.write_signal(*sig_id, existing.clone());
+                self.record_signal_change(*sig_id, &old_val, &existing);
             }
             IrLValue::BitSelect(sig_id, idx) => {
                 sanitize_for_2state(&self.design.top.signals, *sig_id, &mut val);
@@ -132,8 +207,9 @@ impl SimulationEngine {
                         existing.bits[*idx] = *b;
                     }
                 }
-                self.state.write_signal(*sig_id, existing);
-                self.signal_last_change.insert(*sig_id, self.state.time);
+                let old_val = self.state.read_signal(*sig_id).clone();
+                self.state.write_signal(*sig_id, existing.clone());
+                self.record_signal_change(*sig_id, &old_val, &existing);
             }
             IrLValue::ArrayIndex {
                 sig_id,
@@ -222,9 +298,10 @@ impl SimulationEngine {
                     }
                 }
                 let is_init = self.state.read_signal(*sig_id).all_x() || self.state.read_signal(*sig_id).all_z();
-                self.state.write_signal(*sig_id, existing);
+                let old_val = self.state.read_signal(*sig_id).clone();
+                self.state.write_signal(*sig_id, existing.clone());
                 if !is_init {
-                    self.signal_last_change.insert(*sig_id, self.state.time);
+                    self.record_signal_change(*sig_id, &old_val, &existing);
                 }
             }
             IrLValue::ArrayBitSelect {
@@ -242,8 +319,9 @@ impl SimulationEngine {
                         existing.bits[abs_idx] = *b;
                     }
                 }
-                self.state.write_signal(*sig_id, existing);
-                self.signal_last_change.insert(*sig_id, self.state.time);
+                let old_val = self.state.read_signal(*sig_id).clone();
+                self.state.write_signal(*sig_id, existing.clone());
+                self.record_signal_change(*sig_id, &old_val, &existing);
             }
             IrLValue::Concat(parts) => {
                 let mut offset = 0;

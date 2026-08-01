@@ -372,21 +372,25 @@ impl SimulationEngine {
             IrExpr::SysFunc { name, args } => {
                 match name.as_str() {
                     "$random" => {
+                        self.rand_call_count += 1;
                         // If seed argument provided, reseed RNG for reproducibility
                         if let Some(seed_arg) = args.first() {
                             if let Ok(seed_val) = self.evaluate_expr(seed_arg) {
                                 let seed = seed_val.to_u64();
                                 self.rng = rand::rngs::StdRng::seed_from_u64(seed);
+                                self.rand_seed = seed;
                             }
                         }
                         let val: i32 = self.rng.gen();
                         Ok(LogicVec::from_u64(val as u64, 32))
                     }
                     "$urandom" => {
+                        self.rand_call_count += 1;
                         let val: u32 = self.rng.gen();
                         Ok(LogicVec::from_u64(val as u64, 32))
                     }
                     "$urandom_range" => {
+                        self.rand_call_count += 1;
                         let args_eval: Vec<LogicVec> = args
                             .iter()
                             .map(|a| self.evaluate_expr(a))
@@ -411,16 +415,25 @@ impl SimulationEngine {
                             .unwrap_or(LogicVec::from_u64(0, 32))
                             .to_u64();
                         self.rng = rand::rngs::StdRng::seed_from_u64(seed);
+                        self.rand_seed = seed;
                         let val: u32 = self.rng.gen();
                         Ok(LogicVec::from_u64(val as u64, 32))
                     }
                     "$srandom" => {
                         if let Some(seed_arg) = args.first() {
                             if let Ok(seed_val) = self.evaluate_expr(seed_arg) {
-                                self.rng = rand::rngs::StdRng::seed_from_u64(seed_val.to_u64());
+                                let seed = seed_val.to_u64();
+                                self.rng = rand::rngs::StdRng::seed_from_u64(seed);
+                                self.rand_seed = seed;
                             }
                         }
                         Ok(LogicVec::new(0))
+                    }
+                    "$get_randcount" => {
+                        Ok(LogicVec::from_u64(self.rand_call_count, 32))
+                    }
+                    "$get_randstate" => {
+                        Ok(LogicVec::from_u64(self.rand_seed, 64))
                     }
                     "$signed" => {
                         if let Some(arg) = args.first() {

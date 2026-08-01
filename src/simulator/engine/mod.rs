@@ -54,6 +54,12 @@ pub struct SimulationEngine {
     pub method_locals: Vec<HashMap<Symbol, LogicVec>>,
     pub current_method: Option<Symbol>,
     pub rng: StdRng,
+    /// Jumlah panggilan fungsi random (untuk $get_randcount).
+    pub rand_call_count: u64,
+    /// Seed RNG terakhir (untuk $get_randstate).
+    pub rand_seed: u64,
+    /// Scope aktif untuk $scope / $showscopes.
+    pub current_scope_name: Option<String>,
     pub file_handles: HashMap<u32, File>,
     pub file_ungetc_buf: HashMap<u32, Vec<u8>>,
     pub file_read_pos: HashMap<u32, u64>,
@@ -65,6 +71,11 @@ pub struct SimulationEngine {
     pub expr_recursion_depth: usize,
     pub forced_signals: HashSet<SignalId>,
     pub signal_snapshot: Option<Vec<LogicVec>>,
+    /// Snapshot coverage di awal time step (SEBELUM loop delta). Tidak di-refresh
+    /// per delta — dipakai record_coverage_after_commit untuk diff toggle/FSM
+    /// (fix SIM-30: signal_snapshot di-refresh tiap delta untuk edge detection,
+    /// membuat diff coverage selalu kosong).
+    pub coverage_snapshot: Option<Vec<LogicVec>>,
     pub pending_waits: Vec<(Vec<SignalId>, Vec<IrStmt>)>,
     pub pending_await_target: Option<ObjId>,
     pub pending_wait_orders: Vec<WaitOrderState>,
@@ -112,6 +123,13 @@ pub struct SimulationEngine {
     pub watchpoints: Vec<Watchpoint>,
     pub signal_history: crate::simulator::signal_history::SignalHistoryStore,
     pub signal_last_change: HashMap<usize, u64>,
+    /// Arah transisi terakhir tiap signal (untuk timing check edge-aware, SIM-24).
+    pub signal_last_dir: HashMap<usize, crate::ast::types::EdgeKind>,
+    /// Waktu perubahan SEBELUM signal_last_change (untuk dedupe width/period, SIM-24).
+    pub signal_prev_change: HashMap<usize, u64>,
+    /// Dedupe pelaporan timing violation per (check_name, signal_id) → last_change
+    /// yang sudah dilaporkan, supaya width/period/recovery tidak spam (SIM-24).
+    pub timing_reported: HashMap<(String, usize), u64>,
     pub udp_prev_args: HashMap<Symbol, Vec<LogicVec>>,
     pub parallel_config: ParallelConfig,
     pub sysfunc_prev: HashMap<Symbol, LogicVec>,
@@ -128,6 +146,10 @@ pub struct SimulationEngine {
     pub coverage_enabled: bool,
     /// Selectively enable specific coverage types (empty = all enabled)
     pub coverage_enabled_types: HashSet<CoverageType>,
+    /// Glitch detection: max pulse width (in time units) for A->B->A detection. 0 = disabled.
+    pub glitch_window: u64,
+    /// Glitch detection: per-signal (time of last change, value before last change)
+    pub glitch_prev: std::collections::HashMap<SignalId, (u64, crate::ir::LogicVec)>,
     pub cover_line: HashMap<Symbol, u64>,
     pub cover_toggle: HashMap<usize, HashSet<(LogicVal, LogicVal)>>,
     pub cover_branches: HashMap<Symbol, HashMap<Symbol, u64>>,
@@ -197,6 +219,10 @@ pub struct SimulationEngine {
 
     /// Whether to use the timing wheel for event scheduling.
     pub use_timing_wheel: bool,
+
+    /// Performance monitoring dashboard (SIM-25): metrik simulasi runtime
+    /// (delta cycles, events processed, throughput). Dipakai CLI --perf-dashboard.
+    pub sim_perf: crate::profiling::PerfDashboard,
 }
 
 // ============================================================================

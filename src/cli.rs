@@ -163,6 +163,10 @@ pub struct Cli {
     #[arg(long = "profile")]
     pub profile: bool,
 
+    /// Print simulation performance dashboard (delta cycles, events, throughput)
+    #[arg(long = "perf-dashboard")]
+    pub perf_dashboard: bool,
+
     /// Force full recompile (ignore cache)
     #[arg(long = "recompile")]
     pub recompile: bool,
@@ -312,4 +316,10 @@ pub struct Cli {
     /// that eliminates O(E) event filtering per delta cycle.
     #[arg(long = "use-timing-wheel")]
     pub use_timing_wheel: bool,
+
+    /// Glitch detection window (in time units). 0 = disabled (default).
+    /// Detects A→B→A pulses where a signal reverts to its previous value
+    /// within this window and reports a WR0302 warning.
+    #[arg(long = "glitch-window", default_value = "0")]
+    pub glitch_window: u64,
 }

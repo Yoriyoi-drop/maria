@@ -481,7 +481,18 @@ impl Parser {
             Token::Repeat => self.parse_repeat_stmt(),
             Token::Fork => self.parse_fork_join(),
             Token::Dollar => self.parse_syscall(),
-            Token::Return => { self.advance(); let expr = self.parse_expr(0)?; self.skip_semi(); Ok(Stmt::Return(Some(Box::new(expr)))) }
+            Token::Return => {
+                self.advance();
+                if self.peek() == &Token::Semi {
+                    // `return;` tanpa nilai (task / void function)
+                    self.skip_semi();
+                    Ok(Stmt::Return(None))
+                } else {
+                    let expr = self.parse_expr(0)?;
+                    self.skip_semi();
+                    Ok(Stmt::Return(Some(Box::new(expr))))
+                }
+            }
             Token::Break => { self.advance(); self.skip_semi(); Ok(Stmt::Break) }
             Token::Continue => { self.advance(); self.skip_semi(); Ok(Stmt::Continue) }
             Token::Disable => {
@@ -978,6 +989,9 @@ impl Parser {
         let name_tok = self.peek().clone();
         let name = match &name_tok {
             Token::Ident(s) => { self.advance(); *s }
+            // Keyword tokens yang valid sebagai system call name ($assign, $deassign)
+            Token::Assign => { self.advance(); Symbol::intern("assign") }
+            Token::Deassign => { self.advance(); Symbol::intern("deassign") }
             _ => return Err(self.err("expected system call name after $")),
         };
         match name.as_str() {
@@ -986,7 +1000,28 @@ impl Parser {
                 self.skip_semi();
                 Ok(Stmt::SysFinish)
             }
-            "time" => { if self.peek() == &Token::LParen { self.advance(); self.expect(Token::RParen)?; } Ok(Stmt::SysCall { name, args: vec![] }) }
+            "time" | "printtimescale" | "showscopes" | "get_randcount" | "get_randstate" => {
+                // $time / $printtimescale / $showscopes / $get_randcount / $get_randstate
+                // dipanggil tanpa kurung (atau dengan kurung kosong).
+                if self.peek() == &Token::LParen {
+                    self.advance();
+                    let mut args = Vec::new();
+                    if self.peek() != &Token::RParen {
+                        loop {
+                            args.push(self.parse_expr(0)?);
+                            if self.peek() == &Token::Comma {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    self.expect(Token::RParen)?;
+                    Ok(Stmt::SysCall { name, args })
+                } else {
+                    Ok(Stmt::SysCall { name, args: vec![] })
+                }
+            }
             _ => {
                 self.expect(Token::LParen)?;
                 let mut args = Vec::new();

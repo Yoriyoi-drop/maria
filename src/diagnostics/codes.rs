@@ -145,6 +145,8 @@ pub const WARNING_CODES: &[(DiagCode, &str)] = &[
     (DiagCode::ClockNeverToggles, "clock never toggles"),
     (DiagCode::ResetPermanentlyAsserted, "reset permanently asserted"),
     (DiagCode::CombinationalLoop, "possible combinational loop"),
+    (DiagCode::SignalGlitch, "signal glitch detected"),
+    (DiagCode::TimingViolation, "timing check violation"),
     (DiagCode::SlowSimulation, "slow simulation region"),
 ];
 
@@ -199,8 +201,8 @@ mod tests {
         let codes = all_codes();
         // Parse: 5, Semantic: 4, Elab: 4, Memory: 5, Signal: 5, Scheduler: 5,
         // Event: 3, Module: 2, Interface: 2, Clock: 2, Assertion: 4, DPI: 3,
-        // Internal: 3, Other: 1, Legacy: 3, Warnings: 7 = 58 total
-        assert_eq!(codes.len(), 61);
+        // Internal: 3, Other: 1, Legacy: 3, Warnings: 9 = 60 total
+        assert_eq!(codes.len(), 63);
     }
 
     #[test]
@@ -225,6 +227,6 @@ mod tests {
         assert_eq!(signal_codes.len(), 5);
 
         let warning_codes = codes_by_category("Warning");
-        assert_eq!(warning_codes.len(), 7);
+        assert_eq!(warning_codes.len(), 9);
     }
 }

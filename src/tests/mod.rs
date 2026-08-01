@@ -5447,6 +5447,191 @@ endmodule
 }
 
 #[test]
+fn test_timeformat_percent_t() {
+    // LANG-48: $timeformat + format %t (IEEE 1800)
+    let source = r#"
+module tb;
+    string s;
+    initial begin
+        $timeformat(-9, 2, " ns", 0);
+        #5;
+        s = $sformatf("%t", $time);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 10).unwrap();
+    let s = sigs
+        .iter()
+        .find(|(n, _)| n == "s")
+        .map(|(_, v)| logicvec_to_string(v))
+        .unwrap_or_default();
+    assert!(
+        s.contains("5.00 ns"),
+        "$timeformat(-9,2) + %%t should print '5.00 ns' at time 5, got '{}'",
+        s
+    );
+}
+
+#[test]
+fn test_printtimescale_runs() {
+    // LANG-49: $printtimescale tanpa kurung harus berjalan tanpa error
+    let source = r#"
+`timescale 1ns / 1ps
+module tb;
+    initial begin
+        $printtimescale;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let result = simulate_signals(source, 5);
+    assert!(result.is_ok(), "$printtimescale should run without error");
+}
+
+#[test]
+fn test_showscopes_runs() {
+    // LANG-53: $showscopes harus berjalan tanpa error
+    let source = r#"
+module tb;
+    initial begin
+        $showscopes;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let result = simulate_signals(source, 5);
+    assert!(result.is_ok(), "$showscopes should run without error");
+}
+
+#[test]
+fn test_deposit_forces_value() {
+    // LANG-52: $deposit(sig, value) memaksa nilai signal
+    let source = r#"
+module tb;
+    reg [7:0] x;
+    initial begin
+        x = 8'h00;
+        #1;
+        $deposit(x, 8'hA5);
+        #1;
+        $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let v = sigs
+        .iter()
+        .find(|(n, _)| n == "x")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    assert_eq!(v, 0xA5, "$deposit should force x to 0xA5, got {:#x}", v);
+}
+
+#[test]
+fn test_assign_forces_value() {
+    // LANG-52: $assign(sig, value) memaksa nilai signal
+    let source = r#"
+module tb;
+    reg [7:0] x;
+    initial begin
+        $assign(x, 8'h3C);
+        #1;
+        $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let v = sigs
+        .iter()
+        .find(|(n, _)| n == "x")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    assert_eq!(v, 0x3C, "$assign should force x to 0x3C, got {:#x}", v);
+}
+
+#[test]
+fn test_assign_suppresses_write_until_deassign() {
+    // LANG-52: $assign override menahan write berikutnya sampai $deassign.
+    // Flag `suppressed_ok` menangkap kondisi di tengah — tanpa itu, assert final
+    // x==0x55 tetap lulus walau suppression rusak (0x00 ditimpa, lalu 0x55).
+    let source = r#"
+module tb;
+    reg [7:0] x;
+    reg suppressed_ok;
+    initial begin
+        $assign(x, 8'hA1);
+        x = 8'h00;        // harus ditekan (masih forced oleh $assign)
+        #1;
+        suppressed_ok = (x === 8'hA1) ? 1'b1 : 1'b0;
+        $deassign(x);
+        x = 8'h55;        // setelah $deassign, write berlaku lagi
+        #1;
+        if (x !== 8'h55) $display("FAILED write after deassign: %h", x);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 6).unwrap();
+    let v = sigs
+        .iter()
+        .find(|(n, _)| n == "x")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    assert_eq!(v, 0x55, "after $deassign, x should be 0x55, got {:#x}", v);
+    let ok = sigs
+        .iter()
+        .find(|(n, _)| n == "suppressed_ok")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    assert_eq!(ok, 1, "$assign should suppress the x=0 write (x stays 0xA1)");
+}
+
+#[test]
+fn test_get_randcount() {
+    // LANG-22: $get_randcount mengembalikan jumlah panggilan random
+    let source = r#"
+module tb;
+    integer a, b, c;
+    initial begin
+        a = $urandom();
+        b = $urandom();
+        c = $get_randcount();
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let v = sigs
+        .iter()
+        .find(|(n, _)| n == "c")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    assert_eq!(v, 2, "$get_randcount after 2 x $urandom should be 2, got {}", v);
+}
+
+#[test]
+fn test_get_randstate_seed() {
+    // LANG-22: $get_randstate mengembalikan seed RNG
+    let source = r#"
+module tb;
+    integer c;
+    initial begin
+        c = $get_randstate();
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let v = sigs
+        .iter()
+        .find(|(n, _)| n == "c")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    assert_eq!(v, 42, "default $get_randstate should be 42, got {}", v);
+}
+
+#[test]
 fn test_random_seed_reproducible() {
     // Same seed should produce same random value (reproducibility)
     let source = r#"
@@ -10565,4 +10750,428 @@ endmodule
     let result = engine.run();
     assert!(result.is_ok(), "JIT NBA sim should succeed: {:?}", result.err());
     eprintln!("JIT NBA integration test passed, q = {}", engine.state.read_signal(q_sig_idx).to_u64());
+}
+
+// ─── SIM-30: $coverage_control semua mode (per-type gating) ───────────────
+
+#[test]
+fn test_coverage_control_bitmask_off() {
+    // $coverage_control(0) — semua coverage nonaktif
+    let source = r#"
+module tb;
+    reg a;
+    covergroup cg;
+        cp_a: coverpoint a;
+    endgroup
+    cg cg_inst = new();
+    initial begin
+        $coverage_control(32'h0);
+        a = 1;
+        #1 cg_inst.sample();
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 4);
+    engine.run().unwrap();
+    assert!(!engine.coverage_enabled, "coverage should be disabled with bitmask 0");
+    assert!(engine.coverage_enabled_types.is_empty());
+    assert_eq!(
+        engine.coverage_options.get("control").map(|s| s.as_str()),
+        Some("0"),
+        "coverage_options.control harus menyimpan bitmask"
+    );
+}
+
+#[test]
+fn test_coverage_control_bitmask_all_on() {
+    // $coverage_control(~0) — semua tipe aktif (set kosong = semua enabled)
+    let source = r#"
+module tb;
+    reg a;
+    initial begin
+        $coverage_control(32'hFFFF_FFFF);
+        a = 1;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 2);
+    engine.run().unwrap();
+    assert!(engine.coverage_enabled, "coverage should be enabled with ~0");
+    assert!(engine.coverage_enabled_types.is_empty(), "empty set = semua tipe enabled");
+}
+
+#[test]
+fn test_coverage_control_bitmask_toggle_only() {
+    // $coverage_control(0x2) — hanya toggle coverage aktif
+    let source = r#"
+module tb;
+    reg a;
+    initial begin
+        $coverage_control(32'h0000_0002);
+        a = 0;
+        #1 a = 1;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 3);
+    engine.run().unwrap();
+    use crate::simulator::types::CoverageType;
+    assert!(engine.coverage_enabled, "coverage enabled with toggle bit");
+    assert!(
+        engine.coverage_enabled_types.contains(&CoverageType::Toggle),
+        "Toggle harus ter-enable: {:?}",
+        engine.coverage_enabled_types
+    );
+    assert!(
+        !engine.coverage_enabled_types.contains(&CoverageType::Line),
+        "Line tidak boleh ter-enable: {:?}",
+        engine.coverage_enabled_types
+    );
+    // Hanya toggle yang tercatat
+    assert!(engine.cover_toggle.len() >= 1, "toggle harus tercatat");
+    // Line coverage NONAKTIF setelah $coverage_control. Satu-satunya line-hit yang
+    // boleh ada adalah statement $coverage_control itu sendiri (di-record SEBELUM
+    // gate diaktifkan — statement dieksekusi saat line coverage masih aktif).
+    // Statement setelahnya (a=0, a=1, $finish) tidak boleh tercatat.
+    let total_line_hits: u64 = engine.cover_line.values().sum();
+    assert!(
+        total_line_hits <= 1,
+        "line coverage harus nonaktif setelah control (max 1 hit utk statement $coverage_control), got {}",
+        total_line_hits
+    );
+}
+
+#[test]
+fn test_coverage_control_branch_only() {
+    // $coverage_control(0x4) — hanya branch coverage aktif; line/toggle harus kosong
+    let source = r#"
+module tb;
+    reg [3:0] a;
+    always_comb begin
+        if (a > 8)
+            a = 8;
+        else
+            a = 0;
+    end
+    initial begin
+        $coverage_control(32'h0000_0004);
+        a = 15;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 2);
+    engine.run().unwrap();
+    use crate::simulator::types::CoverageType;
+    assert!(engine.coverage_enabled_types.contains(&CoverageType::Branch));
+    assert!(!engine.coverage_enabled_types.contains(&CoverageType::Line));
+    assert!(engine.cover_toggle.is_empty(), "toggle coverage harus kosong");
+}
+
+// ─── SIM-23: Glitch detection (A→B→A dalam window) ────────────────────────
+
+#[test]
+fn test_glitch_detection_triggers_warning() {
+    // Signal 0→1→0 dengan window 2 — harus menghasilkan WR0302 SignalGlitch
+    let source = r#"
+module tb;
+    reg x;
+    initial begin
+        x = 0;
+        #1 x = 1;
+        #1 x = 0;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 4);
+    engine.set_glitch_window(2);
+    engine.run().unwrap();
+    let diags = engine.flush_diagnostics();
+    assert!(
+        diags.iter().any(|d| d.code == crate::diagnostics::DiagCode::SignalGlitch),
+        "harus ada warning glitch: {:#?}",
+        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_glitch_detection_disabled_by_default() {
+    // Tanpa set_glitch_window, tidak ada warning glitch
+    let source = r#"
+module tb;
+    reg x;
+    initial begin
+        x = 0;
+        #1 x = 1;
+        #1 x = 0;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 4);
+    engine.run().unwrap();
+    let diags = engine.flush_diagnostics();
+    assert!(
+        !diags.iter().any(|d| d.code == crate::diagnostics::DiagCode::SignalGlitch),
+        "glitch detection default harus nonaktif (window 0)"
+    );
+}
+
+#[test]
+fn test_glitch_detection_no_false_positive_slow_transition() {
+    // Transisi lambat 0→1→0 dengan jarak > window — tidak boleh glitch
+    let source = r#"
+module tb;
+    reg x;
+    initial begin
+        x = 0;
+        #10 x = 1;
+        #10 x = 0;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 25);
+    engine.set_glitch_window(2);
+    engine.run().unwrap();
+    let diags = engine.flush_diagnostics();
+    assert!(
+        !diags.iter().any(|d| d.code == crate::diagnostics::DiagCode::SignalGlitch),
+        "transisi dengan jarak > window bukan glitch: {:#?}",
+        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_glitch_detection_end_to_end() {
+    // End-to-end via CLI-style config: set_glitch_window dijalankan sebelum run
+    let source = r#"
+module tb;
+    reg [7:0] y;
+    initial begin
+        y = 8'h00;
+        #1 y = 8'hFF;
+        #1 y = 8'h00;
+        #1 y = 8'hFF;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 5);
+    engine.set_glitch_window(1);
+    engine.run().unwrap();
+    let diags = engine.flush_diagnostics();
+    let glitch_count = diags
+        .iter()
+        .filter(|d| d.code == crate::diagnostics::DiagCode::SignalGlitch)
+        .count();
+    assert!(glitch_count >= 1, "0→FF→0→FF harus memicu glitch");
+    // Nilai akhir tetap benar
+    let y_idx = engine.design.top.signals.iter().position(|s| s.name.as_str() == "y").unwrap();
+    assert_eq!(engine.state.read_signal(y_idx).to_u64(), 0xFF);
+}
+
+// ─── SIM-24: Timing check violation reporting (WR0303) ────────────────────
+
+#[test]
+fn test_timing_setup_violation_warning() {
+    // $setup(data, posedge clk, 5): data berubah 1ns sebelum check — harus
+    // menghasilkan warning TimingViolation (WR0303) via DiagSink.
+    let source = r#"
+module tb;
+    reg data, clk;
+    specify
+        $setup(data, posedge clk, 5);
+    endspecify
+    initial begin
+        data = 0;
+        clk = 0;
+        #1 data = 1;   // data berubah di time 1
+        #1 clk = 1;    // posedge clk di time 2 — data berubah 1ns sebelum edge (<= 5)
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 5);
+    engine.run().unwrap();
+    let diags = engine.flush_diagnostics();
+    assert!(
+        diags.iter().any(|d| d.code == crate::diagnostics::DiagCode::TimingViolation),
+        "harus ada warning timing violation: {:#?}",
+        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+    );
+    assert!(
+        diags.iter().any(|d| d.code.as_str() == "WR0303"),
+        "harus ada kode WR0303"
+    );
+}
+
+#[test]
+fn test_timing_hold_violation_warning() {
+    // $hold(posedge clk, data, 5): data berubah setelah ref dalam window —
+    // harus menghasilkan warning TimingViolation.
+    let source = r#"
+module tb;
+    reg data, clk;
+    specify
+        $hold(posedge clk, data, 5);
+    endspecify
+    initial begin
+        data = 0;
+        clk = 0;
+        #1 clk = 1;    // ref edge
+        #1 data = 1;   // data berubah dalam hold window
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 5);
+    engine.run().unwrap();
+    let diags = engine.flush_diagnostics();
+    assert!(
+        diags.iter().any(|d| d.code == crate::diagnostics::DiagCode::TimingViolation),
+        "harus ada warning timing violation (hold): {:#?}",
+        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_timing_no_false_positive_when_satisfied() {
+    // Data stabil jauh sebelum ref (10ns > limit 5ns) — TIDAK boleh ada
+    // warning TimingViolation.
+    let source = r#"
+module tb;
+    reg data, clk;
+    specify
+        $setup(data, posedge clk, 5);
+    endspecify
+    initial begin
+        data = 0;
+        clk = 0;
+        #10 data = 1;   // data berubah di time 10
+        #10 clk = 1;    // posedge clk di time 20 — data berubah 10ns sebelum edge (> 5)
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 25);
+    engine.run().unwrap();
+    let diags = engine.flush_diagnostics();
+    assert!(
+        !diags.iter().any(|d| d.code == crate::diagnostics::DiagCode::TimingViolation),
+        "tidak boleh ada warning timing violation: {:#?}",
+        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_timing_width_violation_warning() {
+    // $width(posedge clk, 5): pulse clk terlalu sempit (2ns < 5ns) — harus
+    // menghasilkan warning TimingViolation.
+    let source = r#"
+module tb;
+    reg data, clk;
+    specify
+        $width(posedge clk, 5);
+    endspecify
+    initial begin
+        data = 0;
+        clk = 0;
+        #2 clk = 1;    // pulse sempit 2ns
+        #2 clk = 0;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 8);
+    engine.run().unwrap();
+    let diags = engine.flush_diagnostics();
+    assert!(
+        diags.iter().any(|d| d.code == crate::diagnostics::DiagCode::TimingViolation),
+        "harus ada warning timing violation (width): {:#?}",
+        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+    );
+}
+
+// ─── SIM-25: Simulation performance monitoring dashboard ──────────────────
+
+#[test]
+fn test_perf_dashboard_counts_activity() {
+    // Engine harus mencatat time steps, delta cycles, dan events processed
+    // selama simulasi (dipakai CLI --perf-dashboard).
+    let source = r#"
+module tb;
+    reg clk;
+    integer count = 0;
+    always #1 clk = ~clk;
+    initial begin
+        clk = 0;
+        count = 0;
+    end
+    always @(posedge clk) begin
+        count = count + 1;
+    end
+    initial #10 $finish;
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 10);
+    engine.run().unwrap();
+    assert!(engine.sim_perf.counters.time_steps >= 1, "harus ada time steps");
+    assert!(
+        engine.sim_perf.counters.delta_cycles >= 1,
+        "harus ada delta cycles"
+    );
+    assert!(
+        engine.sim_perf.counters.events_processed >= 1,
+        "harus ada events processed"
+    );
+    assert!(
+        engine.sim_perf.counters.sensitive_triggers >= 1,
+        "posedge clk harus memicu sensitive processes"
+    );
+    assert!(
+        engine.sim_perf.counters.processes_evaluated >= 1,
+        "harus ada proses yang dievaluasi (jalur sequential/DAG)"
+    );
+}
+
+#[test]
+fn test_perf_dashboard_display_and_throughput() {
+    let source = r#"
+module tb;
+    reg clk;
+    always #1 clk = ~clk;
+    initial begin
+        clk = 0;
+    end
+    initial #5 $finish;
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 5);
+    engine.run().unwrap();
+    let s = format!("{}", engine.sim_perf);
+    assert!(s.contains("Simulation Performance Dashboard"));
+    assert!(s.contains("Delta cycles"));
+    assert!(s.contains("Throughput"));
+    // events_per_delta tidak boleh NaN/panik meski delta==0
+    assert!(engine.sim_perf.events_per_delta().is_finite());
+    assert!(engine.sim_perf.events_per_sec().is_finite());
 }

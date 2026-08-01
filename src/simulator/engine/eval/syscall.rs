@@ -21,60 +21,133 @@ impl SimulationEngine {
             match item {
                 SpecifyItem::SetupCheck {
                     data,
-                    ref_event: _ref_event,
+                    ref_event,
+                    ref_edge,
                     limit,
                 } => {
-                    // _ref_event is parsed but runtime edge detection is simplified
+                    // SIM-24: setup violation dicek saat ref edge terjadi (ref_chg ==
+                    // current_time), arah edge harus cocok dengan ref_edge (posedge/
+                    // negedge), lalu bandingkan kapan data terakhir berubah. Fix false
+                    // positive: sebelumnya fire di KEDUA edge ref (negedge juga memicu
+                    // posedge-check).
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
-                    if let Expr::Ident { name: data_sig, .. } = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
-                            if let Some(&last_change) = self.signal_last_change.get(sid) {
-                                let delta = current_time - last_change;
-                                if delta <= limit_val && delta > 0 {
-                                    eprintln!("TIMING WARNING: $setup violation: data '{}' changed {}ns before ref (limit={}ns)",
-                                        data_sig, delta, limit_val);
+                    if let (Expr::Ident { name: data_sig, .. }, Expr::Ident { name: ref_sig, .. }) =
+                        (data, ref_event)
+                    {
+                        if let (Some((_, dsid)), Some((_, rsid))) = (
+                            signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()),
+                            signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str()),
+                        ) {
+                            if let (Some(&data_chg), Some(&ref_chg)) = (
+                                self.signal_last_change.get(dsid),
+                                self.signal_last_change.get(rsid),
+                            ) {
+                                // Arah edge ref harus cocok dengan spesifikasi (kalau ada)
+                                let dir_ok = match ref_edge {
+                                    Some(e) => self.signal_last_dir.get(rsid) == Some(e),
+                                    None => true,
+                                };
+                                if dir_ok
+                                    && ref_chg == current_time
+                                    && data_chg < ref_chg
+                                    && ref_chg - data_chg <= limit_val
+                                {
+                                    self.emit_warning(
+                                        crate::diagnostics::DiagCode::TimingViolation,
+                                        format!("$setup violation: data '{}' changed {}ns before ref (limit={}ns)",
+                                            data_sig, ref_chg - data_chg, limit_val),
+                                    );
                                 }
                             }
                         }
                     }
                 }
                 SpecifyItem::HoldCheck {
-                    ref_event: _ref_event,
+                    ref_event,
+                    ref_edge,
                     data,
                     limit,
                 } => {
+                    // SIM-24: hold violation dicek saat data BERUBAH pada step ini,
+                    // dan ref edge (arah sesuai ref_edge) terjadi dalam `limit` sebelumnya.
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
-                    if let Expr::Ident { name: data_sig, .. } = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
-                            if let Some(&last_change) = self.signal_last_change.get(sid) {
-                                let delta = current_time - last_change;
-                                if delta > 0 && delta <= limit_val {
-                                    eprintln!("TIMING WARNING: $hold violation: data '{}' changed {}ns before ref (limit={}ns)",
-                                        data_sig, delta, limit_val);
+                    if let (Expr::Ident { name: ref_sig, .. }, Expr::Ident { name: data_sig, .. }) =
+                        (ref_event, data)
+                    {
+                        if let (Some((_, rsid)), Some((_, dsid))) = (
+                            signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str()),
+                            signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()),
+                        ) {
+                            if let (Some(&ref_chg), Some(&data_chg)) = (
+                                self.signal_last_change.get(rsid),
+                                self.signal_last_change.get(dsid),
+                            ) {
+                                let dir_ok = match ref_edge {
+                                    Some(e) => self.signal_last_dir.get(rsid) == Some(e),
+                                    None => true,
+                                };
+                                if dir_ok
+                                    && data_chg == current_time
+                                    && ref_chg < data_chg
+                                    && data_chg - ref_chg <= limit_val
+                                {
+                                    self.emit_warning(
+                                        crate::diagnostics::DiagCode::TimingViolation,
+                                        format!("$hold violation: data '{}' changed {}ns after ref (limit={}ns)",
+                                            data_sig, data_chg - ref_chg, limit_val),
+                                    );
                                 }
                             }
                         }
                     }
                 }
                 SpecifyItem::SetupHoldCheck {
-                    ref_event: _ref_event,
+                    ref_event,
+                    ref_edge,
                     data,
                     setup_limit,
                     hold_limit,
                 } => {
                     let setup_val = const_eval_simple(setup_limit).unwrap_or(0) as u64;
                     let hold_val = const_eval_simple(hold_limit).unwrap_or(0) as u64;
-                    if let Expr::Ident { name: data_sig, .. } = data {
-                        if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()) {
-                            if let Some(&last_change) = self.signal_last_change.get(sid) {
-                                let delta = current_time - last_change;
-                                if delta > 0 && delta <= setup_val {
-                                    eprintln!("TIMING WARNING: $setuphold (setup) violation: data '{}' changed {}ns before ref (setup={}ns)",
-                                        data_sig, delta, setup_val);
+                    if let (Expr::Ident { name: ref_sig, .. }, Expr::Ident { name: data_sig, .. }) =
+                        (ref_event, data)
+                    {
+                        if let (Some((_, rsid)), Some((_, dsid))) = (
+                            signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str()),
+                            signal_names.iter().find(|(n, _)| n.as_str() == data_sig.as_str()),
+                        ) {
+                            if let (Some(&ref_chg), Some(&data_chg)) = (
+                                self.signal_last_change.get(rsid),
+                                self.signal_last_change.get(dsid),
+                            ) {
+                                let dir_ok = match ref_edge {
+                                    Some(e) => self.signal_last_dir.get(rsid) == Some(e),
+                                    None => true,
+                                };
+                                // Setup: ref edge step ini, data berubah dalam setup window sebelum edge
+                                if dir_ok
+                                    && ref_chg == current_time
+                                    && data_chg < ref_chg
+                                    && ref_chg - data_chg <= setup_val
+                                {
+                                    self.emit_warning(
+                                        crate::diagnostics::DiagCode::TimingViolation,
+                                        format!("$setuphold (setup) violation: data '{}' changed {}ns before ref (setup={}ns)",
+                                            data_sig, ref_chg - data_chg, setup_val),
+                                    );
                                 }
-                                if delta > 0 && delta <= hold_val {
-                                    eprintln!("TIMING WARNING: $setuphold (hold) violation: data '{}' changed {}ns before ref (hold={}ns)",
-                                        data_sig, delta, hold_val);
+                                // Hold: data berubah step ini, ref edge dalam hold window sebelumnya
+                                if dir_ok
+                                    && data_chg == current_time
+                                    && ref_chg < data_chg
+                                    && data_chg - ref_chg <= hold_val
+                                {
+                                    self.emit_warning(
+                                        crate::diagnostics::DiagCode::TimingViolation,
+                                        format!("$setuphold (hold) violation: data '{}' changed {}ns after ref (hold={}ns)",
+                                            data_sig, data_chg - ref_chg, hold_val),
+                                    );
                                 }
                             }
                         }
@@ -83,6 +156,7 @@ impl SimulationEngine {
                 SpecifyItem::RecoveryCheck {
                     data,
                     ref_event: _ref_event,
+                    ref_edge: _,
                     limit,
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
@@ -91,7 +165,14 @@ impl SimulationEngine {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta <= limit_val {
-                                    eprintln!("TIMING WARNING: $recovery violation: signal '{}' changed {}ns before ref (limit={}ns)", data_sig, delta, limit_val);
+                                    let key = ("$recovery".to_string(), *sid);
+                                    if self.timing_reported.get(&key) != Some(&last_change) {
+                                        self.timing_reported.insert(key, last_change);
+                                        self.emit_warning(
+                                            crate::diagnostics::DiagCode::TimingViolation,
+                                            format!("$recovery violation: signal '{}' changed {}ns before ref (limit={}ns)", data_sig, delta, limit_val),
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -99,6 +180,7 @@ impl SimulationEngine {
                 }
                 SpecifyItem::RemovalCheck {
                     ref_event: _ref_event,
+                    ref_edge: _,
                     data,
                     limit,
                 } => {
@@ -108,7 +190,14 @@ impl SimulationEngine {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta <= limit_val {
-                                    eprintln!("TIMING WARNING: $removal violation: signal '{}' changed {}ns before ref (limit={}ns)", data_sig, delta, limit_val);
+                                    let key = ("$removal".to_string(), *sid);
+                                    if self.timing_reported.get(&key) != Some(&last_change) {
+                                        self.timing_reported.insert(key, last_change);
+                                        self.emit_warning(
+                                            crate::diagnostics::DiagCode::TimingViolation,
+                                            format!("$removal violation: signal '{}' changed {}ns before ref (limit={}ns)", data_sig, delta, limit_val),
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -116,6 +205,7 @@ impl SimulationEngine {
                 }
                 SpecifyItem::RecoveryRemovalCheck {
                     ref_event: _ref_event,
+                    ref_edge: _,
                     data,
                     recovery_limit,
                     removal_limit,
@@ -127,23 +217,57 @@ impl SimulationEngine {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta <= recov_val {
-                                    eprintln!("TIMING WARNING: $recrem (recovery) violation: signal '{}' changed {}ns before ref (recov={}ns)", data_sig, delta, recov_val);
+                                    let key = ("$recrem-recov".to_string(), *sid);
+                                    if self.timing_reported.get(&key) != Some(&last_change) {
+                                        self.timing_reported.insert(key, last_change);
+                                        self.emit_warning(
+                                            crate::diagnostics::DiagCode::TimingViolation,
+                                            format!("$recrem (recovery) violation: signal '{}' changed {}ns before ref (recov={}ns)", data_sig, delta, recov_val),
+                                        );
+                                    }
                                 }
                                 if delta > 0 && delta <= remov_val {
-                                    eprintln!("TIMING WARNING: $recrem (removal) violation: signal '{}' changed {}ns before ref (remov={}ns)", data_sig, delta, remov_val);
+                                    let key = ("$recrem-remov".to_string(), *sid);
+                                    if self.timing_reported.get(&key) != Some(&last_change) {
+                                        self.timing_reported.insert(key, last_change);
+                                        self.emit_warning(
+                                            crate::diagnostics::DiagCode::TimingViolation,
+                                            format!("$recrem (removal) violation: signal '{}' changed {}ns before ref (remov={}ns)", data_sig, delta, remov_val),
+                                        );
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                SpecifyItem::PeriodCheck { ref_event, limit } => {
+                SpecifyItem::PeriodCheck {
+                    ref_event,
+                    ref_edge,
+                    limit,
+                } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident { name: ref_sig, .. } = ref_event {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str()) {
-                            if let Some(&last_change) = self.signal_last_change.get(sid) {
-                                let delta = current_time - last_change;
-                                if delta > 0 && delta < limit_val {
-                                    eprintln!("TIMING WARNING: $period violation: signal '{}' period {}ns < minimum {}ns", ref_sig, delta, limit_val);
+                            // Dedupe: hanya fire saat edge baru terjadi pada step ini
+                            // (last_change == current_time) dan period antar-edge < limit.
+                            if let (Some(&last_change), Some(&prev_change)) = (
+                                self.signal_last_change.get(sid),
+                                self.signal_prev_change.get(sid),
+                            ) {
+                                let dir_ok = match ref_edge {
+                                    Some(e) => self.signal_last_dir.get(sid) == Some(e),
+                                    None => true,
+                                };
+                                if dir_ok
+                                    && last_change == current_time
+                                    && prev_change < last_change
+                                    && last_change - prev_change < limit_val
+                                {
+                                    let delta = last_change - prev_change;
+                                    self.emit_warning(
+                                        crate::diagnostics::DiagCode::TimingViolation,
+                                        format!("$period violation: signal '{}' period {}ns < minimum {}ns", ref_sig, delta, limit_val),
+                                    );
                                 }
                             }
                         }
@@ -151,16 +275,41 @@ impl SimulationEngine {
                 }
                 SpecifyItem::WidthCheck {
                     ref_event,
+                    ref_edge,
                     limit,
                     threshold: _threshold,
                 } => {
                     let limit_val = const_eval_simple(limit).unwrap_or(0) as u64;
                     if let Expr::Ident { name: ref_sig, .. } = ref_event {
                         if let Some((_, sid)) = signal_names.iter().find(|(n, _)| n.as_str() == ref_sig.as_str()) {
-                            if let Some(&last_change) = self.signal_last_change.get(sid) {
-                                let delta = current_time - last_change;
-                                if delta > 0 && delta < limit_val {
-                                    eprintln!("TIMING WARNING: $width violation: signal '{}' pulse width {}ns < minimum {}ns", ref_sig, delta, limit_val);
+                            // Dedupe: fire sekali saat pulse berakhir (edge baru terjadi),
+                            // lebar pulse = last_change - prev_change. Bila ref_edge
+                            // dispesifikasikan, pulse berakhir pada edge KEBALIKAN arah
+                            // (mis. $width(posedge clk) mengukur pulse high yang berakhir
+                            // di negedge) — filter ini mencegah false positive pulse low.
+                            let dir_ok = match ref_edge {
+                                Some(crate::ast::types::EdgeKind::PosEdge) => {
+                                    self.signal_last_dir.get(sid) == Some(&crate::ast::types::EdgeKind::NegEdge)
+                                }
+                                Some(crate::ast::types::EdgeKind::NegEdge) => {
+                                    self.signal_last_dir.get(sid) == Some(&crate::ast::types::EdgeKind::PosEdge)
+                                }
+                                None => true,
+                            };
+                            if let (Some(&last_change), Some(&prev_change)) = (
+                                self.signal_last_change.get(sid),
+                                self.signal_prev_change.get(sid),
+                            ) {
+                                if dir_ok
+                                    && last_change == current_time
+                                    && prev_change < last_change
+                                    && last_change - prev_change < limit_val
+                                {
+                                    let delta = last_change - prev_change;
+                                    self.emit_warning(
+                                        crate::diagnostics::DiagCode::TimingViolation,
+                                        format!("$width violation: signal '{}' pulse width {}ns < minimum {}ns", ref_sig, delta, limit_val),
+                                    );
                                 }
                             }
                         }
@@ -168,6 +317,7 @@ impl SimulationEngine {
                 }
                 SpecifyItem::SkewCheck {
                     ref_event,
+                    ref_edge: _,
                     data,
                     limit,
                 } => {
@@ -182,8 +332,18 @@ impl SimulationEngine {
                                         if let Some(&ref_change) = self.signal_last_change.get(rsid)
                                         {
                                             let skew = data_change.abs_diff(ref_change);
-                                            if skew > limit_val {
-                                                eprintln!("TIMING WARNING: $skew violation: skew {}ns > max {}ns between '{}' and '{}'", skew, limit_val, data_sig, ref_sig);
+                                            // Dedupe: hanya fire saat salah satu sinyal berubah
+                                            if skew > limit_val
+                                                && (data_change == current_time || ref_change == current_time)
+                                            {
+                                                let key = ("$skew".to_string(), *sid);
+                                                if self.timing_reported.get(&key) != Some(&current_time) {
+                                                    self.timing_reported.insert(key, current_time);
+                                                    self.emit_warning(
+                                                        crate::diagnostics::DiagCode::TimingViolation,
+                                                        format!("$skew violation: skew {}ns > max {}ns between '{}' and '{}'", skew, limit_val, data_sig, ref_sig),
+                                                    );
+                                                }
                                             }
                                         }
                                     }
@@ -194,6 +354,7 @@ impl SimulationEngine {
                 }
                 SpecifyItem::TimeskewCheck {
                     ref_event,
+                    ref_edge: _,
                     data,
                     limit,
                     threshold: _threshold,
@@ -209,8 +370,17 @@ impl SimulationEngine {
                                         if let Some(&ref_change) = self.signal_last_change.get(rsid)
                                         {
                                             let skew = data_change.abs_diff(ref_change);
-                                            if skew > limit_val {
-                                                eprintln!("TIMING WARNING: $timeskew violation: skew {}ns > max {}ns between '{}' and '{}'", skew, limit_val, data_sig, ref_sig);
+                                            if skew > limit_val
+                                                && (data_change == current_time || ref_change == current_time)
+                                            {
+                                                let key = ("$timeskew".to_string(), *sid);
+                                                if self.timing_reported.get(&key) != Some(&current_time) {
+                                                    self.timing_reported.insert(key, current_time);
+                                                    self.emit_warning(
+                                                        crate::diagnostics::DiagCode::TimingViolation,
+                                                        format!("$timeskew violation: skew {}ns > max {}ns between '{}' and '{}'", skew, limit_val, data_sig, ref_sig),
+                                                    );
+                                                }
                                             }
                                         }
                                     }
@@ -221,6 +391,7 @@ impl SimulationEngine {
                 }
                 SpecifyItem::NochangeCheck {
                     ref_event: _ref_event,
+                    ref_edge: _,
                     data,
                     start_limit,
                     end_limit,
@@ -232,7 +403,14 @@ impl SimulationEngine {
                             if let Some(&last_change) = self.signal_last_change.get(sid) {
                                 let delta = current_time - last_change;
                                 if delta > 0 && delta >= start_val && delta <= end_val {
-                                    eprintln!("TIMING WARNING: $nochange violation: signal '{}' changed within window [{}ns, {}ns] (delta={}ns)", data_sig, start_val, end_val, delta);
+                                    let key = ("$nochange".to_string(), *sid);
+                                    if self.timing_reported.get(&key) != Some(&last_change) {
+                                        self.timing_reported.insert(key, last_change);
+                                        self.emit_warning(
+                                            crate::diagnostics::DiagCode::TimingViolation,
+                                            format!("$nochange violation: signal '{}' changed within window [{}ns, {}ns] (delta={}ns)", data_sig, start_val, end_val, delta),
+                                        );
+                                    }
                                 }
                             }
                         }

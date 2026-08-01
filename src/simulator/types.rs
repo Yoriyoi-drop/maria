@@ -362,3 +362,51 @@ impl XPropagationMode {
         }
     }
 }
+
+/// Konfigurasi format waktu untuk `%t` (set oleh `$timeformat`).
+/// units = eksponen unit (mis. -9 = ns, -12 = ps), sesuai IEEE 1800.
+#[derive(Debug, Clone)]
+pub struct TimeFormat {
+    pub units: i64,
+    pub precision: i64,
+    pub suffix: String,
+    pub min_field_width: usize,
+    /// Eksponen unit basis sim-time (mis. -9 = ns). Diderivasi dari
+    /// `` `timescale `` desain saat engine init; dipakai untuk skala %t.
+    pub base_units: i64,
+}
+
+impl TimeFormat {
+    /// Parse eksponen unit dari string seperti "1ns", "10ps", "100us", "1ms".
+    /// Mengembalikan None jika tidak dikenal (caller fallback ke -9 = ns).
+    pub fn unit_exponent(unit: &str) -> Option<i64> {
+        let unit = unit.trim();
+        if unit.ends_with("fs") {
+            Some(-15)
+        } else if unit.ends_with("ps") {
+            Some(-12)
+        } else if unit.ends_with("ns") {
+            Some(-9)
+        } else if unit.ends_with("us") {
+            Some(-6)
+        } else if unit.ends_with("ms") {
+            Some(-3)
+        } else if unit.ends_with('s') {
+            Some(0)
+        } else {
+            None
+        }
+    }
+}
+
+impl Default for TimeFormat {
+    fn default() -> Self {
+        TimeFormat {
+            units: -9,
+            precision: 0,
+            suffix: String::new(),
+            min_field_width: 0,
+            base_units: -9,
+        }
+    }
+}

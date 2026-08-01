@@ -542,6 +542,10 @@ fn run(cli: Cli) -> Result<(), SimError> {
     engine.use_dag_parallel = cli.parallel;
     engine.use_mir_jit = cli.jit_body;
     engine.use_timing_wheel = cli.use_timing_wheel;
+    engine.glitch_window = cli.glitch_window;
+    if cli.glitch_window > 0 && !cli.quiet {
+        println!("Glitch detection enabled (window = {} time units)", cli.glitch_window);
+    }
     if cli.use_timing_wheel && !cli.quiet {
         println!("Timing wheel enabled (O(1) event scheduling)");
     }
@@ -764,6 +768,11 @@ fn run(cli: Cli) -> Result<(), SimError> {
 
     // Flush runtime diagnostics (warnings, etc.)
     emit_diags(&debugger.engine.flush_diagnostics());
+
+    // ── Simulation performance dashboard (SIM-25) ──
+    if cli.perf_dashboard && !cli.quiet {
+        println!("{}", debugger.engine.sim_perf);
+    }
 
     if debug_mode != DebugMode::Normal && !cli.quiet {
         if debugger.engine.paused {
@@ -1209,6 +1218,10 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     engine.use_dag_parallel = cli.parallel;
     engine.use_cycle_fusion = cli.cycle_fusion;
     engine.use_timing_wheel = cli.use_timing_wheel;
+    engine.glitch_window = cli.glitch_window;
+    if cli.glitch_window > 0 && !cli.quiet {
+        println!("Glitch detection enabled (window = {} time units)", cli.glitch_window);
+    }
 
     // Configure signal history disk spill
     if let Some(ref spill_path) = cli.signal_history_spill {
@@ -1376,6 +1389,11 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
 
     // Flush runtime diagnostics (warnings, etc.)
     emit_diags(&debugger.engine.flush_diagnostics());
+
+    // ── Simulation performance dashboard (SIM-25) ──
+    if cli.perf_dashboard && !cli.quiet {
+        println!("{}", debugger.engine.sim_perf);
+    }
 
     if debug_mode != DebugMode::Normal && !cli.quiet {
         if debugger.engine.paused {

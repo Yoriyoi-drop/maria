@@ -256,6 +256,10 @@ pub enum DiagCode {
     ResetPermanentlyAsserted,
     /// Possible combinational loop (WR0301)
     CombinationalLoop,
+    /// Signal glitch detected (WR0302)
+    SignalGlitch,
+    /// Timing check violation (WR0303)
+    TimingViolation,
     /// Slow simulation region (WR0402)
     SlowSimulation,
 }
@@ -341,6 +345,8 @@ impl DiagCode {
             DiagCode::ClockNeverToggles => "WR0202",
             DiagCode::ResetPermanentlyAsserted => "WR0203",
             DiagCode::CombinationalLoop => "WR0301",
+            DiagCode::SignalGlitch => "WR0302",
+            DiagCode::TimingViolation => "WR0303",
             DiagCode::SlowSimulation => "WR0402",
         }
     }
@@ -425,6 +431,8 @@ impl DiagCode {
             DiagCode::ClockNeverToggles => "clock never toggles",
             DiagCode::ResetPermanentlyAsserted => "reset permanently asserted",
             DiagCode::CombinationalLoop => "possible combinational loop",
+            DiagCode::SignalGlitch => "signal glitch detected",
+            DiagCode::TimingViolation => "timing check violation",
             DiagCode::SlowSimulation => "slow simulation region",
         }
     }
@@ -552,6 +560,10 @@ impl DiagCode {
                 "A reset signal is permanently asserted and never de-asserted.",
             DiagCode::CombinationalLoop =>
                 "A potential combinational loop was detected in the design.",
+            DiagCode::SignalGlitch =>
+                "A signal changed value and reverted to its previous value within a very short time window, indicating a glitch or race condition.",
+            DiagCode::TimingViolation =>
+                "A timing check (setup, hold, width, period, recovery, removal, skew, etc.) was violated during simulation.",
             DiagCode::SlowSimulation =>
                 "A simulation region or process is significantly slower than others.",
         }
@@ -680,6 +692,10 @@ impl DiagCode {
                 "Check reset logic and ensure the reset de-asserts after initialization.",
             DiagCode::CombinationalLoop =>
                 "Add flip-flops or non-zero delays to break the potential combinational loop.",
+            DiagCode::SignalGlitch =>
+                "Check for race conditions, missing delays, or combinational loops causing narrow pulses on the signal.",
+            DiagCode::TimingViolation =>
+                "Review the timing constraints in the specify block or SDF annotation, and ensure data transitions respect setup/hold/window requirements.",
             DiagCode::SlowSimulation =>
                 "Optimize the identified region or process to improve simulation performance.",
         }
@@ -745,6 +761,8 @@ impl DiagCode {
             | DiagCode::ClockNeverToggles
             | DiagCode::ResetPermanentlyAsserted
             | DiagCode::CombinationalLoop
+            | DiagCode::SignalGlitch
+            | DiagCode::TimingViolation
             | DiagCode::SlowSimulation => "Warning",
         }
     }

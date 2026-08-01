@@ -1001,6 +1001,14 @@ impl Parser {
                         t
                     )));
                 }
+                // Class parameterization: typedef some_class #(.P(...), ...) name;
+                // Parameter values diabaikan untuk DataType::UserDefined.
+                if self.peek() == &Token::Hash {
+                    self.advance();
+                    if self.peek() == &Token::LParen {
+                        self.skip_balanced_paren_light()?;
+                    }
+                }
                 let range = if self.peek() == &Token::LBrack {
                     self.parse_range()?
                 } else {

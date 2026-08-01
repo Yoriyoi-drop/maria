@@ -182,6 +182,25 @@ impl Parser {
         })
     }
 
+    /// Parse a timing-check reference event: optional `posedge`/`negedge` prefix
+    /// followed by the signal expression. `parse_expr` tidak menerima token
+    /// PosEdge/NegEdge, jadi edge prefix dikonsumsi di sini (fix SIM-24).
+    /// Mengembalikan `(expr, edge_kind)` — edge kind dipakai runtime setup/hold
+    /// agar tidak memicu false positive pada edge yang salah arah.
+    fn parse_ref_event(&mut self) -> Result<(Expr, Option<EdgeKind>), SimError> {
+        match self.peek() {
+            Token::PosEdge => {
+                self.advance();
+                Ok((self.parse_expr(0)?, Some(EdgeKind::PosEdge)))
+            }
+            Token::NegEdge => {
+                self.advance();
+                Ok((self.parse_expr(0)?, Some(EdgeKind::NegEdge)))
+            }
+            _ => Ok((self.parse_expr(0)?, None)),
+        }
+    }
+
     pub(crate) fn parse_specify_item(&mut self) -> Result<Option<SpecifyItem>, SimError> {
         // Check for $setup, $hold, $setuphold system function calls
         if self.peek() == &Token::Dollar {
@@ -190,35 +209,43 @@ impl Parser {
             self.advance(); // consume $
             if let Token::Ident(fname) = self.peek().clone() {
                 self.advance();
+                // NOTE: tokenizer memisahkan `$` menjadi Token::Dollar, sehingga
+                // fname adalah "setup" (TANPA `$`). Fix SIM-24: match arms dan
+                // flag is_* harus dibandingkan tanpa `$` — sebelumnya pakai
+                // "$setup" sehingga specify_items SELALU kosong (bug pre-existing).
                 match fname.as_str() {
-                    "$setup" | "$hold" | "$setuphold" | "$recovery" | "$removal" | "$recrem"
-                    | "$period" | "$width" | "$nochange" | "$skew" | "$timeskew" => {
-                        let is_setup = fname == "$setup";
-                        let is_hold = fname == "$hold";
-                        let is_setuphold = fname == "$setuphold";
-                        let is_recovery = fname == "$recovery";
-                        let is_removal = fname == "$removal";
-                        let is_recrem = fname == "$recrem";
-                        let is_period = fname == "$period";
-                        let is_width = fname == "$width";
-                        let is_nochange = fname == "$nochange";
-                        let is_skew = fname == "$skew";
-                        let is_timeskew = fname == "$timeskew";
+                    "setup" | "hold" | "setuphold" | "recovery" | "removal" | "recrem"
+                    | "period" | "width" | "nochange" | "skew" | "timeskew" => {
+                        let is_setup = fname == "setup";
+                        let is_hold = fname == "hold";
+                        let is_setuphold = fname == "setuphold";
+                        let is_recovery = fname == "recovery";
+                        let is_removal = fname == "removal";
+                        let is_recrem = fname == "recrem";
+                        let is_period = fname == "period";
+                        let is_width = fname == "width";
+                        let is_nochange = fname == "nochange";
+                        let is_skew = fname == "skew";
+                        let is_timeskew = fname == "timeskew";
                         self.expect(Token::LParen)?;
                         // Parse based on timing check type
                         if is_period {
                             // $period(ref_event, limit);
-                            let ref_event = self.parse_expr(0)?;
+                            let (ref_event, ref_edge) = self.parse_ref_event()?;
                             self.expect(Token::Comma)?;
                             let limit = self.parse_expr(0)?;
                             self.expect(Token::RParen)?;
                             if self.peek() == &Token::Semi {
                                 self.advance();
                             }
-                            return Ok(Some(SpecifyItem::PeriodCheck { ref_event, limit }));
+                            return Ok(Some(SpecifyItem::PeriodCheck {
+                                ref_event,
+                                ref_edge,
+                                limit,
+                            }));
                         } else if is_width {
                             // $width(ref_event, limit [, threshold]);
-                            let ref_event = self.parse_expr(0)?;
+                            let (ref_event, ref_edge) = self.parse_ref_event()?;
                             self.expect(Token::Comma)?;
                             let limit = self.parse_expr(0)?;
                             let threshold = if self.peek() == &Token::Comma {
@@ -233,12 +260,13 @@ impl Parser {
                             }
                             return Ok(Some(SpecifyItem::WidthCheck {
                                 ref_event,
+                                ref_edge,
                                 limit,
                                 threshold,
                             }));
                         } else if is_skew {
                             // $skew(ref_event, data, limit);
-                            let ref_event = self.parse_expr(0)?;
+                            let (ref_event, ref_edge) = self.parse_ref_event()?;
                             self.expect(Token::Comma)?;
                             let data = self.parse_expr(0)?;
                             self.expect(Token::Comma)?;
@@ -249,12 +277,13 @@ impl Parser {
                             }
                             return Ok(Some(SpecifyItem::SkewCheck {
                                 ref_event,
+                                ref_edge,
                                 data,
                                 limit,
                             }));
                         } else if is_timeskew {
                             // $timeskew(ref_event, data, limit [, threshold]);
-                            let ref_event = self.parse_expr(0)?;
+                            let (ref_event, ref_edge) = self.parse_ref_event()?;
                             self.expect(Token::Comma)?;
                             let data = self.parse_expr(0)?;
                             self.expect(Token::Comma)?;
@@ -271,13 +300,14 @@ impl Parser {
                             }
                             return Ok(Some(SpecifyItem::TimeskewCheck {
                                 ref_event,
+                                ref_edge,
                                 data,
                                 limit,
                                 threshold,
                             }));
                         } else if is_nochange {
                             // $nochange(ref_event, data, start_limit, end_limit);
-                            let ref_event = self.parse_expr(0)?;
+                            let (ref_event, ref_edge) = self.parse_ref_event()?;
                             self.expect(Token::Comma)?;
                             let data = self.parse_expr(0)?;
                             self.expect(Token::Comma)?;
@@ -290,15 +320,33 @@ impl Parser {
                             }
                             return Ok(Some(SpecifyItem::NochangeCheck {
                                 ref_event,
+                                ref_edge,
                                 data,
                                 start_limit,
                                 end_limit,
                             }));
                         }
-                        // $setup, $hold, $setuphold, $recovery, $removal, $recrem — same signature pattern
-                        let data = self.parse_expr(0)?;
-                        self.expect(Token::Comma)?;
-                        let ref_event = self.parse_expr(0)?;
+                        // Signature order (IEEE 1800):
+                        //   $setup(data, ref, limit)     — data dulu
+                        //   $hold(ref, data, limit)      — ref dulu
+                        //   $setuphold(ref, data, su,h)  — ref dulu
+                        //   $recovery(ref, data, limit)  — ref dulu
+                        //   $removal(ref, data, limit)   — ref dulu
+                        //   $recrem(ref, data, rec,rem)  — ref dulu
+                        // (fix SIM-24: sebelumnya semua diparse data-dulu, sehingga
+                        //  $hold(posedge clk, ...) gagal dengan "expected expression,
+                        //  found PosEdge")
+                        let (data, ref_event, ref_edge) = if is_setup {
+                            let data = self.parse_expr(0)?;
+                            self.expect(Token::Comma)?;
+                            let (ref_event, ref_edge) = self.parse_ref_event()?;
+                            (data, ref_event, ref_edge)
+                        } else {
+                            let (ref_event, ref_edge) = self.parse_ref_event()?;
+                            self.expect(Token::Comma)?;
+                            let data = self.parse_expr(0)?;
+                            (data, ref_event, ref_edge)
+                        };
                         let (setup_limit, hold_limit) = if is_setuphold || is_recrem {
                             self.expect(Token::Comma)?;
                             let sl = self.parse_expr(0)?;
@@ -321,6 +369,7 @@ impl Parser {
                         return if is_setuphold {
                             Ok(Some(SpecifyItem::SetupHoldCheck {
                                 ref_event,
+                                ref_edge,
                                 data,
                                 setup_limit: setup_limit.unwrap(),
                                 hold_limit: hold_limit.unwrap(),
@@ -329,17 +378,20 @@ impl Parser {
                             Ok(Some(SpecifyItem::SetupCheck {
                                 data,
                                 ref_event,
+                                ref_edge,
                                 limit: setup_limit.unwrap(),
                             }))
                         } else if is_hold {
                             Ok(Some(SpecifyItem::HoldCheck {
                                 ref_event,
+                                ref_edge,
                                 data,
                                 limit: hold_limit.unwrap(),
                             }))
                         } else if is_recrem {
                             Ok(Some(SpecifyItem::RecoveryRemovalCheck {
                                 ref_event,
+                                ref_edge,
                                 data,
                                 recovery_limit: setup_limit.unwrap(),
                                 removal_limit: hold_limit.unwrap(),
@@ -348,11 +400,13 @@ impl Parser {
                             Ok(Some(SpecifyItem::RecoveryCheck {
                                 data,
                                 ref_event,
+                                ref_edge,
                                 limit: setup_limit.unwrap(),
                             }))
                         } else if is_removal {
                             Ok(Some(SpecifyItem::RemovalCheck {
                                 ref_event,
+                                ref_edge,
                                 data,
                                 limit: hold_limit.unwrap(),
                             }))
@@ -361,6 +415,7 @@ impl Parser {
                             Ok(Some(SpecifyItem::SetupCheck {
                                 data,
                                 ref_event,
+                                ref_edge,
                                 limit: setup_limit.unwrap_or(
                                     hold_limit.unwrap_or(Expr::Value(
                                         crate::ast::expr::Value::Decimal(0),

@@ -216,6 +216,9 @@ impl Parser {
                         Token::Task => {
                             items.push(PackageItem::Task(self.parse_task(false)?));
                         }
+                        Token::Class => {
+                            items.push(PackageItem::Class(self.parse_class()?));
+                        }
                         Token::Typedef => {
                             // Check for 'typedef class' (forward declaration)
                             if matches!(self.peek_ahead(1), Token::Class | Token::Virtual) {

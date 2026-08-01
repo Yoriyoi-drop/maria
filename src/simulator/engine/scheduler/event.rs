@@ -13,6 +13,8 @@ impl SimulationEngine {
                 if pid >= self.design.top.processes.len() {
                     return Ok(());
                 }
+                // SIM-25: catat evaluasi process untuk performance dashboard
+                self.sim_perf.counters.processes_evaluated += 1;
                 let process = self.design.top.processes[pid].clone();
 
                 // Set runtime context: process name + instance path

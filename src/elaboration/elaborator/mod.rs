@@ -64,6 +64,19 @@ pub struct Elaborator {
     /// Konstanta package ter-evaluasi (kualifikasi `pkg::name`): skalar & array.
     pub pkg_const_scalars: HashMap<Symbol, i64>,
     pub pkg_const_arrays: HashMap<Symbol, Vec<i64>>,
+    /// Context package global (qualified `pkg::name` + enum members) yang
+    /// dihitung SEKALI per compile. Tidak bergantung pada module sehingga bisa
+    /// dipakai bersama (clone) oleh semua module — menghindari rescan semua
+    /// package + fixed-point 64 iterasi untuk tiap module (bottleneck di
+    /// desain besar seperti OpenTitan).
+    pub pkg_param_ctx: HashMap<Symbol, i64>,
+    /// Context hasil `import pkg::*` / `import pkg::item` level $unit
+    /// (unit_imports). Juga konstan antar-module sehingga dihitung sekali.
+    pub unit_import_ctx: HashMap<Symbol, i64>,
+    /// Nilai plain param per package (dengan base = context global package).
+    /// Dipakai untuk `import pkg::item`/`pkg::*` milik module — menghindari
+    /// evaluasi ulang default param package untuk tiap module.
+    pub pkg_plain_params: HashMap<Symbol, HashMap<Symbol, i64>>,
     pub specialized_classes: std::cell::RefCell<Vec<ClassDecl>>,
     pub diag_sink: DiagSink,
     pub source_lines: Vec<String>,
@@ -93,6 +106,7 @@ impl Elaborator {
                     PackageItem::Typedef(t) => t.name,
                     PackageItem::Function(f) => f.name,
                     PackageItem::Task(t) => t.name,
+                    PackageItem::Class(c) => c.name,
                     PackageItem::Decl(d) => {
                         d.names.first().map(|v| v.name).unwrap_or(Symbol::EMPTY)
                     }
@@ -179,6 +193,12 @@ impl Elaborator {
         let (pkg_const_scalars, pkg_const_arrays) =
             crate::ast::const_eval_ext::eval_package_constants(&package_symbols);
 
+        if std::env::var("DBG_ELAB").is_ok() {
+            let gp = Symbol::intern("gpio_env_pkg");
+            let dv = Symbol::intern("dv_utils_pkg");
+            eprintln!("[DBG-ELAB] with_source: design.packages={} package_symbols={} gpio_env_pkg={} dv_utils_pkg={}", design.packages.len(), package_symbols.len(), package_symbols.contains_key(&gp), package_symbols.contains_key(&dv));
+        }
+
         Elaborator {
             design,
             modules: HashMap::new(),
@@ -188,6 +208,9 @@ impl Elaborator {
             package_symbols,
             pkg_const_scalars,
             pkg_const_arrays,
+            pkg_param_ctx: HashMap::new(),
+            unit_import_ctx: HashMap::new(),
+            pkg_plain_params: HashMap::new(),
             specialized_classes: std::cell::RefCell::new(Vec::new()),
             diag_sink: DiagSink::new(),
             source_lines,
@@ -204,6 +227,14 @@ impl Elaborator {
         let elab_t0 = std::time::Instant::now();
         if std::env::var("DBG_ELAB").is_ok() {
             eprintln!("[DBG-ELAB] elaborate() start (n_modules={})", self.design.modules.len());
+        }
+        // Build global package param context ONCE — dipakai bersama oleh semua
+        // module. Sebelumnya dihitung ulang per-modul (rescan semua package +
+        // fixed-point 64 iterasi) yang menjadi bottleneck di desain besar.
+        self.build_pkg_param_ctx();
+        if std::env::var("DBG_ELAB").is_ok() {
+            let n_arr_elems: usize = self.pkg_const_arrays.values().map(|v| v.len()).sum();
+            eprintln!("[DBG-ELAB] global package param ctx built in {:?} ({} entries; scalars={} arrays={} array_elems={})", elab_t0.elapsed(), self.pkg_param_ctx.len(), self.pkg_const_scalars.len(), self.pkg_const_arrays.len(), n_arr_elems);
         }
         // Process bind declarations: add bound instances to target modules
         let binds = std::mem::take(&mut self.design.binds);
@@ -365,13 +396,16 @@ _ => {}
         }
         // Expand generates in all modules (with resolved params)
         for i in 0..self.design.modules.len() {
+            let mod_t0 = std::time::Instant::now();
             let ctx = self.collect_package_param_ctx(&self.design.modules[i]);
+            let ctx_ms = mod_t0.elapsed().as_millis();
             let param_vals =
                 resolve_param_values_with_ctx(&self.design.modules[i], &HashMap::new(), &ctx)?;
+            let resolve_ms = mod_t0.elapsed().as_millis();
             let module_name = self.design.modules[i].name;
             self.current_module = Some(module_name);
             if std::env::var("DBG_ELAB").is_ok() {
-                eprintln!("[DBG-ELAB] expanding generates in module '{}' ({}/{})", module_name.as_str(), i + 1, self.design.modules.len());
+                eprintln!("[DBG-ELAB] expanding generates in module '{}' ({}/{}) ctx={}ms resolve={}ms", module_name.as_str(), i + 1, self.design.modules.len(), ctx_ms, resolve_ms);
             }
             // Process generate expansion in isolated block to release mutable borrow before elab_diag_at
             let gen_result = {
@@ -379,8 +413,7 @@ _ => {}
                 expand_all_generates(module, &param_vals, &self.diag_sink)
             };
             if let Err(e) = gen_result {
-                let ctx_keys: Vec<&str> = param_vals.keys().map(|k| k.as_str()).collect();
-                return Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!("generate expansion failed in '{}': {} (param context has: {:?})", module_name, e.msg, ctx_keys), e.line, e.col));
+                return Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!("generate expansion failed in '{}': {}", module_name, e.msg), e.line, e.col));
             }
         }
 
@@ -1016,37 +1049,13 @@ _ => {}
             .map_err(|e| self.elab_diag(DiagCode::ParamMismatch, e))
     }
 
-    /// Kumpulkan nilai parameter package yang terlihat oleh module via
-    /// `import pkg::*`/`import pkg::item` (baik di header module maupun $unit).
-    /// Dipakai sebagai base context saat evaluasi konstanta (generate limit,
-    /// parameter default, dll.) sehingga package parameter bisa di-resolve.
-    /// Package param yang di-referensikan secara scoped (`pkg::name`) juga
-    /// didaftarkan agar `const_eval_with_params` bisa me-resolve.
-    fn collect_package_param_ctx(&self, module: &Module) -> HashMap<Symbol, i64> {
+    /// Hitung context package global SEKALI: qualified `pkg::name` untuk semua
+    /// parameter package + enum member (plain & qualified) dari semua package,
+    /// plus konstanta package ter-evaluasi. Hasil disimpan di `self.pkg_param_ctx`
+    /// dan di-clone oleh tiap module (lihat `collect_package_param_ctx`).
+    fn build_pkg_param_ctx(&mut self) {
         let mut ctx: HashMap<Symbol, i64> = HashMap::new();
-        let mut import_sets: Vec<(Symbol, Symbol)> = self.design.unit_imports.clone();
-        for item in &module.items {
-            if let ModuleItem::Import { package, item } = item {
-                import_sets.push((*package, *item));
-            }
-        }
-        // Enum member constants dari typedef di body module (e.g. LastEdnEntry)
-        let module_enums: Vec<Vec<(Symbol, Option<Expr>)>> = module
-            .items
-            .iter()
-            .filter_map(|item| {
-                if let ModuleItem::Typedef(td) = item {
-                    if let DataType::EnumType { members, .. } = &td.dtype {
-                        Some(members.clone())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect();
-        // Enum member constants dari package
+        // Enum member constants dari package (plain + qualified, sequential)
         let pkg_enums: Vec<(Symbol, Vec<(Symbol, Option<Expr>)>)> = self
             .package_symbols
             .iter()
@@ -1073,28 +1082,8 @@ _ => {}
                 }
             })
             .collect();
-        // Fixed-point: beberapa package param bisa mereferensikan param lain
-        // (scoped `pkg::name` maupun plain name dari package yang di-import).
         for _ in 0..64 {
             let mut changed = false;
-            // Enum member constants dari body module (sequential values)
-            for members in &module_enums {
-                let mut last = 0i64;
-                for (member_name, member_expr) in members {
-                    let val = match member_expr {
-                        Some(expr) => match const_eval_with_params(expr, &ctx) {
-                            Ok(v) => v,
-                            Err(_) => last,
-                        },
-                        None => last,
-                    };
-                    if !ctx.contains_key(member_name) {
-                        ctx.insert(*member_name, val);
-                        changed = true;
-                    }
-                    last = val + 1;
-                }
-            }
             // Qualified names untuk SEMUA package (agar scoped reference resolve)
             for (pkg_name, items) in &self.package_symbols {
                 for (name, item) in items {
@@ -1134,30 +1123,6 @@ _ => {}
                     last = val + 1;
                 }
             }
-            // Plain names untuk package yang di-import module/$unit
-            for (package, import_item) in &import_sets {
-                let Some(pkg_items) = self.package_symbols.get(package) else {
-                    continue;
-                };
-                let names: Vec<Symbol> = if import_item.as_str() == "*" {
-                    pkg_items.keys().copied().collect()
-                } else {
-                    vec![*import_item]
-                };
-                for name in names {
-                    if let Some(PackageItem::Param(p)) = pkg_items.get(&name) {
-                        if ctx.contains_key(&p.name) {
-                            continue;
-                        }
-                        if let Some(expr) = &p.default {
-                            if let Ok(val) = const_eval_with_params(expr, &ctx) {
-                                ctx.insert(p.name, val);
-                                changed = true;
-                            }
-                        }
-                    }
-                }
-            }
             if !changed {
                 break;
             }
@@ -1168,7 +1133,202 @@ _ => {}
             &self.pkg_const_arrays,
             &mut ctx,
         );
-        for (package, import_item) in &import_sets {
+        self.pkg_param_ctx = ctx;
+
+        // ── Context $unit imports (unit_imports) — sekali, untuk semua module ──
+        // Resolusi plain param names + flatten konstanta untuk import set global.
+        let unit_imports: Vec<(Symbol, Symbol)> = self.design.unit_imports.clone();
+        let mut unit_ctx: HashMap<Symbol, i64> = self.pkg_param_ctx.clone();
+        for _ in 0..64 {
+            let mut changed = false;
+            for (package, import_item) in &unit_imports {
+                let Some(pkg_items) = self.package_symbols.get(package) else {
+                    continue;
+                };
+                let names: Vec<Symbol> = if import_item.as_str() == "*" {
+                    pkg_items.keys().copied().collect()
+                } else {
+                    vec![*import_item]
+                };
+                for name in names {
+                    if let Some(PackageItem::Param(p)) = pkg_items.get(&name) {
+                        if unit_ctx.contains_key(&p.name) {
+                            continue;
+                        }
+                        if let Some(expr) = &p.default {
+                            if let Ok(val) = const_eval_with_params(expr, &unit_ctx) {
+                                unit_ctx.insert(p.name, val);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        for (package, import_item) in &unit_imports {
+            crate::ast::const_eval_ext::flatten_imported_consts_into_ctx(
+                package.as_str(),
+                import_item.as_str(),
+                &self.pkg_const_scalars,
+                &self.pkg_const_arrays,
+                &mut unit_ctx,
+            );
+        }
+        // Hanya simpan DELTA vs pkg_param_ctx — sebagian besar entri sudah sama
+        // (qualified names). Collect per-modul tinggal extend delta kecil,
+        // menghindari ~33k insert duplikat untuk tiap module.
+        let mut delta: HashMap<Symbol, i64> = HashMap::new();
+        for (k, v) in &unit_ctx {
+            if self.pkg_param_ctx.get(k) != Some(v) {
+                delta.insert(*k, *v);
+            }
+        }
+        self.unit_import_ctx = delta;
+
+        // ── Plain param per package — sekali, untuk import milik module ──
+        // Base: context global yang sudah lengkap (qualified + unit imports).
+        let base: HashMap<Symbol, i64> = self.unit_import_ctx.clone();
+        let mut plain_map: HashMap<Symbol, HashMap<Symbol, i64>> = HashMap::new();
+        for (pkg_name, items) in &self.package_symbols {
+            let mut pctx = base.clone();
+            for _ in 0..64 {
+                let mut changed = false;
+                for (name, item) in items {
+                    let PackageItem::Param(p) = item else { continue };
+                    if pctx.contains_key(&p.name) {
+                        continue;
+                    }
+                    if let Some(expr) = &p.default {
+                        if let Ok(val) = const_eval_with_params(expr, &pctx) {
+                            pctx.insert(p.name, val);
+                            changed = true;
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+            let mut plain: HashMap<Symbol, i64> = HashMap::new();
+            for (name, item) in items {
+                let PackageItem::Param(p) = item else { continue };
+                if let Some(&v) = pctx.get(&p.name) {
+                    plain.insert(*name, v);
+                }
+            }
+            plain_map.insert(*pkg_name, plain);
+        }
+        self.pkg_plain_params = plain_map;
+        if std::env::var("DBG_ELAB").is_ok() {
+            let gp = Symbol::intern("gpio_env_pkg");
+            let gn = Symbol::intern("NUM_GPIOS");
+            let plain_n = self.pkg_plain_params.get(&gp).map(|m| m.len()).unwrap_or(0);
+            let has_ng = self.pkg_plain_params.get(&gp).map(|m| m.contains_key(&gn)).unwrap_or(false);
+            let pkg_has = self.package_symbols.contains_key(&gp);
+            eprintln!("[DBG-ELAB]   pkg_plain_params[gpio_env_pkg] len={} has_NUM_GPIOS={} pkg_present={}", plain_n, has_ng, pkg_has);
+        }
+    }
+
+    /// Kumpulkan nilai parameter package yang terlihat oleh module via
+    /// `import pkg::*`/`import pkg::item` (baik di header module maupun $unit).
+    /// Dipakai sebagai base context saat evaluasi konstanta (generate limit,
+    /// parameter default, dll.) sehingga package parameter bisa di-resolve.
+    /// Package param yang di-referensikan secara scoped (`pkg::name`) juga
+    /// didaftarkan agar `const_eval_with_params` bisa me-resolve.
+    fn collect_package_param_ctx(&self, module: &Module) -> HashMap<Symbol, i64> {
+        let dbg = std::env::var("DBG_ELAB").is_ok();
+        let t0 = std::time::Instant::now();
+        let mut ctx: HashMap<Symbol, i64> = self.pkg_param_ctx.clone();
+        let t1 = std::time::Instant::now();
+        if dbg {
+            eprintln!("[DBG-ELAB]   collect clone pkg ctx: {:?} (pkg_ctx={})", t1.duration_since(t0), self.pkg_param_ctx.len());
+        }
+        // Context $unit imports sudah di-precompute (konstan antar-module).
+        ctx.extend(self.unit_import_ctx.iter().map(|(k, v)| (*k, *v)));
+        let t2 = std::time::Instant::now();
+        if dbg {
+            eprintln!("[DBG-ELAB]   collect extend unit ctx: {:?} (unit_ctx={})", t2.duration_since(t1), self.unit_import_ctx.len());
+        }
+        // Import set milik module itu sendiri (di luar $unit).
+        let module_imports: Vec<(Symbol, Symbol)> = module
+            .items
+            .iter()
+            .filter_map(|item| {
+                if let ModuleItem::Import { package, item } = item {
+                    Some((*package, *item))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        // Enum member constants dari typedef di body module (e.g. LastEdnEntry)
+        let module_enums: Vec<Vec<(Symbol, Option<Expr>)>> = module
+            .items
+            .iter()
+            .filter_map(|item| {
+                if let ModuleItem::Typedef(td) = item {
+                    if let DataType::EnumType { members, .. } = &td.dtype {
+                        Some(members.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+        // Fixed-point: modul-local enum member & plain import names bisa
+        // mereferensikan package param (dan satu sama lain). Plain param
+        // package sudah di-precompute (pkg_plain_params); hanya enum modul yang
+        // perlu fixed-point.
+        let tf = std::time::Instant::now();
+        for _ in 0..64 {
+            let mut changed = false;
+            // Enum member constants dari body module (sequential values)
+            for members in &module_enums {
+                let mut last = 0i64;
+                for (member_name, member_expr) in members {
+                    let val = match member_expr {
+                        Some(expr) => match const_eval_with_params(expr, &ctx) {
+                            Ok(v) => v,
+                            Err(_) => last,
+                        },
+                        None => last,
+                    };
+                    if !ctx.contains_key(member_name) {
+                        ctx.insert(*member_name, val);
+                        changed = true;
+                    }
+                    last = val + 1;
+                }
+            }
+            // Plain names untuk package yang di-import module
+            for (package, import_item) in &module_imports {
+                let Some(plain) = self.pkg_plain_params.get(package) else {
+                    continue;
+                };
+                if import_item.as_str() == "*" {
+                    for (&name, &val) in plain {
+                        ctx.entry(name).or_insert(val);
+                    }
+                } else if let Some(&val) = plain.get(import_item) {
+                    ctx.entry(*import_item).or_insert(val);
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        if dbg && tf.elapsed().as_millis() > 20 {
+            eprintln!("[DBG-ELAB]   collect fixed-point: {:?} (module_imports={}, enums={})", tf.elapsed(), module_imports.len(), module_enums.len());
+        }
+        // Merge konstanta package yang sudah dievaluasi penuh — hanya untuk
+        // import set milik module ($unit sudah ada di unit_import_ctx).
+        let tl = std::time::Instant::now();
+        for (package, import_item) in &module_imports {
             crate::ast::const_eval_ext::flatten_imported_consts_into_ctx(
                 package.as_str(),
                 import_item.as_str(),
@@ -1176,6 +1336,23 @@ _ => {}
                 &self.pkg_const_arrays,
                 &mut ctx,
             );
+        }
+        if dbg && module.name.as_str() == "rv_core_ibex_peri" {
+            let gn = Symbol::intern("NumRegions");
+            let ga = Symbol::intern("NumAlerts");
+            eprintln!("[DBG-ELAB]   peri imports={:?}", module_imports.iter().map(|(p, i)| format!("{}::{}", p.as_str(), i.as_str())).collect::<Vec<_>>());
+            eprintln!("[DBG-ELAB]   peri has_pkg_reg={} NumRegions_in_ctx={} NumAlerts_in_ctx={} ctx_len={}", self.package_symbols.contains_key(&Symbol::intern("rv_core_ibex_reg_pkg")), ctx.contains_key(&gn), ctx.contains_key(&ga), ctx.len());
+            eprintln!("[DBG-ELAB]   pkg_plain_params has reg_pkg={}", self.pkg_plain_params.contains_key(&Symbol::intern("rv_core_ibex_reg_pkg")));
+        }
+        if dbg && module.name.as_str() == "tb" {
+            let gn = Symbol::intern("NUM_GPIOS");
+            eprintln!("[DBG-ELAB]   tb imports={:?} NUM_GPIOS_in_ctx={}", module_imports.iter().map(|(p, i)| format!("{}::{}", p.as_str(), i.as_str())).collect::<Vec<_>>(), ctx.contains_key(&gn));
+        }
+        if dbg && tl.elapsed().as_millis() > 20 {
+            eprintln!("[DBG-ELAB]   collect flatten-module: {:?}", tl.elapsed());
+        }
+        if dbg && t0.elapsed().as_millis() > 50 {
+            eprintln!("[DBG-ELAB]   collect total: {:?}", t0.elapsed());
         }
         ctx
     }

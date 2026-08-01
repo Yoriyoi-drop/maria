@@ -19,6 +19,8 @@ pub struct SimulationState {
     /// Fallback LogicVec returned for out-of-bounds read requests.
     /// Prevents panic; instead returns a zero-width X value.
     dummy_signal: LogicVec,
+    /// Format untuk `%t` (dari `$timeformat`).
+    pub timeformat: crate::simulator::types::TimeFormat,
 }
 
 impl SimulationState {
@@ -39,6 +41,15 @@ impl SimulationState {
             fields: HashMap::new(),
         }];
 
+        // Seed basis unit %t dari timescale desain (mis. 1ps → -12).
+        // Tanpa ini, %t mengasumsikan basis 1ns untuk desain 1ps/1us.
+        let mut timeformat = crate::simulator::types::TimeFormat::default();
+        if let Some((ref unit, _)) = design.timescale {
+            if let Some(exp) = crate::simulator::types::TimeFormat::unit_exponent(unit) {
+                timeformat.base_units = exp;
+            }
+        }
+
         SimulationState {
             signals,
             next_signals,
@@ -47,6 +58,7 @@ impl SimulationState {
             objects,
             next_obj_id: 1,
             dummy_signal: LogicVec::new(1),
+            timeformat,
         }
     }
 

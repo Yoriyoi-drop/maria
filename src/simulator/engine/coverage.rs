@@ -3,6 +3,7 @@
 use crate::diagnostics::DiagCode;
 use crate::error::SimError;
 use crate::ir::*;
+use crate::simulator::types::CoverageType;
 use crate::simulator::util::*;
 use crate::Symbol;
 use std::collections::{HashMap, HashSet};
@@ -44,11 +45,53 @@ fn wildcard_match(value: u64, pattern: &str) -> bool {
 }
 
 impl SimulationEngine {
+    // ─── Coverage Control ($coverage_control, SIM-30) ───────────────
+
+    /// Terapkan bitmask `$coverage_control(control)` (IEEE 1800-2017 §20.13.2).
+    /// Bit-0=line, bit-1=toggle, bit-2=branch, bit-3=FSM, bit-4=covergroup.
+    /// Nilai 0 → semua nonaktif; nilai ~0 (semua bit set) → semua aktif.
+    pub(crate) fn apply_coverage_control(&mut self, bitmask: u64) {
+        self.coverage_options.insert("control".to_string(), bitmask.to_string());
+        self.coverage_enabled_types.clear();
+        const ALL_TYPES: u64 = 0x1F; // 5 tipe coverage yang didukung
+        if bitmask == 0 {
+            self.coverage_enabled = false;
+        } else if bitmask == u64::MAX || (bitmask & ALL_TYPES) == ALL_TYPES {
+            // Semua tipe aktif: set kosong berarti semua enabled (sesuai komentar field)
+            self.coverage_enabled = true;
+        } else {
+            self.coverage_enabled = true;
+            if bitmask & 0x1 != 0 {
+                self.coverage_enabled_types.insert(CoverageType::Line);
+            }
+            if bitmask & 0x2 != 0 {
+                self.coverage_enabled_types.insert(CoverageType::Toggle);
+            }
+            if bitmask & 0x4 != 0 {
+                self.coverage_enabled_types.insert(CoverageType::Branch);
+            }
+            if bitmask & 0x8 != 0 {
+                self.coverage_enabled_types.insert(CoverageType::Fsm);
+            }
+            if bitmask & 0x10 != 0 {
+                self.coverage_enabled_types.insert(CoverageType::Covergroup);
+            }
+        }
+    }
+
+    /// Apakah tipe coverage tertentu aktif saat ini?
+    /// Set kosong (coverage_enabled_types) berarti semua tipe aktif.
+    fn coverage_type_enabled(&self, t: CoverageType) -> bool {
+        self.coverage_enabled
+            && (self.coverage_enabled_types.is_empty()
+                || self.coverage_enabled_types.contains(&t))
+    }
+
     // ─── Line Coverage ─────────────────────────────────────────────
     
     /// Record that a source line was executed.
     pub(crate) fn record_line_hit(&mut self, stmt: &IrStmt, process_name: &str) {
-        if !self.coverage_enabled {
+        if !self.coverage_type_enabled(CoverageType::Line) {
             return;
         }
         let key = Symbol::intern(&format!("{}.{:?}", process_name, std::mem::discriminant(stmt)));
@@ -66,7 +109,7 @@ impl SimulationEngine {
         branch_key: Symbol,
         label: &str,
     ) {
-        if !self.coverage_enabled {
+        if !self.coverage_type_enabled(CoverageType::Branch) {
             return;
         }
         let branches = self.cover_branches.entry(branch_key).or_default();
@@ -77,7 +120,7 @@ impl SimulationEngine {
 
     /// Record a signal toggle (transition between logic values).
     pub(crate) fn record_toggle(&mut self, sig_id: usize, old_val: &LogicVec, new_val: &LogicVec) {
-        if !self.coverage_enabled {
+        if !self.coverage_type_enabled(CoverageType::Toggle) {
             return;
         }
         let toggles = self.cover_toggle.entry(sig_id).or_default();
@@ -94,7 +137,7 @@ impl SimulationEngine {
 
     /// Record a signal value for FSM state analysis.
     pub(crate) fn record_fsm_value(&mut self, sig_id: usize, val: &LogicVec) {
-        if !self.coverage_enabled {
+        if !self.coverage_type_enabled(CoverageType::Fsm) {
             return;
         }
         let uval = val.to_u64();
@@ -300,8 +343,10 @@ impl SimulationEngine {
         if !self.coverage_enabled {
             return;
         }
-        // Clone snapshot and current values to avoid double borrow of self
-        let old_vals: Vec<LogicVec> = self.signal_snapshot
+        // Clone snapshot and current values to avoid double borrow of self.
+        // Pakai coverage_snapshot (capture di awal time step) — signal_snapshot
+        // di-refresh tiap delta cycle sehingga diff selalu kosong (fix SIM-30).
+        let old_vals: Vec<LogicVec> = self.coverage_snapshot
             .as_ref()
             .map(|snap| snap.clone())
             .unwrap_or_default();
@@ -321,6 +366,9 @@ impl SimulationEngine {
 
     /// Sample a named covergroup: evaluate coverpoints, update hit counts and bins.
     pub(crate) fn sample_covergroup(&mut self, cg_name: &str) -> Result<(), SimError> {
+        if !self.coverage_type_enabled(CoverageType::Covergroup) {
+            return Ok(());
+        }
         let cg = self
             .design
             .covergroups

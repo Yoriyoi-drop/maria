@@ -32,6 +32,9 @@ impl SimulationEngine {
             current_method: None,
             disable_pending: None,
             rng: rand::rngs::StdRng::seed_from_u64(42),
+            rand_call_count: 0,
+            rand_seed: 42,
+            current_scope_name: None,
             file_handles: HashMap::new(),
             file_ungetc_buf: HashMap::new(),
             file_read_pos: HashMap::new(),
@@ -42,6 +45,7 @@ impl SimulationEngine {
             expr_recursion_depth: 0,
             forced_signals: HashSet::new(),
             signal_snapshot: None,
+            coverage_snapshot: None,
             pending_waits: Vec::new(),
             pending_await_target: None,
             pending_wait_orders: Vec::new(),
@@ -84,6 +88,9 @@ impl SimulationEngine {
             watchpoints: Vec::new(),
             signal_history: crate::simulator::signal_history::SignalHistoryStore::new(10000, None),
             signal_last_change: HashMap::new(),
+            signal_last_dir: HashMap::new(),
+            signal_prev_change: HashMap::new(),
+            timing_reported: HashMap::new(),
             udp_prev_args: HashMap::new(),
             parallel_config: ParallelConfig::default(),
             sysfunc_prev: HashMap::new(),
@@ -99,6 +106,8 @@ impl SimulationEngine {
             coverage_options: HashMap::new(),
             coverage_enabled: true,
             coverage_enabled_types: std::collections::HashSet::new(),
+            glitch_window: 0,
+            glitch_prev: std::collections::HashMap::new(),
             cover_line: HashMap::new(),
             cover_toggle: HashMap::new(),
             cover_branches: HashMap::new(),
@@ -130,6 +139,7 @@ impl SimulationEngine {
 
             timing_wheel: None,
             use_timing_wheel: false,
+            sim_perf: crate::profiling::PerfDashboard::new(),
 
             cosim_state: None,
             cosim_signals: Vec::new(),
@@ -261,6 +271,11 @@ impl SimulationEngine {
 
     pub fn set_delta_limit(&mut self, limit: u64) {
         self.delta_limit = limit;
+    }
+
+    /// Set glitch detection window (in time units). 0 = disabled.
+    pub fn set_glitch_window(&mut self, window: u64) {
+        self.glitch_window = window;
     }
 
     pub fn set_use_dag_parallel(&mut self, enabled: bool) {
@@ -1228,13 +1243,29 @@ impl SimulationEngine {
                 snapshot.push(self.state.read_signal(i).clone());
             }
             self.signal_snapshot = Some(snapshot);
+            // SIM-30: coverage snapshot hanya di-capture di awal time step (tidak
+            // di-refresh per delta). Diff-nya vs state akhir dipakai untuk toggle/FSM
+            // coverage — kalau ikut signal_snapshot (refresh per delta), diff selalu kosong.
+            // Gate: hanya clone saat Toggle/FSM coverage aktif (set kosong = semua tipe
+            // aktif). Hindari O(N) clone per time step saat coverage tak dipakai.
+            let need_cov_snap = self.coverage_enabled
+                && (self.coverage_enabled_types.is_empty()
+                    || self.coverage_enabled_types.contains(&CoverageType::Toggle)
+                    || self.coverage_enabled_types.contains(&CoverageType::Fsm));
+            self.coverage_snapshot = if need_cov_snap {
+                self.signal_snapshot.clone()
+            } else {
+                None
+            };
 
             self.dump_vcd_time()?;
             self.dump_fst_time()?;
 
             // ── IEEE 1800 stratified event loop ──
+            self.sim_perf.counters.time_steps += 1;
             let mut delta_count = 0u64;
             loop {
+                self.sim_perf.counters.delta_cycles += 1;
                 let mut activity = false;
                 let mut deltas: Vec<SignalId> = Vec::new();
 
@@ -1263,6 +1294,7 @@ impl SimulationEngine {
                                         true
                                     }
                                 });
+                                self.sim_perf.counters.events_processed += to_process.len() as u64;
                                 if !to_process.is_empty() {
                                     activity = true;
                                     matched = true;
@@ -1322,6 +1354,7 @@ impl SimulationEngine {
                                         .drain(..)
                                         .filter(|re| re.region == region)
                                         .collect();
+                                    self.sim_perf.counters.events_processed += events.len() as u64;
                                     if events.is_empty() {
                                         break;
                                     }
@@ -1360,6 +1393,11 @@ impl SimulationEngine {
 
                                         // Process EvalProcess events via DAG parallel
                                         if !eval_pids.is_empty() {
+                                            // SIM-25: jalur DAG-parallel tidak lewat
+                                            // process_event → hitung di sini agar counter
+                                            // processes_evaluated akurat.
+                                            self.sim_perf.counters.processes_evaluated +=
+                                                eval_pids.len() as u64;
                                             self.evaluate_eval_processes_parallel(
                                                 &eval_pids,
                                             )?;
@@ -1381,11 +1419,13 @@ impl SimulationEngine {
                         EventRegion::Nba => {
                             // NBA region: commit pending non-blocking assignments
                             self.commit_nba();
+                            self.sim_perf.counters.nba_commits += 1;
                             self.ensure_events(t);
                             let events: Vec<RegionEvent> = self.events[t]
                                 .drain(..)
                                 .filter(|re| re.region == EventRegion::Nba)
                                 .collect();
+                            self.sim_perf.counters.events_processed += events.len() as u64;
                             if !events.is_empty() {
                                 activity = true;
                                 for re in events {
@@ -1403,6 +1443,7 @@ impl SimulationEngine {
                                         deltas.push(*id);
                                     }
                                 }
+                                self.sim_perf.counters.sensitive_triggers += 1;
                                 self.trigger_sensitive_processes(&changed, t)?;
                             }
                             // Process Reactive events (from events[t] and reactive_events buffer)
@@ -1411,6 +1452,7 @@ impl SimulationEngine {
                                 .drain(..)
                                 .filter(|re| re.region == EventRegion::Reactive)
                                 .collect();
+                            self.sim_perf.counters.events_processed += events.len() as u64;
                             if !events.is_empty() {
                                 activity = true;
                                 for re in events {

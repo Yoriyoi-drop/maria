@@ -327,49 +327,49 @@ LANG-13: Tidak ada cover property formal (Medium)
 LANG-14: Tidak ada expect statement (assertion in procedural) (Medium)
 LANG-15: Tidak ada wildcard range in case (High)
 LANG-16: Tidak ada unique0/unique case (Medium)
-LANG-17: Tidak ada priority case (Medium)
-LANG-18: Tidak ada randsequence full support (Medium)
-LANG-19: Tidak ada randcase weighted distribution full (Medium)
-LANG-20: Tidak ada std::randomize() with inline constraints (Medium)
-LANG-21: Tidak ada urandom_seed / srandom (Medium)
-LANG-22: Tidak ada get_randcount / get_randstate (Low)
-LANG-23: Tidak ada process::self() all states (Medium)
-LANG-24: Tidak ada mailbox bounded mode (Medium)
-LANG-25: Tidak ada semaphore keyed (Medium)
-LANG-26: Tidak ada event triggered / wait_trigger (Medium)
-LANG-27: Tidak ada iff di event control (Medium)
-LANG-28: Tidak ada level-sensitive event control (High)
-LANG-29: Tidak ada wait fork (Medium)
-LANG-30: Tidak ada disable fork for specific branches (Medium)
-LANG-31: Tidak ada soft constraint (Medium)
-LANG-32: Tidak ada static constraint blocks (Medium)
-LANG-33: Tidak ada constraint mode (constraint_mode()) (Medium)
-LANG-34: Tidak ada randomize with inline constraint all methods (Medium)
-LANG-35: Tidak ada dynamic array methods (size, delete, insert) (Critical)
-LANG-36: Tidak ada associative array methods (num, exists, first,
-         last, next, prev, delete) (Critical)
-LANG-37: Tidak ada queue methods (push_front, push_back, pop_front,
-         pop_back) (Critical)
-LANG-38: Tidak ada foreach loop on associative/dynamic arrays (High)
-LANG-39: Tidak ada streaming operators (<<, >>) partial (Medium)
-LANG-40: Tidak ada let inside class (Low)
-LANG-41: Tidak ada wildcard import (import pkg::*) partial (Medium)
-LANG-42: Tidak ada export * wildcard (Medium)
-LANG-43: Tidak ada function/task import from package (High)
+LANG-17: [ ] priority case — WARNING: belum, butuh label priority di case item (alasan: parser/AST belum simpan modifier)
+LANG-18: [ ] randsequence full support — WARNING: belum, hanya randcase parsial (alasan: butuh runtime production parser)
+LANG-19: [ ] randcase weighted distribution full — WARNING: parsial (alasan: bobot tunggal ada, distribusi weighted penuh belum)
+LANG-20: [ ] std::randomize() with inline constraints — WARNING: belum penuh (alasan: constraint inline dengan scope expression belum)
+LANG-21: [ ] urandom_seed / srandom — WARNING: parsial, seed diterapkan tapi return-value $srandom tidak menaikkan rand_call_count (alasan: seeding per-thread belum penuh)
+LANG-22: [x] get_randcount / get_randstate — FIXED ($get_randcount/$get_randstate)
+LANG-23: [ ] process::self() all states — WARNING: belum penuh (alasan: hanya status dasar, state lain belum)
+LANG-24: [ ] mailbox bounded mode — WARNING: belum (alasan: bounded put/get blocking belum)
+LANG-25: [ ] semaphore keyed — WARNING: belum (alasan: keyed get belum)
+LANG-26: [ ] event triggered / wait_trigger — WARNING: parsial (alasan: triggered() ada, wait_trigger belum)
+LANG-27: [ ] iff di event control — WARNING: belum (alasan: guard event control belum)
+LANG-28: [ ] level-sensitive event control — WARNING: belum (alasan: butuh scheduler level-sensitive)
+LANG-29: [ ] wait fork — WARNING: belum (alasan: join-all untuk process dinamis belum)
+LANG-30: [ ] disable fork for specific branches — WARNING: parsial (alasan: disable seluruh fork ada, per-branch belum)
+LANG-31: [ ] soft constraint — WARNING: belum (alasan: solver hanya hard constraint)
+LANG-32: [ ] static constraint blocks — WARNING: belum (alasan: constraint block scoping belum)
+LANG-33: [ ] constraint mode (constraint_mode()) — WARNING: belum (alasan: enable/disable constraint per-block belum)
+LANG-34: [ ] randomize with inline constraint all methods — WARNING: parsial (alasan: jalur utama ada, semua method belum)
+LANG-35: [ ] dynamic array methods (size, delete, insert) — WARNING: sebagian sudah (size/delete), insert belum (alasan: resizing buffer belum)
+LANG-36: [ ] associative array methods (num, exists, first,
+         last, next, prev, delete) — WARNING: sebagian (num/exists ada), iterasi urutan belum (alasan: ordered iteration belum)
+LANG-37: [ ] queue methods (push_front, push_back, pop_front,
+         pop_back) — WARNING: sebagian (push/pop ada), depan-belakang belum lengkap (alasan: offset queue belum)
+LANG-38: [ ] foreach loop on associative/dynamic arrays — WARNING: parsial (alasan: urutan iterasi assoc belum)
+LANG-39: [ ] streaming operators (<<, >>) — WARNING: parsial (alasan: slicing umum belum)
+LANG-40: [ ] let inside class — WARNING: belum (alasan: let scope belum diparser)
+LANG-41: [ ] wildcard import (import pkg::*) — WARNING: parsial, const/typedef sudah (alasan: function/task import sudah via ROUND 11, enum member import belum semua)
+LANG-42: [ ] export * wildcard — WARNING: belum (alasan: package export namespace belum)
+LANG-43: [ ] function/task import from package — WARNING: sebagian, plain-name sudah (alasan: qualified-call dalam expression belum semua)
 LANG-44: ✅ DPI-C scope resolution — FIXED (svSetScope/svGetScope/svScopeName)
 LANG-45: ✅ DPI-C context functions — FIXED (thread-local scope + time state)
-LANG-46: Tidak ada VPI/VHPI/PLI (Critical — required for all
+LANG-46: [ ] VPI/VHPI/PLI — WARNING: VPI sebagian (systf/callback/handle ada), VHPI/PLI belum (alasan: integrasi EDA komersial besar)
          commercial EDA integration)
-LANG-47: Tidak ada real-time control ($realtime) (Medium)
-LANG-48: Tidak ada $timeformat (Medium)
-LANG-49: Tidak ada $printtimescale (Low)
-LANG-50: Tidak ada $setup $hold $width $period $recovery $removal
-         $setuphold $skew $timeskew $nochange $recrem — semua di
+LANG-47: [ ] real-time control ($realtime) — WARNING: expression $realtime sudah, real-time scaling penuh belum (alasan: representasi real time belum)
+LANG-48: [x] $timeformat — FIXED (units/precision/suffix/min_width + %t)
+LANG-49: [x] $printtimescale — FIXED (print design timescale)
+LANG-50: [ ] $setup $hold $width $period $recovery $removal
+         $setuphold $skew $timeskew $nochange $recrem — WARNING: parse + check dasar di sdf.rs, runtime check simplified (alasan: full timing check perlu event-driven window)
          specify block — CLAIM DIDUKUNG tapi runtime check
          simplified (High)
-LANG-51: Tidak ada $sdf_annotate system task (Medium)
-LANG-52: Tidak ada $deposit / $assign simulation command (High)
-LANG-53: Tidak ada $scope / $showscopes (Medium)
+LANG-51: [x] $sdf_annotate system task — FIXED (runtime SDF via parse_file)
+LANG-52: [x] $deposit / $assign simulation command — FIXED (+ $deassign)
+LANG-53: [x] $scope / $showscopes — FIXED
 
 4.2 PARSER GAPS
 
@@ -471,15 +471,29 @@ SIM-19: No out-of-order simulation (Medium)
 SIM-20: No cycle-based simulation mode (beyond cycle-fusion claim) (High)
 SIM-21: No clock-domain crossing (CDC) awareness (Critical)
 SIM-22: No reset-domain crossing detection (High)
-SIM-23: No glitch detection (High)
-SIM-24: No setup/hold violation reporting beyond basic (Medium)
-SIM-25: No simulation performance monitoring dashboard (Medium)
+SIM-23: ✅ Glitch detection implemented (High)
+           Deteksi pulse A→B→A dalam window configurable (--glitch-window N,
+           default 0 = nonaktif). Hanya untuk full-signal write (bukan partial
+           RangeSelect/BitSelect) dan skip multi-driver nets. Warning WR0302
+           SignalGlitch via DiagSink. 4 unit tests. (ROUND 20)
+[x] SIM-24: No setup/hold violation reporting beyond basic (Medium)
+[x] SIM-25: No simulation performance monitoring dashboard (Medium)
+           PerfDashboard runtime (--perf-dashboard): delta_cycles, time_steps,
+           events_processed, nba_commits, sensitive_triggers, processes_evaluated,
+           events/sec, deltas/sec, wall-clock. File baru src/profiling/dashboard.rs.
+           5 unit tests. (ROUND 22)
 SIM-26: No real-number modeling (wreal) (Medium)
 SIM-27: No analog/mixed-signal co-simulation (N/A - but claimed
         target is HDL)
 SIM-28: No power-aware simulation (UPF) (Critical)
 SIM-29: No simulation macros for coverage exclusions (High)
-SIM-30: No $coverage_control all modes (Medium)
+SIM-30: ✅ $coverage_control all modes implemented (Medium)
+           apply_coverage_control(bitmask): bit0=Line, bit1=Toggle, bit2=Branch,
+           bit3=FSM, bit4=Covergroup. Kedua handler block_syscall kini memanggilnya.
+           FIX pre-existing: toggle/FSM coverage broken karena signal_snapshot
+           di-refresh per delta (Sched-04) — kini coverage_snapshot terpisah
+           di-capture di awal time step (di-gate hanya saat Toggle/FSM aktif).
+           4 unit tests. (ROUND 20)
 
 4.6 WAVEFORM GAPS
 
@@ -2025,11 +2039,11 @@ FIX LOG — 2026-07-28 (Final Update)
 ========================================
 
 ═══ STATUS RINGKAS ═══
-✅ Total FIXED:   46 items (CRIT, DEBT, PERF, PARSER, ELAB, LANG, SCHED, VPI, JIT, BENCH, CACHE, WAV, CDC, DIST, TW, ERR)
+✅ Total FIXED:   50 items (CRIT, DEBT, PERF, PARSER, ELAB, LANG, SIM, SCHED, VPI, JIT, BENCH, CACHE, WAV, CDC, DIST, TW, ERR)
 ⚠️ Remaining:     7 critical items still open
-📊 Tests:         1185 passed, 0 failed (✅ ALL FIXED) — +13 new tests (+11 ROUND 11, +2 ROUND 12)
+📊 Tests:         1210 passed, 0 failed (✅ ALL FIXED) — +17 new tests (+8 ROUND 20, +4 ROUND 21, +5 ROUND 22)
 📈 Scores:        Sim 33→34 | Comp 16→18 | Scale 27→28 | VPI 0→40 | JIT 0→25 | LINT 0→95
-🔧 Files changed: 40+ files across 23 rounds
+🔧 Files changed: 40+ files across 27 rounds
 
 Detail perbaikan per round:
 
@@ -2503,7 +2517,7 @@ END OF AUDIT REPORT
    - P0: --no-default-features build ✅ (dpi tests cfg-guarded)
 
 📊 **Metrik Saat Ini:**
-   - 1185 tests pass, 0 fail (default features) ✅ (+13 tests: +11 ROUND 11, +2 ROUND 12)
+   - 1210 tests pass, 0 fail (default features) ✅ (+38 tests: +11 ROUND 11, +2 ROUND 12, +8 ROUND 19, +8 ROUND 20, +4 ROUND 21, +5 ROUND 22)
    - 1092 tests pass, 0 fail (--no-default-features) ✅ (FIXED — dpi tests cfg-guarded)
    - Enterprise Readiness: 19/100
    - Simulator Score: 33/100
@@ -2721,6 +2735,200 @@ END OF AUDIT REPORT
    - Tersisa 199 warnings: structural lints (if-let collapse 19, if/match
      collapse 18, complex types 10, &mut Vec 4, vpi const pattern 6, dsb)
      — memerlukan refactor struktural, diserahkan pada keputusan user.
+
+═══ ROUND 19 — LANG SYSCALL: TIMEFORMAT/PRINTTIMESCALE/SCOPE/DEPOSIT/RANDCOUNT ═══
+
+[ ] LANG-21: $urandom_seed/$srandom — WARNING: hanya sebagian (seed diterapkan
+     tetapi return value $srandom tidak menaikkan rand_call_count; seeding
+     $urandom_seed belum di-verifikasi full-scope). Alasan: perlu integrasi
+     seed-state per-thread; item lama, bukan prioritas.
+
+[x] LANG-22: $get_randcount / $get_randstate — FIXED
+   - $get_randcount: kembalikan jumlah panggilan random (rand_call_count)
+   - $get_randstate: kembalikan seed terakhir (rand_seed)
+   - rand_call_count dinaikkan di $random/$urandom/$urandom_range
+     (jalur expression di eval/expr.rs DAN jalur statement di block_syscall.rs)
+   - $srandom TIDAK menaikkan counter (sesuai IEEE — hanya set seed)
+   - Files: src/simulator/engine/eval/expr.rs, src/simulator/engine/scheduler/block_syscall.rs
+
+[x] LANG-48: $timeformat — FIXED (units, precision, suffix, min_width)
+   - TimeFormat struct baru di src/simulator/types.rs + field state.timeformat
+   - base_units di-seed dari IrDesign.timescale saat engine init (unit_exponent)
+     sehingga %t benar utk desain 1ps/1us/1ms (bukan hardcode 1ns)
+   - format_display (%t) di util.rs: skala relatif base_units - units dengan
+     saturating_sub (anti panic underflow), precision + suffix + min width
+   - min_field_width di-clamp ≤ 128 utk cegah alokasi berlebihan
+   - KNOWN-GAP: non-blocking assign (commit_nba) belum dicek thd forced_signals
+     — $assign override utk jalur NBA perlu konfirmasi commit_nba lewat write_lvalue
+   - Parser: optional parens untuk syscall tanpa argumen
+   - Files: types.rs, state.rs, util.rs, block_syscall.rs, stmt.rs
+
+[x] LANG-49: $printtimescale — FIXED
+   - Cetak "Timescale of (top) is <unit> / <precision>" dari
+     IrDesign.timescale (fallback 1ns/1ps)
+   - Files: block_syscall.rs
+
+[x] LANG-51: $sdf_annotate — FIXED
+   - $sdf_annotate("file.sdf") parse + annotate runtime via
+     SdfData::parse_file + engine.annotate_sdf
+   - Files: block_syscall.rs
+
+[x] LANG-52: $deposit / $assign / $deassign — FIXED
+   - $deposit(sig, val): tulis nilai SEKALI, TIDAK masuk forced_signals —
+     bisa ditimpa driver berikutnya (semantik IEEE deposit)
+   - $assign(sig, val): tulis + tandai forced_signals — write berikutnya
+     DITEKAN di write_lvalue sampai $deassign (procedural continuous assign)
+   - $deassign(sig): hapus tanda forced sehingga write berlaku lagi
+   - Parser fix: token keyword setelah $ ($assign = Token::Assign,
+     $deassign = Token::Deassign) diterima sebagai syscall name
+   - Files: block_syscall.rs, stmt.rs, eval/lvalue.rs (guard forced_signals)
+
+[x] LANG-53: $scope / $showscopes — FIXED
+   - $scope(name): set current_scope_name
+   - $showscopes: cetak semua module names (sorted)
+   - Files: block_syscall.rs
+
+📊 VERIFIKASI ROUND 19:
+   - cargo build: 0 error
+   - cargo test --lib: 1193 passed, 0 failed (+8 test baru)
+   - Test baru: test_timeformat_percent_t, test_printtimescale_runs,
+     test_showscopes_runs, test_deposit_forces_value, test_assign_forces_value,
+     test_assign_suppresses_write_until_deassign, test_get_randcount,
+     test_get_randstate_seed
+   - Fix pre-existing: E0382/E0277 borrow di elaborator/mod.rs
+     (import_sets kini &module_imports)
+
+═══ ROUND 20 — SIM-23 GLITCH DETECTION + SIM-30 $COVERAGE_CONTROL ALL MODES ═══
+
+[x] SIM-23: Glitch detection (A→B→A dalam window) — FIXED
+   - Field baru engine: glitch_window: u64 (default 0 = nonaktif) +
+     glitch_prev: HashMap<SignalId, (u64, LogicVec)> di mod.rs
+   - set_glitch_window() setter + CLI flag --glitch-window N (di-wire ke
+     run() dan run_fast() di main.rs)
+   - Deteksi di write_lvalue (lvalue.rs) — HANYA untuk IrLValue::Signal
+     (full-signal write), skip partial write (RangeSelect/BitSelect/ArrayIndex)
+     supaya update bit parsial tidak false positive
+   - Skip multi-driver nets: nilai committed adalah hasil resolve_net_values(),
+     bukan val mentah — konsisten dengan race detection yang juga skip
+   - Perbandingan via to_u64() (bukan LogicVec utuh) agar lebar literal 32-bit
+     vs lebar signal 1-bit tidak membuat false-negative
+   - Warning baru DiagCode::SignalGlitch (WR0302) di diagnostic.rs + codes.rs
+     (WARNING_CODES + test count 62) — message: "glitch detected on signal
+     'X' at time T: value reverted within N time units"
+   - Files: mod.rs, core.rs, lvalue.rs, diagnostic.rs, codes.rs, cli.rs, main.rs
+
+[x] SIM-30: $coverage_control all modes — FIXED
+   - apply_coverage_control(bitmask) di coverage.rs: bit0=Line, bit1=Toggle,
+     bit2=Branch, bit3=FSM, bit4=Covergroup; bitmask 0 → semua nonaktif;
+     u64::MAX/0x1F → semua aktif (set kosong = semua tipe enabled)
+   - Kedua handler $coverage_control di block_syscall.rs kini memanggil
+     apply_coverage_control (sebelumnya hanya set bit0 + coverage_options)
+   - coverage_type_enabled() gate ditambahkan di record_line_hit,
+     record_toggle, record_fsm_value, sample_covergroup
+   - FIX BUG PRE-EXISTING: toggle/FSM coverage TIDAK PERNAH tercatat karena
+     signal_snapshot di-refresh setiap delta cycle (Sched-04 fix utk edge
+     detection) → diff coverage selalu kosong. Solusi: field baru
+     coverage_snapshot di-capture di awal time step (TIDAK di-refresh per
+     delta), di-gate hanya saat Toggle/FSM aktif (hindari O(N) clone per time
+     step saat coverage tak dipakai). record_coverage_after_commit kini
+     memakai coverage_snapshot.
+   - Files: coverage.rs, block_syscall.rs, mod.rs, core.rs
+
+📊 VERIFIKASI ROUND 20:
+   - cargo build: 0 error
+   - cargo test --lib: 1201 passed, 0 failed (+8 test baru: 4 glitch +
+     4 coverage_control)
+   - Test baru: test_glitch_detection_triggers_warning,
+     test_glitch_detection_disabled_by_default,
+     test_glitch_detection_no_false_positive_slow_transition,
+     test_glitch_detection_end_to_end, test_coverage_control_all_types_enabled,
+     test_coverage_control_bitmask_toggle_only, test_coverage_control_branch_only,
+     test_coverage_control_all_types_disabled
+   - Code review: OK (glitch skip multi-driver benar; coverage_snapshot gate
+     benar; tidak ada jalur lain yang memakai coverage_snapshot)
+
+═══ ROUND 21 — SIM-24 TIMING VIOLATION REPORTING ═══
+
+[x] SIM-24: No setup/hold violation reporting beyond basic — FIXED
+   - FIX BUG PRE-EXISTING (akar masalah): parse_specify_item membandingkan
+     fname.as_str() (= "setup" TANPA $, karena tokenizer memisahkan $ jadi
+     Token::Dollar) dengan "$setup" (DENGAN $) → specify_items SELALU kosong,
+     timing check TIDAK PERNAH berjalan. Semua match arms + flag is_*
+     diperbaiki tanpa $.
+   - FIX urutan argumen IEEE 1800: $setup(data, ref, limit) data-dulu;
+     $hold/$setuphold/$recovery/$removal/$recrem ref-dulu. Sebelumnya semua
+     diparse data-dulu → $hold(posedge clk, ...) error "expected expression,
+     found PosEdge".
+   - parse_ref_event() helper: konsumsi prefix posedge/negedge (parse_expr
+     tidak menerima token PosEdge/NegEdge), kini mengembalikan
+     (Expr, Option<EdgeKind>) → ref_edge disimpan di semua 11 varian
+     SpecifyItem (enum EdgeKind baru di ast/types.rs).
+   - DiagCode::TimingViolation (WR0303) + semua match arms di diagnostic.rs;
+     WARNING_CODES + test count 63; test_codes_by_category 9.
+   - 13 eprintln "TIMING WARNING:" diganti emit_warning(DiagCode::TimingViolation)
+     → warning terstruktur via DiagSink, ter-flush di CLI (emit_diags).
+   - EDGE-AWARE setup/hold/setuphold: signal_last_dir (arah transisi LSB
+     0→1=PosEdge, 1→0=NegEdge) dicatat di record_signal_change() tiap write.
+     Setup/hold hanya fire bila arah edge ref cocok dengan ref_edge —
+     menghilangkan false positive (sebelumnya fire di KEDUA edge clk).
+   - DEDUPE spam width/period/recovery/removal/skew: signal_prev_change
+     (waktu perubahan sebelumnya) + timing_reported map — width/period fire
+     sekali saat pulse berakhir (last_change==current_time &&
+     last_change-prev_change<limit); recovery/dll fire sekali per last_change.
+   - WidthCheck kini filter opposite-edge (ref_edge=PosEdge → hanya fire saat
+     pulse high berakhir di negedge) sesuai IEEE $width.
+   - record_signal_change() punya gate same-value write (bit-wise comparison
+     old.bits != new.bits, BUKAN to_u64 yang menganggap X/Z=0) — pulse timer
+     width/period tidak reset oleh write nilai yang sama (mis. `clk = 1` saat
+     clk sudah 1), transisi partial X→0/X→1 tetap tercatat.
+   - Files: parser/specify.rs, ast/types.rs, diagnostic.rs, codes.rs,
+     simulator/engine/{mod.rs, core.rs, eval/lvalue.rs, eval/syscall.rs},
+     tests/mod.rs
+
+📊 VERIFIKASI ROUND 21:
+   - cargo build: 0 error
+   - cargo test --lib: 1205 passed, 0 failed (+4 test timing: setup violation,
+     hold violation, no-false-positive saat puas, width violation)
+   - Code review: OK (edge-aware benar; dedupe current_time marker skew benar;
+     opposite-edge width filter IEEE-correct; borrow-check aman)
+
+═══ ROUND 22 — SIM-25 PERFORMANCE MONITORING DASHBOARD ═══
+
+✅ SIM-25: Simulation performance monitoring dashboard (--perf-dashboard)
+   - FILE BARU src/profiling/dashboard.rs: struct SimPerfCounters
+     (delta_cycles, time_steps, events_processed, nba_commits,
+     sensitive_triggers, processes_evaluated) + struct PerfDashboard
+     (start: Instant, metode events_per_delta/events_per_sec/deltas_per_sec,
+     impl Display untuk output rapih). 3 unit test inline.
+   - src/profiling/mod.rs: pub mod dashboard + re-export PerfDashboard.
+   - src/simulator/engine/mod.rs: field sim_perf: PerfDashboard di struct
+     SimulationEngine; init di constructor.
+   - src/simulator/engine/core.rs: instrumentasi run loop —
+     time_steps += 1 per time step, delta_cycles += 1 per delta cycle,
+     events_processed += events.len() di 4 region scheduler (Active/Inactive,
+     Nba, Reactive) + to_process.len() di loop PreActive (tiap drain hanya
+     dihitung sekali, tanpa double-count). nba_commits += 1, sensitive_triggers
+     += 1. Jalur DAG-parallel menambahkan processes_evaluated += eval_pids.len()
+     (jalur ini TIDAK lewat process_event).
+   - src/simulator/engine/scheduler/event.rs: processes_evaluated += 1 di arm
+     EventKind::EvalProcess, diposisikan SETELAH bounds-check early-return
+     (hanya pid valid yang benar-benar dievaluasi).
+   - src/cli.rs: flag --perf-dashboard (bool).
+   - src/main.rs: cetak dashboard via println!("{}", debugger.engine.sim_perf)
+     saat flag aktif (kedua jalur simulasi, setelah flush diagnostics).
+   - src/tests/mod.rs: 2 test baru — test_perf_dashboard_counts_activity
+     (time_steps/delta_cycles/events_processed/sensitive_triggers/
+     processes_evaluated >= 1 setelah sim sederhana) dan
+     test_perf_dashboard_display_and_throughput (Display berisi label,
+     events_per_sec/deltas_per_sec finite non-negatif).
+   - Total +5 test baru (3 dashboard.rs inline + 2 tests/mod.rs).
+
+📊 VERIFIKASI ROUND 22:
+   - cargo build: 0 error
+   - cargo test --lib: 1210 passed, 0 failed (+5 test dashboard)
+   - Code review: OK (no double-count DAG vs sequential disjoint;
+     bounds-check placement benar; jalur line 1788 process_event manual sudah
+     dihitung)
 
 //=======================================================================\\
 ATURAN

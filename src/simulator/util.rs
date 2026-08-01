@@ -303,6 +303,12 @@ pub fn eval_display_arg(
             let msg = format_display(state, signals, hier_map, assoc_data, args);
             Ok(string_to_logicvec(&msg))
         }
+        IrExpr::SysFunc { name, .. } if name == "$time" || name == "time" => {
+            Ok(LogicVec::from_u64(state.time, 64))
+        }
+        IrExpr::SysFunc { name, .. } if name == "$realtime" || name == "realtime" => {
+            Ok(LogicVec::from_u64((state.time as f64).to_bits(), 64))
+        }
         _ => Ok(LogicVec::from_u64(0, 32)),
     }
 }
@@ -399,6 +405,33 @@ pub fn format_display(
                         let s = format!("{}", f64::from_bits(val.to_u64()));
                         result.push_str(&s);
                     }
+                    value_idx += 1;
+                }
+                Some('t') => {
+                    // %t: format time using $timeformat settings (IEEE 1800).
+                    // Sim time advances 1 unit per step; base unit seeded from
+                    // design `timescale (default 1ns = 10^-9 s).
+                    let t = value_args
+                        .get(value_idx)
+                        .map(|v| v.to_u64() as f64)
+                        .unwrap_or(state.time as f64);
+                    // Skala relatif terhadap basis sim-time, bukan hardcode -9.
+                    // saturating_sub mencegah underflow i64 (panic di debug)
+                    // jika user memanggil $timeformat dengan units ekstrem.
+                    let scale = 10f64.powi(
+                        state.timeformat.base_units.saturating_sub(state.timeformat.units)
+                            as i32,
+                    );
+                    let scaled = t * scale;
+                    let precision = state.timeformat.precision.clamp(0, 20) as usize;
+                    let mut s = format!("{:.*}", precision, scaled);
+                    // Clamp min_field_width utk cegah alokasi " ".repeat(huge).
+                    let min_width = state.timeformat.min_field_width.min(128);
+                    if s.len() < min_width {
+                        s = format!("{}{}", " ".repeat(min_width - s.len()), s);
+                    }
+                    s.push_str(&state.timeformat.suffix);
+                    result.push_str(&s);
                     value_idx += 1;
                 }
                 Some('s') => {
