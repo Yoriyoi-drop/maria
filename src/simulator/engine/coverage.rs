@@ -10,6 +10,11 @@ use std::collections::{HashMap, HashSet};
 
 use super::SimulationEngine;
 
+/// Batas jumlah default bin per coverpoint/cross. Nilai unik di luar cap tetap
+/// dihitung sebagai sample (hits/total), tapi tidak membuat bin baru — mencegah
+/// pertumbuhan tak terbatas untuk coverpoint lebar dengan nilai acak.
+pub(crate) const MAX_DEFAULT_BINS: usize = 4096;
+
 /// Check if a value matches a wildcard bin pattern (supports ? and * wildcards).
 #[allow(dead_code)]
 fn wildcard_match(value: u64, pattern: &str) -> bool {
@@ -88,7 +93,22 @@ impl SimulationEngine {
     }
 
     // ─── Line Coverage ─────────────────────────────────────────────
-    
+
+    /// Apakah baris (1-based, koordinat output preprocessed) berada dalam
+    /// region `` `coverage_off ``/`` `coverage_on `` sehingga line coverage-nya
+    /// harus di-exclude (SIM-29).
+    ///
+    /// # Note
+    /// API dicadangkan untuk filtering line-aware: `record_line_hit` saat ini
+    /// memakai key `process_name + discriminant(stmt)` tanpa info baris, jadi
+    /// metode ini belum di-konsumsi jalur produksi (diverifikasi via unit test).
+    #[allow(dead_code)]
+    pub(crate) fn is_line_excluded(&self, line: usize) -> bool {
+        self.coverage_exclusions
+            .iter()
+            .any(|(s, e)| line >= *s && line <= *e)
+    }
+
     /// Record that a source line was executed.
     pub(crate) fn record_line_hit(&mut self, stmt: &IrStmt, process_name: &str) {
         if !self.coverage_type_enabled(CoverageType::Line) {
@@ -387,15 +407,19 @@ impl SimulationEngine {
                     .unwrap_or(LogicVec::from_u64(0, 32));
                 cp_values.insert(cp.name.as_str().to_string(), val.to_u64());
 
-                // Default bin: just record the actual value
+                // Default bin: record the actual value — cap jumlah bin unik
+                // per coverpoint (anti-leak untuk nilai acak).
                 let bin_key = format!("{}={}", cp.name, val.to_u64());
                 let bin_key_sym = Symbol::intern(&bin_key);
                 let bins = self
                     .cover_bins
                     .entry(key_sym)
                     .or_default();
-                let entry = bins.entry(bin_key_sym).or_insert(0);
-                *entry += 1;
+                if bins.contains_key(&bin_key_sym) {
+                    *bins.get_mut(&bin_key_sym).unwrap() += 1;
+                } else if bins.len() < MAX_DEFAULT_BINS {
+                    bins.insert(bin_key_sym, 1);
+                }
                 let hits = self.cover_hits.entry(key_sym).or_insert(0);
                 *hits += 1;
             }
@@ -416,8 +440,11 @@ impl SimulationEngine {
                     .cover_bins
                     .entry(key_sym)
                     .or_default();
-                let entry = bins.entry(bin_key_sym).or_insert(0);
-                *entry += 1;
+                if bins.contains_key(&bin_key_sym) {
+                    *bins.get_mut(&bin_key_sym).unwrap() += 1;
+                } else if bins.len() < MAX_DEFAULT_BINS {
+                    bins.insert(bin_key_sym, 1);
+                }
                 let hits = self.cover_hits.entry(key_sym).or_insert(0);
                 *hits += 1;
             }

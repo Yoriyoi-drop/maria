@@ -516,10 +516,22 @@ _ => {}
                 self.modules.insert(mod_name, cached_ir.clone());
                 self.cache_hits += 1;
             } else {
-                let ir = self.elaborate_module(module, &module_names)?;
-                self.module_cache.insert(dep_aware, ir.clone());
-                self.modules.insert(mod_name, ir);
-                self.cache_misses += 1;
+                match self.elaborate_module(module, &module_names) {
+                    Ok(ir) => {
+                        self.module_cache.insert(dep_aware, ir.clone());
+                        self.modules.insert(mod_name, ir);
+                        self.cache_misses += 1;
+                    }
+                    Err(e) => {
+                        // Module yang gagal elaborasi dilewati dengan warning
+                        // (mis. package/type yang dirujuk tidak tersedia), bukan
+                        // mematikan seluruh elaborasi.
+                        self.elab_warn(
+                            DiagCode::ModuleNotFound,
+                            format!("module '{}' skipped due to elaboration error: {}", mod_name, e),
+                        );
+                    }
+                }
             }
         }
 
@@ -642,10 +654,42 @@ _ => {}
                 .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, "no modules in design"))?,
         };
 
-        let mut top = self
-            .modules
-            .remove(&top_name)
-            .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, format!("top module '{}' not found", top_name)))?;
+        let mut top = match self.modules.remove(&top_name) {
+            Some(m) => m,
+            None => {
+                // Top otomatis (tanpa --top) gagal elaborasi. Fallback ke modul
+                // pertama yang BERHASIL elaborasi agar simulasi tetap berjalan;
+                // module yang gagal dilewati dengan warning. Untuk top eksplisit
+                // tetap error agar tidak menyesatkan pengguna.
+                let fallback = self
+                    .design
+                    .modules
+                    .iter()
+                    .filter_map(|m| self.modules.get(&m.name).cloned())
+                    .next();
+                match fallback {
+                    Some(fb) if top_module.is_none() => {
+                        self.elab_warn(
+                            DiagCode::ModuleNotFound,
+                            format!(
+                                "top module '{}' not elaborated (skipped due to elaboration error); falling back to first elaboratable module '{}'",
+                                top_name, fb.name
+                            ),
+                        );
+                        fb
+                    }
+                    _ => {
+                        return Err(self.elab_diag(
+                            DiagCode::ModuleNotFound,
+                            format!(
+                                "top module '{}' not found: no module could be elaborated (all skipped due to elaboration errors)",
+                                top_name
+                            ),
+                        ))
+                    }
+                }
+            }
+        };
 
         if std::env::var("DBG_ELAB").is_ok() {
             eprintln!("[DBG-ELAB] top found in {:?}", elab_t0.elapsed());
@@ -910,7 +954,7 @@ _ => {}
 
         Ok(IrDesign {
             top,
-            modules: self.modules.clone(),
+            modules: std::mem::take(&mut self.modules),
             classes,
             covergroups,
             dpi_imports,
@@ -929,6 +973,8 @@ _ => {}
             } else {
                 Some(self.source_file.clone())
             },
+            pkg_scoped_consts: std::mem::take(&mut self.pkg_param_ctx),
+            coverage_exclusions: Vec::new(),
         })
     }
 

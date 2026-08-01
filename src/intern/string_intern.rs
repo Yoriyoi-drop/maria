@@ -175,15 +175,17 @@ impl PartialEq<String> for Symbol {
 ///
 /// Design:
 /// - `lookup`: DashMap for O(1) string→u32 lookup
-/// - `strings`: append-only Vec of `Box::leak`'d `&'static str` for O(1) u32→string
+/// - `strings`: append-only Vec of `Box<str>` — DIMILIKI table, sehingga
+///   `reset_string_table()` benar-benar membebaskan memori (tidak `Box::leak`).
 /// - RwLock permits concurrent reads without serialization
 struct StringTable {
     /// O(1) hash-based lookup — string → u32 index
     lookup: DashMap<String, u32, fxhash::FxBuildHasher>,
-    /// Indexed storage — `Box::leak`'d strings for stable `&'static str` pointers.
-    /// Append-only: once pushed, a string lives forever.
+    /// Indexed storage — `Box<str>` owned oleh table.
+    /// Lifetime `'static` yang dibagikan via `Symbol::get` dibuat dengan
+    /// transmute: memori hidup selama table (di-free saat `reset_string_table`).
     /// RwLock: concurrent reads (as_str) don't block each other.
-    strings: parking_lot::RwLock<Vec<&'static str>>,
+    strings: parking_lot::RwLock<Vec<Box<str>>>,
     // ID is derived from strings.len() under the lock — no separate counter needed.
 }
 
@@ -303,14 +305,15 @@ impl StringTable {
         match self.lookup.entry(owned) {
             Entry::Occupied(e) => Symbol(*e.get()),
             Entry::Vacant(e) => {
-                // Leak the string for a stable `&'static str` pointer.
-                // Safe: only allocated once, lives forever.
-                // Note: `owned` is already moved into `entry()` above, so we allocate fresh.
-                let leaked: &'static str = Box::leak(Box::from(s));
-                // Use strings.len() as the ID (guaranteed to match Vec index under the lock)
+                // Simpan Box<str> di table (bukan `Box::leak`) — sehingga
+                // reset_string_table() dapat benar-benar membebaskan memori.
+                // Safety: reference `'static` dibuat via transmute; memori valid
+                // selama table hidup. Kontrak sama dengan implementasi lama
+                // (Box::leak): jangan gunakan Symbol setelah reset_string_table.
+                let boxed: Box<str> = Box::from(s);
                 let mut strings = self.strings.write();
                 let id = strings.len() as u32;
-                strings.push(leaked);
+                strings.push(boxed);
                 e.insert(id);
                 Symbol(id)
             }
@@ -319,11 +322,13 @@ impl StringTable {
 
     /// Retrieve a string by its u32 ID — O(1).
     ///
-    /// `&'static str: Copy`, so indexing the Vec returns a `&'static str` value
-    /// that is not tied to the MutexGuard lifetime — safe without transmute.
+    /// `&'static str` dihasilkan dengan transmute lifetime dari `&Box<str>`
+    /// di dalam table. Memori di-free saat `reset_string_table`; setelah itu
+    /// Symbol lama tidak boleh dipakai (kontrak sama seperti Box::leak).
     fn get(&self, id: u32) -> &'static str {
         let strings = self.strings.read();
-        strings[id as usize]
+        let view = strings[id as usize].as_ref();
+        unsafe { std::mem::transmute::<&str, &'static str>(view) }
     }
 }
 

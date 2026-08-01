@@ -241,6 +241,15 @@ pub fn resolve_expr_range(
 ) -> Result<Range, String> {
     let msb = const_eval_with_params(&er.msb, param_vals)?;
     let lsb = const_eval_with_params(&er.lsb, param_vals)?;
+    // Range negatif (msb/lsb hasil konstanta tak valid) ditolak agar tidak
+    // menghasilkan width raksasa (cast negatif ke usize) yang mem-blow-up
+    // alokasi sinyal.
+    if msb < 0 || lsb < 0 {
+        return Err(format!(
+            "negative range bound msb={} lsb={} in [{}:{}]",
+            msb, lsb, msb, lsb
+        ));
+    }
     Ok(Range {
         msb: msb as usize,
         lsb: lsb as usize,
@@ -331,7 +340,7 @@ impl DeclVar {
         let mut total = base_width;
         for (er, _) in &self.extra_packed_dims {
             let r = resolve_expr_range(er, param_vals)?;
-            total *= r.width();
+            total = total.saturating_mul(r.width());
         }
         Ok(total)
     }

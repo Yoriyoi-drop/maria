@@ -1,4 +1,5 @@
 use super::SimulationEngine;
+use super::EVENT_COMPACT_THRESHOLD;
 use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, RuntimeContext, SourceSnippet};
 use crate::error::SimError;
 use crate::ir::*;
@@ -18,10 +19,12 @@ impl SimulationEngine {
         let state = SimulationState::new(&design);
         SimulationEngine {
             state,
+            coverage_exclusions: design.coverage_exclusions.clone(),
             design,
             max_time,
             running: true,
             events: Vec::new(),
+            events_base: 0,
             nba_pending: Vec::new(),
             vcd: None,
             fst: None,
@@ -47,12 +50,14 @@ impl SimulationEngine {
             signal_snapshot: None,
             coverage_snapshot: None,
             pending_waits: Vec::new(),
+            pending_events: Vec::new(),
             pending_await_target: None,
             pending_wait_orders: Vec::new(),
             loop_continuation: None,
             post_loop_tail: Vec::new(),
             current_time: 0,
             fork_groups: Vec::new(),
+            fork_free: Vec::new(),
             reactive_events: Vec::new(),
             strobe_events: Vec::new(),
             fstrobe_events: Vec::new(),
@@ -82,6 +87,7 @@ impl SimulationEngine {
             cover_hits: HashMap::new(),
             cover_total: HashMap::new(),
             cover_bins: HashMap::new(),
+            ast_loop_iters: 0,
             plusargs: HashMap::new(),
             debug_mode: DebugMode::Normal,
             breakpoints: Vec::new(),
@@ -212,6 +218,24 @@ impl SimulationEngine {
         SimError::Diagnostic(diag)
     }
 
+    /// Emit warning diagnostic dengan posisi source (line, col).
+    pub fn diag_warn_at(&self, code: DiagCode, message: impl Into<String>, line: usize, col: usize) {
+        let msg: String = message.into();
+        let mut diag = Diagnostic::new(DiagLevel::Warning, code, msg)
+            .with_runtime_context(self.runtime_context())
+            .with_code_context();
+        if line > 0 {
+            if let Some(ref source_lines) = self.design.source_lines {
+                if line <= source_lines.len() {
+                    let source_line = &source_lines[line - 1];
+                    let (file, display_line) = self.resolve_source_location(line);
+                    diag = diag.with_source_snippet(SourceSnippet::new(file, display_line, col, source_line));
+                }
+            }
+        }
+        self.diag_sink.push(diag);
+    }
+
     /// Emit fatal diagnostic ke DiagSink dan return SimError dengan full context.
     pub fn diag_fatal(&self, code: DiagCode, message: impl Into<String>) -> SimError {
         self.diag_fatal_at(code, message, 0, 0)
@@ -291,10 +315,108 @@ impl SimulationEngine {
     }
 
     /// Ensure the events Vec is large enough to hold events at time `t`.
+    /// Indeks relatif terhadap `events_base` (lihat `retire_events`).
     pub fn ensure_events(&mut self, t: usize) {
-        if t >= self.events.len() {
-            self.events.resize(t + 1, Vec::new());
+        let idx = t - self.events_base;
+        if idx >= self.events.len() {
+            self.events.resize(idx + 1, Vec::new());
         }
+    }
+
+    /// Reclaim slot event untuk time step `processed` setelah selesai diproses.
+    /// 1) Bebaskan alokasi inner Vec slot yang sudah lewat.
+    /// 2) Periodik: buang slot-slot leading yang sudah retired sehingga `events`
+    ///    tidak tumbuh O(max_time). Aman karena event selalu dijadwalkan pada
+    ///    waktu >= waktu saat ini (delay `#0`/`#N` tidak pernah ke masa lalu).
+    pub fn retire_events(&mut self, processed: usize) {
+        let idx = processed - self.events_base;
+        if idx < self.events.len() {
+            self.events[idx] = Vec::new();
+        }
+        if idx >= EVENT_COMPACT_THRESHOLD {
+            self.events.drain(..idx);
+            self.events_base += idx;
+        }
+    }
+
+    /// Alokasikan slot ForkGroup — reuse slot retired bila ada (anti-leak
+    /// untuk fork di dalam loop).
+    pub(crate) fn alloc_fork_group(
+        &mut self,
+        remaining: usize,
+        continuation: Vec<IrStmt>,
+        reclaimable: bool,
+    ) -> usize {
+        if let Some(fid) = self.fork_free.pop() {
+            self.fork_groups[fid] = ForkGroup {
+                remaining,
+                continuation,
+                fired: false,
+                active: true,
+                reclaimable,
+            };
+            fid
+        } else {
+            let fid = self.fork_groups.len();
+            self.fork_groups.push(ForkGroup {
+                remaining,
+                continuation,
+                fired: false,
+                active: true,
+                reclaimable,
+            });
+            fid
+        }
+    }
+
+    /// Retire ForkGroup yang sudah selesai: free continuation, tandai non-aktif,
+    /// kembalikan slot ke free list. Idempoten (guard `active`).
+    pub(crate) fn retire_fork_group(&mut self, fid: usize) {
+        if fid < self.fork_groups.len() && self.fork_groups[fid].active {
+            let g = &mut self.fork_groups[fid];
+            g.active = false;
+            g.fired = true;
+            g.remaining = 0;
+            g.continuation.clear();
+            self.fork_free.push(fid);
+        }
+    }
+
+    /// Decrement counter branch fork. Dipanggil hanya saat satu branch BENAR-BENAR
+    /// selesai (all_consumed). Bila semua branch selesai, finish fork.
+    pub(crate) fn fork_decrement(&mut self, fid: usize) -> Result<(), SimError> {
+        if fid >= self.fork_groups.len() || !self.fork_groups[fid].active {
+            return Ok(());
+        }
+        if self.fork_groups[fid].remaining > 0 {
+            self.fork_groups[fid].remaining -= 1;
+        }
+        self.fork_finish(fid)
+    }
+
+    /// Finalisasi fork saat remaining == 0: eksekusi continuation (sekali via
+    /// `fired`), lalu reclaim slot bila aman (reclaimable) atau hanya free
+    /// continuation untuk JoinAny.
+    pub(crate) fn fork_finish(&mut self, fid: usize) -> Result<(), SimError> {
+        if fid >= self.fork_groups.len() || !self.fork_groups[fid].active {
+            return Ok(());
+        }
+        if self.fork_groups[fid].remaining > 0 {
+            return Ok(());
+        }
+        if !self.fork_groups[fid].fired {
+            self.fork_groups[fid].fired = true;
+            let cont = std::mem::take(&mut self.fork_groups[fid].continuation);
+            if !cont.is_empty() {
+                self.evaluate_block_with_delay_fork(&cont, None)?;
+            }
+        }
+        if self.fork_groups[fid].reclaimable {
+            self.retire_fork_group(fid);
+        } else {
+            self.fork_groups[fid].continuation.clear();
+        }
+        Ok(())
     }
 
     /// Push an event at time `t` with dynamic allocation.
@@ -314,8 +436,11 @@ impl SimulationEngine {
                 // Current or past time — fall through to events[t]
             }
         }
-        self.ensure_events(t);
-        self.events[t].push(event);
+        let idx = t - self.events_base;
+        if idx >= self.events.len() {
+            self.ensure_events(t);
+        }
+        self.events[t - self.events_base].push(event);
     }
 
     /// Enable the hierarchical timing wheel for O(1) event scheduling.
@@ -1152,6 +1277,9 @@ impl SimulationEngine {
         // Semua LogicVec::new(), fill(), from_u64() otomatis alokasi dari arena
         // selama event loop berjalan. Tidak perlu ubah evaluate_expr() call sites.
         crate::simulator::arena::set_thread_arena(Some(&mut self.sim_arena));
+        // RAII guard: arena di-deregister otomatis saat run() keluar (termasuk
+        // early-return error) — cegah pointer menggantung ke sim_arena.
+        let _arena_guard = crate::simulator::arena::ArenaGuard;
 
         // ── Build DAG untuk parallel process evaluation ──
         // Hanya untuk Combinational/CombReactive processes yang aman di-paralelkan.
@@ -1210,6 +1338,9 @@ impl SimulationEngine {
 
         while self.running && self.state.time <= self.max_time {
             let t = self.state.time as usize;
+            // events_base konstan selama satu time step (hanya berubah di
+            // retire_events, yang dipanggil setelah step selesai).
+            let base = self.events_base;
 
             // ── Timing wheel: advance to current time ──
             // Populates events[t] with all events scheduled for this time step
@@ -1219,7 +1350,7 @@ impl SimulationEngine {
                     let wheel_events = wheel.advance(t);
                     if !wheel_events.is_empty() {
                         self.ensure_events(t);
-                        self.events[t].extend(wheel_events);
+                        self.events[t - base].extend(wheel_events);
                     }
                 }
             }
@@ -1286,7 +1417,7 @@ impl SimulationEngine {
                             while matched {
                                 matched = false;
                                 let mut to_process = Vec::new();
-                                self.events[t].retain(|re| {
+                                self.events[t - base].retain(|re| {
                                     if re.region == region {
                                         to_process.push(re.event.clone());
                                         false
@@ -1308,7 +1439,7 @@ impl SimulationEngine {
                             // Postponed region: process once per time step, does NOT re-circulate
                             self.ensure_events(t);
                             let mut to_process = Vec::new();
-                                self.events[t].retain(|re| {
+                                self.events[t - base].retain(|re| {
                                     if re.region == EventRegion::Postponed {
                                         to_process.push(re.event.clone());
                                         false
@@ -1330,7 +1461,7 @@ impl SimulationEngine {
                                 while matched {
                                     matched = false;
                                     let mut to_process = Vec::new();
-                                    self.events[t].retain(|re| {
+                                    self.events[t - base].retain(|re| {
                                         if re.region == EventRegion::Observed {
                                             to_process.push(re.event.clone());
                                             false
@@ -1350,7 +1481,7 @@ impl SimulationEngine {
                         EventRegion::Active | EventRegion::Inactive => {
                             self.ensure_events(t);
                             loop {
-                                    let events: Vec<RegionEvent> = self.events[t]
+                                    let events: Vec<RegionEvent> = self.events[t - base]
                                         .drain(..)
                                         .filter(|re| re.region == region)
                                         .collect();
@@ -1421,7 +1552,7 @@ impl SimulationEngine {
                             self.commit_nba();
                             self.sim_perf.counters.nba_commits += 1;
                             self.ensure_events(t);
-                            let events: Vec<RegionEvent> = self.events[t]
+                            let events: Vec<RegionEvent> = self.events[t - base]
                                 .drain(..)
                                 .filter(|re| re.region == EventRegion::Nba)
                                 .collect();
@@ -1448,7 +1579,7 @@ impl SimulationEngine {
                             }
                             // Process Reactive events (from events[t] and reactive_events buffer)
                             self.ensure_events(t);
-                            let events: Vec<RegionEvent> = self.events[t]
+                            let events: Vec<RegionEvent> = self.events[t - base]
                                 .drain(..)
                                 .filter(|re| re.region == EventRegion::Reactive)
                                 .collect();
@@ -1493,6 +1624,13 @@ impl SimulationEngine {
                     activity = true;
                 }
 
+                // Check pending blocking event control @(sig)
+                if !self.pending_events.is_empty() && !deltas.is_empty()
+                    && self.process_pending_events(&deltas)?
+                {
+                    activity = true;
+                }
+
                 // Check pending wait_order conditions
                 if !self.pending_wait_orders.is_empty() && !deltas.is_empty()
                     && self.process_pending_wait_orders(&deltas)?
@@ -1503,7 +1641,7 @@ impl SimulationEngine {
                 // Re-circulate if any events remain or NBA is pending
                 // Postponed events do NOT re-circulate (they fire once per time step)
                 self.ensure_events(t);
-                let has_remaining = self.events[t].iter().any(|re| {
+                let has_remaining = self.events[t - base].iter().any(|re| {
                         matches!(
                             re.region,
                             EventRegion::PreActive
@@ -1637,6 +1775,9 @@ impl SimulationEngine {
 
             // Advance and evaluate sequence attempts
             self.evaluate_sequence_attempts()?;
+            // Reclaim slot event untuk time step yang baru selesai (anti-leak:
+            // events tidak pernah tumbuh O(max_time)).
+            self.retire_events(t);
             self.state.time += 1;
             if self.state.time > self.max_time {
                 break;
@@ -1656,6 +1797,8 @@ impl SimulationEngine {
         }
 
         // ── Cleanup: deregister thread-local arena untuk cegah dangling pointer ──
+        // (ArenaGuard di atas juga menanganinya saat early-return; panggilan
+        // eksplisit ini tetap ada untuk path normal.)
         crate::simulator::arena::set_thread_arena(None);
 
         // ── VPI Cleanup ──

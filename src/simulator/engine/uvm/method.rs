@@ -20,10 +20,13 @@ impl SimulationEngine {
             .map(|o| o.class_name)
             .unwrap_or_default();
         if class_name.is_empty() {
-            return Err(SimError::with_diag(
-                DiagCode::DpiError,
-                format!("cannot call method '{}' on object with unknown class", method),
-            ));
+            // Method call pada null handle / class tak dikenal: warning + default
+            // agar simulasi tetap berjalan (null-handle chain pada kode UVM).
+            self.emit_warning(
+                DiagCode::NullHandle,
+                format!("cannot call method '{}' on object with unknown class (obj_id={}); using null default", method, obj_id),
+            );
+            return Ok(LogicVec::from_u64(0, 64));
         }
         if class_name == "__mailbox" {
             return self.execute_mailbox_method(obj_id, method, args);

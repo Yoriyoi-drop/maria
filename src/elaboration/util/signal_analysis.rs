@@ -99,8 +99,10 @@ pub fn collect_read_signals_stmt(stmt: &IrStmt, out: &mut Vec<SignalId>) {
             }
             collect_read_signals_stmts(body, out);
         }
-        IrStmt::EventControl { sig_id, body, .. } => {
-            out.push(*sig_id);
+        IrStmt::EventControl { sigs, body, .. } => {
+            for (sid, _) in sigs {
+                out.push(*sid);
+            }
             collect_read_signals_stmts(body, out);
         }
         IrStmt::EventTrigger { sig_id } => {

@@ -23,6 +23,14 @@ pub struct IrDesign {
     pub source_lines: Option<Vec<String>>,
     /// First source file path (for source snippets)
     pub source_file: Option<String>,
+    /// Konstanta package global (qualified `pkg::name` → nilai i64), termasuk
+    /// enum member dan parameter package. Dipakai evaluasi `pkg::item` saat
+    /// runtime (ScopedIdent) di method class / constraint.
+    pub pkg_scoped_consts: HashMap<Symbol, i64>,
+    /// Line ranges (start, end) inklusif 1-based — dari `` `coverage_off ``/
+    /// `` `coverage_on `` (koordinat output preprocessed). Dipakai engine untuk
+    /// mengecualikan baris dari line coverage (SIM-29).
+    pub coverage_exclusions: Vec<(usize, usize)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -348,8 +356,9 @@ pub enum IrStmt {
     SysFinish,
     Null,
     EventControl {
-        sig_id: SignalId,
-        edge: Option<ClockEdge>,
+        /// Daftar (signal, edge) sensitivity — `@(a or posedge b)`.
+        /// edge None = level (tunggu perubahan nilai signal).
+        sigs: Vec<(SignalId, Option<ClockEdge>)>,
         body: Vec<IrStmt>,
     },
     EventTrigger {

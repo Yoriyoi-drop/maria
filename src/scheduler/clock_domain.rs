@@ -322,8 +322,10 @@ fn collect_stmt_reads(stmts: &[IrStmt], reads: &mut HashSet<SignalId>) {
             IrStmt::Delay { body, .. } | IrStmt::Wait { cond: _, body, .. } => {
                 collect_stmt_reads(body, reads);
             }
-            IrStmt::EventControl { sig_id, body, .. } => {
-                reads.insert(*sig_id);
+            IrStmt::EventControl { sigs, body, .. } => {
+                for (sid, _) in sigs {
+                    reads.insert(*sid);
+                }
                 collect_stmt_reads(body, reads);
             }
             IrStmt::Fork { processes, .. } => {
@@ -471,6 +473,8 @@ mod tests {
             source_file: None,
             source_lines: None,
             module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
         };
         let analysis = ClockDomainAnalysis::analyze(&design);
         assert_eq!(analysis.num_domains(), 0);
@@ -533,6 +537,8 @@ mod tests {
             source_file: None,
             source_lines: None,
             module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
         };
 
         let analysis = ClockDomainAnalysis::analyze(&design);
@@ -588,6 +594,8 @@ mod tests {
             source_file: None,
             source_lines: None,
             module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
         };
 
         let analysis = ClockDomainAnalysis::analyze(&design);

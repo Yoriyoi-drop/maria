@@ -72,7 +72,7 @@ pub fn compute_expr_width(
                                 const_eval_with_params(&r.msb, param_vals),
                                 const_eval_with_params(&r.lsb, param_vals),
                             ) {
-                                (msb.abs_diff(lsb) + 1) as usize
+                                (msb.abs_diff(lsb).saturating_add(1)) as usize
                             } else {
                                 1
                             }
@@ -109,17 +109,22 @@ pub fn compute_expr_width(
             Ok(lw.max(rw))
         }
         Expr::Concat(items) => {
-            let mut total = 0;
+            let mut total: usize = 0;
             for item in items {
-                total +=
-                    compute_expr_width(item, signal_map, signals, param_vals, package_symbols)?;
+                total = total.saturating_add(compute_expr_width(
+                    item,
+                    signal_map,
+                    signals,
+                    param_vals,
+                    package_symbols,
+                )?);
             }
             Ok(total)
         }
         Expr::Replicate { count, expr: inner } => {
             let c = const_eval_with_params(count, param_vals).unwrap_or(1) as usize;
             let w = compute_expr_width(inner, signal_map, signals, param_vals, package_symbols)?;
-            Ok(c * w)
+            Ok(c.saturating_mul(w))
         }
         Expr::TernaryOp {
             true_expr,

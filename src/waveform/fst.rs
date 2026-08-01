@@ -337,3 +337,26 @@ impl FstWaveWriter {
         Ok(())
     }
 }
+
+impl Drop for FstWaveWriter {
+    fn drop(&mut self) {
+        // DEBT-19: finalisasi FST (finish writer) walau engine return early
+        // tanpa close() eksplisit. Aman/idempoten — writer.take() di close()
+        // memastikan finish() hanya dieksekusi sekali.
+        let _ = self.close();
+    }
+}
+
+// DEBT-20: Debug konsisten — FstWriter (crate wavefst) tidak implement Debug,
+// jadi tampilkan status ringkas (bukan field internal raw-pointer FST).
+impl std::fmt::Debug for FstWaveWriter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FstWaveWriter")
+            .field("writer_active", &self.writer.is_some())
+            .field("var_count", &self.var_handles.len())
+            .field("current_time", &self.current_time)
+            .field("enabled", &self.enabled)
+            .field("stream_flush_interval", &self.stream_flush_interval)
+            .finish()
+    }
+}

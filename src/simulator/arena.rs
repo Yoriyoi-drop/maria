@@ -49,6 +49,20 @@ pub fn set_thread_arena(arena: Option<&mut SimulationArena>) {
     crate::ir::set_logicvec_ctor(if has_arena { Some(try_alloc_logicvec) } else { None });
 }
 
+/// RAII guard: me-reset thread-local arena saat drop.
+///
+/// `run()` mengaktifkan thread-local arena untuk zero-deallocation; guard ini
+/// memastikan arena di-deregister bahkan pada early-return error — mencegah
+/// pointer ke `sim_arena` yang sudah di-drop tertinggal (use-after-free pada
+/// `LogicVec::new()` berikutnya di thread yang sama).
+pub struct ArenaGuard;
+
+impl Drop for ArenaGuard {
+    fn drop(&mut self) {
+        set_thread_arena(None);
+    }
+}
+
 /// Alokasi LogicVec dari thread-local arena (jika ada).
 /// Dipanggil oleh LogicVec::new() dan LogicVec::fill().
 pub fn try_alloc_logicvec(width: usize, init: LogicVal) -> Option<LogicVec> {

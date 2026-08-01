@@ -7,6 +7,10 @@ use crate::Symbol;
 use crate::simulator::types::*;
 use rand::Rng;
 
+/// Cap iterasi loop AST (method/task context) untuk mencegah hang ketika loop
+/// berisi blocking event (`@(...)`) yang tidak memajukan waktu simulasi.
+const AST_LOOP_ITER_CAP: u64 = 10_000_000;
+
 impl SimulationEngine {
     pub(crate) fn evaluate_block_with_delay(&mut self, stmts: &[IrStmt]) -> Result<bool, SimError> {
         self.evaluate_block_with_delay_fork(stmts, None)
@@ -110,36 +114,23 @@ impl SimulationEngine {
                         }
                     return Ok(false);
                 }
-                IrStmt::EventControl { sig_id, edge, body } => {
-                    let sig_val = self.state.read_signal(*sig_id).clone();
-                    let triggered = match edge {
-                        Some(ClockEdge::PosEdge(_)) => {
-                            if let Some(ref snap) = self.signal_snapshot {
-                                let old_val = snap
-                                    .get(*sig_id)
-                                    .cloned()
-                                    .unwrap_or_else(|| LogicVec::new(1));
-                                old_val.to_bool() != Some(true) && sig_val.to_bool() == Some(true)
-                            } else {
-                                sig_val.to_bool() == Some(true)
-                            }
-                        }
-                        Some(ClockEdge::NegEdge(_)) => {
-                            if let Some(ref snap) = self.signal_snapshot {
-                                let old_val = snap
-                                    .get(*sig_id)
-                                    .cloned()
-                                    .unwrap_or_else(|| LogicVec::new(1));
-                                old_val.to_bool() != Some(false) && sig_val.to_bool() == Some(false)
-                            } else {
-                                sig_val.to_bool() == Some(false)
-                            }
-                        }
-                        None => true,
-                    };
-                    if triggered {
-                        self.evaluate_stmt_block(body)?;
+                IrStmt::EventControl { sigs, body } => {
+                    // Blocking event control `@(a or posedge b)`:
+                    // SELALU suspend — tunggu perubahan/edge berikutnya. Event
+                    // yang sudah lewat (mis. clk sudah high) TIDAK dihitung.
+                    let mut later: Vec<IrStmt> = body.clone();
+                    later.extend(stmts[i + 1..].to_vec());
+                    if let Some(lc) = &self.loop_continuation {
+                        later.extend(lc.clone());
                     }
+                    for (sig_id, edge) in sigs {
+                        self.pending_events.push(PendingEventControl {
+                            sig_id: *sig_id,
+                            edge: edge.clone(),
+                            continuation: later.clone(),
+                        });
+                    }
+                    return Ok(false);
                 }
                 IrStmt::EventTrigger { sig_id } => {
                     let val = self.state.read_signal(*sig_id);
@@ -535,32 +526,31 @@ impl SimulationEngine {
                     processes,
                     join_type,
                 } => {
-                    let fid = self.fork_groups.len();
                     let remaining: Vec<IrStmt> = stmts[i + 1..].to_vec();
                     let count = processes.len();
-                    self.fork_groups.push(ForkGroup {
-                        remaining: count,
-                        continuation: remaining.clone(),
-                    });
+                    // JoinNone tidak perlu menyimpan continuation (dieksekusi
+                    // sekali di sini) → hindari clone sisa statement.
+                    let cont = if matches!(join_type, IrJoinType::JoinNone) {
+                        Vec::new()
+                    } else {
+                        remaining.clone()
+                    };
+                    let reclaimable = !matches!(join_type, IrJoinType::JoinAny);
+                    let fid = self.alloc_fork_group(count, cont, reclaimable);
                     match join_type {
                         IrJoinType::Join => {
                             for p in processes {
                                 if p.is_empty() {
-                                    if self.fork_groups[fid].remaining > 0 {
-                                        self.fork_groups[fid].remaining -= 1;
-                                    }
+                                    self.fork_decrement(fid)?;
                                 } else {
                                     let all_consumed =
                                         self.evaluate_block_with_delay_fork(p, Some(fid))?;
-                                    if all_consumed && self.fork_groups[fid].remaining > 0 {
-                                        self.fork_groups[fid].remaining -= 1;
+                                    if all_consumed {
+                                        self.fork_decrement(fid)?;
                                     }
                                 }
                             }
-                            if self.fork_groups[fid].remaining == 0 && !remaining.is_empty() {
-                                let group = self.fork_groups[fid].clone();
-                                self.evaluate_block_with_delay_fork(&group.continuation, None)?;
-                            }
+                            self.fork_finish(fid)?;
                         }
                         IrJoinType::JoinAny => {
                             self.fork_groups[fid].remaining = 1;
@@ -576,23 +566,29 @@ impl SimulationEngine {
                                     }
                                 }
                             }
-                            if any_immediate && self.fork_groups[fid].remaining > 0 {
-                                self.fork_groups[fid].remaining -= 1;
+                            if any_immediate {
+                                self.fork_decrement(fid)?;
                             }
-                            if self.fork_groups[fid].remaining == 0 && !remaining.is_empty() {
-                                let group = self.fork_groups[fid].clone();
-                                self.evaluate_block_with_delay_fork(&group.continuation, None)?;
-                            }
+                            self.fork_finish(fid)?;
                         }
                         IrJoinType::JoinNone => {
                             for p in processes {
-                                if !p.is_empty() {
-                                    self.evaluate_block_with_delay_fork(p, Some(fid))?;
+                                if p.is_empty() {
+                                    self.fork_decrement(fid)?;
+                                } else {
+                                    let all_consumed =
+                                        self.evaluate_block_with_delay_fork(p, Some(fid))?;
+                                    if all_consumed {
+                                        self.fork_decrement(fid)?;
+                                    }
                                 }
                             }
+                            // continuation join_none dieksekusi sekali sekarang
+                            self.fork_groups[fid].fired = true;
                             if !remaining.is_empty() {
-                                self.evaluate_block_with_delay(&remaining)?;
+                                self.evaluate_block_with_delay_fork(&remaining, None)?;
                             }
+                            self.fork_finish(fid)?;
                         }
                     }
                     return Ok(true);
@@ -795,6 +791,14 @@ impl SimulationEngine {
                         self.control_flow = None;
                         break;
                     }
+                    self.ast_loop_iters += 1;
+                    if self.ast_loop_iters > AST_LOOP_ITER_CAP {
+                        self.emit_warning(
+                            crate::diagnostics::diagnostic::DiagCode::NotImplemented,
+                            "AST while/forever loop exceeded iteration cap (blocking event in loop without time advance); breaking out to avoid hang",
+                        );
+                        break;
+                    }
                     if !self.evaluate_ast_block_with_delay_fork(inner, fork_id)? {
                         break;
                     }
@@ -812,6 +816,14 @@ impl SimulationEngine {
                     }
                     if self.control_flow.is_some() {
                         self.control_flow = None;
+                        break;
+                    }
+                    self.ast_loop_iters += 1;
+                    if self.ast_loop_iters > AST_LOOP_ITER_CAP {
+                        self.emit_warning(
+                            crate::diagnostics::diagnostic::DiagCode::NotImplemented,
+                            "AST while loop exceeded iteration cap (blocking event in loop without time advance); breaking out to avoid hang",
+                        );
                         break;
                     }
                     let cond_val = self.evaluate_ast_expr(cond)?;
@@ -835,6 +847,14 @@ impl SimulationEngine {
                     }
                     if self.control_flow.is_some() {
                         self.control_flow = None;
+                        break;
+                    }
+                    self.ast_loop_iters += 1;
+                    if self.ast_loop_iters > AST_LOOP_ITER_CAP {
+                        self.emit_warning(
+                            crate::diagnostics::diagnostic::DiagCode::NotImplemented,
+                            "AST do-while loop exceeded iteration cap (blocking event in loop without time advance); breaking out to avoid hang",
+                        );
                         break;
                     }
                     if !self.evaluate_ast_block_with_delay_fork(inner, fork_id)? {
@@ -869,6 +889,14 @@ impl SimulationEngine {
                         }
                         if self.control_flow.is_some() {
                             self.control_flow = None;
+                            break;
+                        }
+                        self.ast_loop_iters += 1;
+                        if self.ast_loop_iters > AST_LOOP_ITER_CAP {
+                            self.emit_warning(
+                                crate::diagnostics::diagnostic::DiagCode::NotImplemented,
+                                "AST for loop exceeded iteration cap (blocking event in loop without time advance); breaking out to avoid hang",
+                            );
                             break;
                         }
                         if let Some(ref c) = cond {
@@ -1457,16 +1485,22 @@ impl SimulationEngine {
                         }
                     return Ok(());
                 }
-                IrStmt::EventControl { sig_id, edge, body } => {
-                    let sig_val = self.state.read_signal(*sig_id).clone();
-                    let triggered = match edge {
-                        Some(ClockEdge::PosEdge(_)) => sig_val.to_bool() == Some(true),
-                        Some(ClockEdge::NegEdge(_)) => sig_val.to_bool() == Some(false),
-                        None => true,
-                    };
-                    if triggered {
-                        self.evaluate_stmt_block(body)?;
+                IrStmt::EventControl { sigs, body } => {
+                    // Blocking event control (evaluate_stmt_block context):
+                    // daftarkan pending wake-up dan berhenti memproses blok ini.
+                    let mut later: Vec<IrStmt> = body.clone();
+                    later.extend(stmts[i + 1..].to_vec());
+                    if let Some(lc) = &self.loop_continuation {
+                        later.extend(lc.clone());
                     }
+                    for (sig_id, edge) in sigs {
+                        self.pending_events.push(PendingEventControl {
+                            sig_id: *sig_id,
+                            edge: edge.clone(),
+                            continuation: later.clone(),
+                        });
+                    }
+                    return Ok(());
                 }
                 IrStmt::EventTrigger { sig_id } => {
                     let val = self.state.read_signal(*sig_id);
@@ -1514,31 +1548,36 @@ impl SimulationEngine {
                     processes,
                     join_type,
                 } => {
-                    let fid = self.fork_groups.len();
                     let remaining: Vec<IrStmt> = stmts[i + 1..].to_vec();
                     let count = processes.len();
-                    self.fork_groups.push(ForkGroup {
-                        remaining: count,
-                        continuation: remaining.clone(),
-                    });
+                    let cont = if matches!(join_type, IrJoinType::JoinNone) {
+                        Vec::new()
+                    } else {
+                        remaining.clone()
+                    };
+                    let reclaimable = !matches!(join_type, IrJoinType::JoinAny);
+                    let fid = self.alloc_fork_group(count, cont, reclaimable);
                     match join_type {
                         IrJoinType::Join => {
                             for p in processes {
                                 if p.is_empty() {
-                                    if self.fork_groups[fid].remaining > 0 {
-                                        self.fork_groups[fid].remaining -= 1;
-                                    }
+                                    self.fork_decrement(fid)?;
                                 } else {
                                     let all_consumed =
                                         self.evaluate_block_with_delay_fork(p, Some(fid))?;
-                                    if all_consumed && self.fork_groups[fid].remaining > 0 {
-                                        self.fork_groups[fid].remaining -= 1;
+                                    if all_consumed {
+                                        self.fork_decrement(fid)?;
                                     }
                                 }
                             }
-                            if self.fork_groups[fid].remaining == 0 && !remaining.is_empty() {
-                                let group = self.fork_groups[fid].clone();
-                                self.evaluate_stmt_block(&group.continuation)?;
+                            if self.fork_groups[fid].active
+                                && self.fork_groups[fid].remaining == 0
+                                && !remaining.is_empty()
+                            {
+                                self.fork_groups[fid].fired = true;
+                                let cont = std::mem::take(&mut self.fork_groups[fid].continuation);
+                                self.evaluate_stmt_block(&cont)?;
+                                self.retire_fork_group(fid);
                             }
                         }
                         IrJoinType::JoinAny => {
@@ -1555,23 +1594,36 @@ impl SimulationEngine {
                                     }
                                 }
                             }
-                            if any_immediate && self.fork_groups[fid].remaining > 0 {
-                                self.fork_groups[fid].remaining -= 1;
+                            if any_immediate {
+                                self.fork_decrement(fid)?;
                             }
-                            if self.fork_groups[fid].remaining == 0 && !remaining.is_empty() {
-                                let group = self.fork_groups[fid].clone();
-                                self.evaluate_stmt_block(&group.continuation)?;
+                            if self.fork_groups[fid].active
+                                && self.fork_groups[fid].remaining == 0
+                                && !remaining.is_empty()
+                            {
+                                self.fork_groups[fid].fired = true;
+                                let cont = std::mem::take(&mut self.fork_groups[fid].continuation);
+                                self.evaluate_stmt_block(&cont)?;
                             }
+                            self.fork_groups[fid].continuation.clear();
                         }
                         IrJoinType::JoinNone => {
                             for p in processes {
-                                if !p.is_empty() {
-                                    self.evaluate_block_with_delay_fork(p, Some(fid))?;
+                                if p.is_empty() {
+                                    self.fork_decrement(fid)?;
+                                } else {
+                                    let all_consumed =
+                                        self.evaluate_block_with_delay_fork(p, Some(fid))?;
+                                    if all_consumed {
+                                        self.fork_decrement(fid)?;
+                                    }
                                 }
                             }
+                            self.fork_groups[fid].fired = true;
                             if !remaining.is_empty() {
                                 self.evaluate_stmt_block(&remaining)?;
                             }
+                            self.fork_finish(fid)?;
                         }
                     }
                     return Ok(());

@@ -365,6 +365,7 @@ impl<'a> FastLexer<'a> {
             "automatic" | "auto" => Token::Auto,
             "static" => Token::Static,
             "real" => Token::Real,
+            "wreal" => Token::WReal,
             "time" => Token::Time,
             "realtime" => Token::RealTime,
             "none" => Token::None,

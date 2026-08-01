@@ -93,6 +93,8 @@ fn expr_location(expr: &Expr) -> (usize, usize) {
 }
 
 /// Perluas SEMUA generate block di module dengan nilai parameter tertentu.
+/// Block yang gagal diekspansi (mis. limit non-constant karena konstanta
+/// package tidak tersedia) dilewati dengan warning, bukan mematikan elaborasi.
 pub fn expand_all_generates(
     module: &mut Module,
     param_vals: &HashMap<Symbol, i64>,
@@ -102,20 +104,37 @@ pub fn expand_all_generates(
     let mut total_items = 0usize;
     while i < module.items.len() {
         if let ModuleItem::Generate(gen) = &module.items[i] {
-            let expanded = expand_generate_block(gen, param_vals, diag_sink)?;
-            total_items += expanded.len();
-            if total_items > MAX_GENERATED_ITEMS {
-                return Err(ElabError::new(
-                    format!("generate expansion exceeded limit ({} items)", MAX_GENERATED_ITEMS),
-                    0, 0
-                ));
-            }
-            for item in &expanded {
-                if let ModuleItem::Decl(d) = item {
-                    module.decls.push(d.clone());
+            match expand_generate_block(gen, param_vals, diag_sink) {
+                Ok(expanded) => {
+                    total_items += expanded.len();
+                    if total_items > MAX_GENERATED_ITEMS {
+                        return Err(ElabError::new(
+                            format!("generate expansion exceeded limit ({} items)", MAX_GENERATED_ITEMS),
+                            0, 0
+                        ));
+                    }
+                    for item in &expanded {
+                        if let ModuleItem::Decl(d) = item {
+                            module.decls.push(d.clone());
+                        }
+                    }
+                    module.items.splice(i..=i, expanded);
+                }
+                Err(e) => {
+                    diag_sink.push(Diagnostic::new(
+                        DiagLevel::Warning,
+                        DiagCode::NotImplemented,
+                        format!(
+                            "generate block expansion skipped in '{}': {} (at line {}:{})",
+                            module.name.as_str(),
+                            e.msg,
+                            e.line,
+                            e.col
+                        ),
+                    ));
+                    i += 1;
                 }
             }
-            module.items.splice(i..=i, expanded);
         } else {
             i += 1;
         }

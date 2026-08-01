@@ -764,8 +764,10 @@ fn collect_stmt_signal_reads(stmts: &[IrStmt], reads: &mut HashSet<SignalId>) {
             IrStmt::Delay { body, .. } | IrStmt::Wait { body, .. } => {
                 collect_stmt_signal_reads(body, reads);
             }
-            IrStmt::EventControl { sig_id, body, .. } => {
-                reads.insert(*sig_id);
+            IrStmt::EventControl { sigs, body, .. } => {
+                for (sid, _) in sigs {
+                    reads.insert(*sid);
+                }
                 collect_stmt_signal_reads(body, reads);
             }
             IrStmt::Fork { processes, .. } => {

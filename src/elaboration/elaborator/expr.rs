@@ -1319,6 +1319,15 @@ impl Elaborator {
             &self.package_symbols,
         ).map_err(|e| self.elab_diag(crate::diagnostics::diagnostic::DiagCode::WidthMismatch, format!("width computation failed for port '{}': {}", hint_name, e)))?;
         let width = if width_val > 0 { width_val } else { 1 };
+        if width > 1_000_000 {
+            eprintln!("[DBG-WIDTH] port '{}' huge width {} expr={:?} in module {}", hint_name, width, expr, self.current_module.map(|s| s.as_str()).unwrap_or("?"));
+            if let Expr::Concat(items) = expr {
+                for it in items {
+                    let w = compute_expr_width(it, signal_map, signals, &self.param_vals, &self.package_symbols).unwrap_or(0);
+                    eprintln!("[DBG-WIDTH]   item {:?} width={}", it, w);
+                }
+            }
+        }
         // Create a unique implicit signal name
         let sig_name = format!("__port_{}", hint_name.replace('.', "_"));
         let sid = *next_id;

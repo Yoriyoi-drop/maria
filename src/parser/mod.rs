@@ -708,14 +708,14 @@ let mut _last_pos = self.pos.get();
                             | Token::Bit
                             | Token::Byte
                             | Token::Shortint
-                            | Token::Longint
-                            | Token::Time
-                            | Token::Real
-                            | Token::RealTime
-                            | Token::String
-                            | Token::Enum
-                            | Token::Struct
-                            | Token::Union
+                            | Token::Longint                        | Token::Time
+                        | Token::Real
+                        | Token::WReal
+                        | Token::RealTime
+                        | Token::String
+                        | Token::Enum
+                        | Token::Struct
+                        | Token::Union
                     ) {
                         let err = self.err("declaration outside of module");
                         self.errors.push(err.to_diagnostic());
@@ -830,6 +830,7 @@ let mut _last_pos = self.pos.get();
                         | Token::Time
                         | Token::String
                         | Token::Real
+                        | Token::WReal
                         | Token::RealTime
                         | Token::Enum
                         | Token::Struct
@@ -875,6 +876,7 @@ let mut _last_pos = self.pos.get();
             | Token::Time
             | Token::String
             | Token::Real
+            | Token::WReal
             | Token::RealTime
             | Token::Mailbox
             | Token::Semaphore
@@ -1399,7 +1401,7 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                     self.advance();
                     return Ok(());
                 }
-                Token::Endmodule | Token::EndFunction | Token::EndTask | Token::EndClass | Token::Eof => {
+                Token::Endmodule | Token::EndFunction | Token::EndTask | Token::EndClass | Token::EndInterface | Token::EndPackage | Token::EndProgram | Token::EndGenerate | Token::EndSpecify | Token::EndClocking | Token::EndConfig | Token::EndPrimitive | Token::EndTable | Token::EndGroup | Token::EndSequence | Token::EndEnum | Token::Eof => {
                     return Ok(());
                 }
                 Token::Begin => {

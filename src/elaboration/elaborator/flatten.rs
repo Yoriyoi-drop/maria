@@ -11,61 +11,97 @@ impl Elaborator {
         &mut self,
         top: &mut IrModule,
     ) -> Result<HashMap<Symbol, SignalId>, SimError> {
+        let mut chain = Vec::new();
+        self.flatten_instances_inner(top, &mut chain)
+    }
+
+    fn flatten_instances_inner(
+        &mut self,
+        top: &mut IrModule,
+        chain: &mut Vec<Symbol>,
+    ) -> Result<HashMap<Symbol, SignalId>, SimError> {
         let mut hier_signal_map: HashMap<Symbol, SignalId> = HashMap::new();
         let instances = std::mem::take(&mut top.sub_instances);
         for inst in &instances {
-            let ast_module_clone: Module = if let Some(m) = self
-                .design
-                .modules
-                .iter()
-                .find(|m| m.name == inst.module_name)
-            {
-                m.clone()
-            } else if let Some(iface) = self
-                .design
-                .interfaces
-                .iter()
-                .find(|i| i.name == inst.module_name)
-            {
-                Module {
-                    name: iface.name,
-                    ports: vec![],
-                    params: vec![],
-                    decls: iface.decls.clone(),
-                    items: vec![],
-                }
-            } else {
+            // Cycle detection: chain berisi nama module yang sedang di-flatten.
+            // Instantiation cycle tidak legal di SV — deteksi dini mencegah
+            // rekursi tak terbatas / duplikasi kerja (anti-leak memori).
+            if chain.contains(&inst.module_name) {
                 return Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!(
-                    "module or interface '{}' not found for instance '{}'",
+                    "instantiation cycle detected: module '{}' is instantiated from within its own hierarchy (instance '{}')",
                     inst.module_name, inst.instance_name
                 ), inst.line, inst.col));
-            };
+            }
 
-            let needs_custom_params =
-                !ast_module_clone.params.is_empty() && !inst.param_map.is_empty();
+            // Clone AST Module HANYA bila instance memakai parameter custom /
+            // type parameter (harus di-elaborasi ulang). Kasus default-param
+            // (paling umum) langsung memakai IR hasil elaborasi — tanpa clone
+            // AST penuh per instance (anti-peak O(depth × AST)).
+            let inst_module = self.design.modules.iter().find(|m| m.name == inst.module_name);
+            let needs_custom_params = inst_module.is_some_and(|m| !m.params.is_empty())
+                && !inst.param_map.is_empty();
             let needs_type_params = !inst.type_param_map.is_empty();
             let mut child = if needs_custom_params || needs_type_params {
+                let ast_module: Module = match inst_module {
+                    Some(m) => m.clone(),
+                    None => match self
+                        .design
+                        .interfaces
+                        .iter()
+                        .find(|i| i.name == inst.module_name)
+                    {
+                        Some(iface) => Module {
+                            name: iface.name,
+                            ports: vec![],
+                            params: vec![],
+                            decls: iface.decls.clone(),
+                            items: vec![],
+                        },
+                        None => {
+                            return Err(self.elab_diag_at(
+                                DiagCode::ModuleNotFound,
+                                format!(
+                                    "module or interface '{}' not found for instance '{}'",
+                                    inst.module_name, inst.instance_name
+                                ),
+                                inst.line,
+                                inst.col,
+                            ))
+                        }
+                    },
+                };
                 let known_mods: Vec<Symbol> =
                     self.design.modules.iter().map(|m| m.name).collect();
-                let param_vals = self.resolve_param_values(&ast_module_clone, &inst.param_map)?;
+                let param_vals = self.resolve_param_values(&ast_module, &inst.param_map)?;
                 self.elaborate_module_with_params_and_type(
-                    &ast_module_clone,
+                    &ast_module,
                     &known_mods,
                     &param_vals,
                     &inst.type_param_map,
                 )?
             } else {
-                // Use pre-elaborated module (default params)
-                self.modules
-                    .get(&inst.module_name)
-                    .ok_or_else(|| {
-                        self.elab_diag(DiagCode::ModuleNotFound, format!("module '{}' not found", inst.module_name))
-                    })?
-                    .clone()
+                // Use pre-elaborated module (default params) — move langsung,
+                // tanpa klone AST.
+                match self.modules.get(&inst.module_name) {
+                    Some(ir) => ir.clone(),
+                    None => {
+                        return Err(self.elab_diag_at(
+                            DiagCode::ModuleNotFound,
+                            format!(
+                                "module or interface '{}' not found for instance '{}'",
+                                inst.module_name, inst.instance_name
+                            ),
+                            inst.line,
+                            inst.col,
+                        ))
+                    }
+                }
             };
 
             // Recursively flatten child's own instances
-            let child_hier_map = self.flatten_instances(&mut child)?;
+            chain.push(inst.module_name);
+            let child_hier_map = self.flatten_instances_inner(&mut child, chain)?;
+            chain.pop();
             hier_signal_map.extend(child_hier_map);
 
             // Build signal remapping: child_signal_id -> parent_signal_id
@@ -432,11 +468,14 @@ impl Elaborator {
                     args: new_args,
                 })
             }
-            IrStmt::EventControl { sig_id, edge, body } => {
+            IrStmt::EventControl { sigs, body } => {
                 let new_body = self.translate_stmts(body, map_sig)?;
+                let new_sigs = sigs
+                    .iter()
+                    .map(|(sid, edge)| (map_sig(*sid), edge.clone()))
+                    .collect();
                 Ok(IrStmt::EventControl {
-                    sig_id: map_sig(*sig_id),
-                    edge: edge.clone(),
+                    sigs: new_sigs,
                     body: new_body,
                 })
             }

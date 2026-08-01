@@ -5,6 +5,7 @@ use crate::intern::Symbol;
 use crate::ir::*;
 use crate::simulator::state::SimulationState;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 pub fn map_ast_binary_op(op: &BinaryOp) -> Result<BinaryIrOp, String> {
     match op {
@@ -321,24 +322,29 @@ pub fn format_display(
     ir_args: &[IrExpr],
 ) -> String {
     let (fmt_str, start_idx) = if let Some(IrExpr::String(s)) = ir_args.first() {
-        (s.clone(), 1)
+        // PERF-11: borrow format string (bukan clone per call).
+        (s.as_str(), 1)
     } else {
-        let mut parts = Vec::new();
+        // Tanpa fmt string: tulis langsung ke satu String (no Vec per call).
+        let mut out = String::with_capacity(ir_args.len() * 8);
+        let mut first = true;
         for arg in ir_args {
             if let Ok(val) = eval_display_arg(state, signals, hier_map, assoc_data, arg) {
-                parts.push(format!("{}", val));
+                if !first {
+                    out.push(' ');
+                }
+                first = false;
+                let _ = write!(out, "{}", val);
             }
         }
-        return parts.join(" ");
+        return out;
     };
 
-    let value_args: Vec<LogicVec> = ir_args[start_idx..]
+    // PERF-11: evaluasi arg secara lazy (no Vec alloc per call).
+    let mut value_args = ir_args[start_idx..]
         .iter()
-        .filter_map(|a| eval_display_arg(state, signals, hier_map, assoc_data, a).ok())
-        .collect();
-
-    let mut value_idx = 0usize;
-    let mut result = String::new();
+        .filter_map(|a| eval_display_arg(state, signals, hier_map, assoc_data, a).ok());
+    let mut result = String::with_capacity(fmt_str.len() + 8 * ir_args.len());
     let mut chars = fmt_str.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '%' {
@@ -360,59 +366,82 @@ pub fn format_display(
             }
             match chars.next() {
                 Some('d') => {
-                    if let Some(val) = value_args.get(value_idx) {
-                        let s = format!("{}", val.to_u64());
-                        if width > s.len() {
+                    if let Some(val) = value_args.next() {
+                        let n = val.to_u64();
+                        let ndigits = u64_digits(n);
+                        if width > ndigits {
                             let pad = if zero_fill { '0' } else { ' ' };
-                            for _ in 0..(width - s.len()) {
+                            for _ in 0..(width - ndigits) {
                                 result.push(pad);
                             }
                         }
-                        result.push_str(&s);
+                        let _ = write!(result, "{}", n);
                     }
-                    value_idx += 1;
                 }
                 Some('b') => {
-                    if let Some(val) = value_args.get(value_idx) {
-                        let s = format!("{}", val);
-                        let trimmed = s.trim_start_matches('0');
-                        let s = if trimmed.is_empty() { "0" } else { trimmed };
-                        if width > s.len() {
+                    if let Some(val) = value_args.next() {
+                        // Tulis bit MSB-first, buang leading '0' (tanpa alokasi).
+                        let mut seen_nonzero = false;
+                        let mut trimmed_len = 0usize;
+                        for bit in val.bits.iter().rev() {
+                            if *bit == LogicVal::Zero && !seen_nonzero {
+                                continue;
+                            }
+                            seen_nonzero = true;
+                            trimmed_len += 1;
+                        }
+                        if !seen_nonzero {
+                            trimmed_len = 1; // nilai "0"
+                        }
+                        if width > trimmed_len {
                             let pad = if zero_fill { '0' } else { ' ' };
-                            for _ in 0..(width - s.len()) {
+                            for _ in 0..(width - trimmed_len) {
                                 result.push(pad);
                             }
                         }
-                        result.push_str(s);
+                        if !seen_nonzero {
+                            result.push('0');
+                        } else {
+                            let mut wrote = false;
+                            for bit in val.bits.iter().rev() {
+                                if *bit == LogicVal::Zero && !wrote {
+                                    continue;
+                                }
+                                wrote = true;
+                                result.push(match bit {
+                                    LogicVal::Zero => '0',
+                                    LogicVal::One => '1',
+                                    LogicVal::X => 'x',
+                                    LogicVal::Z => 'z',
+                                });
+                            }
+                        }
                     }
-                    value_idx += 1;
                 }
                 Some('h') => {
-                    if let Some(val) = value_args.get(value_idx) {
-                        let s = format!("{:x}", val.to_u64());
-                        if width > s.len() {
+                    if let Some(val) = value_args.next() {
+                        let n = val.to_u64();
+                        let ndigits = u64_hex_digits(n);
+                        if width > ndigits {
                             let pad = if zero_fill { '0' } else { ' ' };
-                            for _ in 0..(width - s.len()) {
+                            for _ in 0..(width - ndigits) {
                                 result.push(pad);
                             }
                         }
-                        result.push_str(&s);
+                        let _ = write!(result, "{:x}", n);
                     }
-                    value_idx += 1;
                 }
                 Some('f') => {
-                    if let Some(val) = value_args.get(value_idx) {
-                        let s = format!("{}", f64::from_bits(val.to_u64()));
-                        result.push_str(&s);
+                    if let Some(val) = value_args.next() {
+                        let _ = write!(result, "{}", f64::from_bits(val.to_u64()));
                     }
-                    value_idx += 1;
                 }
                 Some('t') => {
                     // %t: format time using $timeformat settings (IEEE 1800).
                     // Sim time advances 1 unit per step; base unit seeded from
                     // design `timescale (default 1ns = 10^-9 s).
                     let t = value_args
-                        .get(value_idx)
+                        .next()
                         .map(|v| v.to_u64() as f64)
                         .unwrap_or(state.time as f64);
                     // Skala relatif terhadap basis sim-time, bukan hardcode -9.
@@ -432,13 +461,11 @@ pub fn format_display(
                     }
                     s.push_str(&state.timeformat.suffix);
                     result.push_str(&s);
-                    value_idx += 1;
                 }
                 Some('s') => {
-                    if let Some(val) = value_args.get(value_idx) {
-                        result.push_str(&logicvec_to_string(val));
+                    if let Some(val) = value_args.next() {
+                        result.push_str(&logicvec_to_string(&val));
                     }
-                    value_idx += 1;
                 }
                 Some(c2) => {
                     result.push('%');
@@ -446,7 +473,7 @@ pub fn format_display(
                         result.push('0');
                     }
                     if width > 0 {
-                        result.push_str(&format!("{}", width));
+                        let _ = write!(result, "{}", width);
                     }
                     result.push(c2);
                 }
@@ -469,6 +496,26 @@ pub fn format_display(
         }
     }
     result
+}
+
+/// Jumlah digit desimal dari u64 (1 untuk 0) — hindari format! alloc di %d.
+fn u64_digits(mut n: u64) -> usize {
+    let mut d = 1usize;
+    while n >= 10 {
+        n /= 10;
+        d += 1;
+    }
+    d
+}
+
+/// Jumlah digit hex dari u64 (1 untuk 0) — hindari format! alloc di %h.
+fn u64_hex_digits(mut n: u64) -> usize {
+    let mut d = 1usize;
+    while n >= 16 {
+        n /= 16;
+        d += 1;
+    }
+    d
 }
 
 pub fn escape_xml(s: &str) -> String {

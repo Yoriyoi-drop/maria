@@ -122,10 +122,29 @@ pub struct RegionEvent {
     pub event: EventKind,
 }
 
+/// Blocking event control `@(sig)` / `@(posedge sig)` yang sedang menunggu
+/// perubahan/edge pada suatu signal. Continuation di-resume saat signal berubah
+/// (level) atau edge yang sesuai terdeteksi (via snapshot delta).
+#[derive(Debug, Clone)]
+pub struct PendingEventControl {
+    pub sig_id: SignalId,
+    /// None = level (tunggu perubahan nilai apa pun); Some(edge) = edge tertentu.
+    pub edge: Option<ClockEdge>,
+    /// Statement yang dilanjutkan setelah event terpenuhi (body + sisa + loop_cont).
+    pub continuation: Vec<IrStmt>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ForkGroup {
     pub(super) remaining: usize,
     pub(super) continuation: Vec<IrStmt>,
+    /// Continuation sudah dijadwalkan/dieksekusi — cegah evaluasi ganda.
+    pub(super) fired: bool,
+    /// Group masih dipakai (belum di-retire ke `fork_free`).
+    pub(super) active: bool,
+    /// true = Join/JoinNone (slot aman di-reuse saat semua branch selesai).
+    /// false = JoinAny (branch yang dibuang masih mereferensi fid → jangan reuse).
+    pub(super) reclaimable: bool,
 }
 
 #[derive(Debug, Clone)]

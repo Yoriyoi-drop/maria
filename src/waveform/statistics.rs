@@ -35,6 +35,7 @@ pub struct SignalStat {
 }
 
 /// Signal statistics collector.
+#[derive(Debug)]
 pub struct SignalStats {
     /// Per-signal statistics keyed by signal index
     pub stats: Vec<SignalStat>,

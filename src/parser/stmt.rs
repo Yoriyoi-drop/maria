@@ -551,13 +551,7 @@ impl Parser {
             Token::At => {
                 self.advance();
                 self.expect(Token::LParen)?;
-                let events = if self.peek() == &Token::PosEdge {
-                        self.advance(); vec![SensitivityEvent::PosEdge(self.parse_expr(0)?)]
-                    } else if self.peek() == &Token::NegEdge {
-                        self.advance(); vec![SensitivityEvent::NegEdge(self.parse_expr(0)?)]
-                    } else {
-                        vec![SensitivityEvent::Level(self.parse_expr(0)?)]
-                    };
+                let events = self.parse_sensitivity_events()?;
                 self.expect(Token::RParen)?;
                 let stmt = self.parse_stmt()?;
                 Ok(Stmt::EventControl { events, stmt: Some(Box::new(stmt)) })

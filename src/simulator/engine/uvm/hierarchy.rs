@@ -55,6 +55,9 @@ impl SimulationEngine {
             Some(c) => c,
             None => return Ok(()),
         };
+        if std::env::var("DBG_UVM").is_ok() {
+            eprintln!("[DBG-UVM] phase class = {}", class_name);
+        }
         // Create root test object once, shared across all phases
         let obj_id = self.state.alloc_object(Symbol::intern(class_name.as_str()));
         self.root_test_obj_id = Some(obj_id);
@@ -65,8 +68,14 @@ impl SimulationEngine {
             .is_ok()
         {
             self.current_this = Some(obj_id);
+            if std::env::var("DBG_UVM").is_ok() {
+                eprintln!("[DBG-UVM] calling build_phase");
+            }
             self.execute_method(obj_id, "build_phase", &[])?;
             self.current_this = None;
+            if std::env::var("DBG_UVM").is_ok() {
+                eprintln!("[DBG-UVM] build_phase done");
+            }
             self.call_phase_on_children(obj_id, "build_phase")?;
         }
         // connect_phase: root then children
@@ -75,8 +84,14 @@ impl SimulationEngine {
             .is_ok()
         {
             self.current_this = Some(obj_id);
+            if std::env::var("DBG_UVM").is_ok() {
+                eprintln!("[DBG-UVM] calling connect_phase");
+            }
             self.execute_method(obj_id, "connect_phase", &[])?;
             self.current_this = None;
+            if std::env::var("DBG_UVM").is_ok() {
+                eprintln!("[DBG-UVM] connect_phase done");
+            }
             self.call_phase_on_children(obj_id, "connect_phase")?;
         }
         // run_phase: call root's run_phase (blocking since delays in methods are no-ops)
@@ -85,8 +100,14 @@ impl SimulationEngine {
             .is_ok()
         {
             self.current_this = Some(obj_id);
+            if std::env::var("DBG_UVM").is_ok() {
+                eprintln!("[DBG-UVM] calling run_phase");
+            }
             self.execute_method(obj_id, "run_phase", &[])?;
             self.current_this = None;
+            if std::env::var("DBG_UVM").is_ok() {
+                eprintln!("[DBG-UVM] run_phase done");
+            }
         }
         Ok(())
     }

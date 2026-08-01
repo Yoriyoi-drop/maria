@@ -227,6 +227,11 @@ pub fn compile_str(source: &str) -> Result<ir::IrDesign, SimError> {
     let mut elaborator = elaboration::Elaborator::with_source(design, source_lines, first_source);
     let ir_design = elaborator.elaborate(None)?;
 
+    // SIM-29: bawa exclusion ranges dari `` `coverage_off ``/`` `coverage_on ``
+    // (koordinat output preprocessed) ke design untuk engine line coverage.
+    let mut ir_design = ir_design;
+    ir_design.coverage_exclusions = pp.coverage_exclusions.clone();
+
     // Flush elaboration-time diagnostics (warnings like WR0102)
     let elab_diags = elaborator.flush_diagnostics();
     if !elab_diags.is_empty() {

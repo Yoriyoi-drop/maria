@@ -71,14 +71,16 @@ impl Parser {
                 events.push(SensitivityEvent::Wildcard);
             } else if self.peek() == &Token::PosEdge {
                 self.advance();
-                let expr = self.parse_primary_expr()?;
+                // parse_expr (bukan parse_primary) agar `@(posedge sig[idx])`
+                // dan member access ikut terdukung.
+                let expr = self.parse_expr(0)?;
                 events.push(SensitivityEvent::PosEdge(expr));
             } else if self.peek() == &Token::NegEdge {
                 self.advance();
-                let expr = self.parse_primary_expr()?;
+                let expr = self.parse_expr(0)?;
                 events.push(SensitivityEvent::NegEdge(expr));
             } else {
-                let expr = self.parse_primary_expr()?;
+                let expr = self.parse_expr(0)?;
                 events.push(SensitivityEvent::Level(expr));
             }
             if self.peek() == &Token::Or || self.peek() == &Token::Comma {

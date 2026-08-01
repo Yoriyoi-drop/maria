@@ -27,6 +27,10 @@ use std::fs::File;
 
 pub(crate) const MAX_LOOP_ITER: usize = 10_000_000;
 
+/// Jumlah slot time-step yang dipertahankan di `events` sebelum leading
+/// retired slots di-drain (lihat `SimulationEngine::retire_events`).
+pub(crate) const EVENT_COMPACT_THRESHOLD: usize = 65_536;
+
 /// Tracks a single attempt of a concurrent assertion sequence evaluation
 pub struct SequenceAttempt {
     pub sequence: Box<IrSequence>,
@@ -42,7 +46,13 @@ pub struct SimulationEngine {
     pub state: SimulationState,
     pub max_time: u64,
     pub running: bool,
+    /// Event queue per time step. Di-index RELATIF terhadap `events_base`:
+    /// slot `i` menyimpan event untuk waktu `events_base + i`. Slot yang sudah
+    /// diproses dibuang secara periodik (lihat `retire_events`) sehingga
+    /// `events` tetap bounded terhadap `max_time` (anti-leak O(max_time)).
     pub events: Vec<Vec<RegionEvent>>,
+    /// Waktu absolut yang direpresentasikan oleh `events[0]`.
+    pub events_base: usize,
     pub nba_pending: Vec<(IrLValue, LogicVec)>,
     pub vcd: Option<VcdWriter>,
     pub fst: Option<FstWaveWriter>,
@@ -77,12 +87,18 @@ pub struct SimulationEngine {
     /// membuat diff coverage selalu kosong).
     pub coverage_snapshot: Option<Vec<LogicVec>>,
     pub pending_waits: Vec<(Vec<SignalId>, Vec<IrStmt>)>,
+    /// Blocking event control `@(sig)` yang menunggu perubahan/edge signal.
+    /// Diperiksa setiap delta saat signal berubah (setara `pending_waits`).
+    pub pending_events: Vec<PendingEventControl>,
     pub pending_await_target: Option<ObjId>,
     pub pending_wait_orders: Vec<WaitOrderState>,
     pub loop_continuation: Option<Vec<IrStmt>>,
     pub post_loop_tail: Vec<IrStmt>,
     pub current_time: u64,
     pub fork_groups: Vec<ForkGroup>,
+    /// Slot `fork_groups` yang sudah selesai & aman di-reuse (anti-leak:
+    /// fork di dalam loop tidak menumpuk entry selamanya).
+    pub fork_free: Vec<usize>,
     pub reactive_events: Vec<EventKind>,
     pub strobe_events: Vec<Vec<IrExpr>>,
     pub fstrobe_events: Vec<(u32, Vec<IrExpr>)>,
@@ -117,6 +133,9 @@ pub struct SimulationEngine {
     pub cover_hits: HashMap<Symbol, u64>,
     pub cover_total: HashMap<Symbol, u64>,
     pub cover_bins: HashMap<Symbol, HashMap<Symbol, u64>>,
+    /// Iterasi loop AST terkumpul selama satu eksekusi method/task (anti-hang
+    /// saat loop berisi blocking event yang tidak memajukan waktu).
+    pub ast_loop_iters: u64,
     pub plusargs: HashMap<String, String>,
     pub debug_mode: DebugMode,
     pub breakpoints: Vec<Breakpoint>,
@@ -133,7 +152,9 @@ pub struct SimulationEngine {
     pub udp_prev_args: HashMap<Symbol, Vec<LogicVec>>,
     pub parallel_config: ParallelConfig,
     pub sysfunc_prev: HashMap<Symbol, LogicVec>,
-    pub sysfunc_history: HashMap<Symbol, Vec<LogicVec>>,
+    /// Riwayat `$past` per key — di-cap ke `n+1` entry terbaru (anti-leak
+    /// O(cycles) per call-site).
+    pub sysfunc_history: HashMap<Symbol, VecDeque<LogicVec>>,
     pub snapshots: Vec<StateSnapshot>,
     pub paused: bool,
     pub step_mode: StepMode,
@@ -146,6 +167,9 @@ pub struct SimulationEngine {
     pub coverage_enabled: bool,
     /// Selectively enable specific coverage types (empty = all enabled)
     pub coverage_enabled_types: HashSet<CoverageType>,
+    /// Line ranges (start, end) inklusif 1-based yang di-exclude dari line
+    /// coverage oleh `` `coverage_off ``/`` `coverage_on `` (SIM-29).
+    pub coverage_exclusions: Vec<(usize, usize)>,
     /// Glitch detection: max pulse width (in time units) for A->B->A detection. 0 = disabled.
     pub glitch_window: u64,
     /// Glitch detection: per-signal (time of last change, value before last change)

@@ -30,6 +30,10 @@ pub struct Preprocessor {
     pub quiet: bool,
     pub timescale: Option<(String, String)>, // (unit, precision)
     pub warnings: Vec<Diagnostic>,
+    /// Line ranges (start, end) inklusif, 1-based, dalam koordinat output
+    /// preprocessed, yang di-exclude dari coverage oleh `` `coverage_off ``
+    /// ... `` `coverage_on `` (IEEE 1800 simulation control directives).
+    pub coverage_exclusions: Vec<(usize, usize)>,
 }
 
 impl Preprocessor {
@@ -43,6 +47,7 @@ impl Preprocessor {
             quiet: false,
             timescale: None,
             warnings: Vec::new(),
+            coverage_exclusions: Vec::new(),
         }
     }
 
@@ -83,6 +88,8 @@ impl Preprocessor {
         let mut i = 0;
         let mut cond_stack: Vec<CondFrame> = vec![];
         let mut emitting = true;
+        // SIM-29: tracking region `` `coverage_off `` ... `` `coverage_on ``
+        let mut cov_start: Option<usize> = None;
 
         while i < lines.len() {
             let mut raw_line = lines[i].to_string();
@@ -275,6 +282,22 @@ impl Preprocessor {
                         self.timescale = Some((ts.to_string(), String::new()));
                     }
                 }
+                "coverage_off" => {
+                    if emitting && cov_start.is_none() {
+                        // Baris output berikutnya (1-based) jadi awal region exclude.
+                        cov_start = Some(output.lines().count() + 1);
+                    }
+                }
+                "coverage_on" => {
+                    if emitting {
+                        if let Some(start) = cov_start.take() {
+                            let end = output.lines().count();
+                            if start <= end {
+                                self.coverage_exclusions.push((start, end));
+                            }
+                        }
+                    }
+                }
                 "default_nettype" => {
                     // `default_nettype wire|none|... — track for implicit net declarations
                     // Currently tracked but not enforced in elaborated
@@ -303,6 +326,14 @@ impl Preprocessor {
             }
 
             i += 1;
+        }
+
+        // Tutup region coverage_off yang belum ditutup di akhir file
+        if let Some(start) = cov_start.take() {
+            let end = output.lines().count();
+            if start <= end {
+                self.coverage_exclusions.push((start, end));
+            }
         }
 
         if !cond_stack.is_empty() {

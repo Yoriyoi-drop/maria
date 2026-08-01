@@ -27,9 +27,9 @@ fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
         IrExpr::Const(lv) => lv.width,
         IrExpr::FillLit(_) => 1,
         IrExpr::Signal(id, _) => signals.get(*id).map(|s| s.width).unwrap_or(1),
-        IrExpr::RangeSelect(_, hi, lo) => hi.saturating_sub(*lo) + 1,
+        IrExpr::RangeSelect(_, hi, lo) => hi.saturating_sub(*lo).saturating_add(1),
         IrExpr::BitSelect(_, _) => 1,
-        IrExpr::ExprRangeSelect(_, hi, lo) => hi.saturating_sub(*lo) + 1,
+        IrExpr::ExprRangeSelect(_, hi, lo) => hi.saturating_sub(*lo).saturating_add(1),
         IrExpr::ExprBitSelect(_, _) => 1,
         IrExpr::ArrayIndex { elem_width, .. } => *elem_width,
         IrExpr::Concat(items) => items.iter().map(|e| expr_approx_width(e, signals)).sum(),
@@ -453,46 +453,41 @@ impl Elaborator {
                 if events.is_empty() {
                     return Ok(IrStmt::Null);
                 }
-                let event = &events[0];
                 let body = match stmt {
                     Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
                     None => vec![],
                 };
-                match event {
-                    SensitivityEvent::PosEdge(expr) | SensitivityEvent::NegEdge(expr) => {
-                        let is_pos = matches!(event, SensitivityEvent::PosEdge(_));
-                        if let Some(sig_id) = resolve_expr_signal(expr, signal_map) {
-                            let edge = if is_pos {
-                                ClockEdge::PosEdge(sig_id)
-                            } else {
-                                ClockEdge::NegEdge(sig_id)
-                            };
-                            Ok(IrStmt::EventControl {
-                                sig_id,
-                                edge: Some(edge),
-                                body,
-                            })
-                        } else {
-                Err(self.elab_diag(DiagCode::ModuleNotFound, "cannot resolve signal in @(...)".to_string()))
+                // @(*) — wildcard: treat as immediate (block), bukan blocking event.
+                if events.iter().any(|e| matches!(e, SensitivityEvent::Wildcard)) {
+                    return Ok(IrStmt::Block { stmts: body });
+                }
+                // Dukung multi-event `@(a or b)` / `@(posedge a or posedge b)`:
+                // kumpulkan SEMUA (sig_id, edge), bukan hanya event pertama.
+                let mut sigs = Vec::with_capacity(events.len());
+                for event in events {
+                    match event {
+                        SensitivityEvent::PosEdge(expr) => {
+                            let sig_id = resolve_expr_signal(expr, signal_map).ok_or_else(
+                                || self.elab_diag(DiagCode::ModuleNotFound, "cannot resolve signal in @(...)".to_string()),
+                            )?;
+                            sigs.push((sig_id, Some(ClockEdge::PosEdge(sig_id))));
                         }
-                    }
-                    SensitivityEvent::Level(expr) => {
-                        if let Some(sig_id) = resolve_expr_signal(expr, signal_map) {
-                            Ok(IrStmt::EventControl {
-                                sig_id,
-                                edge: None,
-                                body,
-                            })
-                        } else {
-                Err(self.elab_diag(DiagCode::ModuleNotFound, "cannot resolve signal in @(...)".to_string()))
+                        SensitivityEvent::NegEdge(expr) => {
+                            let sig_id = resolve_expr_signal(expr, signal_map).ok_or_else(
+                                || self.elab_diag(DiagCode::ModuleNotFound, "cannot resolve signal in @(...)".to_string()),
+                            )?;
+                            sigs.push((sig_id, Some(ClockEdge::NegEdge(sig_id))));
                         }
-                    }
-                    SensitivityEvent::Wildcard => {
-                        // @(*) in procedural context: wait for any signal change
-                        // For now, treat as immediate
-                        Ok(IrStmt::Block { stmts: body })
+                        SensitivityEvent::Level(expr) => {
+                            let sig_id = resolve_expr_signal(expr, signal_map).ok_or_else(
+                                || self.elab_diag(DiagCode::ModuleNotFound, "cannot resolve signal in @(...)".to_string()),
+                            )?;
+                            sigs.push((sig_id, None));
+                        }
+                        SensitivityEvent::Wildcard => unreachable!("handled above"),
                     }
                 }
+                Ok(IrStmt::EventControl { sigs, body })
             }
             Stmt::EventTrigger { name } => {
                 if let Some(sig_id) = signal_map.get(name) {

@@ -14,6 +14,13 @@ pub fn string_to_i64(s: &str) -> i64 {
     val
 }
 
+/// Nama fungsi dasar untuk fungsi yang dipanggil secara scoped
+/// (`pkg::func(...)`). Mengembalikan bagian setelah `::` terakhir agar
+/// dispatch fungsi konstan berlaku global untuk package mana pun.
+fn base_func_name(name: &str) -> &str {
+    name.rsplit_once("::").map(|(_, f)| f).unwrap_or(name)
+}
+
 pub fn const_eval_simple(expr: &Expr) -> Result<i64, String> {
     match expr {
         Expr::Value(Value::Decimal(n)) => Ok(*n),
@@ -396,12 +403,18 @@ pub fn const_eval_with_params(
             }
             let base_val = const_eval_with_params(expr, param_vals)?;
             let idx = const_eval_with_params(index, param_vals)?;
+            if idx < 0 || idx >= 64 {
+                return Ok(0);
+            }
             Ok((base_val >> idx) & 1)
         }
         Expr::RangeSelect { expr, msb, lsb } => {
             let base_val = const_eval_with_params(expr, param_vals)?;
             let m = const_eval_with_params(msb, param_vals)?;
             let l = const_eval_with_params(lsb, param_vals)?;
+            if l < 0 || l >= 64 {
+                return Ok(0);
+            }
             let width = (m - l + 1) as usize;
             if width >= 64 {
                 Ok(base_val >> l)
@@ -429,7 +442,7 @@ pub fn const_eval_with_params(
             }
         }
         // OpenTitan prim_util_pkg::vbits(value) = (value == 1) ? 1 : $clog2(value)
-        Expr::FuncCall { name, args } if name == "vbits" => {
+        Expr::FuncCall { name, args } if base_func_name(name.as_str()) == "vbits" => {
             let v = const_eval_with_params(args.first().ok_or("vbits needs 1 arg")?, param_vals)?;
             Ok(if v == 1 { 1 } else {
                 let n = v as u64;
@@ -438,7 +451,7 @@ pub fn const_eval_with_params(
             })
         }
         // OpenTitan prim_util_pkg::ceil_div(a, b) = ceiling division
-        Expr::FuncCall { name, args } if name == "ceil_div" => {
+        Expr::FuncCall { name, args } if base_func_name(name.as_str()) == "ceil_div" => {
             let a = const_eval_with_params(args.first().ok_or("ceil_div needs 2 args")?, param_vals)?;
             let b = const_eval_with_params(args.get(1).ok_or("ceil_div needs 2 args")?, param_vals)?;
             if b == 0 {

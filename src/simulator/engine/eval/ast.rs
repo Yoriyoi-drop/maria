@@ -25,12 +25,12 @@ impl SimulationEngine {
                 }
                 Value::Real(r) => Ok(LogicVec::from_u64(r.to_bits(), 64)),
             },
-            Expr::Ident { name, .. } => {
+            Expr::Ident { name, line, col } => {
                 if name == "this" {
                     if let Some(obj_id) = self.current_this {
                         return Ok(LogicVec::from_u64(obj_id as u64, 64));
                     } else {
-                        return Err(SimError::with_diag(DiagCode::NullHandle, "'this' used outside of class method"));
+                        return Err(self.diag_error_at(DiagCode::NullHandle, "'this' used outside of class method", *line, *col));
                     }
                 }
                 if let Some(local) = self.get_local(name.as_str()) {
@@ -50,10 +50,17 @@ impl SimulationEngine {
                     .current_this
                     .map(|id| format!("obj_id={}", id))
                     .unwrap_or_else(|| "no current_this".to_string());
-                Err(SimError::with_diag(
+                // Identifier method-context yang tak bisa di-resolve (mis. field
+                // class yang belum di-assign / null handle pada kode UVM) di-
+                // perlakukan sebagai warning + null default agar simulasi tetap
+                // berjalan, bukan mematikan seluruh run.
+                self.diag_warn_at(
                     DiagCode::NullHandle,
-                    format!("cannot resolve identifier '{}' in method context ({})", name, ctx),
-                ))
+                    format!("cannot resolve identifier '{}' in method context ({}); using null default", name, ctx),
+                    *line,
+                    *col,
+                );
+                Ok(LogicVec::from_u64(0, 64))
             }
             Expr::BinaryOp { op, lhs, rhs } => {
                 let lval = self.evaluate_ast_expr(lhs)?;
@@ -326,7 +333,7 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             Expr::FuncCall { name, args } => {
-                let _arg_vals: Vec<LogicVec> = args
+                let arg_vals: Vec<LogicVec> = args
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
                     .collect::<Result<_, _>>()?;
@@ -342,10 +349,27 @@ impl SimulationEngine {
                         return Ok(LogicVec::from_u64(result, 32));
                     }
                 }
-                Err(SimError::with_diag(
+                // Pemanggilan method class tanpa `this.` prefix — dispatch ke
+                // object saat ini bila method ada di hierarki class-nya.
+                if let Some(obj_id) = self.current_this {
+                    if let Some(obj) = self.state.get_object(obj_id) {
+                        if !obj.class_name.is_empty() {
+                            if self
+                                .find_method_in_hierarchy(obj.class_name.as_str(), name.as_str())
+                                .is_ok()
+                            {
+                                return self.execute_method(obj_id, name.as_str(), &arg_vals);
+                            }
+                        }
+                    }
+                }
+                self.diag_warn_at(
                     DiagCode::NotImplemented,
-                    format!("unknown function '{}' in method context", name),
-                ))
+                    format!("unknown function '{}' in method context; using null default", name),
+                    0,
+                    0,
+                );
+                Ok(LogicVec::from_u64(0, 64))
             }
             Expr::MethodCall {
                 obj,
@@ -596,10 +620,19 @@ impl SimulationEngine {
                 };
                 Ok(val.resize(cast_width))
             }
-            Expr::ScopedIdent { package, item } => Err(SimError::with_diag(
-                DiagCode::DpiError,
-                format!("scoped identifier '{}.{}' not resolved at runtime", package, item),
-            )),
+            Expr::ScopedIdent { package, item } => {
+                let qname = Symbol::intern(&format!("{}::{}", package.as_str(), item.as_str()));
+                if let Some(&val) = self.design.pkg_scoped_consts.get(&qname) {
+                    return Ok(LogicVec::from_u64(val as u64, 32));
+                }
+                self.diag_warn_at(
+                    DiagCode::DpiError,
+                    format!("scoped identifier '{}.{}' not resolved at runtime; using null default", package, item),
+                    0,
+                    0,
+                );
+                Ok(LogicVec::from_u64(0, 32))
+            }
         }
     }
 

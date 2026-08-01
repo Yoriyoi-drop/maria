@@ -12,10 +12,12 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
-/// Cache for CString allocations to prevent memory leaks (used by sv_scope_name).
-fn scopename_cache() -> &'static Mutex<Vec<std::ffi::CString>> {
-    static CACHE: OnceLock<Mutex<Vec<std::ffi::CString>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(Vec::new()))
+/// Cache CString untuk sv_scope_name, di-dedup berdasarkan nama (anti-leak:
+/// satu alokasi per nama scope unik, bukan satu per pemanggilan).
+fn scopename_cache() -> &'static Mutex<(Vec<std::ffi::CString>, HashMap<String, usize>)> {
+    static CACHE: OnceLock<Mutex<(Vec<std::ffi::CString>, HashMap<String, usize>)>> =
+        OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new((Vec::new(), HashMap::new())))
 }
 
 // ─── Thread-local Scope State (wired to SimulationEngine) ───
@@ -71,9 +73,16 @@ fn scope_registry() -> &'static Mutex<HashMap<usize, String>> {
 static NEXT_SCOPE_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
 
 /// Register a scope and return its opaque handle.
+/// Dedup berdasarkan nama path — pemanggilan berulang untuk path yang sama
+/// mengembalikan handle yang sama (anti-leak O(#panggilan)).
 pub fn sv_set_scope_name(scope_name: &str) -> svScope {
-    let id = NEXT_SCOPE_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let mut registry = scope_registry().lock().unwrap();
+    for (id, name) in registry.iter() {
+        if name == scope_name {
+            return svScope { ptr: *id as *mut std::ffi::c_void };
+        }
+    }
+    let id = NEXT_SCOPE_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     registry.insert(id, scope_name.to_string());
     svScope { ptr: id as *mut std::ffi::c_void }
 }
@@ -437,16 +446,23 @@ pub fn sv_set_scope(scope: svScope) -> i32 {
 }
 
 /// svScopeName(scope) — return the name of a scope handle.
-/// Uses a static CString cache to prevent memory leaks.
+/// Menggunakan CString cache yang di-dedup per nama (pointer tetap valid,
+/// tapi tidak tumbuh per pemanggilan).
 pub fn sv_scope_name(scope: svScope) -> *mut c_char {
     let name = sv_get_scope_name(scope).unwrap_or_default();
     if name.is_empty() {
         return std::ptr::null_mut();
     }
     let mut cache = scopename_cache().lock().unwrap();
+    if let Some(&idx) = cache.1.get(&name) {
+        return cache.0[idx].as_ptr() as *mut c_char;
+    }
+    let key = name.clone();
     let cstr = CString::new(name).unwrap_or_default();
     let ptr = cstr.as_ptr() as *mut c_char;
-    cache.push(cstr);
+    let idx = cache.0.len();
+    cache.1.insert(key, idx);
+    cache.0.push(cstr);
     ptr
 }
 

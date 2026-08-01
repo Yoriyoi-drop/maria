@@ -313,6 +313,8 @@ impl DesignPartitioner {
             specify_items: Vec::new(),
             source_lines: None,
             source_file: None,
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
         }
     }
 

@@ -4,6 +4,7 @@ use std::io::Write;
 
 use crate::ir::{IrDesign, LogicVal};
 
+/// VCD waveform writer.
 pub struct VcdWriter {
     file: fs::File,
     last_values: HashMap<String, String>,
@@ -14,6 +15,21 @@ pub struct VcdWriter {
     /// Flush to disk every N state dumps (0 = never, 1 = every dump)
     pub stream_flush_interval: u64,
     flush_counter: u64,
+}
+
+// DEBT-20: Debug konsisten — tampilkan status ringkas (bukan isi penuh map
+// last_values/code_by_key yang bisa sangat besar untuk desain besar).
+impl std::fmt::Debug for VcdWriter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VcdWriter")
+            .field("enabled", &self.enabled)
+            .field("max_dump_size", &self.max_dump_size)
+            .field("total_written", &self.total_written)
+            .field("stream_flush_interval", &self.stream_flush_interval)
+            .field("signal_count", &self.last_values.len())
+            .field("code_count", &self.code_by_key.len())
+            .finish()
+    }
 }
 
 impl VcdWriter {
@@ -372,6 +388,14 @@ impl VcdWriter {
     pub fn close(&mut self) -> Result<(), String> {
         self.flush()?;
         self.close_inner()
+    }
+}
+
+impl Drop for VcdWriter {
+    fn drop(&mut self) {
+        // DEBT-19: pastikan buffer ter-flush walau engine return early
+        // (mis. error sim) tanpa sempat memanggil close() eksplisit.
+        let _ = self.flush();
     }
 }
 

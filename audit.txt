@@ -308,25 +308,25 @@ Par-03: ⚠️ Clone bodies di parallel eval — masih open
 
 4.1 LANGUAGE DESIGN GAPS
 
-LANG-01: Tidak ada VHDL Support (Critical)
-LANG-02: Tidak ada SystemC Support (Critical)
-LANG-03: Tidak ada PSL (Property Specification Language) (High)
-LANG-04: Tidak ada `assert property @ formal semantics — hanya
+LANG-01: [] Tidak ada VHDL Support (Critical)
+LANG-02: [] Tidak ada SystemC Support (Critical)
+LANG-03: [] Tidak ada PSL (Property Specification Language) (High)
+LANG-04: [] Tidak ada `assert property @ formal semantics — hanya
          cycle-based simulation (Critical)
-LANG-05: Constraint solver rejection sampling max 100 attempts —
+LANG-05: [] Constraint solver rejection sampling max 100 attempts —
          completely inadequate. VCS uses BDD + SAT. (Critical)
-LANG-06: Tidak ada full coverage of 1800-2017 (98% claimed tapi
+LANG-06: [] Tidak ada full coverage of 1800-2017 (98% claimed tapi
          banyak partial) (High)
-LANG-07: `ifdef expression syntax tidak didukung (High)
-LANG-08: Tidak ada net alias / nettype (High)
-LANG-09: Tidak ada let declarations (let policies) (Medium)
-LANG-10: Tidak ada checker construct (SVA checker) (High)
-LANG-11: Tidak ada restrict property (Medium)
-LANG-12: Tidak ada assume property formal (formal semantics) (High)
-LANG-13: Tidak ada cover property formal (Medium)
-LANG-14: Tidak ada expect statement (assertion in procedural) (Medium)
-LANG-15: Tidak ada wildcard range in case (High)
-LANG-16: Tidak ada unique0/unique case (Medium)
+LANG-07: [] `ifdef expression syntax tidak didukung (High)
+LANG-08: [] Tidak ada net alias / nettype (High)
+LANG-09: [] Tidak ada let declarations (let policies) (Medium)
+LANG-10: [] Tidak ada checker construct (SVA checker) (High)
+LANG-11: [] Tidak ada restrict property (Medium)
+LANG-12: [] Tidak ada assume property formal (formal semantics) (High)
+LANG-13: [] Tidak ada cover property formal (Medium)
+LANG-14: [] Tidak ada expect statement (assertion in procedural) (Medium)
+LANG-15: [] Tidak ada wildcard range in case (High)
+LANG-16: [] Tidak ada unique0/unique case (Medium)
 LANG-17: [ ] priority case — WARNING: belum, butuh label priority di case item (alasan: parser/AST belum simpan modifier)
 LANG-18: [ ] randsequence full support — WARNING: belum, hanya randcase parsial (alasan: butuh runtime production parser)
 LANG-19: [ ] randcase weighted distribution full — WARNING: parsial (alasan: bobot tunggal ada, distribusi weighted penuh belum)
@@ -373,74 +373,74 @@ LANG-53: [x] $scope / $showscopes — FIXED
 
 4.2 PARSER GAPS
 
-PARSER-01: Tidak ada incremental parsing (Critical)
-PARSER-02: Tidak ada error recovery beyond basic sync (High)
-PARSER-03: Tidak ada error suggestions (like "did you mean?") (High)
-PARSER-04: Tidak ada fix-it hints (Medium)
-PARSER-05: Tidak ada code formatting (verible-format equivalent) (High)
-PARSER-06: Tidak ada parser performance benchmark vs Verilator (High)
-PARSER-07: Dua parser (legacy + FastLexer) — maintenance burden (Medium)
-PARSER-08: FastLexer belum digabung dengan parser baru — hanya
+PARSER-01:[] Tidak ada incremental parsing (Critical)
+PARSER-02:[] Tidak ada error recovery beyond basic sync (High)
+PARSER-03:[] Tidak ada error suggestions (like "did you mean?") (High)
+PARSER-04:[] Tidak ada fix-it hints (Medium)
+PARSER-05:[] Tidak ada code formatting (verible-format equivalent) (High)
+PARSER-06:[] Tidak ada parser performance benchmark vs Verilator (High)
+PARSER-07:[] Dua parser (legacy + FastLexer) — maintenance burden (Medium)
+PARSER-08:[] FastLexer belum digabung dengan parser baru — hanya
            tokenisasi (High)
-PARSER-09: Tidak ada parser for SVA properties full syntax (High)
-PARSER-10: Tidak ada parser for module/interface parameter type
+PARSER-09:[] Tidak ada parser for SVA properties full syntax (High)
+PARSER-10:[] Tidak ada parser for module/interface parameter type
            list edge cases (Medium)
-PARSER-11: Tidak ada lexical edge case tests for Unicode/escaped
+PARSER-11:[] Tidak ada lexical edge case tests for Unicode/escaped
            identifiers (Low)
-PARSER-12: Parser recursive descent — potential stack overflow for
+PARSER-12:[] Parser recursive descent — potential stack overflow for
            deeply nested expressions (Medium)
-PARSER-13: Tidak ada AST comparison tool for regression (High)
-PARSER-14: Tidak ada AST differential between versions (Medium)
-PARSER-15: Tidak ada concrete syntax tree (CST) untuk LSP (High)
+PARSER-13:[] Tidak ada AST comparison tool for regression (High)
+PARSER-14:[] Tidak ada AST differential between versions (Medium)
+PARSER-15:[] Tidak ada concrete syntax tree (CST) untuk LSP (High)
 
 4.3 ELABORATOR GAPS
 
-ELAB-01: Elaborator tidak parallel (5571 lines sequential) (Critical)
-ELAB-02: Lazy elaboration partial — hanya skip full elab untuk
+ELAB-01:[] Elaborator tidak parallel (5571 lines sequential) (Critical)
+ELAB-02:[] Lazy elaboration partial — hanya skip full elab untuk
          --compile-only mode (High)
-ELAB-03: Tidak ada non-blocking elaboration (Medium)
-ELAB-04: Tidak ada type-2 incremental elaboration (High)
-ELAB-05: Generate loop unrolling bisa O(2^N) untuk nested
+ELAB-03:[] Tidak ada non-blocking elaboration (Medium)
+ELAB-04:[] Tidak ada type-2 incremental elaboration (High)
+ELAB-05:[] Generate loop unrolling bisa O(2^N) untuk nested
          generated loops (Critical)
-ELAB-06: Tidak ada generate loop runtime bounds (Medium)
-ELAB-07: Tidak ada cross-module parameter dependency tracking (High)
-ELAB-08: Tidak ada config/libraray mapping full implementation (Medium)
-ELAB-09: Tidak ada instance array with parameter override per
+ELAB-06:[] Tidak ada generate loop runtime bounds (Medium)
+ELAB-07:[] Tidak ada cross-module parameter dependency tracking (High)
+ELAB-08:[] Tidak ada config/libraray mapping full implementation (Medium)
+ELAB-09:[] Tidak ada instance array with parameter override per
          instance path (High)
-ELAB-10: Tidak ada parameter type override checking (Medium)
-ELAB-11: Tidak ada elaborated database persistence (High)
-ELAB-12: Tidak ada elab-time assertion evaluation for
+ELAB-10:[] Tidak ada parameter type override checking (Medium)
+ELAB-11:[] Tidak ada elaborated database persistence (High)
+ELAB-12:[] Tidak ada elab-time assertion evaluation for
          parameter-dependent assertions (Medium)
 
 4.4 COMPILER GAPS
 
-COMP-01: Tidak ada multi-pass optimization pipeline (Critical)
-COMP-02: Tidak ada dead code elimination (Critical)
-COMP-03: Tidak ada constant propagation beyond $clog2 etc (High)
-COMP-04: Tidak ada common subexpression elimination (CSE) (High)
-COMP-05: Tidak ada loop invariant code motion (LICM) (High)
-COMP-06: Tidak ada strength reduction (Medium)
-COMP-07: Tidak ada bit-width analysis for optimization (High)
-COMP-08: Tidak ada sign extension elimination (Medium)
-COMP-09: Tidak ada X/Z propagation optimization (Medium)
-COMP-10: Tidak ada gate-level optimization (High)
-COMP-11: Tidak ada FSM extraction/minimization (High)
-COMP-12: Tidak ada case analysis for parallel_case/full_case (High)
-COMP-13: Tidak ada clock gating inference (Medium)
-COMP-14: Tidak ada power optimization (Medium)
-COMP-15: Tidak ada memory inference optimization (Medium)
-COMP-16: Tidak ada sequential equivalence checking (Critical)
-COMP-17: Tidak ada design partitioning for parallel compilation (High)
-COMP-18: Tidak ada distributed compilation via network (Critical)
-COMP-19: Tidak ada compilation server daemon (High)
-COMP-20: Tidak ada incremental compilation for single-file change
+COMP-01:[] Tidak ada multi-pass optimization pipeline (Critical)
+COMP-02:[] Tidak ada dead code elimination (Critical)
+COMP-03:[] Tidak ada constant propagation beyond $clog2 etc (High)
+COMP-04:[] Tidak ada common subexpression elimination (CSE) (High)
+COMP-05:[] Tidak ada loop invariant code motion (LICM) (High)
+COMP-06:[] Tidak ada strength reduction (Medium)
+COMP-07:[] Tidak ada bit-width analysis for optimization (High)
+COMP-08:[] Tidak ada sign extension elimination (Medium)
+COMP-09:[] Tidak ada X/Z propagation optimization (Medium)
+COMP-10:[] Tidak ada gate-level optimization (High)
+COMP-11:[] Tidak ada FSM extraction/minimization (High)
+COMP-12:[] Tidak ada case analysis for parallel_case/full_case (High)
+COMP-13:[] Tidak ada clock gating inference (Medium)
+COMP-14:[] Tidak ada power optimization (Medium)
+COMP-15:[] Tidak ada memory inference optimization (Medium)
+COMP-16:[] Tidak ada sequential equivalence checking (Critical)
+COMP-17:[] Tidak ada design partitioning for parallel compilation (High)
+COMP-18:[] Tidak ada distributed compilation via network (Critical)
+COMP-19:[] Tidak ada compilation server daemon (High)
+COMP-20:[] Tidak ada incremental compilation for single-file change
          di edit dalam LSP (High)
 
 4.5 SIMULATOR GAPS
 
-SIM-01: Simulation is interpreter-based, not compiled (Critical)
-SIM-02: No multi-threaded delta cycle scheduling (Critical)
-SIM-03: No multi-threaded NBA processing (High)
+SIM-01:[] Simulation is interpreter-based, not compiled (Critical)
+SIM-02:[] No multi-threaded delta cycle scheduling (Critical)
+SIM-03:[] No multi-threaded NBA processing (High)
 SIM-04: ✅ Hierarchical timing wheel implemented (High)
            src/simulator/engine/scheduler/timing_wheel.rs (NEW, ~310 LOC)
            Fitur: 3-level wheel (256:1:256:256:65536), O(1) add_event, O(B) advance,
@@ -454,39 +454,70 @@ SIM-05: ✅ Liberty .lib cell library parser implemented (Critical)
            delay tables, templates, FF. Tokenizer handles LIberty ident/string/number/
            block syntax. 8 unit tests. 0 compilation errors.
            LIMITATION: Parser only — belum diintegrasikan ke simulation engine.
-SIM-06: No timing-aware SDF back-annotation fully (High)
-SIM-07: No SDF min:typ:max handling (High)
-SIM-08: No negative timing check (Medium)
-SIM-09: No pulse filtering / pulse control (High)
-SIM-10: No timing checks with conditional (setuphold context) (Medium)
-SIM-11: No X propagation mode (3-state / 4-state selectable) (Critical)
-SIM-12: No RTL locking for race detection (High)
-SIM-13: No race condition detection (always_comb vs always) (Critical)
-SIM-14: No write-in-progress detection for NBA (High)
-SIM-15: No multiple driver detection (beyond wire resolution) (High)
-SIM-16: No force/release all levels (High)
-SIM-17: No simulation save/restore (checkpoint) (Critical)
-SIM-18: No simulation crash recovery (Medium)
-SIM-19: No out-of-order simulation (Medium)
-SIM-20: No cycle-based simulation mode (beyond cycle-fusion claim) (High)
-SIM-21: No clock-domain crossing (CDC) awareness (Critical)
-SIM-22: No reset-domain crossing detection (High)
+SIM-06:[] No timing-aware SDF back-annotation fully (High)
+SIM-07:[] No SDF min:typ:max handling (High)
+SIM-08:[] No negative timing check (Medium)
+SIM-09:[] No pulse filtering / pulse control (High)
+SIM-10:[] No timing checks with conditional (setuphold context) (Medium)
+SIM-11:[] No X propagation mode (3-state / 4-state selectable) (Critical)
+SIM-12:[] No RTL locking for race detection (High)
+SIM-13:[] No race condition detection (always_comb vs always) (Critical)
+SIM-14:[] No write-in-progress detection for NBA (High)
+SIM-15:[] No multiple driver detection (beyond wire resolution) (High)
+SIM-16:[] No force/release all levels (High)
+SIM-17:[] No simulation save/restore (checkpoint) (Critical)
+SIM-18:[] No simulation crash recovery (Medium)
+SIM-19:[] No out-of-order simulation (Medium)
+SIM-20:[] No cycle-based simulation mode (beyond cycle-fusion claim) (High)
+SIM-21:[] No clock-domain crossing (CDC) awareness (Critical)
+SIM-22:[] No reset-domain crossing detection (High)
 SIM-23: ✅ Glitch detection implemented (High)
            Deteksi pulse A→B→A dalam window configurable (--glitch-window N,
            default 0 = nonaktif). Hanya untuk full-signal write (bukan partial
            RangeSelect/BitSelect) dan skip multi-driver nets. Warning WR0302
            SignalGlitch via DiagSink. 4 unit tests. (ROUND 20)
-[x] SIM-24: No setup/hold violation reporting beyond basic (Medium)
-[x] SIM-25: No simulation performance monitoring dashboard (Medium)
+[x] SIM-24:[] No setup/hold violation reporting beyond basic (Medium)
+[x] SIM-25:[] No simulation performance monitoring dashboard (Medium)
            PerfDashboard runtime (--perf-dashboard): delta_cycles, time_steps,
            events_processed, nba_commits, sensitive_triggers, processes_evaluated,
            events/sec, deltas/sec, wall-clock. File baru src/profiling/dashboard.rs.
            5 unit tests. (ROUND 22)
-SIM-26: No real-number modeling (wreal) (Medium)
-SIM-27: No analog/mixed-signal co-simulation (N/A - but claimed
-        target is HDL)
-SIM-28: No power-aware simulation (UPF) (Critical)
-SIM-29: No simulation macros for coverage exclusions (High)
+SIM-26: ✅ No real-number modeling (wreal) — keyword wreal + e2e (Medium)
+           real/realtime sudah ada sebelumnya (lexer/parser/DataType/eval
+           is_real). Kini wreal (net type real) dikenali penuh: Token::WReal di
+           lexer legacy + FastLexer, parse_decl → DataType::Real (kind Wire),
+           dispatcher module item (3 arm di parser/mod.rs). 2 test e2e:
+           continuous assign + procedural. (ROUND 24)
+SIM-27:[x] No analog/mixed-signal co-simulation (N/A - but claimed
+        target is HDL) — N/A: target simulator adalah HDL digital; analog/
+        mixed-signal (SPICE/Verilog-AMS) di luar scope, tidak akan
+        diimplementasikan (dokumentasi scope)
+SIM-28: ✅ Power-aware simulation (UPF) end-to-end verified (Critical)
+           PowerIntent (src/simulator/upf.rs, 1074 baris) sudah lengkap: power
+           domain, supply net/set, power switch, isolation cell, X-propagation
+           untuk sinyal domain OFF + clamp isolation. Ter-wire: CLI --upf
+           (main.rs 2 jalur), engine.power_intent (mod.rs), auto-bind supply
+           net dari sinyal design + evaluate_power_states per time step
+           (core.rs:1563), clamp/X saat baca sinyal (eval/expr.rs:123).
+           ROUND 23: +2 test end-to-end lewat engine —
+           test_upf_power_off_x_propagation_end_to_end (domain OFF → sinyal
+           baca X) dan test_upf_isolation_clamp_end_to_end (set_isolation
+           -clamp_value 0 → terbaca 0). 14 test inline upf.rs sebelumnya
+           menutup parse/state/mapping.
+SIM-29: ⚠️ Coverage exclusion macros — PARTIAL (High)
+           `` `coverage_off ``/`` `coverage_on `` kini dikenali preprocessor
+           (tidak lagi jatuh ke unknown-directive), range baris (1-based,
+           koordinat output preprocessed) di-track ke Preprocessor.coverage_exclusions
+           → plumb ke IrDesign.coverage_exclusions (compile_str) → engine
+           (field + is_line_excluded API). Test: test_coverage_exclusion_macros
+           (range terisi, is_line_excluded benar, kode tetap dieksekusi).
+           ⚠️ REASON: filtering per-statement di record_line_hit BELUM aktif —
+           IrStmt/ast::Stmt TIDAK membawa info baris (menambah `line` ke semua
+           varian = ~250 situs edit manual, risiko tinggi melanggar aturan
+           AGENTS.md anti mass-edit). record_line_hit masih keyed
+           process_name+discriminant. API is_line_excluded dicadangkan
+           (#[allow(dead_code)] + doc note) untuk wiring line-aware saat
+           plumbing baris tersedia.
 SIM-30: ✅ $coverage_control all modes implemented (Medium)
            apply_coverage_control(bitmask): bit0=Line, bit1=Toggle, bit2=Branch,
            bit3=FSM, bit4=Covergroup. Kedua handler block_syscall kini memanggilnya.
@@ -497,24 +528,24 @@ SIM-30: ✅ $coverage_control all modes implemented (Medium)
 
 4.6 WAVEFORM GAPS
 
-WAV-01: No FSDB format (Synopsys standard) (Critical)
-WAV-02: No VPD format (Synopsys VCD Plus) (Critical)
-WAV-03: No SHM/WDB format (Cadence/Siemens) (Critical)
-WAV-04: No compressed waveform database (beyond FST gzip) (High)
-WAV-05: No incremental waveform dump (Critical)
+WAV-01:[] No FSDB format (Synopsys standard) (Critical)
+WAV-02:[] No VPD format (Synopsys VCD Plus) (Critical)
+WAV-03:[] No SHM/WDB format (Cadence/Siemens) (Critical)
+WAV-04:[] No compressed waveform database (beyond FST gzip) (High)
+WAV-05:[] No incremental waveform dump (Critical)
 WAV-06: ✅ Waveform streaming to disk — periodic flush + CLI
            src/waveform/vcd.rs — stream_flush_interval + flush() + maybe_flush()
            src/waveform/fst.rs — same API (flush is no-op, wavefst crate limitation)
            src/simulator/engine/waveform.rs — dump_state calls maybe_flush()
            src/cli.rs + src/main.rs — --waveform-stream flag (flush every delta)
            STATUS: ✅ FIXED (VCD streaming; FST: wavefst crate doesn't expose flush)
-WAV-07: No waveform random access for debugger (High)
-WAV-08: No hierarchical signal indexing in waveform (High)
-WAV-09: No waveform comparison tool (Critical)
-WAV-10: No signal search (name, pattern, wildcard) (Medium)
-WAV-11: No waveform reload for post-sim debugging (High)
-WAV-12: No multi-session waveform merge (High)
-WAV-13: No waveform annotation from SDF (Medium)
+WAV-07:[] No waveform random access for debugger (High)
+WAV-08:[] No hierarchical signal indexing in waveform (High)
+WAV-09:[] No waveform comparison tool (Critical)
+WAV-10:[] No signal search (name, pattern, wildcard) (Medium)
+WAV-11:[] No waveform reload for post-sim debugging (High)
+WAV-12:[] No multi-session waveform merge (High)
+WAV-13:[] No waveform annotation from SDF (Medium)
 WAV-14: ✅ HTML self-contained waveform viewer (High)
            src/waveform/html_viewer.rs — standalone HTML+CSS+JS, filter/zoom/reset
            CLI: --html-waveform <path> — generate viewer linked to CSV
@@ -531,163 +562,163 @@ WAV-17: ✅ Signal statistics (toggle/rise/fall/X/Z) (Low)
            src/waveform/statistics.rs — SignalStats collector, per-signal report
            CLI: --signal-stats <path>
            STATUS: ✅ FIXED — 4 tests
-WAV-15: No waveform export to other formats (Medium)
-WAV-16: No protocol-aware waveform decode (AHB, AXI, APB) (High)
-WAV-17: No waveform statistics (toggle rate, transitions) (Medium)
-WAV-18: No value change dump at end of sim (blocking) (Medium)
-WAV-19: VCD writer single-threaded, blocking sim during dump (High)
+WAV-15:[] No waveform export to other formats (Medium)
+WAV-16:[] No protocol-aware waveform decode (AHB, AXI, APB) (High)
+WAV-17:[] No waveform statistics (toggle rate, transitions) (Medium)
+WAV-18:[] No value change dump at end of sim (blocking) (Medium)
+WAV-19:[] VCD writer single-threaded, blocking sim during dump (High)
 
 4.7 VERIFICATION GAPS
 
-VERIF-01: No full UVM 1.2 class library (Critical)
-VERIF-02: No uvm_reg (register layer) (Critical)
-VERIF-03: No uvm_cmdline_processor (Medium)
-VERIF-04: No uvm_root/get_top/run_test all variants (Medium)
-VERIF-05: No uvm_phase jumping/objection full (High)
-VERIF-06: No uvm_config_db full (get, set, exists, wait_modified) (High)
-VERIF-07: No uvm_resource_db full (High)
-VERIF-08: No uvm_event / uvm_event_pool (Medium)
-VERIF-09: No uvm_barrier / uvm_barrier_pool (Medium)
-VERIF-10: No uvm_callback (Critical — used in all commercial VIP)
-VERIF-11: No uvm_report_handler full (High)
-VERIF-12: No uvm_printer / uvm_table_printer (Medium)
-VERIF-13: No uvm_comparator / uvm_in_order_comparator (Medium)
-VERIF-14: No uvm_subscriber (Medium)
-VERIF-15: No uvm_heartbeat (Medium)
-VERIF-16: No uvm_tlm_fifo / uvm_tlm_queue (High)
-VERIF-17: No uvm_transaction recording (High)
-VERIF-18: No uvm_tr_database (High)
-VERIF-19: No uvm_recorded_item / uvm_tr_stream (Medium)
-VERIF-20: No full OVM compatibility (Medium)
-VERIF-21: No functional coverage integration with coverage database (High)
-VERIF-22: No code coverage (line, toggle, branch, condition, FSM) (Critical)
-VERIF-23: No coverage HTML report (Medium)
-VERIF-24: No coverage merge across multiple runs (High)
-VERIF-25: No coverage exclusion (cover pragmas) (Medium)
-VERIF-26: No coverage gap analysis (High)
-VERIF-27: No assertion coverage metrics (High)
-VERIF-28: No covergroup type_option weight/per_instance (Medium)
-VERIF-29: No cross coverage auto-binning (Medium)
-VERIF-30: No coverpoint ignore_bins / illegal_bins beyond basic (Medium)
-VERIF-31: No transition coverage (High)
-VERIF-32: No sequence coverage (Medium)
-VERIF-33: No SVA assertion coverage (High)
-VERIF-34: No random stability (StdRng seed from u64) (High)
-VERIF-35: No random seeding per-instance for predictability (Medium)
-VERIF-36: No constraint distribution biasing (Medium)
-VERIF-37: No dynamic constraint modification (Medium)
-VERIF-38: No solve-before full ordering (Medium)
+VERIF-01:[] No full UVM 1.2 class library (Critical)
+VERIF-02:[] No uvm_reg (register layer) (Critical)
+VERIF-03:[] No uvm_cmdline_processor (Medium)
+VERIF-04:[] No uvm_root/get_top/run_test all variants (Medium)
+VERIF-05:[] No uvm_phase jumping/objection full (High)
+VERIF-06:[] No uvm_config_db full (get, set, exists, wait_modified) (High)
+VERIF-07:[] No uvm_resource_db full (High)
+VERIF-08:[] No uvm_event / uvm_event_pool (Medium)
+VERIF-09:[] No uvm_barrier / uvm_barrier_pool (Medium)
+VERIF-10:[] No uvm_callback (Critical — used in all commercial VIP)
+VERIF-11:[] No uvm_report_handler full (High)
+VERIF-12:[] No uvm_printer / uvm_table_printer (Medium)
+VERIF-13:[] No uvm_comparator / uvm_in_order_comparator (Medium)
+VERIF-14:[] No uvm_subscriber (Medium)
+VERIF-15:[] No uvm_heartbeat (Medium)
+VERIF-16:[] No uvm_tlm_fifo / uvm_tlm_queue (High)
+VERIF-17:[] No uvm_transaction recording (High)
+VERIF-18:[] No uvm_tr_database (High)
+VERIF-19:[] No uvm_recorded_item / uvm_tr_stream (Medium)
+VERIF-20:[] No full OVM compatibility (Medium)
+VERIF-21:[] No functional coverage integration with coverage database (High)
+VERIF-22:[] No code coverage (line, toggle, branch, condition, FSM) (Critical)
+VERIF-23:[] No coverage HTML report (Medium)
+VERIF-24:[] No coverage merge across multiple runs (High)
+VERIF-25:[] No coverage exclusion (cover pragmas) (Medium)
+VERIF-26:[] No coverage gap analysis (High)
+VERIF-27:[] No assertion coverage metrics (High)
+VERIF-28:[] No covergroup type_option weight/per_instance (Medium)
+VERIF-29:[] No cross coverage auto-binning (Medium)
+VERIF-30:[] No coverpoint ignore_bins / illegal_bins beyond basic (Medium)
+VERIF-31:[] No transition coverage (High)
+VERIF-32:[] No sequence coverage (Medium)
+VERIF-33:[] No SVA assertion coverage (High)
+VERIF-34:[] No random stability (StdRng seed from u64) (High)
+VERIF-35:[] No random seeding per-instance for predictability (Medium)
+VERIF-36:[] No constraint distribution biasing (Medium)
+VERIF-37:[] No dynamic constraint modification (Medium)
+VERIF-38:[] No solve-before full ordering (Medium)
 
 4.8 FORMAL VERIFICATION GAPS
 
-FORMAL-01: No formal property checking engine (Critical)
-FORMAL-02: No BMC (Bounded Model Checking) (Critical)
-FORMAL-03: No induction-based proof (Critical)
-FORMAL-04: No k-induction (High)
-FORMAL-05: No IC3/PDR (Critical)
-FORMAL-06: No SAT solver integration (Critical)
-FORMAL-07: No BDD engine (High)
-FORMAL-08: No SMT solver integration (High)
-FORMAL-09: No abstract interpretation (Medium)
-FORMAL-10: No assume-guarantee reasoning (High)
-FORMAL-11: No equivalence checking combinational (Critical)
-FORMAL-12: No equivalence checking sequential (Critical)
-FORMAL-13: No connectivity checking (High)
-FORMAL-14: No X-propagation formal analysis (High)
-FORMAL-15: No unreachable assertion detection (High)
-FORMAL-16: No cover property formal analysis (Medium)
+FORMAL-01:[] No formal property checking engine (Critical)
+FORMAL-02:[] No BMC (Bounded Model Checking) (Critical)
+FORMAL-03:[] No induction-based proof (Critical)
+FORMAL-04:[] No k-induction (High)
+FORMAL-05:[] No IC3/PDR (Critical)
+FORMAL-06:[] No SAT solver integration (Critical)
+FORMAL-07:[] No BDD engine (High)
+FORMAL-08:[] No SMT solver integration (High)
+FORMAL-09:[] No abstract interpretation (Medium)
+FORMAL-10:[] No assume-guarantee reasoning (High)
+FORMAL-11:[] No equivalence checking combinational (Critical)
+FORMAL-12:[] No equivalence checking sequential (Critical)
+FORMAL-13:[] No connectivity checking (High)
+FORMAL-14:[] No X-propagation formal analysis (High)
+FORMAL-15:[] No unreachable assertion detection (High)
+FORMAL-16:[] No cover property formal analysis (Medium)
 
 4.9 LSP/IDE GAPS
 
 LSP-01: ✅ LSP server MVP (tower-lsp 0.20, --lsp flag, publishDiagnostics via parser)
-LSP-02: No autocomplete/suggestions (Critical)
-LSP-03: No go-to-definition (Critical)
-LSP-04: No find-references (Critical)
-LSP-05: No rename (Critical)
-LSP-06: No hover documentation (Critical)
-LSP-07: No semantic tokens highlighting (High)
-LSP-08: No code lens (Test/References) (High)
-LSP-09: No inlay hints (type hints) (Medium)
-LSP-10: No code actions (quick-fix) (High)
-LSP-11: No workspace symbol search (High)
-LSP-12: No document symbol (outline) (High)
-LSP-13: No call hierarchy (Medium)
-LSP-14: No type hierarchy (Medium)
-LSP-15: No folding range (Low)
-LSP-16: No signature help (Medium)
-LSP-17: No completion resolve (Medium)
-LSP-18: No incremental document sync (Medium)
+LSP-02:[] No autocomplete/suggestions (Critical)
+LSP-03:[] No go-to-definition (Critical)
+LSP-04:[] No find-references (Critical)
+LSP-05:[] No rename (Critical)
+LSP-06:[] No hover documentation (Critical)
+LSP-07:[] No semantic tokens highlighting (High)
+LSP-08:[] No code lens (Test/References) (High)
+LSP-09:[] No inlay hints (type hints) (Medium)
+LSP-10:[] No code actions (quick-fix) (High)
+LSP-11:[] No workspace symbol search (High)
+LSP-12:[] No document symbol (outline) (High)
+LSP-13:[] No call hierarchy (Medium)
+LSP-14:[] No type hierarchy (Medium)
+LSP-15:[] No folding range (Low)
+LSP-16:[] No signature help (Medium)
+LSP-17:[] No completion resolve (Medium)
+LSP-18:[] No incremental document sync (Medium)
 LSP-19: ✅ Diagnostic publishing via parser (src/lsp/backend.rs, publishDiagnostics pada
         open/change/save/close)
-LSP-20: No format-on-save / document formatting (High)
-LSP-21: No code lens for test run (Medium)
-LSP-22: No color provider (Low)
-LSP-23: No linked editing range (Low)
-LSP-24: No selection range (Low)
-LSP-25: Tauri GUI uses Monaco — hanya text editor, no
+LSP-20:[] No format-on-save / document formatting (High)
+LSP-21:[] No code lens for test run (Medium)
+LSP-22:[] No color provider (Low)
+LSP-23:[] No linked editing range (Low)
+LSP-24:[] No selection range (Low)
+LSP-25:[] Tauri GUI uses Monaco — hanya text editor, no
         language intelligence (High)
 
 4.10 ENTERPRISE GAPS
 
-ENT-01: No CI/CD pipeline (Critical)
-ENT-02: No regression test infrastructure (Critical)
-ENT-03: No build artifacts management (High)
-ENT-04: No remote distributed caching (Critical)
-ENT-05: No incremental cache in CI (Critical)
-ENT-06: No test result database (High)
-ENT-07: No metrics dashboard (High)
-ENT-08: No performance trend tracking (High)
-ENT-09: No memory leak detection in CI (High)
-ENT-10: No thread sanitizer testing (High)
-ENT-11: No license management (High)
-ENT-12: No IP encryption/decryption (Critical)
-ENT-13: No RTL secure vault (Medium)
-ENT-14: No user authentication (Medium)
-ENT-15: No audit trail (Medium)
-ENT-16: No project-level configuration (High)
-ENT-17: No team collaboration features (High)
-ENT-18: No parallel multi-user simulation server (Critical)
-ENT-19: No job scheduling / batch simulation (High)
-ENT-20: No resource management (memory/CPU quotas) (Medium)
-ENT-21: No integration with CI/CD common tools (Jenkins,
+ENT-01:[] No CI/CD pipeline (Critical)
+ENT-02:[] No regression test infrastructure (Critical)
+ENT-03:[] No build artifacts management (High)
+ENT-04:[] No remote distributed caching (Critical)
+ENT-05:[] No incremental cache in CI (Critical)
+ENT-06:[] No test result database (High)
+ENT-07:[] No metrics dashboard (High)
+ENT-08:[] No performance trend tracking (High)
+ENT-09:[] No memory leak detection in CI (High)
+ENT-10:[] No thread sanitizer testing (High)
+ENT-11:[] No license management (High)
+ENT-12:[] No IP encryption/decryption (Critical)
+ENT-13:[] No RTL secure vault (Medium)
+ENT-14:[] No user authentication (Medium)
+ENT-15:[] No audit trail (Medium)
+ENT-16:[] No project-level configuration (High)
+ENT-17:[] No team collaboration features (High)
+ENT-18:[] No parallel multi-user simulation server (Critical)
+ENT-19:[] No job scheduling / batch simulation (High)
+ENT-20:[] No resource management (memory/CPU quotas) (Medium)
+ENT-21:[] No integration with CI/CD common tools (Jenkins,
         GitLab CI) (Critical)
-ENT-22: No version compatibility checking untuk SV files (Medium)
-ENT-23: No design migration assistance (High)
-ENT-24: No AXI/AHB/APB protocol verification IP (High)
-ENT-25: No standard verification IP library (Critical)
-ENT-26: No waveform database server for team access (High)
-ENT-27: No coverage database server (High)
-ENT-28: No integration with bug tracking (Jira/Redmine) (Medium)
-ENT-29: No integration with requirements management (Medium)
-ENT-30: No IEEE 1801 (UPF) power intent support (Critical)
-ENT-31: No timing constraints (SDC) support (Critical)
-ENT-32: No integration with STA tools (PrimeTime, Tempus) (Critical)
-ENT-33: No integration with synthesis tools (DC, Genus, Yosys) (Critical)
-ENT-34: No integration with P&R tools (ICC2, Innovus) (Critical)
-ENT-35: No integration with DFT tools (Tessent, DFTMAX) (Critical)
-ENT-36: No multi-project management (Medium)
-ENT-37: No IP packaging (IP-XACT) (High)
-ENT-38: No design repository (Critical)
-ENT-39: No revision control integration beyond git (Low)
-ENT-40: No plugin/extension marketplace (High)
+ENT-22:[] No version compatibility checking untuk SV files (Medium)
+ENT-23:[] No design migration assistance (High)
+ENT-24:[] No AXI/AHB/APB protocol verification IP (High)
+ENT-25:[] No standard verification IP library (Critical)
+ENT-26:[] No waveform database server for team access (High)
+ENT-27:[] No coverage database server (High)
+ENT-28:[] No integration with bug tracking (Jira/Redmine) (Medium)
+ENT-29:[] No integration with requirements management (Medium)
+ENT-30:[] No IEEE 1801 (UPF) power intent support (Critical)
+ENT-31:[] No timing constraints (SDC) support (Critical)
+ENT-32:[] No integration with STA tools (PrimeTime, Tempus) (Critical)
+ENT-33:[] No integration with synthesis tools (DC, Genus, Yosys) (Critical)
+ENT-34:[] No integration with P&R tools (ICC2, Innovus) (Critical)
+ENT-35:[] No integration with DFT tools (Tessent, DFTMAX) (Critical)
+ENT-36:[] No multi-project management (Medium)
+ENT-37:[] No IP packaging (IP-XACT) (High)
+ENT-38:[] No design repository (Critical)
+ENT-39:[] No revision control integration beyond git (Low)
+ENT-40:[] No plugin/extension marketplace (High)
 
 4.11 PLATFORM GAPS (Linux / OS)
 
-LINUX-01: Windows support — none (Medium)
-LINUX-02: macOS support — none (Medium)
-LINUX-03: No NUMA-aware memory allocation (High)
-LINUX-04: No HugePage support for large designs (High)
-LINUX-05: No io_uring for async file I/O (High)
-LINUX-06: No epoll-based async (Medium)
-LINUX-07: No BPF-based performance monitoring (Medium)
-LINUX-08: No perf integration for profiling (High)
-LINUX-09: No flamegraph generation built-in (Medium)
-LINUX-10: No valgrind/heaptrack integration built-in (Medium)
-LINUX-11: No cgroup-aware resource limits (Medium)
-LINUX-12: No container-native deployment (docker) (Low)
-LINUX-13: No thread affinity / CPU pinning configuration (High)
-LINUX-14: No containerized CI test environment (Medium)
-LINUX-15: No KVM/VM acceleration for simulation (Low)
+LINUX-01[]: Windows support — none (Medium)
+LINUX-02[]: macOS support — none (Medium)
+LINUX-03:[] No NUMA-aware memory allocation (High)
+LINUX-04:[] No HugePage support for large designs (High)
+LINUX-05:[] No io_uring for async file I/O (High)
+LINUX-06:[] No epoll-based async (Medium)
+LINUX-07:[] No BPF-based performance monitoring (Medium)
+LINUX-08:[] No perf integration for profiling (High)
+LINUX-09:[] No flamegraph generation built-in (Medium)
+LINUX-10:[] No valgrind/heaptrack integration built-in (Medium)
+LINUX-11:[] No cgroup-aware resource limits (Medium)
+LINUX-12:[] No container-native deployment (docker) (Low)
+LINUX-13:[] No thread affinity / CPU pinning configuration (High)
+LINUX-14:[] No containerized CI test environment (Medium)
+LINUX-15:[] No KVM/VM acceleration for simulation (Low)
 
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -697,7 +728,7 @@ LINUX-15: No KVM/VM acceleration for simulation (Low)
 (CATATAN: Hanya 50 masalah paling kritis ditampilkan karena panjang
 dokumen. Full 200 tersedia di appendix.)
 
-CRIT-001: 2 pre-existing test failures — Foundation tidak stabil
+CRIT-001:[x] 2 pre-existing test failures — Foundation tidak stabil
             Impact: Any change bisa menambah failures tanpa terdeteksi
             Fix: Debug dan fix semua failing tests
             STATUS: ✅ FIXED — 2 failures fixed (forever+delay bugs in edge_tests)
@@ -1183,27 +1214,27 @@ PERF-01: ✅ Hierarchical timing wheel — O(1) event scheduling
          Impact: Setiap delta cycle scan seluruh event list
          Fix: Region-specific event bins with O(1) access
 
-PERF-02: Signal history in HashMap — O(N) lookup per cycle
+PERF-02:[] Signal history in HashMap — O(N) lookup per cycle
          core.rs: signal_history per signal
          Impact: 1M signals x per-cycle store = memory + CPU
          Fix: Array-backed signal history, fixed-size ring buffer
 
-PERF-03: Preponed snapshot clones ALL signals every cycle
+PERF-03:[] Preponed snapshot clones ALL signals every cycle
          core.rs: snapshot Vec<LogicVec> per cycle
          Impact: O(S * W) copy per cycle (S=signals, W=avg width)
          Fix: Lazy/differential snapshot, version-based
 
-PERF-04: Process body clone in DAG parallel evaluation
+PERF-04:[] Process body clone in DAG parallel evaluation
          core.rs: body_map clone for each DAG execution
          Impact: O(P * B) memory/copy per cycle
          Fix: Arc<[IrStmt]> sharing
 
-PERF-05: Vec::drain/filter/retain in event loop — O(E) allocation
+PERF-05:[] Vec::drain/filter/retain in event loop — O(E) allocation
          core.rs: drain/filter/retain per region per delta
          Impact: Each delta cycle allocates temporary Vecs
          Fix: Linked-list of events per region, O(1) pop
 
-PERF-06: Signal state Vec behind &mut self — no concurrent reads
+PERF-06:[] Signal state Vec behind &mut self — no concurrent reads
          state.rs: read_signal/write_signal sequential
          Impact: All process evaluation serialized on state access
          Fix: Row-based signal storage, versioned reads
@@ -1221,25 +1252,29 @@ PERF-07: ✅ LogicVec SIMD-ized with u64 bitmasks
          Fallback ke per-bit loop untuk width > 64.
          STATUS: ✅ FIXED — O(width)→O(1) untuk ≤64 bit widths
 
-PERF-08: StringTable DashMap contention at 16+ threads
+PERF-08:[] StringTable DashMap contention at 16+ threads
          string_intern.rs: all threads contend on DashMap
          Impact: Thread scaling bottleneck at moderate concurrency
          Fix: Thread-local cache with batch insert
 
-PERF-09: CacheManager DashMap with no eviction
+PERF-09:[] CacheManager DashMap with no eviction
          cache_manager.rs: unlimited growth
          Impact: Memory leak in compile-serve daemon
          Fix: LRU eviction with max memory budget
 
-PERF-10: Recursive evaluate_expr — deep stack for large expressions
+PERF-10:[] Recursive evaluate_expr — deep stack for large expressions
          engine/eval.rs: recursive tree traversal
          Impact: Stack overflow for deeply nested expressions
          Fix: Iterative tree walk with explicit stack
 
-PERF-11: $display string formatting allocates per call
+PERF-11:[x] $display string formatting allocates per call
          eval.rs: format_display creates String each time
          Impact: Heavy $display usage destroys performance
          Fix: Write to io::Write directly with format segments
+         FIX (ROUND 27): borrow fmt_str (as_str, no clone per call), arg
+              evaluasi lazy (no Vec per call), String::with_capacity, write!
+              langsung untuk %d/%h/%f/%b (no String perantara), helper
+              u64_digits/u64_hex_digits untuk padding.
 
 PERF-12: ✅ File-based JIT cache persistence (line-based format)
          src/simulator/jit_cranelift.rs: cache_path + save_cache() / load_cache()
@@ -1248,42 +1283,42 @@ PERF-12: ✅ File-based JIT cache persistence (line-based format)
          Placeholder entries with null code_ptr detected (return None = miss → re-JIT)
          STATUS: ✅ FIXED — persistent JIT cache metadata across runs
 
-PERF-13: Single-threaded VCD/FST dump blocks simulation
+PERF-13:[] Single-threaded VCD/FST dump blocks simulation
          vcd.rs, fst.rs: synchronous write
          Impact: sim pauses during waveform dump
          Fix: Background writer thread with ring buffer
 
-PERF-14: VCD dump at end of simulation (not streaming)
+PERF-14:[] VCD dump at end of simulation (not streaming)
          core.rs: dump called per cycle tapi buffered
          Impact: Large memory for signal history before dump
          Fix: Stream VCD to disk continuously
 
-PERF-15: NBA commit checks all pending entries
+PERF-15:[] NBA commit checks all pending entries
          scheduler.rs: commit_nba iterates all NBA pending
          Impact: O(NBA) per delta — many NBA causes slowdown
          Fix: Bucket NBA by target signal, incremental commit
 
-PERF-16: Covergroup sampling loops over all bins
+PERF-16:[] Covergroup sampling loops over all bins
          coverage.rs: linear bin checking per sample
          Impact: Many covergroups degrade performance
          Fix: Hash-based bin lookup, early-out on full bins
 
-PERF-17: All file mmaps held open during compile
+PERF-17:[] All file mmaps held open during compile
          io.rs: MmapFile stays mapped
          Impact: 100K files = 100K mmap regions
          Fix: Sequential processing, unmap after parse
 
-PERF-18: StringTable.get() iterates string-slice for Symbol→String
+PERF-18:[] StringTable.get() iterates string-slice for Symbol→String
          string_intern.rs: StringTable::get() lookup
          Impact: O(1) pointer but string allocation per lookup
          Fix: Return &str from intern storage
 
-PERF-19: Parser recovery mode retries same tokens
+PERF-19:[] Parser recovery mode retries same tokens
          parser.rs: error recovery sync-token
          Impact: Cascading errors slow parsing significantly
          Fix: Skip-to-sync-token after single recovery attempt
 
-PERF-20: ForkJoin tracking via Vec iteration
+PERF-20:[] ForkJoin tracking via Vec iteration
          types.rs: ForkGroup remaining decrement
          Impact: O(fork_branches) per completion
          Fix: Atomic counter per ForkGroup
@@ -1295,7 +1330,7 @@ PERF-20: ForkJoin tracking via Vec iteration
 
 (Top 30 — full 200 di appendix)
 
-DEBT-01: Simulator engine monolithic — no trait/impl separation
+DEBT-01:[] Simulator engine monolithic — no trait/impl separation
          engine/mod.rs: SimulationEngine struct 135+ fields
          Impact: Hard to test, maintain, or parallelize
          Severity: High
@@ -1309,7 +1344,7 @@ DEBT-02: No workspace in Cargo.toml
           Build: ✅ Both default (1167 tests) + no-default-features ✅
           Severity: Medium → Fixed
 
-DEBT-04: no_std compatibility not considered
+DEBT-04:[] no_std compatibility not considered
          Impact: Future bare-metal use case blocked
          Severity: Low
 
@@ -1410,23 +1445,40 @@ DEBT-16: ✅ Unsafe code audit — completed
          Impact: unsafe blocks unchecked for soundness
          Severity: High
 
-DEBT-17: Simulation state not Send/Sync audited
+DEBT-17:[x] Simulation state not Send/Sync audited
          Impact: Thread safety assumptions unverified
          Severity: High
+         FIX: Compile-time guard test_simulation_state_send_sync_audit
+              (tests/mod.rs) — assert Send+Sync untuk SimulationState
+              (murni Vec/HashMap/u64/TimeFormat) dan LogicVec. Engine
+              sengaja tidak di-assert: Option<FstWaveWriter> (wavefst)
+              memegang RefCell+raw pointer (symbol cache FST) → !Sync
+              by design; parallel.rs hanya clone LogicVec via rayon.
 
-DEBT-18: Symbol interning relies on 'static lifetime
+DEBT-18:[x] Symbol interning relies on 'static lifetime
          string_intern.rs: leaked allocation
          Impact: Memory never freed — okay for compiler, bad
          for daemon
          Severity: Medium
+         FIX: reset_string_table() (string_intern.rs:259) — dibebaskan
+              untuk daemon mode (detail entri fix di bawah).
 
-DEBT-19: No Drop implementation for shared resources
+DEBT-19:[x] No Drop implementation for shared resources
          Impact: File handles may leak on early return
          Severity: Medium
+         FIX: impl Drop VcdWriter→flush() (pola CsvWaveWriter) + impl Drop
+              FstWaveWriter→close() (FstWriter::finish() via writer.take(),
+              idempoten) — file ter-flush/finalisasi walau engine return
+              early tanpa close() eksplisit (detail di ROUND 26).
 
-DEBT-20: No Debug/Deref implementations consistent across types
+DEBT-20:[x] No Debug/Deref implementations consistent across types
          Impact: Debugging state difficult
          Severity: Low
+         FIX: Debug ringkas konsisten untuk VcdWriter (manual: enabled,
+              max_dump_size, total_written, signal_count, code_count) dan
+              FstWaveWriter (manual: writer_active, var_count, current_time)
+              — FstWriter wavefst tidak Debug, jadi manual; SignalStats
+              #[derive(Debug)]. CsvWaveWriter sudah Debug (detail ROUND 26).
 
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -1435,33 +1487,33 @@ DEBT-20: No Debug/Deref implementations consistent across types
 
 (Top 25 — full 200 di appendix)
 
-FEAT-01: Design database server (persistent compile cache across
+FEAT-01:[] Design database server (persistent compile cache across
          projects and users) — Critical
-FEAT-02: Collaborative debug (multi-user debugging session) — High
-FEAT-03: Web-based simulation control dashboard — High
-FEAT-04: REST/gRPC API for automation — Critical
-FEAT-05: Python bindings (like cocotb integration) — High
-FEAT-06: Tcl scripting interface — High
-FEAT-07: Regression management system with pass/fail analytics — Critical
-FEAT-08: Bug tracking integration — Medium
-FEAT-09: Requirements traceability — Medium
-FEAT-10: Coverage closure analytics — Critical
-FEAT-11: Verification management dashboard — High
-FEAT-12: License server for floating licenses — High
-FEAT-13: IP encryption (IEEE 1735) — Critical
-FEAT-14: IP packaging (IP-XACT) — High
-FEAT-15: Design-for-debug infrastructure — Medium
-FEAT-16: Simulation farm orchestration — Critical
-FEAT-17: CI/CD pipeline integration kit — Critical
-FEAT-18: Post-silicon validation alignment — Medium
-FEAT-19: Emulation/prototyping integration — High
-FEAT-20: Hardware acceleration co-simulation — High
-FEAT-21: ECO support (Engineering Change Order) — High
-FEAT-22: Automated testbench generation — Medium
-FEAT-23: Bus protocol checker library (AXI, AHB, APB) — Critical
-FEAT-24: Standard VIP for industry protocols (USB, PCIe, DDR,
+FEAT-02:[] Collaborative debug (multi-user debugging session) — High
+FEAT-03:[] Web-based simulation control dashboard — High
+FEAT-04:[] REST/gRPC API for automation — Critical
+FEAT-05:[] Python bindings (like cocotb integration) — High
+FEAT-06:[] Tcl scripting interface — High
+FEAT-07:[] Regression management system with pass/fail analytics — Critical
+FEAT-08:[] Bug tracking integration — Medium
+FEAT-09:[] Requirements traceability — Medium
+FEAT-10:[] Coverage closure analytics — Critical
+FEAT-11:[] Verification management dashboard — High
+FEAT-12:[] License server for floating licenses — High
+FEAT-13:[] IP encryption (IEEE 1735) — Critical
+FEAT-14:[] IP packaging (IP-XACT) — High
+FEAT-15:[] Design-for-debug infrastructure — Medium
+FEAT-16:[] Simulation farm orchestration — Critical
+FEAT-17:[] CI/CD pipeline integration kit — Critical
+FEAT-18:[] Post-silicon validation alignment — Medium
+FEAT-19:[] Emulation/prototyping integration — High
+FEAT-20:[] Hardware acceleration co-simulation — High
+FEAT-21:[] ECO support (Engineering Change Order) — High
+FEAT-22:[] Automated testbench generation — Medium
+FEAT-23:[] Bus protocol checker library (AXI, AHB, APB) — Critical
+FEAT-24:[] Standard VIP for industry protocols (USB, PCIe, DDR,
          Ethernet) — Critical
-FEAT-25: Waiver management for lint/formal violations — High
+FEAT-25:[] Waiver management for lint/formal violations — High
 
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -2039,11 +2091,11 @@ FIX LOG — 2026-07-28 (Final Update)
 ========================================
 
 ═══ STATUS RINGKAS ═══
-✅ Total FIXED:   50 items (CRIT, DEBT, PERF, PARSER, ELAB, LANG, SIM, SCHED, VPI, JIT, BENCH, CACHE, WAV, CDC, DIST, TW, ERR)
-⚠️ Remaining:     7 critical items still open
-📊 Tests:         1210 passed, 0 failed (✅ ALL FIXED) — +17 new tests (+8 ROUND 20, +4 ROUND 21, +5 ROUND 22)
+✅ Total FIXED:   55 items (CRIT, DEBT, PERF, PARSER, ELAB, LANG, SIM, SCHED, VPI, JIT, BENCH, CACHE, WAV, CDC, DIST, TW, ERR)
+⚠️ Remaining:     2 critical items still open
+📊 Tests:         1216 passed, 0 failed (✅ ALL FIXED) — +23 new tests (+8 ROUND 20, +4 ROUND 21, +5 ROUND 22, +3 ROUND 23, +2 ROUND 24, +1 ROUND 25)
 📈 Scores:        Sim 33→34 | Comp 16→18 | Scale 27→28 | VPI 0→40 | JIT 0→25 | LINT 0→95
-🔧 Files changed: 40+ files across 27 rounds
+🔧 Files changed: 40+ files across 30 rounds
 
 Detail perbaikan per round:
 
@@ -2929,6 +2981,217 @@ END OF AUDIT REPORT
    - Code review: OK (no double-count DAG vs sequential disjoint;
      bounds-check placement benar; jalur line 1788 process_event manual sudah
      dihitung)
+
+═══ ROUND 23 — SIM-28 UPF E2E + SIM-29 COVERAGE EXCLUSION MACROS ═══
+
+✅ SIM-28: UPF power-aware simulation — verifikasi end-to-end
+   - UPF sudah diimplementasikan penuh (src/simulator/upf.rs: PowerDomain,
+     SupplyNet/Set, PowerSwitch, IsolationCell, PowerIntent parse_file/parse,
+     evaluate_power_states, get_isolation_clamp, is_signal_powered_off,
+     build_signal_mapping; 14 test inline) dan ter-wire ke engine:
+     * CLI --upf (src/cli.rs:251; main.rs jalur 1 & 2)
+     * engine.power_intent (src/simulator/engine/mod.rs:210)
+     * auto-bind supply net dari sinyal design + evaluate_power_states per
+       time step (src/simulator/engine/core.rs:1563)
+     * clamp/X saat baca IrExpr::Signal (src/simulator/engine/eval/expr.rs:123)
+   - ROUND 23 menambah 2 test end-to-end yang membuktikan perilaku runtime:
+     * test_upf_power_off_x_propagation_end_to_end — domain PD berisi `data`,
+       VDD=false (supply_values), tidak ada isolation → `out = data` baca X
+       (out_val.all_x()).
+     * test_upf_isolation_clamp_end_to_end — set_isolation PD -clamp_value 0
+       → `out = data` baca 0 (clamp), bukan X.
+   - Files: src/tests/mod.rs.
+
+⚠️ SIM-29: Coverage exclusion macros — PARTIAL (High, warning + alasan)
+   DONE:
+   - src/parser/preprocessor.rs: `` `coverage_off `` / `` `coverage_on ``
+     dikenali sebagai direktif resmi; cov_start di-set saat coverage_off
+     (baris output berikutnya), range (start,end) 1-based di-push ke
+     Preprocessor.coverage_exclusions saat coverage_on; region yang belum
+     ditutup ditutup di EOF. Hanya saat emitting=true.
+   - src/ir/ir.rs: IrDesign + field pub coverage_exclusions: Vec<(usize,usize)>.
+   - src/lib.rs compile_str: ir_design.coverage_exclusions =
+     pp.coverage_exclusions.clone() (bawa dari preprocessor ke design).
+   - src/simulator/engine/mod.rs + core.rs: field coverage_exclusions di
+     SimulationEngine, init dari design di constructor.
+   - src/simulator/engine/coverage.rs: is_line_excluded(line) — cek apakah
+     baris dalam region exclude. #[allow(dead_code)] + doc note (API dicadangkan
+     untuk wiring line-aware).
+   - 14 situs konstruksi literal IrDesign di-update (formal/tests.rs 7,
+     partitioner.rs, elaborator/mod.rs, sim_dag.rs 2, clock_domain.rs 3);
+     19 situs lain pakai IrDesign::default()/..Default::default() otomatis.
+   - Test: test_coverage_exclusion_macros — range terisi, is_line_excluded
+     benar untuk baris dalam/duar region, kode di antara direktif tetap
+     dieksekusi (sim berjalan normal).
+   ALASAN PARTIAL (warning): filtering per-statement di record_line_hit belum
+   aktif. IrStmt dan ast::Stmt TIDAK membawa info baris; menambah field `line`
+   ke semua varian IrStmt (~29 varian) + situs konstruksi (~131 di elaborator)
+   + pola match (~100 di simulator) = ~250 edit manual berisiko tinggi, dan
+   melanggar prinsip AGENTS.md (anti mass-edit, minimal change). record_line_hit
+   tetap memakai key process_name+discriminant. API is_line_excluded + field
+   coverage_exclusions siap dikonsumsi saat plumbing baris tersedia di masa
+   depan (refactor terpisah).
+
+📊 VERIFIKASI ROUND 23:
+   - cargo build: 0 error
+   - cargo test --lib: 1213 passed, 0 failed (+3 test: 2 UPF e2e + 1 exclusion)
+   - Code review: OK — UPF e2e semantik valid (auto-bind tidak menimpa VDD
+     karena tidak ada sinyal bernama VDD; domain OFF di evaluasi power state;
+     clamp membutuhkan isolation cell cocok domain). Range coverage_off benar
+     (baris antar direktif, bukan direktif). Semua IrDesign literal ter-update.
+     is_line_excluded diberi #[allow(dead_code)] (konsisten dengan wildcard_match
+     di file yang sama).
+
+═══ ROUND 24 — SIM-26 WREAL (REAL-NUMBER MODELING) ═══
+
+✅ SIM-26: `wreal` keyword (net type real) — real-number modeling
+   - Latar: real/realtime sudah didukung penuh (Token::Real/RealNum, parser
+     decl.rs → DataType::Real, elaborator is_real width 64, eval binary
+     real-aware, 4+ test). Yang kurang: keyword `wreal` (net type real).
+   - src/parser/lexer.rs: Token::WReal di enum + keyword match
+     ("wreal" => Token::WReal), sejajar real/realtime.
+   - src/frontend/lexer.rs (FastLexer): sinkronisasi paritas keyword table
+     ("wreal" => Token::WReal) — tanpa ini wreal di-lex sebagai Ident →
+     UserDefined lebar 32, bukan real.
+   - src/parser/decl.rs: Token::WReal diparse sebagai
+     Decl { dtype: DataType::Real, kind: DeclKind::Wire }.
+   - src/parser/mod.rs: Token::WReal ditambahkan ke TIGA match dispatcher
+     module item yang sebelumnya hanya punya Token::Real/RealTime: (a) arm
+     Token::Var type check, (b) arm deklarasi utama module item body,
+     (c) arm error 'declaration outside of module' di top-level. INI FIX
+     AKAR MASALAH — tanpa ini `wreal out;` di-drop dan out auto-dibuat wire
+     1-bit (bukan real 64-bit), nilai selalu 0.
+   - Jalur elaborasi otomatis: DataType::Real → is_real=true (SignalInfo 64
+     bit) di elaborator/mod.rs — wreal tidak perlu perubahan elaborator.
+   - DOCUMENTED LIMITATION: wreal sebagai tipe PORT (`input wreal x`) belum
+     didukung — port parser (instance.rs) tidak mengenali WReal. Class field
+     dispatcher (class.rs) juga hanya punya Real/RealTime, bukan WReal.
+     Dukungan saat ini: deklarasi internal module + continuous/procedural
+     assign, mengalir seperti real biasa.
+   - Files: parser/lexer.rs, frontend/lexer.rs, parser/decl.rs, parser/mod.rs,
+     tests/mod.rs, audit.txt.
+
+📊 VERIFIKASI ROUND 24:
+   - cargo build: 0 error
+   - cargo test --lib: 1215 passed, 0 failed (+2 test: test_wreal_net_type_decl
+     continuous assign + test_wreal_direct_assignment procedural)
+   - Code review: OK (2x) — akar masalah tersangka FastLexer di-verify namun
+     akar sebenarnya dispatcher module item di parser/mod.rs; FastLexer sync
+     tetap diperlukan untuk paritas. Semantik test valid: elaborator is_real
+     keyed oleh dtype (bukan kind), jadi wreal (kind Wire) mengalir lewat jalur
+     real 64-bit tanpa bertabrakan dengan net LogicVec. Limitation port/class
+     didokumentasikan.
+
+═══ ROUND 25 — SEND/SYNC AUDIT + CLEANUP MARKER ═══
+
+✅ DEBT-17: Simulation state Send/Sync audit — compile-time guard
+   - src/tests/mod.rs: test_simulation_state_send_sync_audit (awalnya
+     test_engine_send_sync_audit, di-rename atas saran reviewer karena kini
+     tidak lagi meng-assert engine). assert_send/assert_sync untuk
+     SimulationState (murni Vec<LogicVec>/Vec<bool>/u64/Vec<ObjectData>/
+     TimeFormat) dan LogicVec (tipe nilai yang disalin lintas thread).
+     Gagal kompilasi bila ada field state baru yang memecah thread-safety.
+   - TEMUAN PENTING: SimulationEngine sengaja TIDAK di-assert — awalnya
+     guard mencakup engine dan GAGAL compile (E0277): field
+     Option<FstWaveWriter> (crate wavefst) memegang
+     RefCell<HashMap<String, SendWrapper<*const u8>>> + NonNull + raw
+     pointer (symbol cache FST) → !Sync by design. Parallel eval
+     (parallel.rs) hanya clone LogicVec via rayon par_iter().cloned(),
+     tidak pernah memindahkan/mem-borrow engine lintas thread — jadi
+     engine single-threaded aman.
+   - Files: tests/mod.rs (guard test + rename), audit.txt.
+
+✅ CRIT-001: Marker stale [] → [x] — sudah FIXED sebelumnya (2 pre-existing
+   failures diperbaiki: forever+delay bugs di edge_tests + 2 SDF test),
+   marker tidak pernah diupdate.
+
+✅ DEBT-18: Marker stale [] → [x] — sudah FIXED sebelumnya via
+   reset_string_table() (string_intern.rs:259) untuk daemon mode.
+
+✅ SIM-27: Tandai [x] N/A + alasan — analog/mixed-signal co-simulation
+   (SPICE/Verilog-AMS) di luar scope target (HDL digital simulator).
+
+📊 VERIFIKASI ROUND 25:
+   - cargo build: 0 error
+   - cargo test --lib: 1216 passed, 0 failed (+1 test:
+     test_simulation_state_send_sync_audit)
+   - Code review: OK — guard valid terhadap DEBT-17 (fokus state, bukan
+     engine); komentar alasan engine !Sync akurat (bukti E0277: RefCell+
+     SendWrapper raw pointer di wavefst); parallel.rs benar hanya clone
+     LogicVec. Saran reviewer diimplementasi: rename test (nama kini
+     mencerminkan isi) + verifikasi path crate::ir::LogicVec resolve
+     (test lulus → path valid).
+
+═══ ROUND 26 — DROP IMPL + DEBUG KONSISTEN (DEBT-19 + DEBT-20) ═══
+
+✅ DEBT-19: Drop impl untuk shared resources (waveform writers)
+   - Sebelumnya hanya CsvWaveWriter yang punya Drop (flush). VcdWriter dan
+     FstWaveWriter tidak punya Drop → file bisa bocor tak ter-flush jika
+     engine return early (mis. error sim) tanpa close() eksplisit.
+   - src/waveform/vcd.rs: impl Drop for VcdWriter → self.flush(). flush()
+     ekuivalen dengan close() (close_inner hanya flush), menghindari
+     double-flush — pola sama dengan CsvWaveWriter.
+   - src/waveform/fst.rs: impl Drop for FstWaveWriter → self.close(). close()
+     memakai writer.take() sebelum finish() → idempoten, finish() hanya
+     sekali. FST baru benar-benar ter-flush saat finish(), jadi Drop ini
+     kritis untuk mencegah file FST terpotong.
+   - Catatan: close_csv() sudah ada di engine; jalur normal main.rs tidak
+     memanggil close_vcd/close_fst eksplisit — Drop adalah safety net.
+
+✅ DEBT-20: Debug/Deref konsisten di tipe waveform
+   - VcdWriter: awalnya #[derive(Debug)] (membuang isi penuh map
+     last_values/code_by_key — bisa raksasa untuk desain besar), atas saran
+     reviewer diganti impl std::fmt::Debug manual ringkas: enabled,
+     max_dump_size, total_written, stream_flush_interval, signal_count,
+     code_count.
+   - FstWaveWriter: impl std::fmt::Debug manual — writer_active, var_count,
+     current_time, enabled, stream_flush_interval (FstWriter wavefst tidak
+     implement Debug, jadi tidak bisa derive; tidak menyentuh field raw
+     pointer).
+   - SignalStats: #[derive(Debug)] (field SignalStat sudah Debug).
+   - CsvWaveWriter sudah #[derive(Debug)] (pre-existing).
+   - Files: waveform/vcd.rs, waveform/fst.rs, waveform/statistics.rs,
+     audit.txt.
+
+📊 VERIFIKASI ROUND 26:
+   - cargo build: 0 error
+   - cargo test --lib: 1216 passed, 0 failed (tidak ada test baru — perubahan
+     internal robustness, tercakup oleh test waveform existing 14 pass)
+   - Code review: OK (2x) — Drop VCD flush ekuivalen close (no double-flush),
+     Drop FST close idempoten via take(); Debug manual ringkas lebih baik dari
+     derive (output besar untuk map raksasa). Catatan reviewer: signal_count
+     adalah proksi last_values.len() — opsional, tidak mengubah fungsionalitas.
+
+═══ ROUND 27 — $display FORMATTING ALLOC (PERF-11) ═══
+
+✅ PERF-11: format_display bebas alokasi per call (src/simulator/util.rs)
+   - Sebelumnya per call: (1) s.clone() — clone seluruh format string,
+     (2) Vec<LogicVec> value_args — heap alloc, (3) Vec<String> parts +
+     join(" ") — alloc per arg, (4) format! per specifier — String
+     perantara, (5) String::new() tanpa capacity hint.
+   - Kini: (1) borrow (s.as_str(), 1) — tanpa clone; (2) arg dievaluasi
+     lazy via iterator filter_map (value_args.next() per specifier, tanpa
+     Vec); (3) else-branch tulis langsung ke String::with_capacity +
+     write! + spasi manual (tanpa Vec<String>/join); (4) %d/%h/%f pakai
+     write! langsung + helper u64_digits/u64_hex_digits untuk padding
+     (tanpa String perantara); %b tulis bit langsung MSB-first, skip
+     leading '0' (semantik sama dgn trim_start_matches('0')); (5) result
+     pakai String::with_capacity(fmt_str.len() + 8*ir_args.len()).
+   - Semantik output terjaga: padding width & zero_fill, leading x/z,
+     all-zero → "0", konsumsi arg per specifier identik (arm fallback
+     Some(c2)/None tidak konsumsi — sama dengan value_idx asli).
+   - BUG CAUGHT by reviewer: %s arm logicvec_to_string(val) → perlu
+     logicvec_to_string(&val) karena val kini owned dari iterator
+     (E0308) — diperbaiki sebelum merge.
+   - Files: src/simulator/util.rs, audit.txt.
+
+📊 VERIFIKASI ROUND 27:
+   - cargo build: 0 error (setelah fix &val)
+   - cargo test --lib: 1216 passed, 0 failed (test display 10 pass)
+   - Code review: OK (2x) — ekivalensi semantik diverifikasi per specifier
+     (d/h/b/f padding, x/z leading, all-zero, konsumsi arg iterator vs
+     value_idx). Catatan minor: %t masih format! (jalur jarang), %b dua
+     loop (tradeoff kesederhanaan) — bukan kewajiban.
 
 //=======================================================================\\
 ATURAN

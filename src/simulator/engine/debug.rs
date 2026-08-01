@@ -6,6 +6,10 @@ use crate::simulator::types::*;
 
 use super::SimulationEngine;
 
+/// Cap jumlah entry event_log — watchpoint/breakpoint aktif tiap cycle bisa
+/// menghasilkan ribuan event; jangan biarkan event_log numpuk tanpa batas.
+const MAX_EVENT_LOG: usize = 100_000;
+
 impl SimulationEngine {
     /// Check all breakpoints and watchpoints, update signal history and snapshots.
     /// Called at the end of each simulation cycle when debug mode is enabled.
@@ -137,6 +141,13 @@ impl SimulationEngine {
                     });
                 }
             }
+        }
+
+        // Cap event_log (anti-leak: watchpoint/breakpoint aktif tiap cycle
+        // menghasilkan entry baru; pertahankan MAX_EVENT_LOG terbaru saja).
+        if self.event_log.len() > MAX_EVENT_LOG {
+            let excess = self.event_log.len() - MAX_EVENT_LOG;
+            self.event_log.drain(..excess);
         }
 
         Ok(())

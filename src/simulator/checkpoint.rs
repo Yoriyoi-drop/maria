@@ -613,18 +613,20 @@ impl crate::simulator::engine::SimulationEngine {
 
         // Reset runtime state that should be fresh after restore
         self.events.clear();
+        self.events_base = 0;
         self.nba_pending.clear();
         self.running = true;
         self.paused = false;
         self.control_flow = None;
         self.fork_groups.clear();
+        self.fork_free.clear();
         self.reactive_events.clear();
         self.strobe_events.clear();
         self.fstrobe_events.clear();
         self.fmonitor_map.clear();
         self.pending_waits.clear();
+        self.pending_events.clear();
         self.pending_wait_orders.clear();
-
         Ok(())
     }
 }

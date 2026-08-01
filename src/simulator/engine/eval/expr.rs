@@ -1156,7 +1156,13 @@ impl SimulationEngine {
                                 .sysfunc_history
                                 .entry(Symbol::intern(&key))
                                 .or_default();
-                            hist.push(val);
+                            hist.push_back(val);
+                            // Cap riwayat ke n+1 entry terbaru — `$past` tidak
+                            // pernah butuh data lebih tua dari kedalaman n,
+                            // jadi jangan numpuk O(cycles) per call-site.
+                            while hist.len() > n + 1 {
+                                hist.pop_front();
+                            }
                             if hist.len() > n {
                                 let past = hist[hist.len() - 1 - n].clone();
                                 Ok(past)

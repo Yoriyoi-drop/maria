@@ -148,6 +148,12 @@ impl Parser {
                 self.skip_semi();
                 return Ok(Decl { dtype: DataType::Real, kind: DeclKind::Reg, names });
             }
+            Token::WReal => {
+                self.advance();
+                let names = self.parse_decl_names(None, vec![])?;
+                self.skip_semi();
+                return Ok(Decl { dtype: DataType::Real, kind: DeclKind::Wire, names });
+            }
             Token::RealTime => {
                 self.advance();
                 let names = self.parse_decl_names(None, vec![])?;

@@ -141,8 +141,10 @@ fn stmt_signal_access(stmts: &[IrStmt], access: &mut SignalAccess) {
                 expr_signal_reads(cond, access);
                 stmt_signal_access(body, access);
             }
-            IrStmt::EventControl { sig_id, body, .. } => {
-                access.reads.insert(*sig_id);
+            IrStmt::EventControl { sigs, body, .. } => {
+                for (sid, _) in sigs {
+                    access.reads.insert(*sid);
+                }
                 stmt_signal_access(body, access);
             }
             IrStmt::EventTrigger { sig_id, .. } => {
@@ -748,6 +750,8 @@ mod tests {
             source_file: None,
             source_lines: None,
             module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
         };
         let dag = SimulationDag::build(&design);
         assert_eq!(dag.num_layers(), 0);
@@ -828,6 +832,8 @@ mod tests {
             source_file: None,
             source_lines: None,
             module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
         };
 
         let dag = SimulationDag::build(&design);

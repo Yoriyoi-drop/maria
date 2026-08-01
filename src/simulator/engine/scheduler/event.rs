@@ -91,16 +91,8 @@ impl SimulationEngine {
                     }
                 }
                 if let Some(fid) = cont.fork_id {
-                    if fid < self.fork_groups.len() && all_consumed {
-                        if self.fork_groups[fid].remaining > 0 {
-                            self.fork_groups[fid].remaining -= 1;
-                        }
-                        if self.fork_groups[fid].remaining == 0 {
-                            let group = self.fork_groups[fid].clone();
-                            if !group.continuation.is_empty() {
-                                self.evaluate_block_with_delay_fork(&group.continuation, None)?;
-                            }
-                        }
+                    if all_consumed {
+                        self.fork_decrement(fid)?;
                     }
                 }
             }
@@ -108,16 +100,8 @@ impl SimulationEngine {
                 self.ensure_events(t);
                 let all_consumed = self.evaluate_ast_block_with_delay_fork(&stmts, fork_id)?;
                 if let Some(fid) = fork_id {
-                    if fid < self.fork_groups.len() && all_consumed {
-                        if self.fork_groups[fid].remaining > 0 {
-                            self.fork_groups[fid].remaining -= 1;
-                        }
-                        if self.fork_groups[fid].remaining == 0 {
-                            let group = self.fork_groups[fid].clone();
-                            if !group.continuation.is_empty() {
-                                self.evaluate_block_with_delay_fork(&group.continuation, None)?;
-                            }
-                        }
+                    if all_consumed {
+                        self.fork_decrement(fid)?;
                     }
                 }
             }
@@ -140,6 +124,50 @@ impl SimulationEngine {
         for item in remaining {
             self.pending_waits.push(item);
         }
+        Ok(matched)
+    }
+
+    /// Resume blocking event control `@(sig)` saat signal berubah.
+    /// - Level (edge None): perubahan nilai apa pun membangunkan.
+    /// - Edge: hanya edge yang sesuai (via snapshot delta) yang membangunkan.
+    pub(crate) fn process_pending_events(&mut self, deltas: &[SignalId]) -> Result<bool, SimError> {
+        let mut matched = false;
+        let mut remaining = Vec::new();
+        let pending = std::mem::take(&mut self.pending_events);
+        for pe in pending {
+            if !deltas.contains(&pe.sig_id) {
+                remaining.push(pe);
+                continue;
+            }
+            let fire = match &pe.edge {
+                None => true,
+                Some(ClockEdge::PosEdge(id)) => {
+                    let new = self.state.read_signal(*id);
+                    let old = self
+                        .signal_snapshot
+                        .as_ref()
+                        .and_then(|s| s.get(*id).cloned())
+                        .unwrap_or_else(|| LogicVec::new(1));
+                    old.to_bool() != Some(true) && new.to_bool() == Some(true)
+                }
+                Some(ClockEdge::NegEdge(id)) => {
+                    let new = self.state.read_signal(*id);
+                    let old = self
+                        .signal_snapshot
+                        .as_ref()
+                        .and_then(|s| s.get(*id).cloned())
+                        .unwrap_or_else(|| LogicVec::new(1));
+                    old.to_bool() != Some(false) && new.to_bool() == Some(false)
+                }
+            };
+            if fire {
+                matched = true;
+                self.evaluate_block_with_delay_fork(&pe.continuation, None)?;
+            } else {
+                remaining.push(pe);
+            }
+        }
+        self.pending_events = remaining;
         Ok(matched)
     }
 

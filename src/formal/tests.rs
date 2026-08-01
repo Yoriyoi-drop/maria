@@ -326,6 +326,8 @@ mod tests {
             source_file: None,
             source_lines: None,
             module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
         };
 
         let mut engine = test_engine();
@@ -372,6 +374,8 @@ mod tests {
             source_file: None,
             source_lines: None,
             module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
         };
 
         let mut engine = test_engine();
@@ -420,6 +424,8 @@ mod tests {
             source_file: None,
             source_lines: None,
             module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
         };
 
         let mut engine = test_engine();
@@ -543,6 +549,8 @@ mod tests {
             source_file: None,
             source_lines: None,
             module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
         };
 
         let results = engine.check_assertions_bmc(&design);
@@ -610,6 +618,8 @@ mod tests {
             source_file: None,
             source_lines: None,
             module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
         };
 
         let results = engine.check_assertions_bmc(&design);
@@ -722,6 +732,8 @@ mod tests {
             source_file: None,
             source_lines: None,
             module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
         };
 
         let results = engine.check_assertions_bmc(&design);
@@ -794,6 +806,8 @@ mod tests {
             source_file: None,
             source_lines: None,
             module_functions: HashMap::new(),
+            pkg_scoped_consts: HashMap::new(),
+            coverage_exclusions: Vec::new(),
         };
 
         let results = engine.check_assertions_bmc(&design);

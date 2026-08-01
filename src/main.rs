@@ -422,7 +422,13 @@ fn run(cli: Cli) -> Result<(), SimError> {
     let elab_start = std::time::Instant::now();
     let source_lines: Vec<String> = combined.lines().map(|s| s.to_string()).collect();
     let mut elaborator = Elaborator::with_source(design, source_lines, first_source.to_string());
-    let mut ir_design = elaborator.elaborate(top_name)?;
+    let mut ir_design = match elaborator.elaborate(top_name) {
+        Ok(d) => d,
+        Err(e) => {
+            emit_diags(&elaborator.flush_diagnostics());
+            return Err(e);
+        }
+    };
     eprintln!("[TIMING] Elaboration done in {:?}", elab_start.elapsed());
 
     // Flush elaboration-time diagnostics (warnings like WR0102)
@@ -1066,7 +1072,13 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         } else {
             Elaborator::with_source(design, source_lines, source_file)
         };
-        let ir_design = elab.elaborate(top_name)?;
+        let ir_design = match elab.elaborate(top_name) {
+            Ok(d) => d,
+            Err(e) => {
+                emit_diags(&elab.flush_diagnostics());
+                return Err(e);
+            }
+        };
         emit_diags(&elab.flush_diagnostics());
         (design_clone, ir_design, index_len)
     } else {
@@ -1080,7 +1092,13 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         } else {
             Elaborator::with_source(design, source_lines, source_file)
         };
-        let ir_design = elab.elaborate(top_name)?;
+        let ir_design = match elab.elaborate(top_name) {
+            Ok(d) => d,
+            Err(e) => {
+                emit_diags(&elab.flush_diagnostics());
+                return Err(e);
+            }
+        };
         emit_diags(&elab.flush_diagnostics());
         (design_clone, ir_design, index_len)
     };

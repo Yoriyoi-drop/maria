@@ -40,6 +40,8 @@ impl SimulationEngine {
         let depth = self.method_locals.len();
         self.method_locals.push(local_signals);
 
+        self.ast_loop_iters = 0;
+
         let old_method = self.current_method;
         self.current_method = Some(Symbol::intern(method));
 
