@@ -139,6 +139,9 @@ impl SimulationEngine {
             }
             IrExpr::RangeSelect(sig_id, msb, lsb) => {
                 let val = self.state.read_signal(*sig_id);
+                if std::env::var("DBG_RS").is_ok() {
+                    eprintln!("[DBG-RS] sid={} msb={} lsb={} val={:?}", sig_id, msb, lsb, val);
+                }
                 let (start, end) = if *msb > *lsb {
                     (*lsb, *msb)
                 } else {

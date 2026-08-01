@@ -126,11 +126,11 @@ impl Elaborator {
                         parent_sig_info.elem_width
                     };
                     if child_width != parent_width {
-                        return Err(self.elab_diag(DiagCode::ParamMismatch, format!(
+                        return Err(self.elab_diag_at(DiagCode::ParamMismatch, format!(
                             "port width mismatch on instance '{}': port '{}' expects width {}, connected signal '{}' has width {}",
                             inst.instance_name, port_name, child_width,
                             parent_sig_info.name, parent_width
-                        )));
+                        ), inst.line, inst.col));
                     }
                     // Untuk port unpacked-array, pastikan lebar ELEMEN juga cocok.
                     // Dua kasus bisa punya total width sama tapi elemen beda
@@ -139,22 +139,22 @@ impl Elaborator {
                     if child_sig_info.array_depth > 1
                         && child_sig_info.elem_width != parent_sig_info.elem_width
                     {
-                        return Err(self.elab_diag(DiagCode::ParamMismatch, format!(
+                        return Err(self.elab_diag_at(DiagCode::ParamMismatch, format!(
                             "port array element width mismatch on instance '{}': port '{}' expects element width {}, connected signal '{}' has element width {}",
                             inst.instance_name, port_name, child_sig_info.elem_width,
                             parent_sig_info.name, parent_sig_info.elem_width
-                        )));
+                        ), inst.line, inst.col));
                     }
                     // Port type checking: inout must connect to tri
                     if child.signals[child_sig].kind == SignalKind::Inout
                         && top.signals[parent_sig].net_type != NetType::Tri
                     {
-                        return Err(self.elab_diag(DiagCode::ParamMismatch, format!(
+                        return Err(self.elab_diag_at(DiagCode::ParamMismatch, format!(
                             "port type mismatch on instance '{}': inout port '{}' must connect to a tri signal, but '{}' has net type {:?}",
                             inst.instance_name, port_name,
                             top.signals[parent_sig].name,
                             top.signals[parent_sig].net_type
-                        )));
+                        ), inst.line, inst.col));
                     }
                     sig_remap[child_sig] = Some(parent_sig);
                     // Add hierarchical alias: inst_name.port_name -> parent signal ID

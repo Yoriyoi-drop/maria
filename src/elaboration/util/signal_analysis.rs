@@ -237,6 +237,9 @@ pub fn resolve_expr_signal(
 ) -> Option<SignalId> {
     match expr {
         Expr::Ident { name, .. } => signal_map.get(name).copied(),
+        // Indexed/range-select (`sig[idx]`, `sig[a:b]`) → resolve ke signal dasar.
+        Expr::BitSelect { expr: inner, .. } => resolve_expr_signal(inner, signal_map),
+        Expr::RangeSelect { expr: inner, .. } => resolve_expr_signal(inner, signal_map),
         Expr::MethodCall { .. } => None,
         Expr::MemberAccess { .. } => None,
         _ => None,

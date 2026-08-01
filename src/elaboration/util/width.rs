@@ -147,7 +147,23 @@ pub fn compute_expr_width(
                 Err("dynamic range select width not computable at compile time".to_string())
             }
         }
-        Expr::BitSelect { .. } => Ok(1),
+        Expr::BitSelect { expr: inner, .. } => {
+            // `sig[idx]`: single-bit select UNTUK skalar/array 1D. Untuk packed
+            // array multidimensi (`logic [1:0][3:0] mubis`), `mubis[0]` memilih
+            // SATU ELEMENT (lebar = width/packed_dims[0]), bukan 1 bit.
+            if let Expr::Ident { name, .. } = inner.as_ref() {
+                if let Some(&sig_id) = signal_map.get(name) {
+                    let sig = &signals[sig_id];
+                    if sig.packed_dims.len() > 1 && sig.packed_dims[0] > 0 {
+                        return Ok((sig.width / sig.packed_dims[0]).max(1));
+                    }
+                    if sig.array_depth > 1 {
+                        return Ok(sig.elem_width.max(1));
+                    }
+                }
+            }
+            Ok(1)
+        }
         Expr::PartSelect { width, .. } => {
             Ok(const_eval_with_params(width, param_vals).unwrap_or(1) as usize)
         }
