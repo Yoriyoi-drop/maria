@@ -254,10 +254,7 @@ pub fn eval_display_arg(
                     } else {
                         (*msb, *lsb)
                     };
-                    let mut bits = val.bits[start..=end.min(val.width - 1)].to_vec();
-                    if msb > lsb {
-                        bits.reverse();
-                    }
+                    let bits = val.bits[start..=end.min(val.width - 1)].to_vec();
                     Ok(LogicVec {
                         width: bits.len(),
                         bits,
@@ -298,6 +295,20 @@ pub fn eval_display_arg(
                     let val = state.read_signal(*id);
                     Ok(val.clone())
                 }
+            }
+        }
+        IrExpr::MemberAccess { obj, field } => {
+            // Class object field read: obj adalah handle → get_object → fields.
+            let obj_val = eval_display_arg(state, signals, hier_map, assoc_data, obj)?;
+            let obj_id = obj_val.to_u64() as ObjId;
+            if let Some(obj_data) = state.get_object(obj_id) {
+                Ok(obj_data
+                    .fields
+                    .get(field)
+                    .cloned()
+                    .unwrap_or_else(|| LogicVec::new(1)))
+            } else {
+                Ok(LogicVec::from_u64(0, 32))
             }
         }
         IrExpr::SysFunc { name, args } if name == "sformatf" => {

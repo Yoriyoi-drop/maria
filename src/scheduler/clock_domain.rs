@@ -197,8 +197,8 @@ fn get_process_reads(process: &Process) -> HashSet<SignalId> {
     match process {
         Process::Combinational { sensitivity, body, .. }
         | Process::CombReactive { sensitivity, body, .. } => {
-            for &sid in sensitivity {
-                reads.insert(sid);
+            for s in sensitivity {
+                reads.insert(s.sig_id);
             }
             collect_stmt_reads(body, &mut reads);
         }
@@ -430,7 +430,8 @@ fn lvalue_collect_writes(lvalue: &IrLValue, writes: &mut HashSet<SignalId>) {
         | IrLValue::BitSelect(sig_id, _)
         | IrLValue::ArrayIndex { sig_id, .. }
         | IrLValue::ArrayRangeSelect { sig_id, .. }
-        | IrLValue::ArrayBitSelect { sig_id, .. } => {
+        | IrLValue::ArrayBitSelect { sig_id, .. }
+        | IrLValue::ObjectField { sig_id, .. } => {
             writes.insert(*sig_id);
         }
         IrLValue::Concat(items) => {
@@ -520,7 +521,7 @@ mod tests {
                     },
                     Process::Combinational {
                         name: Symbol::intern("comb"),
-                        sensitivity: vec![1],
+                        sensitivity: vec![SignalSensitivity::whole(1)],
                         body: comb_body,
                     },
                 ],

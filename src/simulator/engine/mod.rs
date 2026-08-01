@@ -90,6 +90,8 @@ pub struct SimulationEngine {
     /// Blocking event control `@(sig)` yang menunggu perubahan/edge signal.
     /// Diperiksa setiap delta saat signal berubah (setara `pending_waits`).
     pub pending_events: Vec<PendingEventControl>,
+    /// Versi AST untuk class method/task UVM (`run_phase` dkk), dengan konteks.
+    pub pending_ast_events: Vec<PendingAstEventControl>,
     pub pending_await_target: Option<ObjId>,
     pub pending_wait_orders: Vec<WaitOrderState>,
     pub loop_continuation: Option<Vec<IrStmt>>,

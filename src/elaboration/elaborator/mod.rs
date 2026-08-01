@@ -538,106 +538,45 @@ _ => {}
         if std::env::var("DBG_ELAB").is_ok() {
             eprintln!("[DBG-ELAB] module elaboration loop done in {:?} (hits={} misses={})", elab_t0.elapsed(), self.cache_hits, self.cache_misses);
         }
-        // Elaborate interfaces as signal-only modules
-        for iface in &self.design.interfaces {
-            let mut signals = Vec::new();
-            let mut signal_map: HashMap<Symbol, SignalId> = HashMap::new();
-            let mut next_id = 0usize;
-            for decl in &iface.decls {
-                let decl_is_2state = is_2state_type(&decl.dtype);
-                for var in &decl.names {
-                    let is_real = decl.dtype == DataType::Real || decl.dtype == DataType::Realtime;
-                    if is_real || decl.dtype == DataType::String {
-                        let sid = next_id;
-                        next_id += 1;
-                        signal_map.insert(var.name, sid);
-                        signals.push(SignalInfo {
-                            name: var.name,
-                            width: if is_real { 64 } else { 0 },
-                            kind: SignalKind::Wire,
-                            net_type: NetType::Wire,
-                            multi_driver: false,
-                            init_val: if is_real {
-                                LogicVec::new(64)
-                            } else {
-                                LogicVec::fill(LogicVal::Z, 0)
-                            },
-                            array_depth: 1,
-                            elem_width: if is_real { 64 } else { 0 },
-                            array_dims: vec![],
-                            class_name: None,
-                            is_string: decl.dtype == DataType::String,
-                            is_mailbox: false,
-                            is_semaphore: false,
-                            is_real,
-                            is_2state: false,
-                            is_dynamic: false,
-                            is_queue: false,
-                            is_associative: false,
-                            is_signed: false,
-                            is_const: false,
-                            msb: if is_real { 63 } else { 0 },
-                            lsb: 0,
-                            struct_fields: vec![],
-                            packed_dims: vec![],
-                            delay_rise: None,
-                            delay_fall: None,
-                            iface_type: None,
-                            iface_modport: None,
-                        });
-                        continue;
-                    }
-                    let width = self.resolve_type_width(&decl.dtype)?;
-                    let elem_width = width
-                        .max(var.resolved_width(&HashMap::new()).unwrap_or(width))
-                        .max(decl.kind.default_width());
-                    let sid = next_id;
-                    next_id += 1;
-                    signal_map.insert(var.name, sid);
-                    signals.push(SignalInfo {
-                        name: var.name,
-                        width: elem_width,
-                        kind: SignalKind::Wire,
-                        net_type: NetType::Wire,
-                        multi_driver: false,
-                        init_val: LogicVec::fill(LogicVal::Z, elem_width),
-                        array_depth: 1,
-                        elem_width,
-                        array_dims: vec![],
-                        class_name: None,
-                        is_string: false,
-                        is_mailbox: false,
-                        is_semaphore: false,
-                        is_real: false,
-                        is_2state: decl_is_2state,
-                        is_dynamic: false,
-                        is_queue: false,
-                        is_associative: false,
-                        is_signed: is_signed_type(&decl.dtype),
-                        is_const: false,
-                        msb: if elem_width > 0 { elem_width - 1 } else { 0 },
-                        lsb: 0,
-                        struct_fields: vec![],
-                        packed_dims: vec![],
-                        delay_rise: None,
-                        delay_fall: None,
-                        iface_type: None,
-                        iface_modport: None,
-                    });
+        // Elaborate interfaces as modules (ports + decls + processes), so
+        // interface initial/always/assign blocks actually run inside the
+        // flattened hierarchy. Falls back to a signal-only module if the
+        // interface body references unsupported constructs.
+        let interfaces_snapshot: Vec<Interface> = self.design.interfaces.clone();
+        for iface in &interfaces_snapshot {
+            let synthetic = Module {
+                name: iface.name,
+                ports: iface.ports.clone(),
+                params: iface.params.clone(),
+                decls: iface.decls.clone(),
+                items: iface.items.clone(),
+            };
+            match self.elaborate_module(&synthetic, &module_names) {
+                Ok(ir) => {
+                    self.modules.insert(iface.name, ir);
+                }
+                Err(e) => {
+                    self.elab_warn(
+                        DiagCode::ModuleNotFound,
+                        format!(
+                            "interface '{}' skipped due to elaboration error: {}",
+                            iface.name, e
+                        ),
+                    );
+                    self.modules.insert(
+                        iface.name,
+                        IrModule {
+                            name: iface.name,
+                            signals: Vec::new(),
+                            inputs: vec![],
+                            outputs: vec![],
+                            inouts: vec![],
+                            processes: vec![],
+                            sub_instances: vec![],
+                        },
+                    );
                 }
             }
-            self.modules.insert(
-                iface.name,
-                IrModule {
-                    name: iface.name,
-                    signals,
-                    inputs: vec![],
-                    outputs: vec![],
-                    inouts: vec![],
-                    processes: vec![],
-                    sub_instances: vec![],
-                },
-            );
         }
 
         if std::env::var("DBG_ELAB").is_ok() {
@@ -1917,7 +1856,10 @@ impl Elaborator {
                 PortDirection::Inout => SignalKind::Inout,
                 PortDirection::Ref => SignalKind::Inout,
             };
-            let (p_msb, p_lsb) = if let Some(r) = &port.range {
+            let (p_msb, p_lsb) = if !port.extra_packed_dims.is_empty() {
+                // Packed multi-dimensi: signal flat mewakili SELURUH array → [width-1:0].
+                (width.saturating_sub(1), 0)
+            } else if let Some(r) = &port.range {
                 (r.msb, r.lsb)
             } else if let Some(er) = &port.expr_range {
                 if let Ok(r) = resolve_expr_range(er, &effective_params) {
@@ -1964,6 +1906,28 @@ impl Elaborator {
                 PortDirection::Output => outputs.push(sid),
                 PortDirection::Inout => inouts.push(sid),
                 PortDirection::Ref => inouts.push(sid),
+            }
+            // Set packed_dims untuk port packed multi-dimensi (`[a:b][c:d] name`)
+            // agar akses elemen `name[k]` benar (via RangeSelect).
+            if !port.extra_packed_dims.is_empty() {
+                let mut pd = Vec::with_capacity(port.extra_packed_dims.len() + 1);
+                let base_w = if let Some(r) = &port.range {
+                    r.width()
+                } else if let Some(er) = &port.expr_range {
+                    resolve_expr_range(er, &effective_params)
+                        .map(|r| r.width())
+                        .unwrap_or(1)
+                } else {
+                    1
+                };
+                pd.push(base_w);
+                for er in &port.extra_packed_dims {
+                    if let Ok(r) = resolve_expr_range(er, &effective_params) {
+                        pd.push(r.width());
+                    }
+                }
+                let sig = &mut signals[sid];
+                sig.packed_dims = pd;
             }
         }
 
@@ -2326,7 +2290,10 @@ impl Elaborator {
                         rhs,
                         delay: None,
                     }];
-                    let sensitivity = collect_sensitivity(&assign.rhs, &signal_map);
+                    let sensitivity = collect_sensitivity(&assign.rhs, &signal_map)
+                        .into_iter()
+                        .map(SignalSensitivity::whole)
+                        .collect();
                     processes.push(Process::Combinational {
                         name: format_sym(b"assign_", proc_counter),
                         sensitivity,
@@ -2416,9 +2383,10 @@ impl Elaborator {
                         if udp.is_sequential {
                             in_exprs.push(IrExpr::Signal(out_id, 0));
                         }
-                        let mut sensitivity = in_ids.clone();
+                        let mut sensitivity: Vec<SignalSensitivity> =
+                            in_ids.iter().map(|&id| SignalSensitivity::whole(id)).collect();
                         if udp.is_sequential {
-                            sensitivity.push(out_id);
+                            sensitivity.push(SignalSensitivity::whole(out_id));
                         }
                         let process = Process::Combinational {
                             name: Symbol::intern(&format!("udp_{}_{}", udp.name, inst.instance_name)),
@@ -2613,9 +2581,13 @@ impl Elaborator {
                         in_ids.iter().map(|id| IrExpr::Signal(*id, 0)).collect();
                     let gate_expr = build_gate_expr(&gate.gate_type, &in_exprs);
                     for &out_id in &out_ids {
+                        let gate_sens: Vec<SignalSensitivity> = in_ids
+                            .iter()
+                            .map(|&id| SignalSensitivity::whole(id))
+                            .collect();
                         let process = Process::Combinational {
                             name: Symbol::intern(&format!("gate_{}", out_id)),
-                            sensitivity: in_ids.clone(),
+                            sensitivity: gate_sens,
                             body: vec![IrStmt::BlockingAssign {
                                 lhs: IrLValue::Signal(out_id, 0),
                                 rhs: gate_expr.clone(),
@@ -2640,7 +2612,10 @@ impl Elaborator {
                     )?;
                     let rhs = self.elaborate_expr(init_expr, &signal_map, &signals)?;
                     if decl.kind.is_net() {
-                        let sensitivity = collect_sensitivity(init_expr, &signal_map);
+                        let sensitivity = collect_sensitivity(init_expr, &signal_map)
+                            .into_iter()
+                            .map(SignalSensitivity::whole)
+                            .collect();
                         processes.push(Process::Combinational {
                             name: format_sym(b"decl_assign_", proc_counter),
                             sensitivity,

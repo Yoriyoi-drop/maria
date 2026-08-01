@@ -114,7 +114,9 @@ pub struct Modport {
 pub struct Interface {
     pub name: Symbol,
     pub params: Vec<ParamDecl>,
+    pub ports: Vec<Port>,
     pub decls: Vec<Decl>,
+    pub items: Vec<ModuleItem>,
     pub modports: Vec<Modport>,
 }
 
@@ -127,18 +129,27 @@ pub struct Port {
     pub dtype_name: Option<Symbol>,
     /// Unpacked array dimension `[msb:lsb]` (atau `[N]` → [N-1:0]) pada port.
     pub array_range: Option<Range>,
+    /// Dimensi packed tambahan sebelum nama port: `[a:b][c:d] name`.
+    /// Dimensi pertama di `range`/`expr_range`, sisanya di sini.
+    pub extra_packed_dims: Vec<ExprRange>,
 }
 
 impl Port {
     pub fn resolved_width(&self, param_vals: &HashMap<Symbol, i64>) -> Result<usize, String> {
-        if let Some(r) = &self.range {
-            Ok(r.width())
+        let base = if let Some(r) = &self.range {
+            r.width()
         } else if let Some(er) = &self.expr_range {
             let r = resolve_expr_range(er, param_vals)?;
-            Ok(r.width())
+            r.width()
         } else {
-            Ok(1)
+            1
+        };
+        let mut total = base;
+        for er in &self.extra_packed_dims {
+            let r = resolve_expr_range(er, param_vals)?;
+            total = total.saturating_mul(r.width());
         }
+        Ok(total)
     }
 }
 
@@ -572,6 +583,8 @@ pub enum GenerateItem {
         cond: Expr,
         true_items: Vec<ModuleItem>,
         false_items: Vec<ModuleItem>,
+        /// Label blok `begin : name` pada branch true (untuk scope hierarki).
+        label: Option<Symbol>,
     },
     For {
         var: Symbol,
@@ -579,6 +592,9 @@ pub enum GenerateItem {
         cond: Option<Expr>,
         step: Option<Stmt>,
         body_items: Vec<ModuleItem>,
+        /// Label blok `begin : name` pada badan loop. Dipakai untuk menamai
+        /// sinyal lokal per iterasi (`name[k].sig`) agar tidak collide.
+        label: Option<Symbol>,
     },
     Case {
         case_type: GenerateCaseType,

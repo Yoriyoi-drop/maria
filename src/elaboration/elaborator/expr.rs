@@ -1363,7 +1363,10 @@ impl Elaborator {
             iface_modport: None,
         });
         // Add a continuous assignment process
-        let sensitivity = collect_sensitivity(expr, signal_map);
+        let sensitivity = collect_sensitivity(expr, signal_map)
+            .into_iter()
+            .map(SignalSensitivity::whole)
+            .collect();
         processes.push(Process::Combinational {
             name: Symbol::intern(&format!("port_assign_{}", hint_name.replace('.', "_"))),
             sensitivity,

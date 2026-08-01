@@ -4137,8 +4137,8 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
-    // bits 5:2 of 11001100 are 0011; stored LSB-first as [0,0,1,1] → 12
-    assert_eq!(val.to_u64(), 12, "a[5:2] of 11001100 should give 12");
+    // a[5:2] of 11001100 = 0011 (bit2=LSB) → 3. Cocok dengan iverilog.
+    assert_eq!(val.to_u64(), 3, "a[5:2] of 11001100 should give 3");
 }
 
 #[test]
@@ -4240,11 +4240,12 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
-    // bits 5:2 of 11001100 are 0011; LSB-first → value 12
+    // a[sel-:4] dengan sel=5 → a[5:2]. bits 5:2 of 11001100 = 0011 = 3
+    // (bit2=LSB). Cocok dengan iverilog.
     assert_eq!(
         val.to_u64(),
-        12,
-        "dynamic part-select a[sel-:4] should give 12"
+        3,
+        "dynamic part-select a[sel-:4] should give 3"
     );
 }
 
@@ -4265,10 +4266,12 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
+    // a[sel+:4] sel=2 → a[2:5] = bits 2..5 of 11001100 = 0011 = 3.
+    // Cocok dengan iverilog.
     assert_eq!(
         val.to_u64(),
-        12,
-        "dynamic part-select a[sel+:4] should give 12"
+        3,
+        "dynamic part-select a[sel+:4] should give 3"
     );
 }
 
@@ -4311,8 +4314,8 @@ endmodule
 "#;
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
-    // arr[1] = 8'h5A = 01011010; [3:0] = a[3]*1 + a[2]*2 + a[1]*4 + a[0]*8 = 1+0+4+0 = 5
-    assert_eq!(val.to_u64(), 5, "arr[i][3:0] should select low nibble");
+    // arr[1] = 8'h5A; [3:0] = low nibble = 0xA = 10. Cocok dengan iverilog.
+    assert_eq!(val.to_u64(), 10, "arr[i][3:0] should select low nibble");
 }
 
 #[test]
@@ -8375,8 +8378,9 @@ endmodule"#,
     )
     .unwrap();
     let (_, v) = sigs.iter().find(|(n, _)| n == "shift").unwrap();
-    // After 2 posedge events: 0x81 → rotate → 0x03 → rotate → 0x01
-    assert!(v.to_u64() == 1 || v.to_u64() == 3 || v.to_u64() == 0x81);
+    // After 2 posedge events (rotate-right via concat): 0x81 → 3 → 6.
+    // Cocok dengan iverilog.
+    assert!(v.to_u64() == 6 || v.to_u64() == 3 || v.to_u64() == 0x81);
 }
 
 #[test]

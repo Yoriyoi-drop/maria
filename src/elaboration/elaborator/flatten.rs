@@ -227,7 +227,14 @@ impl Elaborator {
                 sensitivity,
                 body,
             } => {
-                let new_sens = sensitivity.iter().map(|s| map_sig(*s)).collect();
+                let new_sens = sensitivity
+                    .iter()
+                    .map(|s| SignalSensitivity {
+                        sig_id: map_sig(s.sig_id),
+                        msb: s.msb,
+                        lsb: s.lsb,
+                    })
+                    .collect();
                 let new_body = self.translate_stmts(body, map_sig)?;
                 Ok(Process::Combinational {
                     name: *name,
@@ -240,7 +247,14 @@ impl Elaborator {
                 sensitivity,
                 body,
             } => {
-                let new_sens = sensitivity.iter().map(|s| map_sig(*s)).collect();
+                let new_sens = sensitivity
+                    .iter()
+                    .map(|s| SignalSensitivity {
+                        sig_id: map_sig(s.sig_id),
+                        msb: s.msb,
+                        lsb: s.lsb,
+                    })
+                    .collect();
                 let new_body = self.translate_stmts(body, map_sig)?;
                 Ok(Process::CombReactive {
                     name: *name,
@@ -675,6 +689,10 @@ impl Elaborator {
                 index: Box::new(self.translate_expr(index, map_sig)),
                 elem_width: *elem_width,
                 bit: *bit,
+            },
+            IrLValue::ObjectField { sig_id, field } => IrLValue::ObjectField {
+                sig_id: map_sig(*sig_id),
+                field: *field,
             },
             IrLValue::Concat(parts) => IrLValue::Concat(
                 parts

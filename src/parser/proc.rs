@@ -784,10 +784,10 @@ impl Parser {
                 self.expect(Token::LParen)?;
                 let cond = self.parse_expr(0)?;
                 self.expect(Token::RParen)?;
-                let true_items = self.parse_generate_block_body()?;
+                let (true_label, true_items) = self.parse_generate_block_body()?;
                 let false_items = if self.peek() == &Token::Else {
                     self.advance();
-                    self.parse_generate_block_body()?
+                    self.parse_generate_block_body()?.1
                 } else {
                     Vec::new()
                 };
@@ -795,6 +795,7 @@ impl Parser {
                     cond,
                     true_items,
                     false_items,
+                    label: true_label,
                 })
             }
             Token::For => {
@@ -844,13 +845,14 @@ impl Parser {
                     None
                 };
                 self.expect(Token::RParen)?;
-                let body_items = self.parse_generate_block_body()?;
+                let (body_label, body_items) = self.parse_generate_block_body()?;
                 Ok(GenerateItem::For {
                     var,
                     init: _init,
                     cond,
                     step,
                     body_items,
+                    label: body_label,
                 })
             }
             Token::GenVar => {
@@ -881,7 +883,7 @@ impl Parser {
                     if self.peek() == &Token::Default {
                         self.advance();
                         self.expect(Token::Colon)?;
-                        default = Some(self.parse_generate_block_body()?);
+                        default = Some(self.parse_generate_block_body()?.1);
                     } else {
                         let mut labels = Vec::new();
                         loop {
@@ -894,7 +896,7 @@ impl Parser {
                             }
                         }
                         self.expect(Token::Colon)?;
-                        let body = self.parse_generate_block_body()?;
+                        let body = self.parse_generate_block_body()?.1;
                         items.push(CaseGenerateItem { labels, body });
                     }
                 }
@@ -917,18 +919,26 @@ impl Parser {
         }
     }
 
-    pub(crate) fn parse_generate_block_body(&mut self) -> Result<Vec<ModuleItem>, SimError> {
+    pub(crate) fn parse_generate_block_body(
+        &mut self,
+    ) -> Result<(Option<Symbol>, Vec<ModuleItem>), SimError> {
         if self.peek() == &Token::Begin {
             self.advance();
-            // Skip optional begin label
-            if matches!(self.peek(), Token::Ident(_)) {
-                self.advance();
-            }
+            // Optional begin label: `begin [: name]` — tangkap untuk scope generate.
+            let mut label = None;
             if self.peek() == &Token::Colon {
                 self.advance();
-                if matches!(self.peek(), Token::Ident(_)) {
+                if let Token::Ident(n) = self.peek().clone() {
+                    self.advance();
+                    label = Some(n);
+                }
+            } else if let Token::Ident(n) = self.peek().clone() {
+                // bentuk `begin name : ...` (tanpa colon) — jarang, abaikan label
+                self.advance();
+                if self.peek() == &Token::Colon {
                     self.advance();
                 }
+                label = Some(n);
             }
             let mut items = Vec::new();
             loop {
@@ -950,11 +960,11 @@ impl Parser {
                     }
                 }
             }
-            Ok(items)
+            Ok((label, items))
         } else {
             match self.parse_module_item()? {
-                Some(mi) => Ok(vec![mi]),
-                None => Ok(Vec::new()),
+                Some(mi) => Ok((None, vec![mi])),
+                None => Ok((None, Vec::new())),
             }
         }
     }

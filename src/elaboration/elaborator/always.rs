@@ -20,7 +20,10 @@ impl Elaborator {
         match always.kind {
             AlwaysKind::AlwaysComb | AlwaysKind::AlwaysLatch => {
                 let body = self.elaborate_stmt_block(&always.stmts, signal_map, &[], signals)?;
-                let sensitivity = infer_comb_sensitivity(&body);
+                let sensitivity = infer_comb_sensitivity(&body)
+                    .into_iter()
+                    .map(SignalSensitivity::whole)
+                    .collect();
                 Ok(Process::CombReactive {
                     name,
                     sensitivity,
@@ -91,12 +94,15 @@ impl Elaborator {
                             .any(|e| matches!(e, SensitivityEvent::Wildcard));
                         if has_wildcard {
                             infer_comb_sensitivity(&body)
+                                .into_iter()
+                                .map(SignalSensitivity::whole)
+                                .collect()
                         } else {
                             sl.events
                                 .iter()
                                 .filter_map(|e| match e {
                                     SensitivityEvent::Level(expr) => {
-                                        resolve_expr_signal(expr, signal_map)
+                                        resolve_expr_sensitivity(expr, signal_map, signals)
                                     }
                                     _ => None,
                                 })
@@ -156,5 +162,62 @@ impl Elaborator {
         clock_edge
             .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, "always_ff must have at least one clock edge"))
             .map(|ce| (ce, reset))
+    }
+}
+
+/// Resolve expression sensitivity list menjadi (signal, bit-range) yang memicu.
+/// - `sig`        → seluruh signal (whole).
+/// - `sig[k]`     → range element k pada packed array multi-dimensi.
+/// - `sig[a:b]`   → range eksplisit.
+fn resolve_expr_sensitivity(
+    expr: &Expr,
+    signal_map: &HashMap<Symbol, SignalId>,
+    signals: &[SignalInfo],
+) -> Option<SignalSensitivity> {
+    match expr {
+        Expr::Ident { name, .. } => signal_map.get(name).map(|&id| SignalSensitivity::whole(id)),
+        Expr::BitSelect { expr: inner, index } => {
+            if let Expr::Ident { name, .. } = inner.as_ref() {
+                if let Some(&sid) = signal_map.get(name) {
+                    let sig = &signals[sid];
+                    if sig.packed_dims.len() > 1 && sig.packed_dims[0] > 0 {
+                        if let Ok(idx) = const_eval_params(index, &HashMap::new()) {
+                            let ow = sig.width / sig.packed_dims[0];
+                            let lo = idx.max(0) as usize * ow;
+                            return Some(SignalSensitivity {
+                                sig_id: sid,
+                                msb: Some(lo + ow - 1),
+                                lsb: Some(lo),
+                            });
+                        }
+                    }
+                    return Some(SignalSensitivity::whole(sid));
+                }
+            }
+            None
+        }
+        Expr::RangeSelect {
+            expr: inner,
+            msb,
+            lsb,
+        } => {
+            if let Expr::Ident { name, .. } = inner.as_ref() {
+                if let Some(&sid) = signal_map.get(name) {
+                    if let (Ok(m), Ok(l)) = (
+                        const_eval_params(msb, &HashMap::new()),
+                        const_eval_params(lsb, &HashMap::new()),
+                    ) {
+                        return Some(SignalSensitivity {
+                            sig_id: sid,
+                            msb: Some(m.max(0) as usize),
+                            lsb: Some(l.max(0) as usize),
+                        });
+                    }
+                    return Some(SignalSensitivity::whole(sid));
+                }
+            }
+            None
+        }
+        _ => resolve_expr_signal(expr, signal_map).map(SignalSensitivity::whole),
     }
 }

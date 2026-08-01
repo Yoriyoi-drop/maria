@@ -1,4 +1,6 @@
 use crate::ir::*;
+use crate::Symbol;
+use std::collections::HashMap;
 use std::fmt;
 
 // ── Debug types ──────────────────────────────────────────────────────────────
@@ -132,6 +134,22 @@ pub struct PendingEventControl {
     pub edge: Option<ClockEdge>,
     /// Statement yang dilanjutkan setelah event terpenuhi (body + sisa + loop_cont).
     pub continuation: Vec<IrStmt>,
+}
+
+/// Blocking event control `@(...)` di jalur AST (class method/task UVM).
+/// Menyimpan konteks method (this/locals/method) agar continuation bisa
+/// di-resume dengan benar (resume AST task kehilangan konteks tanpa ini).
+#[derive(Debug, Clone)]
+pub struct PendingAstEventControl {
+    /// Semua (signal, edge) dari satu `@(a or b)` — SATU entry, cegah double-fire.
+    pub sigs: Vec<(SignalId, Option<ClockEdge>)>,
+    pub continuation: Vec<crate::ast::Stmt>,
+    pub this: Option<ObjId>,
+    pub method: Option<Symbol>,
+    /// Snapshot lengkap method_locals saat suspensi.
+    pub locals: Vec<HashMap<Symbol, LogicVec>>,
+    /// Jumlah frame locals saat suspensi — dipakai truncate saat continuation selesai.
+    pub base_len: usize,
 }
 
 #[derive(Debug, Clone)]

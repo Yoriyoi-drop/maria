@@ -591,7 +591,7 @@ endmodule"#,
     )
     .unwrap();
     let (_, v) = sigs.iter().find(|(n, _)| n == "b").unwrap();
-    assert_eq!(v.to_u64(), 12);
+    assert_eq!(v.to_u64(), 3);
 }
 
 #[test]

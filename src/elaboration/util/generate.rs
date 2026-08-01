@@ -11,7 +11,7 @@
 //!
 //! ──────────────────────────────────────────────────────────────────────────────
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::types::const_eval_simple;
 
@@ -22,7 +22,9 @@ use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic};
 use crate::diagnostics::DiagSink;
 use crate::intern::Symbol;
 
-use super::loop_unroll::{substitute_loop_var_in_expr, substitute_loop_var_in_stmt};
+use super::loop_unroll::{
+    substitute_loop_var_in_expr, substitute_loop_var_in_stmt, substitute_sensitivity_event,
+};
 
 /// Structured error untuk elaboration/generate expansion dengan source location.
 #[derive(Debug, Clone)]
@@ -175,6 +177,7 @@ pub fn expand_generate_block(
                 cond,
                 true_items,
                 false_items,
+                ..
             } => {
                 let (cond_line, cond_col) = expr_location(cond);
                 let eval_result = const_eval_with_params(cond, param_vals);
@@ -195,6 +198,7 @@ pub fn expand_generate_block(
                 cond,
                 step,
                 body_items,
+                label,
             } => {
                 if std::env::var("DBG_GEN").is_ok() {
                     eprintln!("DBG-GEN: for var={} init={:?} cond={:?} step={:?}", var.as_str(), init, cond, step);
@@ -264,6 +268,7 @@ pub fn expand_generate_block(
                         for item in &mut substituted {
                             substitute_genvar_in_module_item(item, var.as_str(), cur);
                         }
+                        scope_rename_generate_iteration(&mut substituted, label.as_ref(), cur);
                         result.extend(expand_item_list(&substituted, param_vals, diag_sink)?);
                         cur += step_val;
                     }
@@ -282,6 +287,7 @@ pub fn expand_generate_block(
                         for item in &mut substituted {
                             substitute_genvar_in_module_item(item, var.as_str(), cur);
                         }
+                        scope_rename_generate_iteration(&mut substituted, label.as_ref(), cur);
                         result.extend(expand_item_list(&substituted, param_vals, diag_sink)?);
                         cur += step_val;
                     }
@@ -375,6 +381,13 @@ fn expand_item_list(
 pub fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, value: i64) {
     match item {
         ModuleItem::Always(always) => {
+            // Substitusi genvar di sensitivity list `@(sig[k])` juga — jika tidak,
+            // `k` tertinggal sebagai Ident dan resolve range sensitivity gagal.
+            if let Some(sl) = &mut always.sensitivity {
+                for event in &mut sl.events {
+                    *event = substitute_sensitivity_event(event, var_name, value);
+                }
+            }
             for stmt in &mut always.stmts {
                 let old = std::mem::replace(stmt, Stmt::Null);
                 *stmt = substitute_loop_var_in_stmt(&old, var_name, value);
@@ -504,6 +517,7 @@ pub fn substitute_genvar_in_generate_item(item: &mut GenerateItem, var_name: &st
             cond,
             true_items,
             false_items,
+            ..
         } => {
             let old_cond =
                 std::mem::replace(cond, Expr::Value(crate::ast::expr::Value::Decimal(0)));
@@ -521,6 +535,7 @@ pub fn substitute_genvar_in_generate_item(item: &mut GenerateItem, var_name: &st
             cond,
             step,
             body_items,
+            ..
         } => {
             if let Some(stmt) = init {
                 let old = std::mem::replace(stmt, Stmt::Null);
@@ -568,5 +583,497 @@ pub fn substitute_genvar_in_generate_item(item: &mut GenerateItem, var_name: &st
                 substitute_genvar_in_module_item(item, var_name, value);
             }
         }
+    }
+}
+
+// ─── Scope rename untuk generate block ─────────────────────────────────────
+// Anti-collision: sinyal lokal di dalam `for genvar k ... begin : name` harus
+// dinamai `name[k].sig` per iterasi, agar dua iterasi tidak berbagi sinyal.
+
+/// Kumpulkan nama sinyal LOKAL yang dideklarasikan dalam item generate.
+fn collect_scope_locals(items: &[ModuleItem]) -> HashSet<Symbol> {
+    let mut locals = HashSet::new();
+    for item in items {
+        if let ModuleItem::Decl(decl) = item {
+            for var in &decl.names {
+                locals.insert(var.name);
+            }
+        }
+    }
+    locals
+}
+
+/// Rename ident lokal di expr: Ident(old) → Ident(new) sesuai `map`.
+fn scope_rename_expr(expr: &Expr, map: &HashMap<Symbol, Symbol>) -> Expr {
+    match expr {
+        Expr::Ident { name, line, col } => match map.get(name) {
+            Some(new) => Expr::Ident {
+                name: *new,
+                line: *line,
+                col: *col,
+            },
+            None => expr.clone(),
+        },
+        Expr::Value(_) | Expr::String(_) | Expr::Null | Expr::FillLit(_) => expr.clone(),
+        Expr::RangeSelect {
+            expr: inner,
+            msb,
+            lsb,
+        } => Expr::RangeSelect {
+            expr: Box::new(scope_rename_expr(inner, map)),
+            msb: Box::new(scope_rename_expr(msb, map)),
+            lsb: Box::new(scope_rename_expr(lsb, map)),
+        },
+        Expr::BitSelect { expr: inner, index } => Expr::BitSelect {
+            expr: Box::new(scope_rename_expr(inner, map)),
+            index: Box::new(scope_rename_expr(index, map)),
+        },
+        Expr::PartSelect {
+            expr: inner,
+            base,
+            width,
+        } => Expr::PartSelect {
+            expr: Box::new(scope_rename_expr(inner, map)),
+            base: Box::new(scope_rename_expr(base, map)),
+            width: Box::new(scope_rename_expr(width, map)),
+        },
+        Expr::Concat(exprs) => Expr::Concat(
+            exprs
+                .iter()
+                .map(|e| scope_rename_expr(e, map))
+                .collect(),
+        ),
+        Expr::FuncCall { name, args } => Expr::FuncCall {
+            name: *name,
+            args: args
+                .iter()
+                .map(|a| scope_rename_expr(a, map))
+                .collect(),
+        },
+        Expr::Replicate { count, expr: inner } => Expr::Replicate {
+            count: Box::new(scope_rename_expr(count, map)),
+            expr: Box::new(scope_rename_expr(inner, map)),
+        },
+        Expr::UnaryOp { op, expr: inner } => Expr::UnaryOp {
+            op: op.clone(),
+            expr: Box::new(scope_rename_expr(inner, map)),
+        },
+        Expr::BinaryOp { op, lhs, rhs } => Expr::BinaryOp {
+            op: op.clone(),
+            lhs: Box::new(scope_rename_expr(lhs, map)),
+            rhs: Box::new(scope_rename_expr(rhs, map)),
+        },
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => Expr::TernaryOp {
+            cond: Box::new(scope_rename_expr(cond, map)),
+            true_expr: Box::new(scope_rename_expr(true_expr, map)),
+            false_expr: Box::new(scope_rename_expr(false_expr, map)),
+        },
+        Expr::Paren(inner) => Expr::Paren(Box::new(scope_rename_expr(inner, map))),
+        Expr::MethodCall {
+            obj,
+            method,
+            args,
+            with_clause,
+        } => Expr::MethodCall {
+            obj: Box::new(scope_rename_expr(obj, map)),
+            method: *method,
+            args: args
+                .iter()
+                .map(|a| scope_rename_expr(a, map))
+                .collect(),
+            with_clause: with_clause
+                .clone()
+                .map(|wc| Box::new(scope_rename_expr(&wc, map))),
+        },
+        Expr::MemberAccess { obj, field } => Expr::MemberAccess {
+            obj: Box::new(scope_rename_expr(obj, map)),
+            field: *field,
+        },
+        Expr::Inside {
+            expr: inner,
+            range_list,
+        } => Expr::Inside {
+            expr: Box::new(scope_rename_expr(inner, map)),
+            range_list: range_list
+                .iter()
+                .map(|e| scope_rename_expr(e, map))
+                .collect(),
+        },
+        Expr::StreamingConcat {
+            op,
+            slice_size,
+            slices,
+        } => Expr::StreamingConcat {
+            op: op.clone(),
+            slice_size: slice_size
+                .as_ref()
+                .map(|ss| Box::new(scope_rename_expr(ss, map))),
+            slices: slices
+                .iter()
+                .map(|e| scope_rename_expr(e, map))
+                .collect(),
+        },
+        Expr::Dist { expr, items } => Expr::Dist {
+            expr: Box::new(scope_rename_expr(expr, map)),
+            items: items.clone(),
+        },
+        Expr::Cast { dtype, expr: inner } => Expr::Cast {
+            dtype: *dtype,
+            expr: Box::new(scope_rename_expr(inner, map)),
+        },
+        Expr::ScopedIdent { package, item } => Expr::ScopedIdent {
+            package: *package,
+            item: *item,
+        },
+    }
+}
+
+fn scope_rename_sensitivity(
+    event: &SensitivityEvent,
+    map: &HashMap<Symbol, Symbol>,
+) -> SensitivityEvent {
+    match event {
+        SensitivityEvent::PosEdge(e) => SensitivityEvent::PosEdge(scope_rename_expr(e, map)),
+        SensitivityEvent::NegEdge(e) => SensitivityEvent::NegEdge(scope_rename_expr(e, map)),
+        SensitivityEvent::Level(e) => SensitivityEvent::Level(scope_rename_expr(e, map)),
+        SensitivityEvent::Wildcard => SensitivityEvent::Wildcard,
+    }
+}
+
+fn scope_rename_stmts(stmts: &[Stmt], map: &HashMap<Symbol, Symbol>) -> Vec<Stmt> {
+    stmts.iter().map(|s| scope_rename_stmt(s, map)).collect()
+}
+
+fn scope_rename_stmt(stmt: &Stmt, map: &HashMap<Symbol, Symbol>) -> Stmt {
+    match stmt {
+        Stmt::Block { stmts } => Stmt::Block {
+            stmts: scope_rename_stmts(stmts, map),
+        },
+        Stmt::BlockingAssign { lhs, rhs, delay } => Stmt::BlockingAssign {
+            lhs: scope_rename_expr(lhs, map),
+            rhs: scope_rename_expr(rhs, map),
+            delay: delay.clone(),
+        },
+        Stmt::NonBlockingAssign { lhs, rhs, delay } => Stmt::NonBlockingAssign {
+            lhs: scope_rename_expr(lhs, map),
+            rhs: scope_rename_expr(rhs, map),
+            delay: delay.clone(),
+        },
+        Stmt::IfElse {
+            cond,
+            true_branch,
+            false_branch,
+        } => Stmt::IfElse {
+            cond: scope_rename_expr(cond, map),
+            true_branch: Box::new(scope_rename_stmt(true_branch, map)),
+            false_branch: false_branch
+                .as_ref()
+                .map(|fb| Box::new(scope_rename_stmt(fb, map))),
+        },
+        Stmt::Case {
+            expr,
+            items,
+            default,
+        } => Stmt::Case {
+            expr: scope_rename_expr(expr, map),
+            items: items
+                .iter()
+                .map(|item| crate::ast::stmt::CaseItem {
+                    labels: item
+                        .labels
+                        .iter()
+                        .map(|l| scope_rename_expr(l, map))
+                        .collect(),
+                    stmt: Box::new(scope_rename_stmt(&item.stmt, map)),
+                })
+                .collect(),
+            default: default
+                .as_ref()
+                .map(|d| Box::new(scope_rename_stmt(d, map))),
+        },
+        Stmt::StmtAssign { lhs, rhs } => Stmt::StmtAssign {
+            lhs: scope_rename_expr(lhs, map),
+            rhs: scope_rename_expr(rhs, map),
+        },
+        Stmt::Delay { delay, stmt } => Stmt::Delay {
+            delay: scope_rename_expr(delay, map),
+            stmt: Box::new(scope_rename_stmt(stmt, map)),
+        },
+        Stmt::SysCall { name, args } => Stmt::SysCall {
+            name: *name,
+            args: args
+                .iter()
+                .map(|a| scope_rename_expr(a, map))
+                .collect(),
+        },
+        Stmt::Expr { expr } => Stmt::Expr {
+            expr: scope_rename_expr(expr, map),
+        },
+        Stmt::CaseX {
+            expr,
+            items,
+            default,
+        } => Stmt::CaseX {
+            expr: scope_rename_expr(expr, map),
+            items: items
+                .iter()
+                .map(|item| crate::ast::stmt::CaseItem {
+                    labels: item
+                        .labels
+                        .iter()
+                        .map(|l| scope_rename_expr(l, map))
+                        .collect(),
+                    stmt: Box::new(scope_rename_stmt(&item.stmt, map)),
+                })
+                .collect(),
+            default: default
+                .as_ref()
+                .map(|d| Box::new(scope_rename_stmt(d, map))),
+        },
+        Stmt::CaseZ {
+            expr,
+            items,
+            default,
+        } => Stmt::CaseZ {
+            expr: scope_rename_expr(expr, map),
+            items: items
+                .iter()
+                .map(|item| crate::ast::stmt::CaseItem {
+                    labels: item
+                        .labels
+                        .iter()
+                        .map(|l| scope_rename_expr(l, map))
+                        .collect(),
+                    stmt: Box::new(scope_rename_stmt(&item.stmt, map)),
+                })
+                .collect(),
+            default: default
+                .as_ref()
+                .map(|d| Box::new(scope_rename_stmt(d, map))),
+        },
+        Stmt::StmtCase {
+            expr,
+            items,
+            default,
+        } => Stmt::StmtCase {
+            expr: scope_rename_expr(expr, map),
+            items: items
+                .iter()
+                .map(|item| crate::ast::stmt::CaseItem {
+                    labels: item
+                        .labels
+                        .iter()
+                        .map(|l| scope_rename_expr(l, map))
+                        .collect(),
+                    stmt: Box::new(scope_rename_stmt(&item.stmt, map)),
+                })
+                .collect(),
+            default: default
+                .as_ref()
+                .map(|d| Box::new(scope_rename_stmt(d, map))),
+        },
+        Stmt::LoopForever { stmts } => Stmt::LoopForever {
+            stmts: scope_rename_stmts(stmts, map),
+        },
+        Stmt::LoopWhile { cond, stmts } => Stmt::LoopWhile {
+            cond: scope_rename_expr(cond, map),
+            stmts: scope_rename_stmts(stmts, map),
+        },
+        Stmt::LoopFor {
+            init,
+            cond,
+            step,
+            stmts,
+        } => Stmt::LoopFor {
+            init: init
+                .as_ref()
+                .map(|s| Box::new(scope_rename_stmt(s, map))),
+            cond: cond.as_ref().map(|c| scope_rename_expr(c, map)),
+            step: step
+                .as_ref()
+                .map(|s| Box::new(scope_rename_stmt(s, map))),
+            stmts: scope_rename_stmts(stmts, map),
+        },
+        Stmt::Repeat { count, stmts } => Stmt::Repeat {
+            count: scope_rename_expr(count, map),
+            stmts: scope_rename_stmts(stmts, map),
+        },
+        Stmt::Wait { cond, stmt } => Stmt::Wait {
+            cond: scope_rename_expr(cond, map),
+            stmt: stmt
+                .as_ref()
+                .map(|s| Box::new(scope_rename_stmt(s, map))),
+        },
+        Stmt::Disable { name } => Stmt::Disable { name: *name },
+        Stmt::Force { lhs, rhs } => Stmt::Force {
+            lhs: scope_rename_expr(lhs, map),
+            rhs: scope_rename_expr(rhs, map),
+        },
+        Stmt::Release { expr } => Stmt::Release {
+            expr: scope_rename_expr(expr, map),
+        },
+        Stmt::Deassign { expr } => Stmt::Deassign {
+            expr: scope_rename_expr(expr, map),
+        },
+        Stmt::Return(expr) => Stmt::Return(
+            expr.as_ref()
+                .map(|e| Box::new(scope_rename_expr(e, map))),
+        ),
+        Stmt::Null => Stmt::Null,
+        Stmt::SysFinish => Stmt::SysFinish,
+        Stmt::EventControl { events, stmt } => Stmt::EventControl {
+            events: events
+                .iter()
+                .map(|e| scope_rename_sensitivity(e, map))
+                .collect(),
+            stmt: stmt
+                .as_ref()
+                .map(|s| Box::new(scope_rename_stmt(s, map))),
+        },
+        Stmt::EventTrigger { name } => Stmt::EventTrigger { name: *name },
+        Stmt::ForeachLoop {
+            array_var,
+            index_vars,
+            stmts,
+        } => Stmt::ForeachLoop {
+            array_var: *array_var,
+            index_vars: index_vars.clone(),
+            stmts: scope_rename_stmts(stmts, map),
+        },
+        Stmt::NamedBlock {
+            name,
+            stmts,
+            decls,
+        } => Stmt::NamedBlock {
+            name: *name,
+            stmts: scope_rename_stmts(stmts, map),
+            decls: decls.clone(),
+        },
+        Stmt::RandCase { items } => Stmt::RandCase {
+            items: items
+                .iter()
+                .map(|rc| crate::ast::stmt::RandCaseItem {
+                    weight: rc.weight,
+                    stmt: Box::new(scope_rename_stmt(&rc.stmt, map)),
+                })
+                .collect(),
+        },
+        Stmt::Fork { processes, join_type } => Stmt::Fork {
+            processes: processes
+                .iter()
+                .map(|p| scope_rename_stmt(p, map))
+                .collect(),
+            join_type: join_type.clone(),
+        },
+        Stmt::Break => Stmt::Break,
+        Stmt::Continue => Stmt::Continue,
+        Stmt::DoWhile { cond, stmts } => Stmt::DoWhile {
+            cond: scope_rename_expr(cond, map),
+            stmts: scope_rename_stmts(stmts, map),
+        },
+        _ => stmt.clone(),
+    }
+}
+
+/// Rename sinyal lokal di module item sesuai `map`.
+fn scope_rename_module_item(item: &mut ModuleItem, map: &HashMap<Symbol, Symbol>) {
+    match item {
+        ModuleItem::Always(always) => {
+            for stmt in &mut always.stmts {
+                let old = std::mem::replace(stmt, Stmt::Null);
+                *stmt = scope_rename_stmt(&old, map);
+            }
+        }
+        ModuleItem::Initial(initial) => {
+            for stmt in &mut initial.stmts {
+                let old = std::mem::replace(stmt, Stmt::Null);
+                *stmt = scope_rename_stmt(&old, map);
+            }
+        }
+        ModuleItem::Final(final_block) => {
+            for stmt in &mut final_block.stmts {
+                let old = std::mem::replace(stmt, Stmt::Null);
+                *stmt = scope_rename_stmt(&old, map);
+            }
+        }
+        ModuleItem::Assign(assign) => {
+            assign.lhs = scope_rename_expr(&assign.lhs, map);
+            assign.rhs = scope_rename_expr(&assign.rhs, map);
+        }
+        ModuleItem::Instance(inst) => {
+            if let Some(range) = &mut inst.range {
+                range.msb = scope_rename_expr(&range.msb, map);
+                range.lsb = scope_rename_expr(&range.lsb, map);
+            }
+            for expr in inst.param_assigns.values_mut() {
+                let old = std::mem::replace(expr, Expr::Value(crate::ast::expr::Value::Decimal(0)));
+                *expr = scope_rename_expr(&old, map);
+            }
+            for conn in &mut inst.port_conns {
+                match conn {
+                    PortConnection::Positional(expr) => {
+                        let old = std::mem::replace(
+                            expr,
+                            Expr::Value(crate::ast::expr::Value::Decimal(0)),
+                        );
+                        *expr = scope_rename_expr(&old, map);
+                    }
+                    PortConnection::Named { expr, .. } => {
+                        let old = std::mem::replace(
+                            expr,
+                            Expr::Value(crate::ast::expr::Value::Decimal(0)),
+                        );
+                        *expr = scope_rename_expr(&old, map);
+                    }
+                }
+            }
+        }
+        ModuleItem::Decl(decl) => {
+            for var in &mut decl.names {
+                if let Some(new) = map.get(&var.name) {
+                    var.name = *new;
+                }
+                if let Some(er) = &mut var.expr_range {
+                    er.msb = scope_rename_expr(&er.msb, map);
+                    er.lsb = scope_rename_expr(&er.lsb, map);
+                }
+                if let Some(init) = &mut var.expr {
+                    let old = std::mem::replace(init, Expr::Value(crate::ast::expr::Value::Decimal(0)));
+                    *init = scope_rename_expr(&old, map);
+                }
+            }
+        }
+        ModuleItem::Func(func) => {
+            for stmt in &mut func.stmts {
+                let old = std::mem::replace(stmt, Stmt::Null);
+                *stmt = scope_rename_stmt(&old, map);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Terapkan scope-rename untuk SATU iterasi generate for.
+/// Sinyal lokal `sig` dinamai `label[cur].sig` (atau `genblk[cur].sig` tanpa
+/// label) agar tidak collide antar iterasi.
+fn scope_rename_generate_iteration(items: &mut [ModuleItem], label: Option<&Symbol>, cur: i64) {
+    let locals = collect_scope_locals(items);
+    if locals.is_empty() {
+        return;
+    }
+    let scope_name = match label {
+        Some(l) => format!("{}[{}]", l.as_str(), cur),
+        None => format!("genblk[{}]", cur),
+    };
+    let mut map = HashMap::with_capacity(locals.len());
+    for l in &locals {
+        map.insert(*l, Symbol::intern(&format!("{}.{}", scope_name, l.as_str())));
+    }
+    for item in items.iter_mut() {
+        scope_rename_module_item(item, &map);
     }
 }

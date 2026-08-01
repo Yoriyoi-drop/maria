@@ -448,10 +448,7 @@ impl SimulationEngine {
                 let m = msb_val.to_u64() as usize;
                 let l = lsb_val.to_u64() as usize;
                 let (start, end) = if m > l { (l, m) } else { (m, l) };
-                let mut bits = val.bits[start..=end].to_vec();
-                if m > l {
-                    bits.reverse();
-                }
+                let bits = val.bits[start..=end].to_vec();
                 Ok(LogicVec {
                     width: bits.len(),
                     bits,
@@ -468,8 +465,7 @@ impl SimulationEngine {
                 let b = base_val.to_u64() as usize;
                 let w = width_val.to_u64() as usize;
                 if b + w <= val.width && w > 0 {
-                    let mut bits = val.bits[b..b + w].to_vec();
-                    bits.reverse();
+                    let bits = val.bits[b..b + w].to_vec();
                     Ok(LogicVec { width: w, bits })
                 } else if w == 0 {
                     Ok(LogicVec::from_u64(0, 1))

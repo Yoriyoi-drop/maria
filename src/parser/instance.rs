@@ -344,6 +344,11 @@ impl Parser {
         // interface kelak mulai memakai type param.
         self.module_type_params.clear();
 
+        // Skip (* ... *) attributes before interface name
+        while self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
+            self.skip_attribute();
+        }
+
         let name = match self.peek() {
             Token::Ident(s) => {
                 let n = *s;
@@ -354,27 +359,30 @@ impl Parser {
                 return Err(self.err("expected interface name"))
             }
         };
-        // Handle #(params) and (ports) after interface name (like module syntax)
+        let mut ports = Vec::new();
+        let mut params = Vec::new();
+        let mut decls = Vec::new();
+        let mut items = Vec::new();
+        let mut modports = Vec::new();
+
+        // Parse #(parameter ...) list (like module syntax)
         if self.peek() == &Token::Hash {
             self.advance();
             self.expect(Token::LParen)?;
-            // Fast-skip parameter list — parameter declarations not critical for interface struct
-            loop {
-                match self.peek() {
-                    Token::RParen => { self.advance(); break; }
-                    Token::Eof => return Err(self.err("unexpected EOF in interface parameter list")),
-                    _ => { self.advance(); }
-                }
-            }
+            self.parse_param_list(&mut params)?;
+            self.expect(Token::RParen)?;
         }
+
+        // Parse (port list)
         if self.peek() == &Token::LParen {
-            self.skip_balanced_paren()?;
+            self.advance();
+            if self.peek() != &Token::RParen {
+                self.parse_port_list(&mut ports)?;
+            }
+            self.expect(Token::RParen)?;
         }
         self.skip_semi();
 
-        let params = Vec::new();
-        let mut decls = Vec::new();
-        let mut modports = Vec::new();
         let mut _last_pos = self.pos.get();
         let mut _stuck = 0u32;
 
@@ -401,42 +409,32 @@ impl Parser {
                     Token::ModPort => {
                         modports.push(self.parse_modport()?);
                     }
-                    Token::Param | Token::Parameter | Token::LocalParam => {
-                        self.skip_until_semi_or_end()?;
-                    }
-                    Token::Import => {
-                        self.advance();
-                        let _ = self.skip_until_semi_or_end();
-                    }
-                    Token::Function | Token::Task => {
-                        let _ = self.skip_until_semi_or_end();
-                    }
-                    Token::Always
-                    | Token::AlwaysComb
-                    | Token::AlwaysFF
-                    | Token::AlwaysLatch
-                    | Token::Initial
-                    | Token::Assign
-                    | Token::Assert
-                    | Token::Assume
-                    | Token::Cover
-                    | Token::GenVar => {
-                        let _ = self.skip_until_semi_or_end();
-                    }
                     Token::LParen if self.peek_ahead(1) == &Token::Star => {
                         self.skip_attribute();
                     }
                     _ => {
                         let before = self.pos.get();
-                        match self.parse_decl() {
-                            Ok(decl) => decls.push(decl),
-                            Err(_) => {
-                                // If parse_decl fails, skip to boundary to avoid infinite loop
-                                let _ = self.skip_until_semi_or_end();
+                        match self.parse_module_item() {
+                            Ok(Some(item)) => {
+                                if let ModuleItem::Covergroup(ref cg) = item {
+                                    self.class_names.insert(cg.name);
+                                }
+                                match item {
+                                    ModuleItem::Decl(d) => decls.push(d),
+                                    ModuleItem::Param(p) => params.push(p),
+                                    other => items.push(other),
+                                }
                             }
-                        }
-                        if self.pos.get() == before {
-                            self.advance();
+                            Ok(None) => {
+                                // If position didn't advance, skip the token to avoid infinite loop
+                                if self.pos.get() == before {
+                                    self.advance();
+                                }
+                            }
+                            Err(e) => {
+                                self.errors.push(e.to_diagnostic());
+                                self.skip_until_semi_or_end()?;
+                            }
                         }
                     }
                 },
@@ -460,7 +458,9 @@ impl Parser {
         Ok(Interface {
             name,
             params,
+            ports,
             decls,
+            items,
             modports,
         })
     }
@@ -622,8 +622,11 @@ impl Parser {
                         None
                     };
                     // Parse additional packed dimensions before port name: [a:b][c:d]
+                    let mut extra_packed_dims = Vec::new();
                     while self.peek() == &Token::LBrack {
-                        self.parse_range()?;
+                        if let Some(er) = self.parse_range()? {
+                            extra_packed_dims.push(er);
+                        }
                     }
                     let range = expr_range.as_ref().and_then(|er| {
                         if let (Ok(m), Ok(l)) =
@@ -700,6 +703,7 @@ impl Parser {
                                     expr_range: expr_range.clone(),
                                     dtype_name: dtype_name.as_ref().map(|s| Symbol::intern(s)),
                                     array_range,
+                                    extra_packed_dims: extra_packed_dims.clone(),
                                 });
                             }
                             _ => break,

@@ -51,6 +51,7 @@ impl SimulationEngine {
             coverage_snapshot: None,
             pending_waits: Vec::new(),
             pending_events: Vec::new(),
+            pending_ast_events: Vec::new(),
             pending_await_target: None,
             pending_wait_orders: Vec::new(),
             loop_continuation: None,
@@ -1627,6 +1628,13 @@ impl SimulationEngine {
                 // Check pending blocking event control @(sig)
                 if !self.pending_events.is_empty() && !deltas.is_empty()
                     && self.process_pending_events(&deltas)?
+                {
+                    activity = true;
+                }
+
+                // Check pending blocking event control @(sig) jalur AST (UVM task)
+                if !self.pending_ast_events.is_empty() && !deltas.is_empty()
+                    && self.process_pending_ast_events(&deltas)?
                 {
                     activity = true;
                 }

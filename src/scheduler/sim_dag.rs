@@ -40,8 +40,8 @@ fn analyze_process_access(process: &Process) -> SignalAccess {
         } => {
             let mut access = SignalAccess::default();
             // Sensitivity list = reads (trigger signals)
-            for &sid in sensitivity {
-                access.reads.insert(sid);
+            for s in sensitivity {
+                access.reads.insert(s.sig_id);
             }
             // Scan body for additional reads + all writes
             stmt_signal_access(body, &mut access);
@@ -219,7 +219,8 @@ fn lvalue_signal_writes(lvalue: &IrLValue, access: &mut SignalAccess) {
         }
         IrLValue::ArrayIndex { sig_id, .. }
         | IrLValue::ArrayRangeSelect { sig_id, .. }
-        | IrLValue::ArrayBitSelect { sig_id, .. } => {
+        | IrLValue::ArrayBitSelect { sig_id, .. }
+        | IrLValue::ObjectField { sig_id, .. } => {
             access.writes.insert(*sig_id);
         }
         IrLValue::Concat(items) => {
@@ -644,7 +645,7 @@ mod tests {
         }];
         let process = Process::Combinational {
             name: Symbol::intern("test"),
-            sensitivity: vec![1, 2],
+            sensitivity: vec![SignalSensitivity::whole(1), SignalSensitivity::whole(2)],
             body,
         };
         let access = analyze_process_access(&process);
@@ -815,9 +816,9 @@ mod tests {
                 outputs: vec![],
                 inouts: vec![],
                 processes: vec![
-                    Process::Combinational { name: Symbol::intern("p0"), sensitivity: vec![1], body: body_a },
-                    Process::Combinational { name: Symbol::intern("p1"), sensitivity: vec![0], body: body_b },
-                    Process::Combinational { name: Symbol::intern("p2"), sensitivity: vec![3], body: body_c },
+                    Process::Combinational { name: Symbol::intern("p0"), sensitivity: vec![SignalSensitivity::whole(1)], body: body_a },
+                    Process::Combinational { name: Symbol::intern("p1"), sensitivity: vec![SignalSensitivity::whole(0)], body: body_b },
+                    Process::Combinational { name: Symbol::intern("p2"), sensitivity: vec![SignalSensitivity::whole(3)], body: body_c },
                 ],
                 sub_instances: vec![],
             },

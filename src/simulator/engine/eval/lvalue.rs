@@ -339,6 +339,15 @@ impl SimulationEngine {
                     offset += w;
                 }
             }
+            IrLValue::ObjectField { sig_id, field } => {
+                // Class object field write: obj signal → handle → get_object → fields.
+                sanitize_for_2state(&self.design.top.signals, *sig_id, &mut val);
+                let handle = self.state.read_signal(*sig_id);
+                let obj_id = handle.to_u64() as ObjId;
+                if let Some(obj) = self.state.get_object_mut(obj_id) {
+                    obj.fields.insert(*field, val);
+                }
+            }
         }
         Ok(())
     }
@@ -364,6 +373,7 @@ impl SimulationEngine {
                 }
             }
             IrLValue::ArrayBitSelect { .. } => 1,
+            IrLValue::ObjectField { .. } => 64,
             IrLValue::Concat(parts) => parts.iter().map(|p| self.get_lvalue_width(p)).sum(),
         }
     }

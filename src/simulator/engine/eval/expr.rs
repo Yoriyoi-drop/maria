@@ -139,18 +139,12 @@ impl SimulationEngine {
             }
             IrExpr::RangeSelect(sig_id, msb, lsb) => {
                 let val = self.state.read_signal(*sig_id);
-                if std::env::var("DBG_RS").is_ok() {
-                    eprintln!("[DBG-RS] sid={} msb={} lsb={} val={:?}", sig_id, msb, lsb, val);
-                }
                 let (start, end) = if *msb > *lsb {
                     (*lsb, *msb)
                 } else {
                     (*msb, *lsb)
                 };
-                let mut bits = val.bits[start..=end].to_vec();
-                if *msb > *lsb {
-                    bits.reverse();
-                }
+                let bits = val.bits[start..=end].to_vec();
                 Ok(LogicVec {
                     width: bits.len(),
                     bits,
@@ -177,10 +171,7 @@ impl SimulationEngine {
                         msb, lsb, val.width
                     )));
                 }
-                let mut bits = val.bits[start..=end].to_vec();
-                if *msb > *lsb {
-                    bits.reverse();
-                }
+                let bits = val.bits[start..=end].to_vec();
                 Ok(LogicVec {
                     width: bits.len(),
                     bits,
@@ -204,9 +195,7 @@ impl SimulationEngine {
                     return Ok(LogicVec::new(1));
                 }
                 let end = (base + width - 1).min(val.width - 1);
-                let mut bits = val.bits[base..=end].to_vec();
-                // PartSelect is always [high:low] with high >= low, so reverse
-                bits.reverse();
+                let bits = val.bits[base..=end].to_vec();
                 Ok(LogicVec {
                     width: bits.len(),
                     bits,
@@ -423,6 +412,7 @@ impl SimulationEngine {
                         Ok(LogicVec::from_u64(val as u64, 32))
                     }
                     "$srandom" => {
+                        self.rand_call_count += 1;
                         if let Some(seed_arg) = args.first() {
                             if let Ok(seed_val) = self.evaluate_expr(seed_arg) {
                                 let seed = seed_val.to_u64();

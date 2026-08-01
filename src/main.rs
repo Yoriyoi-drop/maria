@@ -1173,6 +1173,23 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
             ir_design.top.signals.len(),
             ir_design.top.processes.len()
         );
+        if std::env::var("MARIA_DBG_PROC").is_ok() {
+            for (i, p) in ir_design.top.processes.iter().enumerate() {
+                let tag = match p {
+                    maria::ir::Process::Initial { name, body } => format!(
+                        "Initial(name={}, body_len={})",
+                        name,
+                        body.len()
+                    ),
+                    maria::ir::Process::Combinational { name, .. } => format!("Comb({})", name),
+                    maria::ir::Process::Sequential { name, .. } => format!("Seq({})", name),
+                    maria::ir::Process::CombReactive { name, .. } => format!("CombR({})", name),
+                    maria::ir::Process::AlwaysWithDelay { name, .. } => format!("AWD({})", name),
+                    maria::ir::Process::Final { name, .. } => format!("Final({})", name),
+                };
+                eprintln!("[DBG-PROC {}] {}", i, tag);
+            }
+        }
     }
 
     // ── Formal Verification (runs before simulation, skips sim) ──

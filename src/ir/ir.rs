@@ -229,16 +229,30 @@ pub struct IrInstance {
     pub col: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SignalSensitivity {
+    pub sig_id: SignalId,
+    /// None = seluruh signal memicu; Some(msb,lsb) = hanya bila RANGE tsb berubah.
+    pub msb: Option<usize>,
+    pub lsb: Option<usize>,
+}
+
+impl SignalSensitivity {
+    pub fn whole(sig_id: SignalId) -> Self {
+        Self { sig_id, msb: None, lsb: None }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Process {
     Combinational {
         name: Symbol,
-        sensitivity: Vec<SignalId>,
+        sensitivity: Vec<SignalSensitivity>,
         body: Vec<IrStmt>,
     },
     CombReactive {
         name: Symbol,
-        sensitivity: Vec<SignalId>,
+        sensitivity: Vec<SignalSensitivity>,
         body: Vec<IrStmt>,
     },
     Sequential {
@@ -455,6 +469,11 @@ pub enum IrLValue {
         index: Box<IrExpr>,
         elem_width: usize,
         bit: usize,
+    },
+    /// Field class object: `obj.field` (obj = signal berisi handle object).
+    ObjectField {
+        sig_id: SignalId,
+        field: Symbol,
     },
     Concat(Vec<IrLValue>),
 }

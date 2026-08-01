@@ -5,6 +5,31 @@ use crate::ir::*;
 use crate::simulator::types::*;
 use crate::simulator::parallel;
 
+/// Apakah sensitivity process terpenuhi oleh perubahan signal `changed`.
+/// Entry range (msb/lsb Some) hanya terpicu bila SLICE tsb berubah; entry
+/// whole (None) terpicu pada perubahan apa pun.
+fn sensitivity_triggered(
+    sensitivity: &[SignalSensitivity],
+    changed: &[(usize, LogicVec, LogicVec)],
+) -> bool {
+    changed.iter().any(|(id, old, new)| {
+        sensitivity.iter().any(|s| {
+            if s.sig_id != *id {
+                return false;
+            }
+            match (s.msb, s.lsb) {
+                (Some(m), Some(l)) => {
+                    let (lo, hi) = (l.min(m), m.max(l));
+                    let a: &[LogicVal] = old.bits.get(lo..=hi).unwrap_or(&[]);
+                    let b: &[LogicVal] = new.bits.get(lo..=hi).unwrap_or(&[]);
+                    a != b
+                }
+                _ => true,
+            }
+        })
+    })
+}
+
 impl SimulationEngine {
     pub(crate) fn process_event(&mut self, event: EventKind, t: usize) -> Result<(), SimError> {
         self.current_time = t as u64;
@@ -121,9 +146,9 @@ impl SimulationEngine {
                 remaining.push((deps, stmts));
             }
         }
-        for item in remaining {
-            self.pending_waits.push(item);
-        }
+        let newly_pushed = std::mem::take(&mut self.pending_waits);
+        remaining.extend(newly_pushed);
+        self.pending_waits = remaining;
         Ok(matched)
     }
 
@@ -167,7 +192,78 @@ impl SimulationEngine {
                 remaining.push(pe);
             }
         }
+        // Resume tadi bisa mendaftarkan pending event baru (mis. `forever @(sig)`
+        // yang re-suspend). Jangan timpa — gabungkan agar event baru tetap hidup
+        // dan membangunkan pada perubahan sinyal berikutnya.
+        let newly_pushed = std::mem::take(&mut self.pending_events);
+        remaining.extend(newly_pushed);
         self.pending_events = remaining;
+        Ok(matched)
+    }
+
+    /// Resume blocking event control `@(sig)` di jalur AST (task/method UVM),
+    /// dengan restore konteks method (this/locals/method).
+    pub(crate) fn process_pending_ast_events(
+        &mut self,
+        deltas: &[SignalId],
+    ) -> Result<bool, SimError> {
+        let mut matched = false;
+        let mut remaining = Vec::new();
+        let pending = std::mem::take(&mut self.pending_ast_events);
+        for pe in pending {
+            let fire = pe.sigs.iter().any(|(sid, edge)| {
+                if !deltas.contains(sid) {
+                    return false;
+                }
+                match edge {
+                    None => true,
+                    Some(ClockEdge::PosEdge(id)) => {
+                        let new = self.state.read_signal(*id);
+                        let old = self
+                            .signal_snapshot
+                            .as_ref()
+                            .and_then(|s| s.get(*id).cloned())
+                            .unwrap_or_else(|| LogicVec::new(1));
+                        old.to_bool() != Some(true) && new.to_bool() == Some(true)
+                    }
+                    Some(ClockEdge::NegEdge(id)) => {
+                        let new = self.state.read_signal(*id);
+                        let old = self
+                            .signal_snapshot
+                            .as_ref()
+                            .and_then(|s| s.get(*id).cloned())
+                            .unwrap_or_else(|| LogicVec::new(1));
+                        old.to_bool() != Some(false) && new.to_bool() == Some(false)
+                    }
+                }
+            });
+            if !fire {
+                remaining.push(pe);
+                continue;
+            }
+            // Restore konteks method task sebelum resume continuation.
+            let old_this = self.current_this;
+            let old_method = self.current_method;
+            let old_locals = std::mem::replace(&mut self.method_locals, pe.locals.clone());
+            self.current_this = pe.this;
+            self.current_method = pe.method;
+            matched = true;
+            let completed = self.evaluate_ast_block_with_delay_fork(&pe.continuation, None)?;
+            if completed {
+                // Task selesai — truncate frame locals task; kembalikan konteks.
+                let keep = pe.base_len.saturating_sub(1).min(self.method_locals.len());
+                self.method_locals.truncate(keep);
+                self.current_this = old_this;
+                self.current_method = old_method;
+            } else {
+                // Task masih re-suspend — pertahankan locals task (old_locals dibuang).
+            }
+        }
+        // Gabungkan pending AST event baru yang didaftarkan saat resume
+        // (mis. `forever @(sig)` yang re-suspend), jangan timpa.
+        let newly_pushed = std::mem::take(&mut self.pending_ast_events);
+        remaining.extend(newly_pushed);
+        self.pending_ast_events = remaining;
         Ok(matched)
     }
 
@@ -215,7 +311,6 @@ impl SimulationEngine {
         _t: usize,
     ) -> Result<(), SimError> {
         let processes = self.design.top.processes.clone();
-
         // Collect triggered combinational processes for potential parallel execution
         // Skip fused processes — they're evaluated as part of clock domain fusion
         let mut comb_indices: Vec<usize> = Vec::new();
@@ -230,7 +325,7 @@ impl SimulationEngine {
                     continue;
                 }
                 let should_trigger = sensitivity.is_empty()
-                    || changed.iter().any(|(id, _, _)| sensitivity.contains(id));
+                    || sensitivity_triggered(sensitivity, changed);
                 if should_trigger {
                     comb_indices.push(pid);
                 }
@@ -291,7 +386,7 @@ impl SimulationEngine {
             match process {
                 Process::CombReactive { sensitivity, .. } => {
                     let should_trigger = sensitivity.is_empty()
-                        || changed.iter().any(|(id, _, _)| sensitivity.contains(id));
+                        || sensitivity_triggered(sensitivity, changed);
                     if should_trigger {
                         self.reactive_events.push(EventKind::EvalProcess(pid));
                     }
@@ -370,6 +465,7 @@ impl SimulationEngine {
             IrLValue::ArrayIndex { sig_id, .. } => Some(*sig_id),
             IrLValue::ArrayRangeSelect { sig_id, .. } => Some(*sig_id),
             IrLValue::ArrayBitSelect { sig_id, .. } => Some(*sig_id),
+            IrLValue::ObjectField { sig_id, .. } => Some(*sig_id),
             IrLValue::Concat(_) => None,
         }
     }

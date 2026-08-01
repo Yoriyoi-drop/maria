@@ -626,6 +626,7 @@ impl crate::simulator::engine::SimulationEngine {
         self.fmonitor_map.clear();
         self.pending_waits.clear();
         self.pending_events.clear();
+        self.pending_ast_events.clear();
         self.pending_wait_orders.clear();
         Ok(())
     }

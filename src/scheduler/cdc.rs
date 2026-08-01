@@ -263,7 +263,8 @@ fn lvalue_collect_signal_ids(lvalue: &IrLValue, ids: &mut HashSet<SignalId>) {
         | IrLValue::BitSelect(sig_id, _)
         | IrLValue::ArrayIndex { sig_id, .. }
         | IrLValue::ArrayRangeSelect { sig_id, .. }
-        | IrLValue::ArrayBitSelect { sig_id, .. } => {
+        | IrLValue::ArrayBitSelect { sig_id, .. }
+        | IrLValue::ObjectField { sig_id, .. } => {
             ids.insert(*sig_id);
         }
         IrLValue::Concat(items) => {

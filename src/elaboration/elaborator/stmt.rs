@@ -17,6 +17,7 @@ fn lvalue_signal_id(lv: &IrLValue) -> Option<SignalId> {
         IrLValue::ArrayIndex { sig_id, .. } => Some(*sig_id),
         IrLValue::ArrayRangeSelect { sig_id, .. } => Some(*sig_id),
         IrLValue::ArrayBitSelect { sig_id, .. } => Some(*sig_id),
+        IrLValue::ObjectField { sig_id, .. } => Some(*sig_id),
         IrLValue::Concat(items) => items.first().and_then(lvalue_signal_id),
     }
 }
@@ -1247,6 +1248,13 @@ impl Elaborator {
                                 "field '{}' not found in struct type",
                                 field
                             )));
+                        }
+                        // Class object handle: obj = signal berisi obj id → field.
+                        if sig_info.class_name.is_some() {
+                            return Ok(IrLValue::ObjectField {
+                                sig_id,
+                                field: *field,
+                            });
                         }
                         Err(self.elab_diag(DiagCode::ModuleNotFound, format!("member access on signal '{:?}' that has no struct fields (cannot use as lvalue)", obj)))
                     }

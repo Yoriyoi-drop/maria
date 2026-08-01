@@ -570,7 +570,12 @@ impl SimulationEngine {
         if name == "display" || name == "write" {
             let ir_args: Vec<IrExpr> = args
                 .iter()
-                .map(|a| IrExpr::Const(self.evaluate_ast_expr(a).unwrap_or(LogicVec::new(32))))
+                .map(|a| match a {
+                    // String format harus tetap IrExpr::String agar format_display
+                    // mengenalinya sebagai format (bukan diubah jadi Const biner).
+                    crate::ast::Expr::String(s) => IrExpr::String(s.clone()),
+                    _ => IrExpr::Const(self.evaluate_ast_expr(a).unwrap_or(LogicVec::new(32))),
+                })
                 .collect();
             let msg = format_display(
                 &self.state,

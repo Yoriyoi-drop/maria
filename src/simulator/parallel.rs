@@ -55,10 +55,7 @@ pub fn evaluate_expr_simple(expr: &IrExpr, signals: &[LogicVec]) -> Result<Logic
                 if end >= val.width {
                     return Ok(LogicVec::new(1));
                 }
-                let mut bits = val.bits[start..=end].to_vec();
-                if *msb > *lsb {
-                    bits.reverse();
-                }
+                let bits = val.bits[start..=end].to_vec();
                 Ok(LogicVec {
                     width: bits.len(),
                     bits,
@@ -88,10 +85,7 @@ pub fn evaluate_expr_simple(expr: &IrExpr, signals: &[LogicVec]) -> Result<Logic
             if end >= val.width {
                 return Ok(LogicVec::new(1));
             }
-            let mut bits = val.bits[start..=end].to_vec();
-            if *msb > *lsb {
-                bits.reverse();
-            }
+            let bits = val.bits[start..=end].to_vec();
             Ok(LogicVec {
                 width: bits.len(),
                 bits,
@@ -113,8 +107,7 @@ pub fn evaluate_expr_simple(expr: &IrExpr, signals: &[LogicVec]) -> Result<Logic
                 return Ok(LogicVec::new(1));
             }
             let end = (base + width - 1).min(val.width - 1);
-            let mut bits = val.bits[base..=end].to_vec();
-            bits.reverse();
+            let bits = val.bits[base..=end].to_vec();
             Ok(LogicVec {
                 width: bits.len(),
                 bits,
@@ -402,6 +395,7 @@ fn get_lvalue_width_simple(lvalue: &IrLValue, signals: &[LogicVec]) -> usize {
             (hi - lo + 1) * elem_width
         }
         IrLValue::ArrayBitSelect { elem_width, .. } => *elem_width,
+        IrLValue::ObjectField { .. } => 64,
         IrLValue::Concat(items) => items
             .iter()
             .map(|i| get_lvalue_width_simple(i, signals))

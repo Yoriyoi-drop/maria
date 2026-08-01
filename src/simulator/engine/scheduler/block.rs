@@ -981,42 +981,61 @@ impl SimulationEngine {
                     return Ok(false);
                 }
                 crate::ast::Stmt::EventControl { events, stmt: body } => {
-                    // For class tasks, handle event control by evaluating signal
-                    // For now, execute immediately (simple edge handling)
-                    // In a full implementation, we would schedule a continuation
-                    if let Some(event) = events.first() {
-                        let triggered = match event {
+                    // Blocking event control di task/method UVM: daftarkan pending
+                    // wake-up (dengan konteks method) lalu suspend. Event yang sudah
+                    // lewat tidak dihitung. Signal yang tak ter-resolve (mis. vif
+                    // tanpa clk di desain) → lanjut segera (tanpa block).
+                    if events
+                        .iter()
+                        .any(|e| matches!(e, crate::ast::SensitivityEvent::Wildcard))
+                    {
+                        if let Some(b) = body {
+                            self.evaluate_ast_block_with_delay_fork(&[*b.clone()], fork_id)?;
+                        }
+                        if i + 1 < stmts.len() {
+                            self.evaluate_ast_block_with_delay_fork(&stmts[i + 1..], fork_id)?;
+                        }
+                        return Ok(true);
+                    }
+                    let mut sigs: Vec<(SignalId, Option<ClockEdge>)> = Vec::new();
+                    for event in events {
+                        match event {
                             crate::ast::SensitivityEvent::PosEdge(expr) => {
                                 if let Some(id) = self.find_ast_signal_id(expr) {
-                                    let sig_val = self.state.read_signal(id);
-                                    sig_val.to_bool() == Some(true)
-                                } else {
-                                    true
+                                    sigs.push((id, Some(ClockEdge::PosEdge(id))));
                                 }
                             }
                             crate::ast::SensitivityEvent::NegEdge(expr) => {
                                 if let Some(id) = self.find_ast_signal_id(expr) {
-                                    let sig_val = self.state.read_signal(id);
-                                    sig_val.to_bool() == Some(false)
-                                } else {
-                                    true
+                                    sigs.push((id, Some(ClockEdge::NegEdge(id))));
                                 }
                             }
-                            _ => true,
-                        };
-                        if triggered {
-                            if let Some(b) = body {
-                                self.evaluate_ast_block_with_delay_fork(&[*b.clone()], fork_id)?;
+                            crate::ast::SensitivityEvent::Level(expr) => {
+                                if let Some(id) = self.find_ast_signal_id(expr) {
+                                    sigs.push((id, None));
+                                }
                             }
-                            if i + 1 < stmts.len() {
-                                self.evaluate_ast_block_with_delay_fork(&stmts[i + 1..], fork_id)?;
-                            }
-                        } else {
-                            // Not triggered — schedule a wake-up when the signal changes
-                            // For now: just don't execute and return
-                            return Ok(true);
+                            crate::ast::SensitivityEvent::Wildcard => unreachable!("handled above"),
                         }
                     }
+                    if sigs.is_empty() {
+                        return Ok(true);
+                    }
+                    let mut later: Vec<crate::ast::Stmt> = Vec::new();
+                    if let Some(b) = body {
+                        later.push(*b.clone());
+                    }
+                    later.extend(stmts[i + 1..].iter().cloned());
+                    let base_len = self.method_locals.len();
+                    self.pending_ast_events.push(PendingAstEventControl {
+                        sigs,
+                        continuation: later,
+                        this: self.current_this,
+                        method: self.current_method,
+                        locals: self.method_locals.clone(),
+                        base_len,
+                    });
+                    return Ok(false);
                 }
                 crate::ast::Stmt::Wait { cond, stmt: body } => {
                     let cond_val = self.evaluate_ast_expr(cond)?;
