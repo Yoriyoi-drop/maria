@@ -4,6 +4,7 @@
 //! `ResourceState` disimpan di `GuiState` dan di-refresh berkala (tiap 1s)
 //! oleh status bar — bar CPU/RAM + tooltip detail.
 
+use eframe::egui::Color32;
 use std::time::Instant;
 
 /// Satu snapshot resource.
@@ -44,13 +45,29 @@ impl Default for ResourceState {
 
 impl ResourceState {
     /// Refresh sampel jika sudah lewat `interval`. Dipanggil tiap frame —
-    /// throttling internal mencegah pembacaan /proc berlebihan.
-    pub fn refresh(&mut self, interval: std::time::Duration) {
+    /// throttling internal mencegah pembacaan /proc berlebihan. Mengembalikan
+    /// true jika sampel baru benar-benar diambil (pemanggil memakai ini untuk
+    /// men-push riwayat grafis sekali per detik — bukan per frame, mencegah
+    /// duplikat saat status bar & panel Benchmark sama-sama memanggil).
+    pub fn refresh(&mut self, interval: std::time::Duration) -> bool {
         if self.last.elapsed() < interval {
-            return;
+            return false;
         }
         self.last = Instant::now();
         self.sample();
+        true
+    }
+
+    /// Warna status CPU (hijau/kuning/merah) — dipakai bersama oleh status bar
+    /// dan panel Benchmark agar konsisten (satu sumber kebenaran).
+    pub fn cpu_color(&self) -> Color32 {
+        if self.cpu_percent > 80.0 {
+            Color32::from_rgb(239, 68, 68)
+        } else if self.cpu_percent > 50.0 {
+            Color32::from_rgb(234, 179, 8)
+        } else {
+            Color32::from_rgb(34, 197, 94)
+        }
     }
 
     /// Baca semua metrik sekaligus (tanpa throttling — internal).

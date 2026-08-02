@@ -4,6 +4,7 @@ use eframe::egui;
 
 use super::benchmark;
 use super::coverage;
+use super::pipeline;
 use super::terminal;
 use super::waveform;
 use super::super::state::{BottomTab, DiagLevel, GuiState};
@@ -20,6 +21,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             (BottomTab::Benchmark, "Benchmark"),
             (BottomTab::Coverage, "Coverage"),
             (BottomTab::Terminal, "Terminal"),
+            (BottomTab::Pipeline, "Pipeline"),
         ] {
             let count = match tab {
                 BottomTab::Problems => state.diagnostics.len(),
@@ -29,6 +31,9 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
                 BottomTab::Benchmark => 0,
                 BottomTab::Coverage => state.coverage.branch_total as usize,
                 BottomTab::Terminal => state.term_lines.len(),
+                BottomTab::Pipeline => {
+                    state.compile_info.as_ref().map(|c| c.micd.as_ref().map(|m| m.files).unwrap_or(0)).unwrap_or(0)
+                }
             };
             let text = egui::RichText::new(format!("{} ({})", label, count)).size(12.0);
             if ui.selectable_label(state.bottom_tab == tab, text).clicked() {
@@ -60,6 +65,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             BottomTab::Benchmark => benchmark::show(ui, state),
             BottomTab::Coverage => coverage::show(ui, state),
             BottomTab::Terminal => terminal::show(ui, state),
+            BottomTab::Pipeline => pipeline::show(ui, state),
         });
 }
 
@@ -68,7 +74,12 @@ fn problems_tab(ui: &mut egui::Ui, state: &mut GuiState) {
         ui.label(egui::RichText::new("No problems detected").weak().italics());
         return;
     }
-    for d in &state.diagnostics {
+    // Aksi dikumpulkan dulu (borrow `state.diagnostics` immutable selesai)
+    // lalu diterapkan SETELAH loop — `state.apply_quick_fix` & `open_file`
+    // meminjam `state` mutable, tidak bisa di dalam iterasi.
+    let mut goto: Option<(String, usize)> = None;
+    let mut fix_idx: Option<usize> = None;
+    for (i, d) in state.diagnostics.iter().enumerate() {
         let (icon, color) = match d.level {
             DiagLevel::Error => ("✖", egui::Color32::from_rgb(239, 68, 68)),
             DiagLevel::Warning => ("⚠", egui::Color32::from_rgb(234, 179, 8)),
@@ -76,15 +87,59 @@ fn problems_tab(ui: &mut egui::Ui, state: &mut GuiState) {
         };
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(icon).color(color));
-            ui.label(
-                egui::RichText::new(format!("{}:{}", d.file, d.line))
-                    .weak()
-                    .monospace()
-                    .size(11.0),
-            );
+            // Lokasi — klik → buka file di editor & lompat ke baris.
+            let loc = format!("{}:{}", d.file, d.line);
+            // on_hover_text dipanggil di Response (bukan builder Link) —
+            // API egui 0.35 tidak lagi menyediakannya di builder widget.
+            let loc_resp = ui
+                .add(egui::Link::new(
+                    egui::RichText::new(&loc).weak().monospace().size(11.0),
+                ))
+                .on_hover_text("Buka file & lompat ke baris ini");
+            if loc_resp.clicked() {
+                goto = Some((d.file.clone(), d.line));
+            }
             ui.label(egui::RichText::new(&d.message).size(12.0).color(color));
+            // Quick Fix — hanya diagnostic yang punya perbaikan otomatis.
+            if let Some(fix) = &d.fix {
+                let fix_resp = ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new(format!("💡 {}", fix.action)).size(11.0),
+                        )
+                        .small()
+                        .fill(egui::Color32::from_rgb(30, 41, 59)),
+                    )
+                    .on_hover_text("Terapkan perbaikan otomatis");
+                if fix_resp.clicked() {
+                    fix_idx = Some(i);
+                }
+            }
         });
     }
+    // Terapkan aksi setelah loop (borrow immutable diagnostics selesai).
+    if let Some((file, line)) = goto {
+        open_diag_location(state, &file, line);
+    }
+    if let Some(i) = fix_idx {
+        state.apply_quick_fix(i);
+    }
+}
+
+/// Buka file diagnostic di editor & lompat ke baris target. Lompat dieksekusi
+/// ScrollArea editor pada frame berikutnya via `OpenFile.pending_goto`.
+fn open_diag_location(state: &mut GuiState, file: &str, line: usize) {
+    if file.is_empty() {
+        return;
+    }
+    let path = std::path::PathBuf::from(file);
+    state.open_file(path);
+    if let Some(idx) = state.active_file {
+        if let Some(f) = state.open_files.get_mut(idx) {
+            f.pending_goto = Some(line.max(1));
+        }
+    }
+    state.log(format!("→ {}:{}", file, line));
 }
 
 fn console_tab(ui: &mut egui::Ui, state: &mut GuiState) {

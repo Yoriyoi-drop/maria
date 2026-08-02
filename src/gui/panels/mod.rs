@@ -9,6 +9,7 @@ pub mod coverage;
 pub mod dependency;
 pub mod editor;
 pub mod outline;
+pub mod pipeline;
 pub mod search;
 pub mod sidebar;
 pub mod statusbar;

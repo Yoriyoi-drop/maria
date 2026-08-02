@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::gui::resource::ResourceState;
 use crate::ir::IrDesign;
 
@@ -60,6 +62,22 @@ pub struct OpenFile {
     pub rename_old: String,
     /// Nama baru (diisi pengguna di popup rename).
     pub rename_new: String,
+    /// Autocomplete: popup kandidat sedang terbuka (otomatis saat mengetik
+    /// identifier, atau Ctrl+Space eksplisit).
+    pub completing: bool,
+    /// Kandidat yang sudah difilter & di-sort (urutan tampil di popup).
+    pub completion_items: Vec<String>,
+    /// Item yang sedang dipilih (navigasi ↑/↓).
+    pub completion_selected: usize,
+    /// Prefix yang dipakai saat kandidat terakhir dibangun — deteksi rebuild
+    /// hanya saat prefix berubah (bukan setiap frame).
+    pub completion_prefix: String,
+    /// Byte offset awal kata yang sedang dilengkapi (batas kiri region
+    /// penggantian saat accept).
+    pub completion_insert: usize,
+    /// Byte offset akhir kata — bertumbuh saat mengetik; membeku saat caret
+    /// keluar dari kata (mis. navigasi ↑/↓).
+    pub completion_end: usize,
 }
 
 /// Level diagnostic.
@@ -148,6 +166,112 @@ pub struct DepRow {
     pub children: Vec<(String, usize)>,
 }
 
+/// Satu node hasil layout graf dependensi (tab Dependency visual) — posisi dan
+/// ukuran di layar + daftar edge (index node target, jumlah instance).
+#[derive(Debug, Clone)]
+pub struct DepGraphNode {
+    pub name: String,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    /// true bila node bagian dari siklus dependensi (ditandai merah).
+    pub in_cycle: bool,
+    /// (index node target, jumlah instance).
+    pub edges: Vec<(usize, usize)>,
+}
+
+/// Hasil layout graf dependensi + kunci cache (hash ringkas dari graf). Layout
+/// di-cache di `GuiState.dep_graph` agar tidak dihitung ulang tiap frame —
+/// deteksi siklus (reachability) bisa mahal untuk desain ribuan module.
+#[derive(Debug, Clone)]
+pub struct DepGraphLayout {
+    pub nodes: Vec<DepGraphNode>,
+    pub width: f32,
+    pub height: f32,
+    /// Kunci cache — layout dipakai ulang bila graf tidak berubah (compile sama).
+    pub key: u64,
+}
+
+/// Riwayat sampel resource realtime (CPU%, RAM GB, jumlah thread) untuk grafik
+/// history di panel Benchmark — observatory "bukan sekadar angka, tetapi
+/// histori": pengguna bisa melihat apakah perubahan terakhir membuat performa
+/// membaik atau justru memburuk. Di-push oleh status bar / panel Benchmark
+/// hanya saat sampel baru diambil (1Hz), di-cap agar memori terkendali.
+#[derive(Debug, Clone)]
+pub struct ResourceHistory {
+    pub cpu: Vec<f32>,
+    pub mem: Vec<f32>,
+    pub threads: Vec<f32>,
+    /// Maksimal entry per seri (180 sampel = 3 menit @1Hz).
+    pub max: usize,
+}
+
+impl ResourceHistory {
+    /// Tambah satu sampel; buang yang tertua jika melebihi `max`.
+    pub fn push(&mut self, cpu: f32, mem_gb: f32, threads: f32) {
+        self.cpu.push(cpu);
+        self.mem.push(mem_gb);
+        self.threads.push(threads);
+        if self.cpu.len() > self.max {
+            self.cpu.remove(0);
+            self.mem.remove(0);
+            self.threads.remove(0);
+        }
+    }
+}
+
+impl Default for ResourceHistory {
+    fn default() -> Self {
+        Self {
+            cpu: Vec::new(),
+            mem: Vec::new(),
+            threads: Vec::new(),
+            max: 180,
+        }
+    }
+}
+
+/// Statistik MICD (Maria Incremental Compilation Database) — untuk panel
+/// Pipeline. Menggambarkan seberapa efektif cache incremental compile:
+/// berapa AST di-restore (parse di-skip) vs berapa file yang berubah.
+#[derive(Debug, Clone)]
+pub struct MicdInfo {
+    /// Database ditemukan & dibaca (file metadata.mdb ada di disk).
+    pub present: bool,
+    /// Jumlah file terdaftar di database.
+    pub files: usize,
+    /// File yang AST-nya di-restore dari MICD (lexer+parser di-skip).
+    pub restored_ast: usize,
+    /// File yang berubah pada build ini (perlu di-recompile).
+    pub changed_files: usize,
+    /// Hit verification cache.
+    pub verify_hits: usize,
+    /// Miss verification cache.
+    pub verify_misses: usize,
+    /// Jumlah snapshot build tersedia (rollback).
+    pub snapshots: usize,
+    /// Ukuran database di disk (bytes, dari seluruh file .mdb).
+    pub db_bytes: u64,
+}
+
+/// Nama tahap Compile Pipeline — dipakai sebagai konstanta bersama oleh
+/// `backend.rs` (saat membangun pipeline) dan `app.rs` (saat menandai tahap
+/// Simulator selesai setelah simulasi). Hindari string hardcode ganda yang
+/// bisa divergen bila nama tahap diubah.
+pub const STAGE_SIMULATOR: &str = "Simulator";
+
+/// Satu tahap Compile Pipeline (Discovery/Lexer/Parser/Elaborator/Optimizer/
+/// Simulator) dengan waktu ukur — untuk panel Pipeline.
+#[derive(Debug, Clone)]
+pub struct PipelineStage {
+    pub name: String,
+    /// Waktu tahap (ms).
+    pub ms: u64,
+    /// Status: "ok" | "waiting" | "running".
+    pub status: String,
+}
+
 /// Hasil compile + elaborate.
 #[derive(Debug, Clone)]
 pub struct CompileInfo {
@@ -172,6 +296,18 @@ pub struct CompileInfo {
     /// Lint warning dari scan source (unused signal, blocking assignment di
     /// blok sequential, dll) — ditampilkan di Problems tab dengan Quick Fix.
     pub lint: Vec<DiagEntry>,
+    /// Statistik MICD (incremental compilation database) setelah compile —
+    /// None bila database tidak tersedia (belum pernah compile / tidak ada
+    /// project root). Dipakai panel Pipeline (Incremental Cache).
+    pub micd: Option<MicdInfo>,
+    /// Timing per tahap compile (Discovery → Preprocessor → Lexer → Parser →
+    /// Elaborator → Optimizer → Simulator) — dipakai panel Pipeline.
+    pub pipeline: Vec<PipelineStage>,
+    /// File yang di-cache (checksum cocok, tidak diproses ulang) — dari
+    /// session.timing, untuk ringkasan panel Pipeline.
+    pub cached_files: usize,
+    /// File yang benar-benar diproses pada compile ini.
+    pub processed_files: usize,
 }
 
 /// Satu sinyal waveform dengan trace transisi nilai (dari VCD).
@@ -227,7 +363,7 @@ pub struct SimInfo {
 }
 
 /// Tab sidebar.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SidebarTab {
     Project,
     Symbols,
@@ -237,7 +373,7 @@ pub enum SidebarTab {
 }
 
 /// Tab panel bawah.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BottomTab {
     Problems,
     Console,
@@ -246,6 +382,9 @@ pub enum BottomTab {
     Benchmark,
     Coverage,
     Terminal,
+    /// Compile Pipeline + Incremental Cache (MICD) — statistik compile
+    /// incremental database & timing per tahap (nilai jual Maria).
+    Pipeline,
 }
 
 /// Event yang dikirim dari worker thread ke UI thread.
@@ -294,14 +433,19 @@ pub struct GuiState {
     pub waveform: Vec<WaveformSignal>,
     /// Zoom horizontal (pixel per unit waktu).
     pub wave_zoom: f32,
+    /// Nama signal yang DISEMBUNYIKAN dari tampilan waveform (toggle di pemilih
+    /// signal panel) — filter visual tanpa mengubah data trace; berguna untuk
+    /// desain dengan banyak signal.
+    pub wave_hidden: std::collections::HashSet<String>,
 
     // ── Architecture ──
     /// State expand/collapse per node pohon arsitektur (key = path instance).
     pub arch_open: std::collections::HashMap<String, bool>,
 
     // ── Dependency ──
-    /// State expand/collapse per module di tab Dependency (key = nama module).
-    pub dep_open: std::collections::HashMap<String, bool>,
+    /// Cache layout graf dependensi visual (None sampai compile pertama) —
+    /// di-reset saat compile baru (graf berubah).
+    pub dep_graph: Option<DepGraphLayout>,
 
     // ── Outline & Search ──
     /// Panel outline kanan terlihat/tidak.
@@ -340,6 +484,8 @@ pub struct GuiState {
 
     // ── Resource monitor (CPU/RAM realtime) ──
     pub resource: ResourceState,
+    /// Riwayat sampel resource — grafik history di panel Benchmark.
+    pub resource_hist: ResourceHistory,
 
     // ── Peek Definition ──
     /// Popup Peek Definition aktif (Alt+Click): data pratinjau.
@@ -379,8 +525,9 @@ impl GuiState {
             cycles: 0,
             waveform: Vec::new(),
             wave_zoom: 4.0,
+            wave_hidden: std::collections::HashSet::new(),
             arch_open: std::collections::HashMap::new(),
-            dep_open: std::collections::HashMap::new(),
+            dep_graph: None,
             show_outline: true,
             outline_filter: String::new(),
             search_filter: String::new(),
@@ -401,6 +548,7 @@ impl GuiState {
             term_hist_idx: usize::MAX,
             term_running: false,
             resource: ResourceState::default(),
+            resource_hist: ResourceHistory::default(),
             peek: None,
             peek_anchor: None,
             sidebar_tab: SidebarTab::Project,
@@ -446,6 +594,12 @@ impl GuiState {
             renaming: false,
             rename_old: String::new(),
             rename_new: String::new(),
+            completing: false,
+            completion_items: Vec::new(),
+            completion_selected: 0,
+            completion_prefix: String::new(),
+            completion_insert: 0,
+            completion_end: 0,
         });
         self.active_file = Some(self.open_files.len() - 1);
     }
@@ -685,6 +839,12 @@ fn fix_blocking_assign(content: &mut String, line: usize) -> bool {
     for (i, l) in content.split('\n').enumerate() {
         if i + 1 == line {
             if let Some(pos) = blocking_assign_pos(l) {
+                // Separator baris SEBELUM baris yang diganti tetap harus
+                // ditulis (jangan `continue` tanpa push newline — baris
+                // sebelumnya akan menempel ke baris ini).
+                if !out.is_empty() {
+                    out.push('\n');
+                }
                 out.push_str(&l[..pos]);
                 out.push_str("<=");
                 out.push_str(&l[pos + 1..]);

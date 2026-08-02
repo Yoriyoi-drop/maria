@@ -110,6 +110,8 @@ pub struct SessionTiming {
     pub lex_ms: u64,
     pub parse_ms: u64,
     pub index_ms: u64,
+    /// Waktu elaborasi (AST → IR) — diukur di `compile_and_elaborate`.
+    pub elab_ms: u64,
     pub total_ms: u64,
     /// Files that were cached (not re-processed)
     pub cached_files: usize,
@@ -1164,6 +1166,9 @@ impl CompileSession {
         let (design, module_index) = self.compile()?;
         let index_len = module_index.len();
 
+        // Ukur waktu elaborasi secara terpisah (untuk panel Pipeline GUI).
+        let elab_start = Instant::now();
+
         // Create elaborator with source info for rich diagnostics
         let (source_lines, source_file) = self.source_info()
             .unwrap_or_default();
@@ -1179,6 +1184,7 @@ impl CompileSession {
         }
 
         let ir_design = elaborator.elaborate(top_name)?;
+        self.timing.elab_ms = elab_start.elapsed().as_millis() as u64;
 
         // Store module cache back for next incremental compile
         self.cached_elab_modules = elaborator.take_cache();

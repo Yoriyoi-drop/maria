@@ -16,10 +16,14 @@ use std::sync::atomic::Ordering;
 
 use super::backend::{scan_tree, spawn_compile, spawn_sim};
 use super::panels::{bottom, command_palette, editor, outline, sidebar, statusbar, toolbar};
-use super::state::{DiagEntry, DiagLevel, GuiEvent, GuiState};
+use super::state::{DiagEntry, DiagLevel, GuiEvent, GuiState, STAGE_SIMULATOR};
+use super::workspace::{restore_workspace, save_workspace};
 
 pub struct MariaApp {
     pub state: GuiState,
+    /// Restore workspace terakhir sudah dieksekusi (sekali di frame pertama —
+    /// scan_tree proyek bisa berat, jangan blokir pembuatan window).
+    restored: bool,
 }
 
 impl MariaApp {
@@ -28,6 +32,7 @@ impl MariaApp {
         setup_theme(&cc.egui_ctx);
         Self {
             state: GuiState::new(tx, rx),
+            restored: false,
         }
     }
 
@@ -37,14 +42,26 @@ impl MariaApp {
             match ev {
                 GuiEvent::CompileDone(result) => match result {
                     Ok((info, design)) => {
+                        // Lint warning (unused signal, blocking assignment di
+                        // blok sequential) dari scan source — tampilkan di
+                        // Problems tab dengan tombol Quick Fix (💡). Di-clone
+                        // dulu karena `info` dipindah ke compile_info.
+                        let lint = info.lint.clone();
                         self.state.design = Some(design);
                         self.state.compile_info = Some(info);
+                        // Graf dependensi berubah → buang cache layout lama
+                        // (di-rebuild dengan kunci baru saat tab dibuka).
+                        self.state.dep_graph = None;
                         let m = self.state.compile_info.as_ref().map(|i| i.modules.len()).unwrap_or(0);
                         self.state.log(format!(
                             "✅ Compile + elaborate selesai ({} module, {:.2}ms)",
                             m,
                             self.state.compile_info.as_ref().map(|i| i.total_time_ms).unwrap_or(0.0)
                         ));
+                        if !lint.is_empty() {
+                            self.state.log(format!("🔍 Lint: {} warning(s)", lint.len()));
+                            self.state.diagnostics.extend(lint);
+                        }
                     }
                     Err(diags) => {
                         // Diagnostics sudah punya file/line (dari source snippet) —
@@ -87,6 +104,20 @@ impl MariaApp {
                     self.state.is_running = false;
                     match result {
                         Ok(info) => {
+                            // Pipeline: tandai tahap Simulator selesai (✓ +
+                            // durasi) — panel Pipeline mencerminkan full
+                            // lifecycle, bukan hanya compile. Cocokkan tahap
+                            // berdasarkan NAMA (bukan last_mut) agar tidak
+                            // rapuh bila urutan tahap pipeline diubah; nama
+                            // memakai konstanta bersama STAGE_SIMULATOR.
+                            if let Some(ci) = self.state.compile_info.as_mut() {
+                                if let Some(stage) =
+                                    ci.pipeline.iter_mut().find(|s| s.name == STAGE_SIMULATOR)
+                                {
+                                    stage.status = "ok".into();
+                                    stage.ms = info.sim_time_ms as u64;
+                                }
+                            }
                             self.state.signals = info.signals;
                             self.state.cycles = info.cycles;
                             self.state.sim_time_ms = info.sim_time_ms;
@@ -112,6 +143,7 @@ impl MariaApp {
                                     line: 0,
                                     message: format!("Simulation error: {}", e),
                                     level: DiagLevel::Error,
+                                    fix: None,
                                 });
                                 self.state.log(format!("❌ Simulasi gagal: {}", e));
                             } else {
@@ -199,6 +231,8 @@ pub fn trigger_open_project(state: &mut GuiState) {
     state.signals.clear();
     state.diagnostics.clear();
     state.log("📂 Proyek dibuka");
+    // Proyek ini jadi "last workspace" — dipulihkan saat app dibuka kembali.
+    save_workspace(state);
 }
 
 /// Trigger: compile + elaborate semua file .sv/.svh di pohon proyek.
@@ -214,7 +248,10 @@ pub fn trigger_compile(state: &mut GuiState) {
     state.log(format!("🔨 Compile {} file...", paths.len()));
     state.diagnostics.clear();
     let tx = state.tx.clone();
-    spawn_compile(tx, paths);
+    // Project root dipakai backend untuk mencari database MICD (`.maria/
+    // database`) — tanpa root, compile berjalan non-incremental.
+    let project_root = state.project_root.clone();
+    spawn_compile(tx, paths, project_root);
 }
 
 /// Trigger: jalankan simulasi pada design ter-compile.
@@ -270,6 +307,17 @@ fn setup_theme(ctx: &egui::Context) {
 impl eframe::App for MariaApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+
+        // ── Restore workspace terakhir (sekali, di frame pertama) ──
+        if !self.restored {
+            self.restored = true;
+            restore_workspace(&mut self.state);
+        }
+        // ── Simpan workspace saat window akan ditutup (frame terakhir) ──
+        if ctx.input(|i| i.viewport().close_requested()) {
+            save_workspace(&self.state);
+        }
+
         self.handle_shortcuts(&ctx);
         self.poll_events();
 

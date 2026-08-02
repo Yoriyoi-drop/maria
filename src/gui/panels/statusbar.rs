@@ -53,15 +53,18 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
 
         // ── Resource monitor (CPU/RAM realtime) ──
         let res = &mut state.resource;
-        res.refresh(std::time::Duration::from_millis(1000));
+        // refresh() true hanya saat sampel BARU (1Hz) — push riwayat di sini
+        // (dipakai grafik history panel Benchmark) tanpa duplikat meski panel
+        // lain memanggil refresh juga. Field resource & resource_hist disjoint.
+        if res.refresh(std::time::Duration::from_millis(1000)) && res.cpu_percent >= 0.0 {
+            state.resource_hist.push(
+                res.cpu_percent as f32,
+                res.mem_used_gb as f32,
+                res.threads as f32,
+            );
+        }
         if res.cpu_percent >= 0.0 {
-            let cpu_color = if res.cpu_percent > 80.0 {
-                egui::Color32::from_rgb(239, 68, 68)
-            } else if res.cpu_percent > 50.0 {
-                egui::Color32::from_rgb(234, 179, 8)
-            } else {
-                egui::Color32::from_rgb(34, 197, 94)
-            };
+            let cpu_color = res.cpu_color();
             let mem_pct = if res.mem_total_gb > 0.0 {
                 (res.mem_used_gb / res.mem_total_gb * 100.0).clamp(0.0, 100.0)
             } else {

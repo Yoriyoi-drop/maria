@@ -12,6 +12,7 @@ pub mod panels;
 pub mod resource;
 pub mod semantic;
 pub mod state;
+pub mod workspace;
 
 pub use app::MariaApp;
 

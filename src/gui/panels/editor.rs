@@ -8,7 +8,10 @@ use eframe::egui;
 use egui::TextBuffer;
 
 use super::super::semantic;
-use super::super::state::{BottomTab, DiagEntry, DiagLevel, GuiState, OpenFile, PeekInfo, StickyScope};
+use super::super::state::{
+    BottomTab, DiagEntry, DiagLevel, GuiState, OpenFile, PeekInfo, StickyScope, diag_matches_file,
+    word_count,
+};
 
 pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
     // ── Welcome screen ──
@@ -220,6 +223,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
         .compile_info
         .as_ref()
         .map(|ci| &ci.symbol_files);
+    // Data AST untuk Autocomplete — module/interface/package dari compile
+    // (field-split valid: disjoint dari `state.open_files` yang dipinjam `f`).
+    let modules: Option<&Vec<String>> = state.compile_info.as_ref().map(|ci| &ci.modules);
+    let packages: Option<&Vec<String>> = state.compile_info.as_ref().map(|ci| &ci.packages);
+    let interfaces: Option<&Vec<String>> = state.compile_info.as_ref().map(|ci| &ci.interfaces);
 
     let mm_w = 14.0;
     let avail = (ui.available_width() - mm_w - 8.0).max(200.0);
@@ -238,6 +246,18 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
     // Popup peek baru dibuka frame ini — jangan langsung ditutup oleh klik yang
     // sama (klik pembuka juga terdeteksi sebagai `any_click`).
     let mut peek_opened_this_frame = false;
+    // Autocomplete: accept terdeteksi di dalam popup, diterapkan SETELAH
+    // closure (perlu `state.open_files`; `f` masih dipinjam di dalam).
+    let mut completion_accept = false;
+    // Konten awal frame — basis rollback saat accept via Enter (TextEdit
+    // multiline menyisipkan '\n' sebelum kita sempat memproses kandidat).
+    let mut frame_before = String::new();
+    // Teks berubah frame ini (dipakai trigger popup saat mengetik).
+    let mut text_changed = false;
+    // Popup baru dibuka frame ini — rebuild kandidat pertama wajib jalan
+    // (Ctrl+Space dengan prefix kosong & items kosong harus tetap tampil),
+    // meski teks tidak berubah.
+    let mut completion_just_opened = false;
 
     // ── Sticky Header ──
     // Deklarasi scope enclosing (module/interface/package/function/task/
@@ -340,7 +360,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                             editor_resp = Some(r);
                             if f.content != before {
                                 f.dirty = true;
+                                text_changed = true;
                             }
+                            // Basis rollback accept (konten sebelum TextEdit
+                            // memproses Enter/karakter frame ini).
+                            frame_before = before;
                         });
                     scroll_left = hout.state.offset.x;
                 });
@@ -470,6 +494,193 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                         }
                     });
             }
+
+            // ── Autocomplete ──
+            // Kandidat dari AST (module/interface/package/signal dari design)
+            // + keyword SV. Popup otomatis saat mengetik identifier (prefix
+            // non-kosong & teks berubah) atau Ctrl+Space eksplisit. Navigasi
+            // ↑/↓ pilih, Enter/klik sisip, Esc/klik luar batal. Posisi caret
+            // dibaca dari state TextEdit (id = response editor).
+            {
+                let caret_char = egui::text_edit::TextEditState::load(ui.ctx(), resp.id)
+                    .and_then(|s| s.cursor.char_range())
+                    .map(|r| r.primary.index.0);
+                let caret_byte = caret_char.map(|c| char_to_byte(&f.content, c));
+                let ctrl_space =
+                    ui.input(|i| i.key_pressed(egui::Key::Space) && i.modifiers.command);
+
+                // Buka popup: ketik karakter baru di dalam kata, atau Ctrl+Space.
+                if !f.completing {
+                    if let Some(cb) = caret_byte {
+                        let (ws, we) = word_region(&f.content, cb);
+                        let prefix = &f.content[ws..we.min(f.content.len())];
+                        let prefix_valid = !prefix.is_empty() && prefix.bytes().all(is_word_char);
+                        if (text_changed && prefix_valid) || ctrl_space {
+                            f.completing = true;
+                            f.completion_insert = ws;
+                            f.completion_end = we.min(f.content.len());
+                            f.completion_prefix = prefix.to_string();
+                            f.completion_selected = 0;
+                            f.completion_items.clear(); // rebuild di bawah
+                            completion_just_opened = true;
+                        }
+                    }
+                }
+
+                if f.completing {
+                    // Accept: Enter — TextEdit sudah menyisipkan '\n' di caret;
+                    // region [insert, end) dari frame sebelumnya tetap akurat
+                    // (rollback ke frame_before saat apply).
+                    if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        completion_accept = true;
+                    } else if let Some(cb) = caret_byte {
+                        // Update akhir kata bila caret masih di dalam kata
+                        // (mengetik memperpanjang). Bila caret KELUAR kata,
+                        // tutup popup HANYA jika teks berubah frame ini —
+                        // ArrowUp/Down menggerakkan caret teks (TextEdit
+                        // memegang fokus) TANPA mengubah teks; tanpa gate
+                        // ini, panah pertama langsung menutup popup dan
+                        // navigasi daftar tidak pernah berfungsi.
+                        let in_word = cb >= f.completion_insert
+                            && cb <= f.content.len()
+                            && f.content.as_bytes()[f.completion_insert..cb]
+                                .iter()
+                                .all(|b| is_word_char(*b));
+                        if in_word {
+                            f.completion_end = cb;
+                        } else if !f.completion_prefix.is_empty() && text_changed {
+                            f.completing = false;
+                        }
+                    }
+                    // Rebuild kandidat hanya saat prefix berubah atau popup baru
+                    // dibuka (Ctrl+Space dengan prefix kosong harus tetap tampil).
+                    // Tanpa flag `just_opened`, rebuild hanya pada perubahan
+                    // prefix — panah/klik tidak memicu rebuild yang sia-sia.
+                    if f.completing {
+                        let prefix = if f.completion_end >= f.completion_insert {
+                            &f.content[f.completion_insert..f.completion_end]
+                        } else {
+                            ""
+                        };
+                        if prefix != f.completion_prefix || completion_just_opened {
+                            completion_just_opened = false;
+                            f.completion_prefix = prefix.to_string();
+                            let all = completion_candidates(
+                                &f.content,
+                                modules,
+                                packages,
+                                interfaces,
+                                sig_info,
+                            );
+                            let filtered: Vec<String> = all
+                                .into_iter()
+                                .filter(|s| {
+                                    s.get(..prefix.len())
+                                        .map(|h| h.eq_ignore_ascii_case(prefix))
+                                        .unwrap_or(false)
+                                })
+                                .take(50)
+                                .collect();
+                            f.completion_items = filtered;
+                            f.completion_selected = 0;
+                        }
+                    }
+                }
+
+                if !completion_accept && f.completing && !f.completion_items.is_empty() {
+                    // Navigasi ↑/↓ (item pilihan bergerak; caret teks ikut
+                    // bergerak — tradeoff TextEdit yang memegang fokus).
+                    let n = f.completion_items.len();
+                    if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+                        f.completion_selected = (f.completion_selected + 1).min(n - 1);
+                    }
+                    if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+                        f.completion_selected = f.completion_selected.saturating_sub(1);
+                    }
+                    let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+
+                    // Posisi popup: dekat caret (perkiraan baris/kolom dari
+                    // indeks karakter via metrik monospace + offset scroll).
+                    let (row, col) = caret_char
+                        .map(|c| line_col_at_char(&f.content, c))
+                        .unwrap_or((0, 0));
+                    let margin = egui::Margin::symmetric(4, 2);
+                    let origin =
+                        resp.rect.min + egui::vec2(margin.left as f32, margin.top as f32);
+                    let anchor = origin
+                        + egui::vec2(
+                            col as f32 * char_w - scroll_left,
+                            (row as f32 + 1.0) * line_h - scroll_top + 2.0,
+                        );
+
+                    let inner = egui::Area::new(ui.id().with("autocomplete"))
+                        .fixed_pos(anchor)
+                        .order(egui::Order::Foreground)
+                        .show(ui.ctx(), |ui| {
+                            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                                ui.set_min_width(260.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("✦")
+                                            .color(egui::Color32::from_rgb(79, 193, 255)),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "{} — {} kandidat",
+                                            f.completion_prefix,
+                                            f.completion_items.len()
+                                        ))
+                                        .weak()
+                                        .size(10.0),
+                                    );
+                                });
+                                ui.separator();
+                                egui::ScrollArea::vertical()
+                                    .id_salt("autocomplete_list")
+                                    .max_height(180.0)
+                                    .show(ui, |ui| {
+                                        let items = f.completion_items.clone();
+                                        for (i, item) in items.iter().enumerate() {
+                                            let sel = i == f.completion_selected;
+                                            let text = egui::RichText::new(item)
+                                                .monospace()
+                                                .size(11.0)
+                                                .color(if sel {
+                                                    egui::Color32::from_rgb(59, 130, 246)
+                                                } else {
+                                                    ui.visuals().text_color()
+                                                });
+                                            let r = ui.selectable_label(sel, text);
+                                            if sel {
+                                                r.scroll_to_me(Some(egui::Align::Center));
+                                            }
+                                            if r.clicked() {
+                                                f.completion_selected = i;
+                                                completion_accept = true;
+                                            }
+                                        }
+                                    });
+                                ui.separator();
+                                ui.label(
+                                    egui::RichText::new("↑↓ pilih · Enter sisip · Esc batal")
+                                        .weak()
+                                        .size(10.0),
+                                );
+                            });
+                        });
+
+                    // Klik di luar popup → tutup (Esc juga).
+                    let click_outside = !completion_accept
+                        && ui.input(|i| i.pointer.any_click())
+                        && ui
+                            .input(|i| i.pointer.interact_pos())
+                            .map(|p| !inner.response.rect.contains(p))
+                            .unwrap_or(false);
+                    if esc || click_outside {
+                        f.completing = false;
+                    }
+                }
+            }
         }
 
         ui.add_space(4.0);
@@ -479,6 +690,34 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
     });
     if want_problems {
         state.bottom_tab = BottomTab::Problems;
+    }
+
+    // ── Autocomplete: sisipkan kandidat terpilih (Enter / klik item) ──
+    if completion_accept {
+        let mut applied = false;
+        if let Some(of) = state.open_files.get_mut(idx) {
+            if of.completing {
+                let item = of.completion_items.get(of.completion_selected).cloned();
+                if let Some(item) = item {
+                    let insert = of.completion_insert;
+                    let end = of.completion_end;
+                    // Basis = konten awal frame: TextEdit multiline menyisipkan
+                    // '\n' pada Enter sebelum accept diproses — rollback supaya
+                    // region [insert, end) akurat (tanpa '\n').
+                    let mut c = frame_before;
+                    if insert <= end && end <= c.len() {
+                        c.replace_range(insert..end, &item);
+                        of.content = c;
+                        of.dirty = true;
+                        applied = true;
+                    }
+                }
+                of.completing = false;
+            }
+        }
+        if applied {
+            state.log("✦ Autocomplete: kandidat disisipkan");
+        }
     }
 
     // ── Go To Definition: buka file target (bila beda) + lompat ke baris ──
@@ -672,31 +911,6 @@ fn build_code_lens(
         out.push((kind.to_string(), name, refs));
     }
     out
-}
-
-/// Cocokkan file diagnostic (dari compile) dengan file yang sedang dibuka.
-/// Nama file dibandingkan (bukan path penuh) — path bisa berbeda format antara
-/// compiler dan tree project.
-fn diag_matches_file(diag_file: &str, open_path: &str) -> bool {
-    if diag_file.is_empty() {
-        return false;
-    }
-    // Fallback pertama: path persis sama (paling andal).
-    if diag_file == open_path {
-        return true;
-    }
-    // Kedua: nama file sama — cegah mis-attribute bila ada dua file bernama
-    // sama di direktori berbeda (bandingkan nama saja tetap lebih baik dari
-    // path penuh yang formatnya bisa beda antara compiler & tree project).
-    let a = std::path::Path::new(diag_file)
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let b = std::path::Path::new(open_path)
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
-    !a.is_empty() && a == b
 }
 
 /// Mini Map editor: strip sempit di kanan editor, setiap baris file diwarnai
@@ -1241,32 +1455,6 @@ fn is_word_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
 }
 
-/// Jumlah kemunculan `word` sebagai kata utuh di `text` (boundary aman).
-fn word_count(text: &str, word: &str) -> usize {
-    if word.is_empty() {
-        return 0;
-    }
-    let b = text.as_bytes();
-    let wb = word.as_bytes();
-    let n = b.len();
-    let mut count = 0usize;
-    let mut i = 0usize;
-    while i + wb.len() <= n {
-        if b[i] == wb[0] {
-            let prev_ok = i == 0 || !is_word_char(b[i - 1]);
-            let end = i + wb.len();
-            let next_ok = end >= n || !is_word_char(b[end]);
-            if prev_ok && next_ok && &b[i..end] == wb {
-                count += 1;
-                i = end;
-                continue;
-            }
-        }
-        i += 1;
-    }
-    count
-}
-
 /// Apakah `name` (kata utuh) di baris ini diikuti operator assignment
 /// (=, <=, +=, -=, *=, /=, &=, |=, ^=, <<=, >>=)? Indeks array `[i]` antara
 /// nama dan operator ikut dilewati (`data[3] <= 1` tetap terdeteksi).
@@ -1441,4 +1629,136 @@ fn utf8_len(b: u8) -> usize {
     } else {
         4
     }
+}
+
+// ─────────────────────────── Autocomplete ───────────────────────────
+
+/// Keyword SystemVerilog umum — kandidat autocomplete tingkat pertama
+/// (selain symbol dari AST: module/interface/package/signal).
+const SV_KEYWORDS: &[&str] = &[
+    "module", "endmodule", "interface", "endinterface", "package", "endpackage",
+    "always", "always_ff", "always_comb", "always_latch", "initial", "final",
+    "begin", "end", "if", "else", "case", "casez", "casex", "default", "for",
+    "while", "repeat", "forever", "fork", "join", "join_any", "join_none",
+    "input", "output", "inout", "logic", "reg", "wire", "bit", "int", "integer",
+    "byte", "shortint", "longint", "time", "real", "tri", "parameter",
+    "localparam", "genvar", "assign", "function", "endfunction", "task",
+    "endtask", "typedef", "enum", "struct", "union", "class", "endclass",
+    "return", "break", "continue", "signed", "unsigned", "var", "void",
+    "import", "export", "assert", "cover",
+];
+
+/// Kandidat autocomplete: keyword SV + module/interface/package + signal
+/// (dari SEMUA module di design) + typedef/enum/parameter di file aktif.
+fn completion_candidates(
+    content: &str,
+    modules: Option<&Vec<String>>,
+    packages: Option<&Vec<String>>,
+    interfaces: Option<&Vec<String>>,
+    sig_info: Option<&HashMap<String, (String, usize)>>,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    out.extend(SV_KEYWORDS.iter().map(|s| s.to_string()));
+    if let Some(m) = modules {
+        out.extend(m.iter().cloned());
+    }
+    if let Some(p) = packages {
+        out.extend(p.iter().cloned());
+    }
+    if let Some(i) = interfaces {
+        out.extend(i.iter().cloned());
+    }
+    if let Some(m) = sig_info {
+        out.extend(m.keys().cloned());
+    }
+    out.extend(scan_declared_names(content));
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Nama typedef/enum/parameter yang dideklarasikan di file aktif — scan
+/// heuristik per-baris: typedef → nama terakhir sebelum ';'; parameter →
+/// identifier pertama setelah keyword & tipe opsional (int/logic/[..] dll).
+fn scan_declared_names(content: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in content.lines() {
+        let code = raw.split("//").next().unwrap_or(raw).trim();
+        if code.is_empty() {
+            continue;
+        }
+        let mut it = code.split_whitespace();
+        match it.next() {
+            Some("typedef") => {
+                // typedef [enum|struct|logic ...] nama; — token terakhir
+                // sebelum ';' (setelah '}' untuk enum berisi member).
+                let sans_semi = code.trim_end_matches(';');
+                if let Some(tok) = sans_semi.split_whitespace().last() {
+                    let clean: String = tok
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    if !clean.is_empty() && !SV_KEYWORDS.contains(&clean.as_str()) {
+                        out.push(clean);
+                    }
+                }
+            }
+            Some("parameter") | Some("localparam") => {
+                // parameter [int|logic|...] NAMA = ...; — identifier pertama
+                // yang bukan tipe/keyword.
+                for tok in it {
+                    let clean: String = tok
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    if clean.is_empty() || SV_KEYWORDS.contains(&clean.as_str()) {
+                        continue;
+                    }
+                    out.push(clean);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Byte offset karakter ke-`char_idx` (indeks karakter, bukan byte).
+fn char_to_byte(content: &str, char_idx: usize) -> usize {
+    content
+        .char_indices()
+        .nth(char_idx)
+        .map(|(b, _)| b)
+        .unwrap_or(content.len())
+}
+
+/// (baris, kolom) 0-based dari indeks karakter.
+fn line_col_at_char(content: &str, char_idx: usize) -> (usize, usize) {
+    let mut seen = 0usize;
+    for (i, line) in content.split('\n').enumerate() {
+        let n = line.chars().count();
+        if char_idx <= seen + n {
+            return (i, char_idx.saturating_sub(seen));
+        }
+        seen += n + 1; // + newline
+    }
+    (content.lines().count().saturating_sub(1), 0)
+}
+
+/// Region kata (start..end byte) yang menutupi `byte_idx` (scan kata utuh
+/// kiri-kanan; karakter non-ASCII bukan word char → boundary aman).
+fn word_region(content: &str, byte_idx: usize) -> (usize, usize) {
+    let b = content.as_bytes();
+    let n = content.len();
+    let idx = byte_idx.min(n);
+    let mut start = idx;
+    while start > 0 && is_word_char(b[start - 1]) {
+        start -= 1;
+    }
+    let mut end = idx;
+    while end < n && is_word_char(b[end]) {
+        end += 1;
+    }
+    (start, end)
 }

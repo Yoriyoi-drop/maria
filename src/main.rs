@@ -1207,48 +1207,46 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     }
 
     // ── Full pipeline: compile + elaborate ──
-    let (design, ir_design, index_len) = if cli.recompile {        if !cli.quiet { eprintln!("Forcing full recompile..."); }
+    let (design, index_len) = if cli.recompile {
+        if !cli.quiet { eprintln!("Forcing full recompile..."); }
         let all_sources: Vec<PathBuf> = session.config.sources.clone();
         let (design, module_index) = session.compile_incremental(&all_sources)?;
         let index_len = module_index.len();
         if !cli.quiet { session.print_timing(); }
-        let design_clone = design.clone();
-        let (source_lines, source_file) = session.source_info().unwrap_or_default();
-        let mut elab = if source_lines.is_empty() {
-            Elaborator::new(design)
-        } else {
-            Elaborator::with_source(design, source_lines, source_file)
-        };
-        let ir_design = match elab.elaborate(top_name) {
-            Ok(d) => d,
-            Err(e) => {
-                emit_diags(&elab.flush_diagnostics());
-                return Err(e);
-            }
-        };
-        emit_diags(&elab.flush_diagnostics());
-        (design_clone, ir_design, index_len)
+        (design, index_len)
     } else {
         let (design, module_index) = session.compile()?;
         let index_len = module_index.len();
         if !cli.quiet { session.print_timing(); }
-        let design_clone = design.clone();
-        let (source_lines, source_file) = session.source_info().unwrap_or_default();
-        let mut elab = if source_lines.is_empty() {
-            Elaborator::new(design)
-        } else {
-            Elaborator::with_source(design, source_lines, source_file)
-        };
-        let ir_design = match elab.elaborate(top_name) {
-            Ok(d) => d,
-            Err(e) => {
-                emit_diags(&elab.flush_diagnostics());
-                return Err(e);
-            }
-        };
-        emit_diags(&elab.flush_diagnostics());
-        (design_clone, ir_design, index_len)
+        (design, index_len)
     };
+
+    // ── MICD: simpan hasil parse SEGERA (sebelum elaborate) agar cache
+    // parse tetap tersimpan walau elaborasi gagal. ──
+    micd_save_and_print(&mut session, cli.quiet);
+
+    if design.modules.is_empty() {
+        return Err(SimError::with_diag(DiagCode::ModuleNotFound, "no modules found in design"));
+    }
+    if cli.print_ast {
+        println!("{:#?}", design);
+    }
+
+    // Elaborate (source info dari merged source — sudah tersimpan di MICD).
+    let (source_lines, source_file) = session.source_info().unwrap_or_default();
+    let mut elab = if source_lines.is_empty() {
+        Elaborator::new(design)
+    } else {
+        Elaborator::with_source(design, source_lines, source_file)
+    };
+    let ir_design = match elab.elaborate(top_name) {
+        Ok(d) => d,
+        Err(e) => {
+            emit_diags(&elab.flush_diagnostics());
+            return Err(e);
+        }
+    };
+    emit_diags(&elab.flush_diagnostics());
 
     // ── MICD: tandai elaborasi sukses + simpan verify cache ──
     session.micd_mark_elaborated();
@@ -1295,14 +1293,6 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         if let Some(report) = session.profile_report() {
             eprintln!("{}", report);
         }
-    }
-
-    if cli.print_ast {
-        println!("{:#?}", design);
-    }
-
-    if design.modules.is_empty() {
-        return Err(SimError::with_diag(DiagCode::ModuleNotFound, "no modules found in design"));
     }
 
     // ── Lazy mode info (when not compile-only) ──

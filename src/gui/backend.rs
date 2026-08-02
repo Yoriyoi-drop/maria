@@ -19,7 +19,8 @@ use crate::simulator::SimulationEngine;
 
 use super::state::{
     CompileInfo, CovergroupRow, CoverageInfo, DepRow, DiagEntry, DiagLevel, FileNode, GuiEvent,
-    QuickFix, QuickFixKind, SimInfo, SignalRow, WaveformSignal, blocking_assign_pos, word_count,
+    MicdInfo, PipelineStage, QuickFix, QuickFixKind, SimInfo, SignalRow, WaveformSignal,
+    blocking_assign_pos, word_count, STAGE_SIMULATOR,
 };
 
 /// Scan direktori → pohon file (rekursif, sinkron).
@@ -55,10 +56,12 @@ pub fn scan_tree(root: &Path) -> Vec<FileNode> {
     build(root)
 }
 
-/// Compile + elaborate project di worker thread.
-pub fn spawn_compile(tx: Sender<GuiEvent>, paths: Vec<PathBuf>) {
+/// Compile + elaborate project di worker thread. `project_root` dipakai untuk
+/// mencari database MICD (`.maria/database`) — bila ada, compile menjadi
+/// incremental (file tak berubah di-restore AST, lexer+parser di-skip).
+pub fn spawn_compile(tx: Sender<GuiEvent>, paths: Vec<PathBuf>, project_root: Option<PathBuf>) {
     std::thread::spawn(move || {
-        let result = compile_project(&paths);
+        let result = compile_project(&paths, project_root.as_deref());
         let _ = tx.send(GuiEvent::CompileDone(result));
     });
 }
@@ -92,7 +95,13 @@ fn simerr_to_diags(err: &SimError) -> Vec<DiagEntry> {
 
 /// Compile + elaborate semua file. Mengembalikan info + design ter-elaborasi,
 /// atau daftar diagnostics (error) dengan lokasi file/line.
-pub fn compile_project(paths: &[PathBuf]) -> Result<(CompileInfo, IrDesign), Vec<DiagEntry>> {
+/// `project_root` dipakai mencari database MICD (`.maria/database`) — bila
+/// ada, compile incremental: file tak berubah di-restore AST-nya (lexer+
+/// parser di-skip), lalu state disimpan kembali setelah compile.
+pub fn compile_project(
+    paths: &[PathBuf],
+    project_root: Option<&std::path::Path>,
+) -> Result<(CompileInfo, IrDesign), Vec<DiagEntry>> {
     let start = std::time::Instant::now();
 
     let mut config = SessionConfig::default();
@@ -103,10 +112,97 @@ pub fn compile_project(paths: &[PathBuf]) -> Result<(CompileInfo, IrDesign), Vec
     config.auto_incdirs = true;
 
     let mut session = CompileSession::new(config);
+
+    // ── MICD: attach database persisten (incremental compile lintas run) ──
+    // Bila database belum ada (compile pertama), open() memberi DB kosong dan
+    // save_micd() di bawah akan membuatnya — run berikutnya file yang hash
+    // kontennya sama di-restore AST-nya (skip lexer+parser). Root database =
+    // `<project>/.maria/database` (sama dengan CLI).
+    let micd_root = project_root.map(|r| r.join(".maria").join("database"));
+    if let Some(root) = micd_root.as_deref() {
+        let db = crate::micd::MicdDatabase::open(root);
+        session.attach_micd(db);
+    }
+
     let (_design, ir_design, _idx) = match session.compile_and_elaborate(None) {
         Ok(v) => v,
         Err(e) => return Err(simerr_to_diags(&e)),
     };
+
+    // ── MICD: tandai ter-elaborasi + simpan database + kumpulkan statistik ──
+    // untuk panel Pipeline. Best-effort: kegagalan save tidak menggagalkan
+    // compile (statistik hanya berisi 0/None).
+    let micd = if session.micd.is_some() {
+        session.micd_mark_elaborated();
+        let stats = session.save_micd().ok().flatten();
+        let db_ref = session.micd.as_ref();
+        Some(MicdInfo {
+            present: true,
+            files: db_ref.map(|d| d.files.len()).unwrap_or(0),
+            restored_ast: stats
+                .as_ref()
+                .map(|s| s.restored_designs)
+                .unwrap_or_else(|| session.micd_restored_count()),
+            changed_files: stats.as_ref().map(|s| s.changed_files).unwrap_or(0),
+            verify_hits: stats
+                .as_ref()
+                .map(|s| s.verify_hits)
+                .unwrap_or_else(|| db_ref.map(|d| micd_verify_hits(d)).unwrap_or(0)),
+            verify_misses: stats
+                .as_ref()
+                .map(|s| s.verify_misses)
+                .unwrap_or_else(|| db_ref.map(|d| micd_verify_misses(d)).unwrap_or(0)),
+            snapshots: db_ref.map(|d| d.snapshots.len()).unwrap_or(0),
+            db_bytes: micd_db_bytes(micd_root.as_deref()),
+        })
+    } else {
+        None
+    };
+
+    // ── Pipeline timing per tahap (dari session.timing + estimasi tahap
+    // elaboration) untuk panel Pipeline. Optimizer & Simulator belum
+    // dijalankan saat compile — status "waiting". ──
+    let t = &session.timing;
+    let pipeline = vec![
+        PipelineStage {
+            name: "Discovery".into(),
+            ms: t.discovery_ms,
+            status: "ok".into(),
+        },
+        PipelineStage {
+            name: "Preprocessor".into(),
+            ms: t.preprocess_ms,
+            status: "ok".into(),
+        },
+        PipelineStage {
+            name: "Lexer".into(),
+            ms: t.lex_ms,
+            status: "ok".into(),
+        },
+        PipelineStage {
+            name: "Parser".into(),
+            ms: t.parse_ms,
+            status: "ok".into(),
+        },
+        PipelineStage {
+            name: "Elaborator".into(),
+            ms: t.elab_ms,
+            status: "ok".into(),
+        },
+        PipelineStage {
+            name: "Optimizer".into(),
+            ms: 0,
+            status: "waiting".into(),
+        },
+        PipelineStage {
+            name: STAGE_SIMULATOR.into(),
+            ms: 0,
+            status: "waiting".into(),
+        },
+    ];
+    let cached_files = t.cached_files;
+    let processed_files = t.processed_files;
+
 
     let modules: Vec<String> = session
         .module_index
@@ -195,9 +291,53 @@ pub fn compile_project(paths: &[PathBuf]) -> Result<(CompileInfo, IrDesign), Vec
             signal_info,
             symbol_files,
             lint,
+            micd,
+            pipeline,
+            cached_files,
+            processed_files,
         },
         ir_design,
     ))
+}
+
+/// Helper: jumlah hit verification cache (dari MicdDatabase — dipakai bila
+/// MicdStats tidak tersedia).
+fn micd_verify_hits(db: &crate::micd::MicdDatabase) -> usize {
+    db.verify.values().filter(|v| v.ok()).count()
+}
+
+/// Helper: jumlah miss verification cache.
+fn micd_verify_misses(db: &crate::micd::MicdDatabase) -> usize {
+    db.files.len().saturating_sub(micd_verify_hits(db))
+}
+
+/// Helper: total ukuran database MICD di disk (bytes). Menghitung SEMUA
+/// file `.mdb` secara rekursif — termasuk `snapshots/` dan `cache/` yang
+/// juga bagian dari database (sesuai db.md), bukan hanya root directory.
+fn micd_db_bytes(root: Option<&std::path::Path>) -> u64 {
+    let Some(root) = root else {
+        return 0;
+    };
+    fn walk(dir: &std::path::Path, total: &mut u64) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            // file_type() TIDAK mengikuti symlink — mencegah infinite
+            // recursion bila database berisi symlink ke direktori induk.
+            if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                walk(&p, total);
+            } else if p.extension().and_then(|e| e.to_str()) == Some("mdb") {
+                if let Ok(m) = std::fs::metadata(&p) {
+                    *total += m.len();
+                }
+            }
+        }
+    }
+    let mut total = 0u64;
+    walk(root, &mut total);
+    total
 }
 
 /// ────────────────────────── Lint ringan (Quick Fix) ──────────────────────────

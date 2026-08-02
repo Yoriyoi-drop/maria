@@ -34,8 +34,8 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
         return;
     }
 
-    // Borrow (bukan clone) — rendering hanya membaca; `wave_zoom` yang di-mutasi
-    // slider adalah field terpisah sehingga borrow field-level aman.
+    // Borrow (bukan clone) — rendering hanya membaca; `wave_zoom` / `wave_hidden`
+    // yang di-mutasi kontrol adalah field terpisah sehingga borrow field-level aman.
     let signals = &state.waveform;
     let t_end = signals
         .iter()
@@ -44,7 +44,13 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
         .unwrap_or(0);
     let scale = state.wave_zoom.max(0.2);
 
-    // ── Kontrol zoom ──
+    // Signal yang terlihat — filter `wave_hidden` (pemilih signal di bawah).
+    let visible: Vec<&WaveformSignal> = signals
+        .iter()
+        .filter(|s| !state.wave_hidden.contains(&s.name))
+        .collect();
+
+    // ── Kontrol zoom + pemilih signal ──
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Zoom").weak().size(11.0));
         if ui.button("−").clicked() {
@@ -65,16 +71,45 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
         ui.separator();
         ui.label(
             egui::RichText::new(format!(
-                "{} signal · T_max = {} · {:.1} px/unit",
-                signals.len(),
+                "{} signal · T_max = {} · {:.1} px/unit · Ctrl+scroll = zoom",
+                visible.len(),
                 t_end,
                 scale
             ))
             .weak()
             .size(11.0),
         );
+        // ── Pemilih signal: centang = tampil, hapus centang = sembunyikan.
+        ui.separator();
+        egui::ComboBox::from_id_salt("wave_sig_picker")
+            .selected_text(format!("{} / {} signal", visible.len(), signals.len()))
+            .show_ui(ui, |ui| {
+                for sig in signals {
+                    let mut on = !state.wave_hidden.contains(&sig.name);
+                    if ui.checkbox(&mut on, &sig.name).changed() {
+                        if on {
+                            state.wave_hidden.remove(&sig.name);
+                        } else {
+                            state.wave_hidden.insert(sig.name.clone());
+                        }
+                    }
+                }
+                ui.separator();
+                if ui.button("Tampilkan semua").clicked() {
+                    state.wave_hidden.clear();
+                }
+            });
     });
     ui.separator();
+
+    if visible.is_empty() {
+        ui.label(
+            egui::RichText::new("Semua signal disembunyikan — centang di pemilih signal")
+                .weak()
+                .italics(),
+        );
+        return;
+    }
 
     let wf_w = (t_end as f32 + 8.0) * scale;
     let mut wf_rect: Option<egui::Rect> = None;
@@ -97,8 +132,8 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
             });
             ui.separator();
 
-            // ── Baris per signal ──
-            for sig in signals {
+            // ── Baris per signal (hanya yang terlihat) ──
+            for sig in &visible {
                 ui.horizontal(|ui| {
                     let icon = if sig.width == 1 { "─" } else { "≡" };
                     ui.add_sized(
@@ -120,9 +155,19 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
                 });
             }
 
-            // ── Cursor hover (seluruh area waveform) ──
+            // ── Cursor hover + Ctrl+scroll zoom (seluruh area waveform) ──
             if let Some(wf) = wf_rect {
                 let resp = ui.interact(wf, egui::Id::new("waveform_hover"), egui::Sense::hover());
+                if resp.hovered() {
+                    // Ctrl+scroll (atau pinch trackpad) = zoom horizontal.
+                    // Catatan: ScrollArea sudah membaca scroll delta sebelum
+                    // closure konten berjalan, jadi area boleh ikut scroll
+                    // sedikit saat zoom — diterima (tidak bisa di-consume).
+                    let zd = ui.input(|i| i.zoom_delta());
+                    if zd != 1.0 {
+                        state.wave_zoom = (state.wave_zoom * zd).clamp(0.5, 1024.0);
+                    }
+                }
                 if let Some(p) = resp.hover_pos() {
                     let t = ((p.x - wf.left()) / scale).max(0.0) as u64;
                     readout = Some(t);
@@ -137,9 +182,9 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     if let Some(t) = readout {
         const MAX_READOUT: usize = 12;
         let mut line = format!("t = {}", t);
-        for (i, sig) in signals.iter().enumerate() {
+        for (i, sig) in visible.iter().enumerate() {
             if i >= MAX_READOUT {
-                line.push_str(&format!("   … +{} sinyal lagi", signals.len() - MAX_READOUT));
+                line.push_str(&format!("   … +{} sinyal lagi", visible.len() - MAX_READOUT));
                 break;
             }
             line.push_str(&format!("   {} = {}", sig.name, value_at(sig, t)));
