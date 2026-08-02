@@ -196,10 +196,41 @@ pub fn compute_expr_width(
         Expr::MethodCall { .. } | Expr::StreamingConcat { .. } | Expr::Dist { .. } => {
             Err("width not computable for this expression type".to_string())
         }
-        Expr::ScopedIdent { package, item } => Err(format!(
-            "cannot determine width of '{}.{}' at compile time",
-            package, item
-        )),
+        Expr::ScopedIdent { package, item } => {
+            // Enum member / konstanta package yang di-flatten ke param_vals
+            // sebagai qualified `pkg::item` (build_pkg_param_ctx). Contoh nyata
+            // OpenTitan: `prim_mubi_pkg::MuBi4False` sebagai argumen port.
+            let qualified = Symbol::intern(&format!("{}::{}", package.as_str(), item.as_str()));
+            if let Some(&val) = param_vals.get(&qualified) {
+                let abs = val.unsigned_abs();
+                return Ok(if val == 0 {
+                    1
+                } else {
+                    64 - (abs.leading_zeros() as usize)
+                }
+                .max(1));
+            }
+            // Package parameter dengan default: `pkg::PARAM`.
+            if let Some(pkg_items) = package_symbols.get(package) {
+                if let Some(PackageItem::Param(p)) = pkg_items.get(item) {
+                    if let Some(expr) = &p.default {
+                        if let Ok(val) = const_eval_with_params(expr, param_vals) {
+                            let abs = val.unsigned_abs();
+                            return Ok(if val == 0 {
+                                1
+                            } else {
+                                64 - (abs.leading_zeros() as usize)
+                            }
+                            .max(1));
+                        }
+                    }
+                }
+            }
+            Err(format!(
+                "cannot determine width of '{}.{}' at compile time",
+                package, item
+            ))
+        }
         _ => Err("cannot determine width of expression".to_string()),
     }
 }

@@ -213,12 +213,44 @@ pub(crate) fn func_port_width(func: &FunctionDecl, port_name: Symbol) -> usize {
         if let Some(r) = &port.range {
             return r.width();
         }
+        // `logic [7:0] in` menyimpan range di expr_range (bukan range)
+        // bila batasnya ekspresi/konstanta yang belum di-fold saat parse.
+        if let Some(er) = &port.expr_range {
+            if let (Ok(msb), Ok(lsb)) = (
+                super::types::const_eval_simple(&er.msb),
+                super::types::const_eval_simple(&er.lsb),
+            ) {
+                let width = if msb >= lsb {
+                    (msb - lsb + 1) as usize
+                } else {
+                    (lsb - msb + 1) as usize
+                };
+                if width > 0 {
+                    return width;
+                }
+            }
+        }
     }
     for decl in &func.decls {
         for var in &decl.names {
             if var.name == port_name {
                 if let Some(r) = &var.range {
                     return r.width();
+                }
+                if let Some(er) = &var.expr_range {
+                    if let (Ok(msb), Ok(lsb)) = (
+                        super::types::const_eval_simple(&er.msb),
+                        super::types::const_eval_simple(&er.lsb),
+                    ) {
+                        let width = if msb >= lsb {
+                            (msb - lsb + 1) as usize
+                        } else {
+                            (lsb - msb + 1) as usize
+                        };
+                        if width > 0 {
+                            return width;
+                        }
+                    }
                 }
                 return 1;
             }

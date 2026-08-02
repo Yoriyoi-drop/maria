@@ -377,6 +377,7 @@ _ => {}
                             None
                         },
                         array_range: None,
+                        array_size_expr: None,
 
                         extra_packed_dims: vec![],
                         is_dynamic: false,
@@ -1439,6 +1440,19 @@ _ => {}
                         }
                     }
                 }
+                // Scoped type name `pkg::type` — cari di package yang tepat.
+                // Nama disimpan sebagai "pkg::type", sedangkan key package
+                // symbols hanya berisi nama tipe tanpa prefix.
+                if let Some((pkg, type_name)) = name.as_str().split_once("::") {
+                    if let Some(pkg_items) = self.package_symbols.get(pkg) {
+                        if let Some(PackageItem::Typedef(td)) = pkg_items.get(type_name) {
+                            let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
+                            if width > 0 {
+                                return Ok(width);
+                            }
+                        }
+                    }
+                }
                 // Check in-module typedefs stored in typedef_map
                 if let Some(&width) = self.typedef_map.get(name) {
                     return Ok(width);
@@ -1456,32 +1470,54 @@ _ => {}
         match dtype {
             DataType::UnionType { members } => members
                 .iter()
-                .map(|m| {
-                    let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
-                    StructFieldInfo {
-                        name: m.name,
-                        offset: 0,
-                        width: w,
-                    }
-                })
+                .map(|m| Self::struct_field_from_member(m, 0))
                 .collect(),
             DataType::StructType { members } => {
                 let mut fields = Vec::new();
                 let mut offset = 0usize;
                 let members_rev: Vec<_> = members.iter().rev().collect();
                 for m in &members_rev {
-                    let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
-                    fields.push(StructFieldInfo {
-                        name: m.name,
-                        offset,
-                        width: w,
-                    });
-                    offset += w;
+                    fields.push(Self::struct_field_from_member(m, offset));
+                    offset += m.range.as_ref().map(|r| r.width()).unwrap_or(1);
                 }
                 fields.reverse();
                 fields
             }
             _ => vec![],
+        }
+    }
+
+    /// Bangun satu `StructFieldInfo` dari member struct/union. Untuk field
+    /// bertipe typedef (`UserDefined`) simpan `type_name` agar chain bisa
+    /// resolve lewat typedef_field_map; untuk anonymous struct/union inline
+    /// simpan `sub_fields` (dari compute_struct_fields) agar `a.b.c` tetap
+    /// bisa di-resolve berjenjang tanpa nama tipe.
+    fn struct_field_from_member(m: &StructMember, offset: usize) -> StructFieldInfo {
+        let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
+        match m.dtype.as_ref() {
+            DataType::UserDefined(t) => StructFieldInfo {
+                name: m.name,
+                offset,
+                width: w,
+                type_name: Some(*t),
+                sub_fields: vec![],
+            },
+            DataType::StructType { .. } | DataType::UnionType { .. } => StructFieldInfo {
+                name: m.name,
+                offset,
+                width: w,
+                // Anonymous struct/union inline — tidak ada nama tipe untuk
+                // lookup typedef_field_map; simpan fields langsung.
+                type_name: None,
+                sub_fields: Self::compute_struct_fields(m.dtype.as_ref()),
+            },
+            _ => StructFieldInfo {
+                name: m.name,
+                offset,
+                width: w,
+                type_name: None,
+                sub_fields: vec![],
+            },
         }
     }
 }
@@ -1907,6 +1943,25 @@ impl Elaborator {
                 PortDirection::Inout => inouts.push(sid),
                 PortDirection::Ref => inouts.push(sid),
             }
+            // Struct-typed port: isi struct_fields agar member access
+            // (`hw2reg.val.d = ...`) bisa di-resolve sebagai lvalue. dtype_name
+            // bisa berformat `pkg::type` (scoped) atau nama typedef biasa.
+            if let Some(tn) = &port.dtype_name {
+                let lookup = tn.as_str();
+                let resolved: Option<Vec<StructFieldInfo>> = if let Some((_, t)) =
+                    lookup.split_once("::")
+                {
+                    self.typedef_field_map.get(t).cloned()
+                } else {
+                    self.typedef_field_map.get(tn).cloned()
+                };
+                if let Some(fields) = resolved {
+                    if !fields.is_empty() {
+                        let sig = &mut signals[sid];
+                        sig.struct_fields = fields;
+                    }
+                }
+            }
             // Set packed_dims untuk port packed multi-dimensi (`[a:b][c:d] name`)
             // agar akses elemen `name[k]` benar (via RangeSelect).
             if !port.extra_packed_dims.is_empty() {
@@ -1931,8 +1986,97 @@ impl Elaborator {
             }
         }
 
-        // Process declarations with parameter-aware width resolution
+        // ── Generate expansion (SEBELUM pemrosesan deklarasi) ──
+        // Expand generate blocks in module items — dilakukan lebih awal agar
+        // deklarasi yang dihasilkan branch generate (mis. `logic wptr_err;`
+        // saat Secure=1) ikut terdaftar sebagai sinyal. Tanpa ini, sinyal
+        // seperti itu hilang → error "signal not found" (E2001).
+        // Collect body-level params (localparam, parameter) into effective_params
+        for item in &module.items {
+            if let ModuleItem::Param(p) = item {
+                if !effective_params.contains_key(&p.name) {
+                    if let Some(expr) = &p.default {
+                        if let Ok(val) = const_eval_with_params(expr, &effective_params) {
+                            effective_params.insert(p.name, val);
+                        }
+                    }
+                }
+            }
+        }
+        self.param_vals = effective_params.clone();
+
+        let expanded_items: Vec<ModuleItem> = {
+            let mut items = Vec::new();
+            for item in &module.items {
+                match item {
+                    ModuleItem::Generate(gen) => {
+                        let expanded = expand_generate_block(gen, &effective_params, &self.diag_sink)
+                            .map_err(|e| self.elab_diag_at(DiagCode::InvalidSyntax, format!("generate block expansion failed: {}", e.msg), e.line, e.col))?;
+                        // Collect params from expanded generate items too
+                        for ei in &expanded {
+                            if let ModuleItem::Param(p) = ei {
+                                if !effective_params.contains_key(&p.name) {
+                                    if let Some(expr) = &p.default {
+                                        if let Ok(val) =
+                                            const_eval_with_params(expr, &effective_params)
+                                        {
+                                            effective_params.insert(p.name, val);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        items.extend(expanded);
+                    }
+                    other => items.push(other.clone()),
+                }
+            }
+            items
+        };
+
+        // Update param_vals after generate expansion which may add body-level params
+        self.param_vals = effective_params.clone();
+
+        // Gabungkan deklarasi module-level dengan deklarasi hasil generate.
+        // Parser menaruh deklarasi normal di module.decls DAN module.items,
+        // jadi dedup by nama (get_or_create_signal juga idempoten).
+        let mut seen_names: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
+        let mut all_decls: Vec<Decl> = Vec::new();
         for decl in &module.decls {
+            let mut new_vars = Vec::new();
+            for var in &decl.names {
+                if seen_names.insert(var.name) {
+                    new_vars.push(var.clone());
+                }
+            }
+            if !new_vars.is_empty() {
+                all_decls.push(Decl {
+                    dtype: decl.dtype.clone(),
+                    kind: decl.kind.clone(),
+                    names: new_vars,
+                });
+            }
+        }
+        for item in &expanded_items {
+            if let ModuleItem::Decl(d) = item {
+                let mut new_vars = Vec::new();
+                for var in &d.names {
+                    if seen_names.insert(var.name) {
+                        new_vars.push(var.clone());
+                    }
+                }
+                if !new_vars.is_empty() {
+                    all_decls.push(Decl {
+                        dtype: d.dtype.clone(),
+                        kind: d.kind.clone(),
+                        names: new_vars,
+                    });
+                }
+            }
+        }
+
+        // Process declarations with parameter-aware width resolution
+        for decl in &all_decls {
             let class_name = match &decl.dtype {
                 DataType::UserDefined(cn) if cn.as_str() == "process" => Some("__process".to_string()),
                 DataType::UserDefined(cn) => Some(cn.as_str().to_string()),
@@ -2046,7 +2190,21 @@ impl Elaborator {
                 } else {
                     (elem_width - 1, 0)
                 };
-                if let Some(ar) = &var.array_range {
+                // Unpacked array dimension: prioritas `array_range` (sudah
+                // di-resolve saat parse); fallback ke `array_size_expr` yang
+                // bisa memuat parameter (`logic [N-1:0] arr [Width]`).
+                let resolved_arr = var.array_range.clone().or_else(|| {
+                    var.array_size_expr.as_ref().and_then(|sz| {
+                        const_eval_params(sz, &effective_params)
+                            .ok()
+                            .filter(|n| *n > 0)
+                            .map(|n| Range {
+                                msb: (n - 1) as usize,
+                                lsb: 0,
+                            })
+                    })
+                });
+                if let Some(ar) = &resolved_arr {
                     let depth = if ar.msb >= ar.lsb {
                         ar.msb - ar.lsb + 1
                     } else {
@@ -2167,25 +2325,17 @@ impl Elaborator {
                             match &decl.dtype {
                                 DataType::UnionType { members } => {
                                     for m in members {
-                                        let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
-                                        sig.struct_fields.push(StructFieldInfo {
-                                            name: m.name,
-                                            offset: 0,
-                                            width: w,
-                                        });
+                                        sig.struct_fields
+                                            .push(Self::struct_field_from_member(m, 0));
                                     }
                                 }
                                 _ => {
                                     let mut offset = 0usize;
                                     let members_rev: Vec<_> = members.iter().rev().collect();
                                     for m in &members_rev {
-                                        let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
-                                        sig.struct_fields.push(StructFieldInfo {
-                                            name: m.name,
-                                            offset,
-                                            width: w,
-                                        });
-                                        offset += w;
+                                        sig.struct_fields
+                                            .push(Self::struct_field_from_member(m, offset));
+                                        offset += m.range.as_ref().map(|r| r.width()).unwrap_or(1);
                                     }
                                     sig.struct_fields.reverse();
                                 }
@@ -2203,53 +2353,6 @@ impl Elaborator {
                 }
             }
         }
-
-        // Expand generate blocks in module items
-        // Collect body-level params (localparam, parameter) into effective_params
-        for item in &module.items {
-            if let ModuleItem::Param(p) = item {
-                if !effective_params.contains_key(&p.name) {
-                    if let Some(expr) = &p.default {
-                        if let Ok(val) = const_eval_with_params(expr, &effective_params) {
-                            effective_params.insert(p.name, val);
-                        }
-                    }
-                }
-            }
-        }
-        self.param_vals = effective_params.clone();
-
-        let expanded_items: Vec<ModuleItem> = {
-            let mut items = Vec::new();
-            for item in &module.items {
-                match item {
-                    ModuleItem::Generate(gen) => {
-                        let expanded = expand_generate_block(gen, &effective_params, &self.diag_sink)
-                            .map_err(|e| self.elab_diag_at(DiagCode::InvalidSyntax, format!("generate block expansion failed: {}", e.msg), e.line, e.col))?;
-                        // Collect params from expanded generate items too
-                        for ei in &expanded {
-                            if let ModuleItem::Param(p) = ei {
-                                if !effective_params.contains_key(&p.name) {
-                                    if let Some(expr) = &p.default {
-                                        if let Ok(val) =
-                                            const_eval_with_params(expr, &effective_params)
-                                        {
-                                            effective_params.insert(p.name, val);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        items.extend(expanded);
-                    }
-                    other => items.push(other.clone()),
-                }
-            }
-            items
-        };
-
-        // Update param_vals after generate expansion which may add body-level params
-        self.param_vals = effective_params.clone();
 
         // Process module items
         let mut proc_counter = 0usize;
@@ -2314,25 +2417,15 @@ impl Elaborator {
                             match &td.dtype {
                                 DataType::UnionType { members } => {
                                     for m in members {
-                                        let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
-                                        fields.push(StructFieldInfo {
-                                            name: m.name,
-                                            offset: 0,
-                                            width: w,
-                                        });
+                                        fields.push(Self::struct_field_from_member(m, 0));
                                     }
                                 }
                                 _ => {
                                     let mut offset = 0usize;
                                     let members_rev: Vec<_> = members.iter().rev().collect();
                                     for m in &members_rev {
-                                        let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
-                                        fields.push(StructFieldInfo {
-                                            name: m.name,
-                                            offset,
-                                            width: w,
-                                        });
-                                        offset += w;
+                                        fields.push(Self::struct_field_from_member(m, offset));
+                                        offset += m.range.as_ref().map(|r| r.width()).unwrap_or(1);
                                     }
                                     fields.reverse();
                                 }
@@ -2602,7 +2695,7 @@ impl Elaborator {
         }
 
         // Process declaration initializers (wire a = 1; reg b = 0; etc.)
-        for decl in &module.decls {
+        for decl in &all_decls {
             for var in &decl.names {
                 if let Some(init_expr) = &var.expr {
                     let lhs = self.elaborate_lvalue(

@@ -14,6 +14,9 @@ impl Parser {
     pub(crate) fn parse_module(&mut self) -> Result<Module, SimError> {
         self.advance(); // consume 'module', 'interface', or 'program'
         self.typedef_names.clear();
+        // Re-seed typedef GLOBAL (lintas file) yang di-clear di atas — tanpa
+        // ini nama typedef dari file lain hilang di scope module.
+        self.typedef_names.extend(self.global_typedef_names.iter().copied());
         // Type params module tidak boleh bocor antar-module.
         self.module_type_params.clear();
 
@@ -340,6 +343,8 @@ impl Parser {
     pub(crate) fn parse_interface(&mut self) -> Result<Interface, SimError> {
         self.advance(); // consume 'interface'
         self.typedef_names.clear();
+        // Re-seed typedef GLOBAL (lintas file) yang di-clear di atas.
+        self.typedef_names.extend(self.global_typedef_names.iter().copied());
         // Hygiene defensif: simetris dgn parse_module, cegah kejutan bila
         // interface kelak mulai memakai type param.
         self.module_type_params.clear();

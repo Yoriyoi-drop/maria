@@ -473,10 +473,24 @@ impl<'a> FastLexer<'a> {
                 if self.peek_next() == b'(' {
                     break;
                 }
-                // Sized format: 8'b1010
+                // Sized format: 8'b1010. Bangun string literal secara manual
+                // (width + ' + base + value) agar whitespace di antara base &
+                // value (`7'h 0`) TIDAK ikut terslice — legacy lexer membangun
+                // string char-by-char tanpa spasi; FastLexer yang slicing
+                // input[start..pos] menyertakan spasi → parse_verilog_number
+                // mendapat value " 0" (leading space) → parse gagal → parameter
+                // package tidak ter-resolve → E2001.
+                let width_part = std::str::from_utf8(&self.input[start..self.pos]).unwrap_or("");
+                let mut literal = String::with_capacity(16);
+                literal.push_str(width_part);
+                literal.push('\'');
                 self.skip_byte();
-                if self.pos < self.input.len() {
-                    self.skip_byte(); // base character
+                // Base character (bisa 'sh' untuk signed)
+                while self.pos < self.input.len()
+                    && self.input[self.pos].is_ascii_alphabetic()
+                {
+                    literal.push(self.input[self.pos] as char);
+                    self.skip_byte();
                 }
                 // Skip whitespace before value
                 while self.pos < self.input.len() && self.input[self.pos].is_ascii_whitespace() {
@@ -493,13 +507,13 @@ impl<'a> FastLexer<'a> {
                         || c == b'Z'
                         || c == b'?'
                     {
+                        literal.push(c as char);
                         self.skip_byte();
                     } else {
                         break;
                     }
                 }
-                let s = std::str::from_utf8(&self.input[start..self.pos]).unwrap_or("");
-                return self.parse_verilog_number(s);
+                return self.parse_verilog_number(&literal);
             } else {
                 break;
             }

@@ -40,6 +40,10 @@ where
         _ => return Ok(None),
     };
 
+    // Step: `i = i + inc` (Add) atau `i = i - inc` (Sub). Pola OpenTitan juga
+    // memakai `i--` (loop menurun) — sebelumnya hanya Add yang didukung,
+    // sehingga `for (int i = 14; i >= 0; i--)` jatuh ke fallback runtime dan
+    // loop var `i` tidak ada di signal_map → error E2001 'i' not found.
     let step_fn: Box<dyn Fn(i64) -> Result<i64, String>> = match step {
         Some(Stmt::BlockingAssign {
             lhs: Expr::Ident { name: n, .. },
@@ -69,18 +73,34 @@ where
                     return Ok(None);
                 }
             }
+            Expr::BinaryOp {
+                op: BinaryOp::Sub,
+                lhs,
+                rhs,
+            } => {
+                if let Expr::Ident { name: n2, .. } = lhs.as_ref() {
+                    if n2 == &var_name {
+                        let inc = const_eval_with_params(rhs, params)?;
+                        Box::new(move |v| Ok(v - inc))
+                    } else {
+                        return Ok(None);
+                    }
+                } else {
+                    return Ok(None);
+                }
+            }
             _ => return Ok(None),
         },
         _ => return Ok(None),
     };
 
-    let limit = match cond {
-        Some(Expr::BinaryOp {
-            op: BinaryOp::Lt,
-            lhs,
-            rhs,
-        }) => match lhs.as_ref() {
-            Expr::Ident { name: n, .. } if *n == var_name => const_eval_with_params(rhs, params)?,
+    // Condition: `i < limit`, `i <= limit` (loop naik) atau
+    // `i > limit`, `i >= limit` (loop turun).
+    let (cmp_op, limit) = match cond {
+        Some(Expr::BinaryOp { op, lhs, rhs }) => match lhs.as_ref() {
+            Expr::Ident { name: n, .. } if *n == var_name => {
+                (op.clone(), const_eval_with_params(rhs, params)?)
+            }
             _ => return Ok(None),
         },
         _ => return Ok(None),
@@ -88,7 +108,24 @@ where
 
     let mut all_stmts = Vec::new();
     let mut ivar = init_val;
-    while ivar < limit {
+    // Jaring pengaman: maks 1 juta iterasi agar loop yang gagal konvergen
+    // (mis. step arah salah) tidak menggantung elaborasi.
+    let mut guard = 0usize;
+    loop {
+        guard += 1;
+        if guard > 1_000_000 {
+            return Ok(None);
+        }
+        let keep = match cmp_op {
+            BinaryOp::Lt => ivar < limit,
+            BinaryOp::Le => ivar <= limit,
+            BinaryOp::Gt => ivar > limit,
+            BinaryOp::Ge => ivar >= limit,
+            _ => return Ok(None),
+        };
+        if !keep {
+            break;
+        }
         let body = elaborate_body(stmts, var_name.as_str(), ivar)?;
         all_stmts.extend(body);
         ivar = step_fn(ivar)?;

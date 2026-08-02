@@ -270,13 +270,14 @@ impl Parser {
                     let mut is_queue = false;
                     let mut is_associative = false;
                     let mut assoc_key_type: Option<DataType> = None;
-                    let (var_expr_range, array_range) = if decl_expr_range.is_some() {
+                    let (var_expr_range, array_range, array_size_expr) =
+                        if decl_expr_range.is_some() {
                         let ar = if self.peek() == &Token::LBrack {
                             if self.peek_ahead(1) == &Token::RBrack {
                                 self.advance();
                                 self.advance();
                                 is_dynamic = true;
-                                None
+                                (None, None)
                             } else if self.peek_ahead(1) == &Token::Dollar
                                 && self.peek_ahead(2) == &Token::RBrack
                             {
@@ -284,7 +285,7 @@ impl Parser {
                                 self.advance();
                                 self.advance();
                                 is_queue = true;
-                                None
+                                (None, None)
                             } else if self.peek_ahead(1) == &Token::Int {
                                 // int-key associative array
                                 self.advance(); // [
@@ -292,7 +293,7 @@ impl Parser {
                                 self.expect(Token::RBrack)?;
                                 is_associative = true;
                                 assoc_key_type = Some(DataType::Int);
-                                None
+                                (None, None)
                             } else if self.peek_ahead(1) == &Token::String {
                                 // string-key associative array
                                 self.advance(); // [
@@ -300,7 +301,7 @@ impl Parser {
                                 self.expect(Token::RBrack)?;
                                 is_associative = true;
                                 assoc_key_type = Some(DataType::String);
-                                None
+                                (None, None)
                             } else if self.peek_ahead(1) == &Token::Bit {
                                 // bit-key associative array
                                 self.advance();
@@ -308,7 +309,7 @@ impl Parser {
                                 self.expect(Token::RBrack)?;
                                 is_associative = true;
                                 assoc_key_type = Some(DataType::Bit);
-                                None
+                                (None, None)
                             } else if self.peek_ahead(1) == &Token::Logic {
                                 // logic-key associative array
                                 self.advance();
@@ -316,7 +317,7 @@ impl Parser {
                                 self.expect(Token::RBrack)?;
                                 is_associative = true;
                                 assoc_key_type = Some(DataType::Logic);
-                                None
+                                (None, None)
                             } else if self.peek_ahead(1) == &Token::Byte {
                                 // byte-key associative array
                                 self.advance();
@@ -324,7 +325,7 @@ impl Parser {
                                 self.expect(Token::RBrack)?;
                                 is_associative = true;
                                 assoc_key_type = Some(DataType::Byte);
-                                None
+                                (None, None)
                             } else if self.peek_ahead(1) == &Token::Shortint {
                                 // shortint-key associative array
                                 self.advance();
@@ -332,7 +333,7 @@ impl Parser {
                                 self.expect(Token::RBrack)?;
                                 is_associative = true;
                                 assoc_key_type = Some(DataType::Shortint);
-                                None
+                                (None, None)
                             } else if self.peek_ahead(1) == &Token::Longint {
                                 // longint-key associative array
                                 self.advance();
@@ -340,7 +341,7 @@ impl Parser {
                                 self.expect(Token::RBrack)?;
                                 is_associative = true;
                                 assoc_key_type = Some(DataType::Longint);
-                                None
+                                (None, None)
                             } else if self.peek_ahead(1) == &Token::Star
                                 && self.peek_ahead(2) == &Token::RBrack
                             {
@@ -350,12 +351,13 @@ impl Parser {
                                 self.expect(Token::RBrack)?;
                                 is_associative = true;
                                 assoc_key_type = Some(DataType::Int);
-                                None
+                                (None, None)
                             } else if self.peek_ahead(1) == &Token::Colon
                                 || self.peek_ahead(2) == &Token::Colon
                             {
+                                // `[msb:lsb]` unpacked — bukan size-expr.
                                 let er = self.parse_range()?;
-                                er.as_ref().and_then(|er| {
+                                let r = er.and_then(|er| {
                                     if let (Ok(m), Ok(l)) =
                                         (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
                                     {
@@ -366,24 +368,36 @@ impl Parser {
                                     } else {
                                         None
                                     }
-                                })
+                                });
+                                (r, None)
                             } else {
+                                // `[N]` / `[Width]`: unpacked array size. Resolve
+                                // literal sekarang; simpan ekspresi untuk parameter.
                                 self.advance(); // [
-                                self.parse_expr(0)?;
+                                let sz = self.parse_expr(0)?;
                                 self.expect(Token::RBrack)?;
-                                None
+                                match const_eval_simple(&sz) {
+                                    Ok(n) if n > 0 => (
+                                        Some(Range {
+                                            msb: (n - 1) as usize,
+                                            lsb: 0,
+                                        }),
+                                        None,
+                                    ),
+                                    _ => (None, Some(sz)),
+                                }
                             }
                         } else {
-                            None
+                            (None, None)
                         };
-                        (decl_expr_range.clone(), ar)
+                        (decl_expr_range.clone(), ar.0, ar.1)
                     } else {
                         if self.peek() == &Token::LBrack {
                             if self.peek_ahead(1) == &Token::RBrack {
                                 self.advance();
                                 self.advance();
                                 is_dynamic = true;
-                                (None, None)
+                                (None, None, None)
                             } else if self.peek_ahead(1) == &Token::Dollar
                                 && self.peek_ahead(2) == &Token::RBrack
                             {
@@ -391,12 +405,23 @@ impl Parser {
                                 self.advance();
                                 self.advance();
                                 is_queue = true;
-                                (None, None)
+                                (None, None, None)
                             } else if self.peek_ahead(1) != &Token::Colon {
+                                // `[N]` / `[Width]`: unpacked array size.
                                 self.advance(); // [
-                                self.parse_expr(0)?;
+                                let sz = self.parse_expr(0)?;
                                 self.expect(Token::RBrack)?;
-                                (None, None)
+                                match const_eval_simple(&sz) {
+                                    Ok(n) if n > 0 => (
+                                        None,
+                                        Some(Range {
+                                            msb: (n - 1) as usize,
+                                            lsb: 0,
+                                        }),
+                                        None,
+                                    ),
+                                    _ => (None, None, Some(sz)),
+                                }
                             } else {
                                 let ver = self.parse_range()?;
                                 let ar = if self.peek() == &Token::LBrack {
@@ -416,10 +441,10 @@ impl Parser {
                                 } else {
                                     None
                                 };
-                                (ver, ar)
+                                (ver, ar, None)
                             }
                         } else {
-                            (None, None)
+                            (None, None, None)
                         }
                     };
                     let var_range = var_expr_range.as_ref().and_then(|er| {
@@ -445,6 +470,7 @@ impl Parser {
                         range: var_range,
                         expr_range: var_expr_range,
                         array_range,
+                        array_size_expr,
                         extra_packed_dims: extra_packed_dims.clone(),
                         is_dynamic,
                         is_queue,

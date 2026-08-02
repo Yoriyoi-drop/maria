@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use super::expr::Expr;
 use super::expr::Value;
 use super::stmt::Stmt;
-use super::types::{FunctionDecl, Module, ModuleItem};
+use super::types::{CaseGenerateItem, FunctionDecl, GenerateBlock, GenerateItem, Module, ModuleItem};
 use crate::ast::inline_util::*;
 use crate::intern::Symbol;
 pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(Symbol, usize)>, String> {
@@ -126,6 +126,17 @@ pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(Symbol, u
                 }
                 // Non-recursive functions are removed (they've been inlined)
             }
+            ModuleItem::Generate(gen) => {
+                let new_gen = inline_funcs_in_generate(
+                    gen,
+                    &funcs,
+                    prefix,
+                    &mut counter,
+                    &mut temp_signals,
+                    &recursive_funcs,
+                );
+                new_items.push(ModuleItem::Generate(new_gen));
+            }
             other => {
                 new_items.push(other);
             }
@@ -143,6 +154,234 @@ pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(Symbol, u
     });
 
     Ok(temp_signals)
+}
+
+/// Inline function calls di dalam generate block. Generate berisi daftar
+/// ModuleItem (Items/If/For/Case body) yang bisa memanggil function package
+/// (pola OpenTitan: `for (genvar i ...) assign x[i] = aes_mul2(x[i]);`).
+/// Tanpa traversal ini, pemanggilan function di dalam generate tidak pernah
+/// di-inline → elaborator mencoba mem-proses body function (dengan variabel
+/// lokal seperti `out`) sebagai sinyal module → error E2001.
+fn inline_funcs_in_generate(
+    gen: GenerateBlock,
+    funcs: &HashMap<Symbol, FunctionDecl>,
+    prefix: Symbol,
+    counter: &mut usize,
+    temp_signals: &mut Vec<(Symbol, usize)>,
+    recursive_funcs: &HashSet<Symbol>,
+) -> GenerateBlock {
+    let items = gen
+        .items
+        .into_iter()
+        .map(|gi| inline_generate_item(gi, funcs, prefix, counter, temp_signals, recursive_funcs))
+        .collect();
+    GenerateBlock { items }
+}
+
+fn inline_generate_item(
+    gi: GenerateItem,
+    funcs: &HashMap<Symbol, FunctionDecl>,
+    prefix: Symbol,
+    counter: &mut usize,
+    temp_signals: &mut Vec<(Symbol, usize)>,
+    recursive_funcs: &HashSet<Symbol>,
+) -> GenerateItem {
+    match gi {
+        GenerateItem::Items(items) => GenerateItem::Items(inline_module_items(
+            items,
+            funcs,
+            prefix,
+            counter,
+            temp_signals,
+            recursive_funcs,
+        )),
+        GenerateItem::If {
+            cond,
+            true_items,
+            false_items,
+            label,
+        } => GenerateItem::If {
+            cond,
+            true_items: inline_module_items(
+                true_items,
+                funcs,
+                prefix,
+                counter,
+                temp_signals,
+                recursive_funcs,
+            ),
+            false_items: inline_module_items(
+                false_items,
+                funcs,
+                prefix,
+                counter,
+                temp_signals,
+                recursive_funcs,
+            ),
+            label,
+        },
+        GenerateItem::For {
+            var,
+            init,
+            cond,
+            step,
+            body_items,
+            label,
+        } => GenerateItem::For {
+            var,
+            init,
+            cond,
+            step,
+            body_items: inline_module_items(
+                body_items,
+                funcs,
+                prefix,
+                counter,
+                temp_signals,
+                recursive_funcs,
+            ),
+            label,
+        },
+        GenerateItem::Case {
+            case_type,
+            expr,
+            items,
+            default,
+        } => GenerateItem::Case {
+            case_type,
+            expr,
+            items: items
+                .into_iter()
+                .map(|ci| CaseGenerateItem {
+                    labels: ci.labels,
+                    body: inline_module_items(
+                        ci.body,
+                        funcs,
+                        prefix,
+                        counter,
+                        temp_signals,
+                        recursive_funcs,
+                    ),
+                })
+                .collect(),
+            default: default.map(|d| {
+                inline_module_items(d, funcs, prefix, counter, temp_signals, recursive_funcs)
+            }),
+        },
+    }
+}
+
+/// Inline function calls di dalam daftar ModuleItem (dipakai generate body).
+fn inline_module_items(
+    items: Vec<ModuleItem>,
+    funcs: &HashMap<Symbol, FunctionDecl>,
+    prefix: Symbol,
+    counter: &mut usize,
+    temp_signals: &mut Vec<(Symbol, usize)>,
+    recursive_funcs: &HashSet<Symbol>,
+) -> Vec<ModuleItem> {
+    let mut out = Vec::new();
+    for item in items {
+        match item {
+            ModuleItem::Assign(assign) => {
+                let mut preamble = Vec::new();
+                let old_rhs = assign.rhs;
+                let new_rhs = replace_func_calls_in_expr(
+                    old_rhs,
+                    funcs,
+                    prefix,
+                    counter,
+                    &mut preamble,
+                    temp_signals,
+                    recursive_funcs,
+                );
+                if preamble.is_empty() {
+                    out.push(ModuleItem::Assign(super::types::ContinuousAssign {
+                        lhs: assign.lhs,
+                        rhs: new_rhs,
+                        delay: assign.delay,
+                    }));
+                } else {
+                    preamble.push(Stmt::BlockingAssign {
+                        lhs: assign.lhs,
+                        rhs: new_rhs,
+                        delay: None,
+                    });
+                    let wc = super::stmt::SensitivityList {
+                        events: vec![super::stmt::SensitivityEvent::Wildcard],
+                    };
+                    out.push(ModuleItem::Always(super::stmt::AlwaysBlock {
+                        kind: super::stmt::AlwaysKind::AlwaysComb,
+                        sensitivity: Some(wc),
+                        stmts: preamble,
+                    }));
+                }
+            }
+            ModuleItem::Always(mut always) => {
+                always.stmts = always
+                    .stmts
+                    .drain(..)
+                    .map(|s| {
+                        inline_funcs_in_stmt(
+                            s,
+                            funcs,
+                            prefix,
+                            counter,
+                            temp_signals,
+                            recursive_funcs,
+                        )
+                    })
+                    .collect();
+                out.push(ModuleItem::Always(always));
+            }
+            ModuleItem::Initial(mut initial) => {
+                initial.stmts = initial
+                    .stmts
+                    .drain(..)
+                    .map(|s| {
+                        inline_funcs_in_stmt(
+                            s,
+                            funcs,
+                            prefix,
+                            counter,
+                            temp_signals,
+                            recursive_funcs,
+                        )
+                    })
+                    .collect();
+                out.push(ModuleItem::Initial(initial));
+            }
+            ModuleItem::Final(mut final_block) => {
+                final_block.stmts = final_block
+                    .stmts
+                    .drain(..)
+                    .map(|s| {
+                        inline_funcs_in_stmt(
+                            s,
+                            funcs,
+                            prefix,
+                            counter,
+                            temp_signals,
+                            recursive_funcs,
+                        )
+                    })
+                    .collect();
+                out.push(ModuleItem::Final(final_block));
+            }
+            ModuleItem::Generate(gen) => {
+                out.push(ModuleItem::Generate(inline_funcs_in_generate(
+                    gen,
+                    funcs,
+                    prefix,
+                    counter,
+                    temp_signals,
+                    recursive_funcs,
+                )));
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 fn inline_funcs_in_stmt(
@@ -669,6 +908,22 @@ fn inline_funcs_in_stmt(
                         };
                         let width = if let Some(r) = &var.range {
                             r.width()
+                        } else if let Some(er) = &var.expr_range {
+                            // `logic [7:0] out` menyimpan range di expr_range
+                            // bila batasnya ekspresi/konstanta yang belum
+                            // di-fold saat parse.
+                            if let (Ok(msb), Ok(lsb)) = (
+                                super::types::const_eval_simple(&er.msb),
+                                super::types::const_eval_simple(&er.lsb),
+                            ) {
+                                if msb >= lsb {
+                                    (msb - lsb + 1) as usize
+                                } else {
+                                    (lsb - msb + 1) as usize
+                                }
+                            } else {
+                                dtype_width.max(decl_width)
+                            }
                         } else {
                             dtype_width.max(decl_width)
                         };
@@ -681,6 +936,16 @@ fn inline_funcs_in_stmt(
                     for func_stmt in &func.stmts {
                         let mut renamed = rename_in_stmt(func_stmt, &rename_map);
                         renamed = rename_func_decls_in_stmt(renamed, &rename_map);
+                        // Proses ulang untuk menangkap nested function calls
+                        // di dalam body task (sama seperti jalur function).
+                        renamed = inline_funcs_in_stmt(
+                            renamed,
+                            funcs,
+                            prefix,
+                            counter,
+                            temp_signals,
+                            recursive_funcs,
+                        );
                         preamble.push(renamed);
                     }
 
@@ -942,7 +1207,31 @@ fn inline_funcs_in_stmt(
             }
         }
         Stmt::Null => Stmt::Null,
-        Stmt::Return(expr) => Stmt::Return(expr),
+        Stmt::Return(expr) => {
+            // `return <expr>` bisa mengandung nested function calls (pola
+            // OpenTitan: `aes_mul4` → `return aes_mul2(aes_mul2(in));`).
+            // Tanpa proses ulang, panggilan di dalam return tidak di-inline
+            // → elaborator mencoba resolve nama lokal function → E2001.
+            let mut preamble = Vec::new();
+            let new_expr = expr.map(|e| {
+                replace_func_calls_in_expr(
+                    *e,
+                    funcs,
+                    prefix,
+                    counter,
+                    &mut preamble,
+                    temp_signals,
+                    recursive_funcs,
+                )
+            });
+            let main = Stmt::Return(new_expr.map(Box::new));
+            if preamble.is_empty() {
+                main
+            } else {
+                preamble.push(main);
+                Stmt::Block { stmts: preamble }
+            }
+        }
         Stmt::ForeachLoop {
             array_var,
             index_vars,
@@ -1605,6 +1894,22 @@ fn replace_func_calls_in_expr(
                         };
                         let width = if let Some(r) = &var.range {
                             r.width()
+                        } else if let Some(er) = &var.expr_range {
+                            // `logic [7:0] out` menyimpan range di expr_range
+                            // bila batasnya ekspresi/konstanta yang belum
+                            // di-fold saat parse.
+                            if let (Ok(msb), Ok(lsb)) = (
+                                super::types::const_eval_simple(&er.msb),
+                                super::types::const_eval_simple(&er.lsb),
+                            ) {
+                                if msb >= lsb {
+                                    (msb - lsb + 1) as usize
+                                } else {
+                                    (lsb - msb + 1) as usize
+                                }
+                            } else {
+                                dtype_width.max(decl_width)
+                            }
                         } else {
                             dtype_width.max(decl_width)
                         };
@@ -1626,6 +1931,19 @@ fn replace_func_calls_in_expr(
                         }
                     }
                     renamed = rename_func_decls_in_stmt(renamed, &rename_map);
+                    // Proses ulang statement body untuk menangkap nested
+                    // function calls (pola `aes_mul4` memanggil `aes_mul2`
+                    // di dalam body-nya). Tanpa ini, FuncCall nested tetap
+                    // tersisa → elaborator tidak bisa resolve nama lokal
+                    // function → E2001 'out' not found.
+                    renamed = inline_funcs_in_stmt(
+                        renamed,
+                        funcs,
+                        prefix,
+                        counter,
+                        temp_signals,
+                        recursive_funcs,
+                    );
                     preamble.push(renamed);
                 }
 

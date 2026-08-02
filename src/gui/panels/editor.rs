@@ -163,6 +163,15 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
     // dengan jumlah referensi (berapa kali module di-instansiasi di seluruh
     // design). Klik segmen → salin nama. Hanya file yang sudah di-compile.
     // `ref_counts` di-precompute saat compile — tidak iterasi design per frame.
+    // Statistik global (compile time + coverage) ditampilkan di ujung strip —
+    // sesuai desain Code Lens: "Compile Time 0.31 ms, Coverage 98% langsung di
+    // atas module". Coverage disalin dulu (nilai Copy) agar borrow field
+    // `state.coverage` tidak konflik dengan `f` (yang meminjam open_files).
+    let cov_pct: Option<f64> = if state.coverage.branch_total > 0 {
+        Some(state.coverage.branch_percent)
+    } else {
+        None
+    };
     if let Some(info) = state.compile_info.as_ref() {
         let lens = build_code_lens(&f.content, &info.ref_counts);
         if !lens.is_empty() {
@@ -183,6 +192,31 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                     if resp.clicked() {
                         ui.ctx().copy_text(name.clone());
                     }
+                }
+
+                // Statistik global (compile time + coverage) di ujung strip.
+                ui.separator();
+                let ct = format!("⏱ {:.2} ms", info.total_time_ms);
+                ui.label(
+                    egui::RichText::new(&ct).weak().monospace().size(10.0),
+                )
+                .on_hover_text("Total compile + elaborate");
+                if let Some(pct) = cov_pct {
+                    let color = if pct >= 90.0 {
+                        egui::Color32::from_rgb(34, 197, 94) // hijau
+                    } else if pct >= 60.0 {
+                        egui::Color32::from_rgb(234, 179, 8) // kuning
+                    } else {
+                        egui::Color32::from_rgb(239, 68, 68) // merah
+                    };
+                    ui.label(
+                        egui::RichText::new(format!("📊 {:.1}%", pct))
+                            .weak()
+                            .monospace()
+                            .size(10.0)
+                            .color(color),
+                    )
+                    .on_hover_text("Branch coverage (hasil simulasi terakhir)");
                 }
             });
             ui.separator();

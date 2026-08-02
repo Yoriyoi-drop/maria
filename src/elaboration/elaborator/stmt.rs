@@ -1233,6 +1233,61 @@ impl Elaborator {
                 if let Some(&sig_id) = signal_map.get(hier_name.as_str()) {
                     return Ok(IrLValue::Signal(sig_id, 0));
                 }
+                // Nested member access lvalue (`hw2reg.val.d = x`): kumpulkan
+                // chain field (dari luar ke dalam), resolve base signal, lalu
+                // akumulasi offset berjenjang via struct_fields + typedef_field_map.
+                if let Some((base_name, chain)) = Self::collect_member_chain(obj, *field) {
+                    if let Some(&base_sid) = signal_map.get(base_name.as_str()) {
+                        let base_info = &signals[base_sid];
+                        if !base_info.struct_fields.is_empty() {
+                            let mut offset = 0usize;
+                            let mut width = 1usize;
+                            // Cari tipe fields awal dari signal base.
+                            let mut cur_fields: Option<Vec<StructFieldInfo>> =
+                                Some(base_info.struct_fields.clone());
+                            let mut ok = true;
+                            for (i, fname) in chain.iter().enumerate() {
+                                let fields = match &cur_fields {
+                                    Some(fs) => fs.clone(),
+                                    None => {
+                                        ok = false;
+                                        break;
+                                    }
+                                };
+                                let found = fields.iter().find(|f| f.name == *fname);
+                                match found {
+                                    Some(f) => {
+                                        offset += f.offset;
+                                        width = f.width;
+                                        // Level berikutnya: pakai fields dari tipe field
+                                        // (nested struct). Prioritas: typedef yang dikenal;
+                                        // fallback ke sub_fields untuk anonymous struct
+                                        // inline (`struct packed {...} data;` pola register
+                                        // file OpenTitan).
+                                        if i + 1 < chain.len() {
+                                            let mut nxt = f.type_name.as_ref().and_then(|tn| {
+                                                self.typedef_field_map.get(tn).cloned()
+                                            });
+                                            if nxt.is_none() {
+                                                nxt = Some(f.sub_fields.clone());
+                                            }
+                                            cur_fields = nxt;
+                                        }
+                                    }
+                                    None => {
+                                        ok = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            if ok {
+                                let lsb = offset;
+                                let msb = offset + width - 1;
+                                return Ok(IrLValue::RangeSelect(base_sid, msb, lsb));
+                            }
+                        }
+                    }
+                }
                 match self.elaborate_expr(obj, signal_map, signals) {
                     Ok(IrExpr::Signal(sig_id, _)) => {
                         let sig_info = &signals[sig_id];
@@ -1270,4 +1325,27 @@ impl Elaborator {
         }
     }
 
+    /// Kumpulkan chain member access `a.b.c` → (nama signal base, urutan field
+    /// dari luar ke dalam). Contoh: `hw2reg.val.d` → ("hw2reg", [val, d]).
+    fn collect_member_chain(obj: &Expr, leaf_field: Symbol) -> Option<(String, Vec<Symbol>)> {
+        let mut chain = vec![leaf_field];
+        let mut cur = obj;
+        loop {
+            match cur {
+                Expr::MemberAccess {
+                    obj: inner,
+                    field,
+                } => {
+                    chain.push(*field);
+                    cur = inner;
+                }
+                Expr::Ident { name, .. } => {
+                    let base = name.as_str().to_string();
+                    chain.reverse(); // [base_field, ..., leaf_field]
+                    return Some((base, chain));
+                }
+                _ => return None,
+            }
+        }
+    }
 }

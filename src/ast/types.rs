@@ -327,6 +327,11 @@ pub struct DeclVar {
     pub range: Option<Range>,
     pub expr_range: Option<ExprRange>,
     pub array_range: Option<Range>,
+    /// Ekspresi ukuran array unpacked `[N]` yang belum bisa di-resolve saat
+    /// parse (mis. `[Width]` dengan parameter) — disimpan untuk di-resolve di
+    /// elaborator bersama `effective_params`. Untuk `[N]` literal langsung
+    /// di-resolve ke `array_range` ([N-1:0]) saat parse.
+    pub array_size_expr: Option<Expr>,
     pub extra_packed_dims: Vec<(ExprRange, Option<Range>)>,
     pub is_dynamic: bool,
     pub is_queue: bool,

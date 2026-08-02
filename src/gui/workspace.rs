@@ -30,6 +30,11 @@ pub struct WorkspaceState {
     /// Signal yang disembunyikan di waveform.
     pub wave_hidden: Vec<String>,
     pub max_time: u64,
+    /// Path file yang di-bookmark (relatif terhadap root — portabel).
+    /// `#[serde(default)]` — workspace lama (tanpa field ini) tetap bisa
+    /// di-restore; hanya bookmark yang hilang, bukan seluruh state.
+    #[serde(default)]
+    pub bookmarks: Vec<String>,
 }
 
 /// Pointer global ke root proyek terakhir (`<config>/maria/last_workspace.json`).
@@ -80,6 +85,11 @@ pub fn save_workspace(state: &GuiState) {
         wave_zoom: state.wave_zoom,
         wave_hidden: state.wave_hidden.iter().cloned().collect(),
         max_time: state.max_time,
+        bookmarks: state
+            .bookmarks
+            .iter()
+            .map(|p| rel_or_abs(root, p))
+            .collect(),
     };
     let json = match serde_json::to_string_pretty(&ws) {
         Ok(j) => j,
@@ -188,6 +198,14 @@ fn apply(state: &mut GuiState, root: PathBuf, ws: WorkspaceState) {
     state.wave_zoom = ws.wave_zoom.max(0.5);
     state.wave_hidden = ws.wave_hidden.into_iter().collect();
     state.max_time = ws.max_time.max(1);
+    // Bookmark (path relatif di-resolve terhadap root).
+    for rel in ws.bookmarks {
+        let p = PathBuf::from(rel);
+        let abs = if p.is_absolute() { p } else { root.join(p) };
+        if abs.exists() {
+            state.bookmarks.insert(abs);
+        }
+    }
 
     state.log(format!(
         "↩ Workspace dipulihkan: {} · {} file terbuka",
@@ -230,6 +248,7 @@ mod tests {
             wave_zoom: 8.0,
             wave_hidden: vec!["clk".into()],
             max_time: 5000,
+            bookmarks: vec!["core/cache.sv".into()],
         };
         let json = serde_json::to_string(&ws).expect("serialize");
         let back: WorkspaceState = serde_json::from_str(&json).expect("deserialize");
@@ -240,5 +259,6 @@ mod tests {
         assert_eq!(back.show_sidebar, false);
         assert_eq!(back.wave_zoom, 8.0);
         assert_eq!(back.max_time, 5000);
+        assert_eq!(back.bookmarks, vec!["core/cache.sv".to_string()]);
     }
 }

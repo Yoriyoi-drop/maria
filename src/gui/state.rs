@@ -445,7 +445,8 @@ pub enum SidebarTab {
 
 /// Kategori pencarian (tab Search sidebar) — sesuai desain "bukan sekadar
 /// grep": Find module, signal, parameter, package, macro, instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Sesi (kategori aktif) tidak dipersistensikan — default Module tiap buka.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchCat {
     Module,
     Signal,
@@ -453,6 +454,87 @@ pub enum SearchCat {
     Package,
     Macro,
     Instance,
+}
+
+/// Kategori file di Project Explorer (desain: "Hierarki file. RTL, Testbench,
+/// Library, Include."). `All` = tanpa filter (tampilkan semua). Klasifikasi
+/// berbasis heuristik path/nama — cukup untuk navigasi cepat, bukan pengganti
+/// indeks semantik.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileCat {
+    All,
+    Rtl,
+    Testbench,
+    Library,
+    Include,
+}
+
+/// Klasifikasikan file SystemVerilog ke kategori Project Explorer.
+/// Prioritas: Testbench > Include > Library > Rtl.
+///
+/// Heuristik:
+/// - Testbench: nama file mengandung `_tb`/`tb_`/`tb.`/`_test`, atau path
+///   mengandung segmen `tb`/`testbench`/`tests`/`verification`/`uvm`.
+/// - Include: ekstensi `.svh` (header — umumnya berisi package/macro/define).
+/// - Library: path mengandung segmen `lib`/`ip`/`pdk`/`library`/`std_cell`/
+///   `stdcell`/`prim` (sel standar / IP terpungut).
+/// - Rtl: fallback — file .sv/.svh biasa.
+pub fn classify_file(path: &std::path::Path) -> FileCat {
+    // Bukan file SystemVerilog (.sv/.svh) → tidak terklasifikasi (abu-abu),
+    // bukan RTL — folder/filter kategori tidak terpengaruh file non-SV.
+    let is_sv = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("sv") || e.eq_ignore_ascii_case("svh"))
+        .unwrap_or(false);
+    if !is_sv {
+        return FileCat::All;
+    }
+
+    let name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let lower_path = path.to_string_lossy().to_lowercase();
+
+    // Testbench: pola nama file.
+    if name.contains("_tb")
+        || name.starts_with("tb_")
+        || name.starts_with("tb.")
+        || name.contains("_test")
+        || name.starts_with("test_")
+    {
+        return FileCat::Testbench;
+    }
+    // Testbench: segmen direktori khas.
+    let segs: Vec<&str> = lower_path.split(['/', '\\']).collect();
+    if segs.iter().any(|s| {
+        matches!(*s, "tb" | "testbench" | "tests" | "verification" | "uvm" | "dv" | "sim")
+    }) {
+        return FileCat::Testbench;
+    }
+
+    // Include: header .svh.
+    if path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("svh"))
+        .unwrap_or(false)
+    {
+        return FileCat::Include;
+    }
+
+    // Library: segmen direktori khas (IP/pdk/cell/prim).
+    if segs.iter().any(|s| {
+        matches!(
+            *s,
+            "lib" | "library" | "ip" | "pdk" | "std_cell" | "stdcell" | "prim" | "cells"
+        )
+    }) {
+        return FileCat::Library;
+    }
+
+    FileCat::Rtl
 }
 
 /// Tab panel bawah.
@@ -537,6 +619,15 @@ pub struct GuiState {
     pub search_filter: String,
     /// Kategori aktif tab Search (Module/Signal/Parameter/Package/Macro/Instance).
     pub search_cat: SearchCat,
+
+    // ── Bookmarks (Project Explorer) ──
+    /// Path file yang di-bookmark (toggle via ikon ★ di file tree). Dipakai
+    /// untuk akses cepat ke file penting — dipersistensikan di workspace.
+    pub bookmarks: std::collections::HashSet<PathBuf>,
+    /// Hanya tampilkan file yang di-bookmark di Project Explorer (filter on).
+    pub bookmarks_only: bool,
+    /// Filter kategori file aktif di Project Explorer (All = tanpa filter).
+    pub explorer_cat: FileCat,
 
     // ── Benchmark (hasil sim terakhir) ──
     pub delta_cycles: u64,
@@ -630,6 +721,9 @@ impl GuiState {
             outline_filter: String::new(),
             search_filter: String::new(),
             search_cat: SearchCat::Module,
+            bookmarks: std::collections::HashSet::new(),
+            bookmarks_only: false,
+            explorer_cat: FileCat::All,
             delta_cycles: 0,
             events_processed: 0,
             processes_evaluated: 0,
@@ -696,6 +790,16 @@ impl GuiState {
         });
         while self.console.len() > 5000 {
             self.console.pop_front();
+        }
+    }
+
+    /// Toggle bookmark untuk `path`. Mengembalikan true jika kini ter-bookmark.
+    pub fn toggle_bookmark(&mut self, path: &PathBuf) -> bool {
+        if !self.bookmarks.insert(path.clone()) {
+            self.bookmarks.remove(path);
+            false
+        } else {
+            true
         }
     }
 
@@ -1015,4 +1119,75 @@ pub fn blocking_assign_pos(line: &str) -> Option<usize> {
         i += 1;
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    fn c(p: &str) -> FileCat {
+        classify_file(Path::new(p))
+    }
+
+    #[test]
+    fn classify_testbench_by_name() {
+        assert_eq!(c("/proj/tb_top.sv"), FileCat::Testbench);
+        assert_eq!(c("/proj/tb.sv"), FileCat::Testbench);
+        assert_eq!(c("/proj/cache_tb.sv"), FileCat::Testbench);
+        assert_eq!(c("/proj/alu_test.sv"), FileCat::Testbench);
+        assert_eq!(c("/proj/test_alu.sv"), FileCat::Testbench);
+    }
+
+    #[test]
+    fn classify_testbench_by_dir() {
+        assert_eq!(c("/proj/verification/tb_cache.sv"), FileCat::Testbench);
+        assert_eq!(c("/proj/tb/cache.sv"), FileCat::Testbench);
+        assert_eq!(c("/proj/uvm/env/pkg.sv"), FileCat::Testbench);
+        assert_eq!(c("/proj/dv/seq_lib.sv"), FileCat::Testbench);
+    }
+
+    #[test]
+    fn classify_include_by_extension() {
+        assert_eq!(c("/proj/pkg_types.svh"), FileCat::Include);
+        assert_eq!(c("/proj/inc/macros.svh"), FileCat::Include);
+    }
+
+    #[test]
+    fn classify_library_by_dir() {
+        assert_eq!(c("/proj/ip/uart/uart.sv"), FileCat::Library);
+        assert_eq!(c("/proj/lib/std_cell.sv"), FileCat::Library);
+        assert_eq!(c("/proj/pdk/cells.sv"), FileCat::Library);
+        assert_eq!(c("/proj/prim/prim_assert.sv"), FileCat::Library);
+    }
+
+    #[test]
+    fn classify_rtl_default() {
+        assert_eq!(c("/proj/core/cache_controller.sv"), FileCat::Rtl);
+        assert_eq!(c("/proj/gpu/shader.sv"), FileCat::Rtl);
+        assert_eq!(c("/proj/top.sv"), FileCat::Rtl);
+    }
+
+    #[test]
+    fn classify_priority_svh_in_tb_dir_is_testbench() {
+        // Prioritas: Testbench > Include — .svh di dalam folder tb → Testbench.
+        // Nama file sengaja TANPA pola tb agar yang diuji adalah aturan
+        // direktori (bukan aturan nama file yang kebetulan mengandung _tb).
+        assert_eq!(c("/proj/tb/header_pkg.svh"), FileCat::Testbench);
+    }
+
+    #[test]
+    fn classify_non_sv_is_unclassified() {
+        assert_eq!(c("/proj/Makefile"), FileCat::All);
+        assert_eq!(c("/proj/README.md"), FileCat::All);
+        assert_eq!(c("/proj/core/list.f"), FileCat::All);
+        // File tanpa ekstensi bukan RTL.
+        assert_eq!(c("/proj/scripts/run"), FileCat::All);
+    }
+
+    #[test]
+    fn classify_case_insensitive_extension() {
+        assert_eq!(c("/proj/TOP.SV"), FileCat::Rtl);
+        assert_eq!(c("/proj/TB_TOP.SV"), FileCat::Testbench);
+    }
 }

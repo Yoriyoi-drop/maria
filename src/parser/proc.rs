@@ -327,15 +327,28 @@ impl Parser {
                     self.advance();
                     continue;
                 }
-                // Skip range like [7:0]
-                let range = if self.peek() == &Token::LBrack {
-                    let _ = self.parse_range();
-                    None
+                // Parse range like [7:0] — simpan ke expr_range (dan range
+                // bila konstanta) agar lebar port function bisa di-resolve.
+                // Sebelumnya range dibuang → `func_port_width` selalu 1 →
+                // width mismatch saat inlining function package.
+                let mut expr_range = None;
+                let mut range = None;
+                if self.peek() == &Token::LBrack {
+                    if let Some(er) = self.parse_range()? {
+                        if let (Ok(m), Ok(l)) =
+                            (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
+                        {
+                            range = Some(Range {
+                                msb: m as usize,
+                                lsb: l as usize,
+                            });
+                        } else {
+                            expr_range = Some(er);
+                        }
+                    }
                 } else if is_int {
-                    Some(Range { msb: 31, lsb: 0 })
-                } else {
-                    None
-                };
+                    range = Some(Range { msb: 31, lsb: 0 });
+                }
                 self.skip_extra_packed_dims()?;
                 // Parse port name(s)
                 while let Token::Ident(pname) = self.peek() {
@@ -344,7 +357,7 @@ impl Parser {
                     ports.push(FunctionPort {
                         name: pn,
                         range: range.clone(),
-                        expr_range: None,
+                        expr_range: expr_range.clone(),
                         direction: last_direction,
                     });
                     if self.peek() == &Token::Comma {

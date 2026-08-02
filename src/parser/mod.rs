@@ -25,6 +25,14 @@ pub struct Parser {
     source_lines: Vec<String>,
     class_names: std::collections::HashSet<Symbol>,
     typedef_names: std::collections::HashSet<Symbol>,
+    /// Nama class GLOBAL (lintas file) dari discovery pass CompileSession.
+    /// Disimpan terpisah dari `class_names` (yang di-clear di parse_design)
+    /// agar tetap tersedia saat module/interface body di-parse — tanpanya
+    /// `ClassType var;` dari file lain (class UVM dsb.) salah di-parse sebagai
+    /// instance module (`type inst;`).
+    global_class_names: std::collections::HashSet<Symbol>,
+    /// Nama typedef GLOBAL (lintas file) — simetris dengan global_class_names.
+    global_typedef_names: std::collections::HashSet<Symbol>,
     /// Type parameter names di scope module (dari `parameter type T = ...`),
     /// agar `T x;` diparse sebagai deklarasi, bukan instance.
     module_type_params: std::collections::HashSet<Symbol>,
@@ -75,6 +83,8 @@ impl Parser {
                 s
             },
             typedef_names: std::collections::HashSet::new(),
+            global_class_names: std::collections::HashSet::new(),
+            global_typedef_names: std::collections::HashSet::new(),
             module_type_params: std::collections::HashSet::new(),
             package_tdefs: std::collections::HashMap::new(),
             type_param_names: Vec::new(),
@@ -93,6 +103,27 @@ impl Parser {
 
     pub fn with_file_line_map(mut self, map: Vec<(usize, String)>) -> Self {
         self.file_line_map = map;
+        self
+    }
+
+    /// Tambahkan nama class & typedef GLOBAL (lintas file) yang ditemukan lewat
+    /// discovery pass di CompileSession. Parsing per-file hanya tahu nama di
+    /// file-nya sendiri; tanpa ini, `class_name var;` dari file lain akan
+    /// disalahartikan sebagai instansiasi module (`type inst;`).
+    pub fn with_global_type_names(
+        mut self,
+        classes: &std::collections::HashSet<Symbol>,
+        typedefs: &std::collections::HashSet<Symbol>,
+    ) -> Self {
+        // Simpan salinan global di field terpisah: `parse_design()` me-reset
+        // class_names (dan parse_module/parse_interface me-reset typedef_names),
+        // jadi kalau hanya di-extend ke set aktif, nama global akan hilang
+        // sebelum body module/interface diparse → `ClassType var;` lintas file
+        // salah di-parse sebagai instance module.
+        self.global_class_names = classes.iter().copied().collect();
+        self.global_typedef_names = typedefs.iter().copied().collect();
+        self.class_names.extend(classes.iter().copied());
+        self.typedef_names.extend(typedefs.iter().copied());
         self
     }
 
@@ -286,6 +317,11 @@ impl Parser {
         self.class_names.insert(Symbol::intern("uvm_report_object"));
         self.class_names.insert(Symbol::intern("uvm_factory"));
         self.class_names.insert(Symbol::intern("uvm_resource_db"));
+        // Re-seed nama class & typedef GLOBAL (lintas file) yang di-clear di
+        // atas. Tanpa ini, `ClassType var;` dari file lain (mis. class UVM di
+        // file terpisah) salah di-parse sebagai instance module.
+        self.class_names.extend(self.global_class_names.iter().copied());
+        self.typedef_names.extend(self.global_typedef_names.iter().copied());
         let mut modules = Vec::with_capacity(64);
         let mut classes = Vec::with_capacity(32);
         let mut packages = Vec::with_capacity(16);
@@ -845,6 +881,7 @@ let mut _last_pos = self.pos.get();
                         range: None,
                         expr_range: None,
                         array_range: None,
+                        array_size_expr: None,
                         extra_packed_dims: vec![],
                         is_dynamic: false,
                         is_queue: false,
@@ -896,6 +933,18 @@ let mut _last_pos = self.pos.get();
                 Ok(Some(ModuleItem::Decl(decl)))
             }
             Token::Ident(name) => {
+                if std::env::var("MARIA_DEBUG_PARSE").is_ok()
+                    && name.as_str() == "my_class"
+                {
+                    eprintln!(
+                        "[DBG-PARSE] decision: name={} in_class={} in_typedef={} in_mod_type_param={} ahead1={}",
+                        name,
+                        self.class_names.contains(name),
+                        self.typedef_names.contains(name),
+                        self.module_type_params.contains(name),
+                        format!("{}", self.peek_ahead(1))
+                    );
+                }
                 if self.class_names.contains(name)
                     || self.typedef_names.contains(name)
                     || self.module_type_params.contains(name)
@@ -920,6 +969,7 @@ let mut _last_pos = self.pos.get();
                                 range: None,
                                 expr_range: None,
                                 array_range: None,
+                                array_size_expr: None,
                                 extra_packed_dims: vec![],
                                 is_dynamic: false,
                                 is_queue: false,
@@ -953,6 +1003,12 @@ let mut _last_pos = self.pos.get();
                         kind: DeclKind::Logic,
                         names,
                     })))
+                } else if self.peek_ahead(1) == &Token::Scope {
+                    // Scoped type declaration: `pkg::type varname;` — parse_decl
+                    // sudah mendukung `Ident :: Ident`. Contoh nyata OpenTitan:
+                    // `tlul_pkg::tl_d2h_t tl_o_pre;` di body module.
+                    let decl = self.parse_decl()?;
+                    Ok(Some(ModuleItem::Decl(decl)))
                 } else if matches!(self.peek_ahead(1), Token::Ident(_))
                     || self.peek_ahead(1) == &Token::Hash
                     || self.peek_ahead(1) == &Token::LParen
@@ -989,6 +1045,7 @@ let mut _last_pos = self.pos.get();
                         range: None,
                         expr_range: None,
                         array_range: None,
+                        array_size_expr: None,
                         extra_packed_dims: vec![],
                         is_dynamic: false,
                         is_queue: false,

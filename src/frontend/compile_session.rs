@@ -262,6 +262,28 @@ impl CompileSession {
             }
         }
 
+        // ── Phase 4b: Discovery nama class & typedef GLOBAL ──
+        // Parsing per-file hanya mengenal nama di file-nya sendiri; `ClassType var;`
+        // dari file lain akan salah di-parse sebagai instance module. Scan semua
+        // combined source (cached + fresh) untuk mengumpulkan nama class/typedef,
+        // lalu seed ke Parser yang memproses file fresh. Skip bila semua file
+        // di-restore dari cache (tidak ada parse → nama tidak dipakai).
+        let has_fresh = prepared.iter().any(|r| matches!(r, Ok((_, None, ..))));
+        let (global_classes, global_typedefs) = if has_fresh {
+            let parts = combined_parts.lock().unwrap();
+            let mut classes: HashSet<Symbol> = HashSet::new();
+            let mut typedefs: HashSet<Symbol> = HashSet::new();
+            for (_, src) in parts.iter() {
+                discover_names_in_source(src, &mut classes, &mut typedefs);
+            }
+            (classes, typedefs)
+        } else {
+            (HashSet::new(), HashSet::new())
+        };
+        if std::env::var("MARIA_DEBUG_PARSE").is_ok() && has_fresh {
+            eprintln!("[DBG-PARSE] global discovery: classes={} typedefs={}", global_classes.len(), global_typedefs.len());
+        }
+
         // ── Phase 5: Parallel lexing + parsing dengan posisi global ──
         let results: Vec<Result<(PathBuf, Design, u64), SimError>> = prepared
             .into_par_iter()
@@ -308,7 +330,8 @@ impl CompileSession {
                     toks
                 };
 
-                let mut parser = Parser::new(tokens, &path_str);
+                let mut parser = Parser::new(tokens, &path_str)
+                    .with_global_type_names(&global_classes, &global_typedefs);
                 let design = parser.parse_design()?;
                 if std::env::var("MARIA_DEBUG_PARSE").is_ok() && !parser.errors.is_empty() {
                     eprintln!("[DBG-PARSE] {} errors={}", path_str, parser.errors.len());
@@ -1730,3 +1753,73 @@ mod tests {
         assert!(!ready.contains(&top), "top should not be ready yet");
     }
 }
+
+/// Discovery pass ringan: scan satu combined source (sudah preprocessed) dan
+/// kumpulkan nama `class <name>` serta nama typedef (`typedef ... <name>;`).
+/// Dipakai untuk seed Parser per-file dengan nama global (lintas file).
+/// Nama class diambil dari ident pertama setelah `class`; nama typedef dari
+/// ident terakhir sebelum `;` selama masih di dalam satu deklarasi typedef.
+/// Over-collection aman: nama ekstra hanya membuat parser lebih condong
+/// mem-parse `name var;` sebagai deklarasi (benar untuk tipe) — tidak pernah
+/// mengubah instantiation module (yang tetap lewat sintaks `#( )` / `( )`).
+fn discover_names_in_source(src: &str, classes: &mut HashSet<Symbol>, typedefs: &mut HashSet<Symbol>) {
+    let mut lexer = FastLexer::new(src, "");
+    let mut in_typedef = false;
+    let mut last_ident: Option<Symbol> = None;
+    // Depth kurung kurawal di dalam typedef: `typedef struct packed {...} name;`
+    // punya SEMI internal (mis. deklarasi member), jadi nama typedef baru
+    // muncul setelah `}` PENUTUP. Semi hanya dianggap terminasi saat depth==0.
+    let mut brace_depth: usize = 0;
+    loop {
+        let (tok, _, _) = lexer.next_token();
+        match tok {
+            Token::Eof => break,
+            Token::Class => {
+                // LRM: `class <class_identifier> ...` — nama selalu ident
+                // pertama setelah `class`. Ambil dan berhenti.
+                loop {
+                    let (t, _, _) = lexer.next_token();
+                    match t {
+                        Token::Eof => break,
+                        Token::Ident(n) => {
+                            classes.insert(n);
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            Token::Typedef => {
+                in_typedef = true;
+                last_ident = None;
+                brace_depth = 0;
+            }
+            Token::LBrace => {
+                if in_typedef {
+                    brace_depth += 1;
+                }
+            }
+            Token::RBrace => {
+                if in_typedef && brace_depth > 0 {
+                    brace_depth -= 1;
+                }
+            }
+            Token::Ident(n) => {
+                if in_typedef && brace_depth == 0 {
+                    last_ident = Some(n);
+                }
+            }
+            Token::Semi => {
+                if in_typedef && brace_depth == 0 {
+                    if let Some(n) = last_ident {
+                        typedefs.insert(n);
+                    }
+                    in_typedef = false;
+                    last_ident = None;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+

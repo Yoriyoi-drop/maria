@@ -172,6 +172,15 @@ pub struct StructFieldInfo {
     pub name: Symbol,
     pub offset: usize,
     pub width: usize,
+    /// Nama tipe field bila field adalah struct/typedef lain (nested struct
+    /// access `a.b.c`). Diisi saat store_typedef_fields / deklarasi struct.
+    /// Dipakai elaborator untuk resolve lvalue nested (`hw2reg.val.d = x`).
+    pub type_name: Option<Symbol>,
+    /// Fields dari anonymous struct/union inline (`struct packed {...} data;`
+    /// tanpa typedef). type_name tidak ada di typedef_field_map, jadi sub_fields
+    /// menyimpan fields langsung agar chain `a.b.c` tetap bisa di-resolve
+    /// (pola register file OpenTitan: `reg2hw.masked_out.data.qe = x`).
+    pub sub_fields: Vec<StructFieldInfo>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
