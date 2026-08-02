@@ -1,6 +1,6 @@
 use crate::intern::Symbol;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Expr {
     Value(Value),
     FillLit(crate::ir::LogicVal),
@@ -82,19 +82,19 @@ pub enum Expr {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DistItem {
     Value(Box<Expr>, DistWeight),
     Range(Box<Expr>, Box<Expr>, DistWeight),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DistWeight {
     Item(u64),  // := weight (each item in range gets this weight)
     Range(u64), // :/ weight (total weight for the range)
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Value {
     Binary {
         bits: String,
@@ -115,7 +115,7 @@ pub enum Value {
     Real(f64),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum UnaryOp {
     Plus,
     Minus,
@@ -129,7 +129,7 @@ pub enum UnaryOp {
     ReductionXnor,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BinaryOp {
     Add,
     Sub,

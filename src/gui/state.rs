@@ -70,6 +70,26 @@ pub enum DiagLevel {
     Info,
 }
 
+/// Jenis perbaikan otomatis (Quick Fix) yang bisa diterapkan pada satu
+/// diagnostic di Problems tab.
+#[derive(Debug, Clone)]
+pub enum QuickFixKind {
+    /// Hapus seluruh baris deklarasi (mis. signal tak terpakai). Baris target
+    /// = `DiagEntry.line`.
+    RemoveLine,
+    /// Ganti assignment blocking `=` pertama dengan non-blocking `<=` pada
+    /// baris target (`DiagEntry.line`).
+    BlockingToNonBlocking,
+}
+
+/// Aksi perbaikan otomatis yang ditawarkan pada satu diagnostic.
+#[derive(Debug, Clone)]
+pub struct QuickFix {
+    /// Label tombol aksi di Problems tab (mis. "Hapus 'data'").
+    pub action: String,
+    pub kind: QuickFixKind,
+}
+
 /// Satu baris diagnostic (Problems).
 #[derive(Debug, Clone)]
 pub struct DiagEntry {
@@ -77,6 +97,8 @@ pub struct DiagEntry {
     pub line: usize,
     pub message: String,
     pub level: DiagLevel,
+    /// Aksi perbaikan otomatis (None = tidak ada Quick Fix).
+    pub fix: Option<QuickFix>,
 }
 
 /// Pratinjau deklarasi untuk Peek Definition (Alt+Click di editor) — sesuai
@@ -147,6 +169,9 @@ pub struct CompileInfo {
     /// Symbol → file asal (module/interface/package dari module_index) untuk
     /// Go To Definition (Ctrl+Click) — precompute sekali saat compile.
     pub symbol_files: std::collections::HashMap<String, PathBuf>,
+    /// Lint warning dari scan source (unused signal, blocking assignment di
+    /// blok sequential, dll) — ditampilkan di Problems tab dengan Quick Fix.
+    pub lint: Vec<DiagEntry>,
 }
 
 /// Satu sinyal waveform dengan trace transisi nilai (dari VCD).
@@ -473,6 +498,74 @@ impl GuiState {
         }
     }
 
+    /// Terapkan Quick Fix untuk diagnostic pada `diag_idx` (Problems tab).
+    /// Menulis perubahan ke file terbuka yang cocok (atau membaca disk bila
+    /// belum terbuka), lalu menghapus diagnostic dari daftar. Mengembalikan
+    /// true jika fix berhasil diterapkan.
+    pub fn apply_quick_fix(&mut self, diag_idx: usize) -> bool {
+        let Some(d) = self.diagnostics.get(diag_idx) else {
+            return false;
+        };
+        let fix = match &d.fix {
+            Some(f) => f.clone(),
+            None => return false,
+        };
+        let file = d.file.clone();
+        let line = d.line;
+
+        // Cari file yang cocok di antara file terbuka; jika belum terbuka,
+        // baca dari disk lalu buka setelah fix diterapkan.
+        let open_idx = self
+            .open_files
+            .iter()
+            .position(|of| diag_matches_file(&file, &of.path.display().to_string()));
+
+        let (applied, ok) = match open_idx {
+            Some(i) => {
+                let mut content = self.open_files[i].content.clone();
+                let applied = match &fix.kind {
+                    QuickFixKind::RemoveLine => remove_line(&mut content, line),
+                    QuickFixKind::BlockingToNonBlocking => fix_blocking_assign(&mut content, line),
+                };
+                if !applied {
+                    return false;
+                }
+                let ok = std::fs::write(&self.open_files[i].path, &content).is_ok();
+                self.open_files[i].content = content;
+                self.open_files[i].dirty = !ok;
+                (applied, ok)
+            }
+            None => {
+                let path = PathBuf::from(&file);
+                let Ok(mut content) = std::fs::read_to_string(&path) else {
+                    return false;
+                };
+                let applied = match &fix.kind {
+                    QuickFixKind::RemoveLine => remove_line(&mut content, line),
+                    QuickFixKind::BlockingToNonBlocking => fix_blocking_assign(&mut content, line),
+                };
+                if !applied {
+                    return false;
+                }
+                let ok = std::fs::write(&path, &content).is_ok();
+                if ok {
+                    self.open_file(path);
+                }
+                (applied, ok)
+            }
+        };
+        if !applied {
+            return false;
+        }
+        self.diagnostics.remove(diag_idx);
+        if ok {
+            self.log(format!("💡 Quick fix '{}' → {}:{}", fix.action, file, line));
+        } else {
+            self.log(format!("⚠ Quick fix '{}' gagal menulis {}:{}", fix.action, file, line));
+        }
+        ok
+    }
+
     /// Kumpulkan semua path file .sv/.svh dari pohon proyek.
     pub fn collect_sv_files(&self) -> Vec<PathBuf> {
         fn walk(nodes: &[FileNode], out: &mut Vec<PathBuf>) {
@@ -495,4 +588,143 @@ impl GuiState {
         walk(&self.files, &mut out);
         out
     }
+}
+
+// ─────────────────────────── Helper text (Quick Fix) ───────────────────────────
+
+/// Karakter pembentuk identifier SV (`[A-Za-z0-9_$]`).
+fn is_word_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+}
+
+/// Jumlah kemunculan `word` sebagai kata utuh di `text` (boundary aman).
+/// Dipakai lint unused signal (backend) — dihitung per file.
+pub fn word_count(text: &str, word: &str) -> usize {
+    if word.is_empty() {
+        return 0;
+    }
+    let b = text.as_bytes();
+    let wb = word.as_bytes();
+    let n = b.len();
+    let mut count = 0usize;
+    let mut i = 0usize;
+    while i + wb.len() <= n {
+        if b[i] == wb[0] {
+            let prev_ok = i == 0 || !is_word_char(b[i - 1]);
+            let end = i + wb.len();
+            let next_ok = end >= n || !is_word_char(b[end]);
+            if prev_ok && next_ok && &b[i..end] == wb {
+                count += 1;
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    count
+}
+
+/// Cocokkan file diagnostic (dari compile/lint) dengan file yang sedang
+/// dibuka. Nama file dibandingkan (bukan path penuh) — path bisa berbeda
+/// format antara compiler dan tree project.
+pub fn diag_matches_file(diag_file: &str, open_path: &str) -> bool {
+    if diag_file.is_empty() {
+        return false;
+    }
+    // Fallback pertama: path persis sama (paling andal).
+    if diag_file == open_path {
+        return true;
+    }
+    // Kedua: nama file sama — cegah mis-attribute bila ada dua file bernama
+    // sama di direktori berbeda (bandingkan nama saja tetap lebih baik dari
+    // path penuh yang formatnya bisa beda antara compiler & tree project).
+    let a = std::path::Path::new(diag_file)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let b = std::path::Path::new(open_path)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    !a.is_empty() && a == b
+}
+
+/// Hapus baris `line` (1-based) dari konten. Mengembalikan true jika baris
+/// ditemukan dan dihapus.
+fn remove_line(content: &mut String, line: usize) -> bool {
+    if line == 0 {
+        return false;
+    }
+    let mut out = String::with_capacity(content.len());
+    let mut removed = false;
+    for (i, l) in content.split('\n').enumerate() {
+        if i + 1 == line {
+            removed = true;
+            continue;
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(l);
+    }
+    if !removed {
+        return false;
+    }
+    *content = out;
+    true
+}
+
+/// Ganti assignment blocking `=` pertama (bukan `==`/`<=`/`>=`/`!=`/`+=` dll)
+/// pada baris `line` dengan `<=`. Mengembalikan true jika ada yang diganti.
+fn fix_blocking_assign(content: &mut String, line: usize) -> bool {
+    if line == 0 {
+        return false;
+    }
+    let mut out = String::with_capacity(content.len());
+    let mut changed = false;
+    for (i, l) in content.split('\n').enumerate() {
+        if i + 1 == line {
+            if let Some(pos) = blocking_assign_pos(l) {
+                out.push_str(&l[..pos]);
+                out.push_str("<=");
+                out.push_str(&l[pos + 1..]);
+                changed = true;
+                continue;
+            }
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(l);
+    }
+    if changed {
+        *content = out;
+    }
+    changed
+}
+
+/// Byte offset `=` pertama di baris yang merupakan assignment blocking murni
+/// (bukan `==`, `<=`, `>=`, `!=`, `+=`, `-=`, dll). Dipakai lint blocking
+/// assignment di blok sequential & Quick Fix (ganti `=` → `<=`).
+pub fn blocking_assign_pos(line: &str) -> Option<usize> {
+    let b = line.as_bytes();
+    let n = b.len();
+    let mut i = 0usize;
+    while i < n {
+        if b[i] == b'=' {
+            let prev = if i > 0 { b[i - 1] } else { 0 };
+            let next = if i + 1 < n { b[i + 1] } else { 0 };
+            // Bukan assignment: `==` (perbandingan), `<=`/`>=`/`!=` (relasional),
+            // atau operator majemuk `+=` `-=` dst.
+            let is_compound_or_compare = matches!(
+                prev,
+                b'=' | b'<' | b'>' | b'!' | b'+' | b'-' | b'*' | b'/' | b'&' | b'|' | b'^'
+            ) || next == b'=';
+            if !is_compound_or_compare {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
 }

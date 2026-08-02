@@ -1,19 +1,19 @@
 use super::expr::Expr;
 use crate::intern::Symbol;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AlwaysBlock {
     pub kind: AlwaysKind,
     pub sensitivity: Option<SensitivityList>,
     pub stmts: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct InitialBlock {
     pub stmts: Vec<Stmt>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum AlwaysKind {
     Always,
     AlwaysComb,
@@ -21,12 +21,12 @@ pub enum AlwaysKind {
     AlwaysLatch,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SensitivityList {
     pub events: Vec<SensitivityEvent>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SensitivityEvent {
     PosEdge(Expr),
     NegEdge(Expr),
@@ -34,7 +34,7 @@ pub enum SensitivityEvent {
     Wildcard,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Stmt {
     Block {
         stmts: Vec<Stmt>,
@@ -218,32 +218,32 @@ pub enum Stmt {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RandSeqProduction {
     pub name: Symbol,
     pub items: Vec<RandSeqItem>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RandSeqItem {
     pub value: Box<Stmt>,
     pub weight: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RandCaseItem {
     pub weight: u64,
     pub stmt: Box<Stmt>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum JoinType {
     Join,
     JoinAny,
     JoinNone,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CaseItem {
     pub labels: Vec<Expr>,
     pub stmt: Box<Stmt>,

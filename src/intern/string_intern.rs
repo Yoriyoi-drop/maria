@@ -124,6 +124,24 @@ impl fmt::Display for Symbol {
     }
 }
 
+// ─── Serde ───
+// Serialisasi sebagai string (bukan u32 index) karena index intern
+// bersifat proses-lokal dan tidak stabil antar proses. Deserialisasi
+// meng-intern ulang string ke tabel global proses saat ini.
+
+impl serde::Serialize for Symbol {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Symbol {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Ok(Symbol::intern(&s))
+    }
+}
+
 impl Hash for Symbol {
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Hash by string content, not u32 index, to be consistent with Borrow<str>.

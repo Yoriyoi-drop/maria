@@ -32,6 +32,7 @@ pub mod cache;
 pub mod diagnostics;
 pub mod frontend;
 pub mod hir;
+pub mod micd;
 pub mod mir;
 pub mod plugin;
 pub mod profiling;

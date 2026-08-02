@@ -25,7 +25,7 @@ cargo test --lib              # same, excludes main.rs
 cargo test <test_name>        # single test (no --lib needed if unique)
 ```
 
-No CI, no lint, no typecheck shortcuts. Just `cargo test`. 1185 tests pass.
+No CI, no lint, no typecheck shortcuts. Just `cargo test`. 1238 tests pass (+16 ignored).
 
 ## Pipeline architecture
 
@@ -124,3 +124,24 @@ Snapshot `StateSnapshot` disimpan setiap `snapshot_interval` cycle. `reverse_ste
 
 ### Signal history
 Semua signal dicatat di `signal_history: HashMap<String, Vec<(u64, LogicVec)>>` setiap cycle (maks 100k entry per signal). Dipakai oleh timeline, break-change, dan watchpoint.
+
+## MICD — Maria Incremental Compilation Database
+
+Object database biner (bukan SQL) di `project/.maria/database/` yang membuat compile
+lintas run incremental: file yang tidak berubah tidak di-lex/di-parse/di-verifikasi
+ulang. **Terintegrasi otomatis ke `run` dan `run_fast`** — bukan flag tambahan.
+
+Struktur `src/micd/`:
+- `format.rs` — format file `MDB1`: header 64B + object table + payload, dibaca via mmap (memmap2). Tulis atomik (temp+rename).
+- `metadata.rs` — per-file: content hash (xxh3), mtime, size, status, flags hash, deps.
+- `graph.rs` — dependency graph file-level + reverse index → `affected(changed)` transitive closure.
+- `ast.rs` — `Design` terserialisasi per file via bincode (AST sudah `serde::Serialize/Deserialize`; `Symbol` diserialisasi sebagai string).
+- `preproc.mdb` (via `PreprocEntry` di mod.rs) — combined source per file, dipakai legacy `run()`.
+- `verify.rs` — verification cache keyed by content hash (parse/elab ok, diag counts, timing).
+- `diag.rs`, `symbol.rs`, `snapshot.rs` — diagnostic per file, index simbol, snapshot build (build-NNN, rollback).
+
+Integrasi:
+- `CompileSession::attach_micd(MicdDatabase)` — restore `prev_designs`/`prev_checksums`/`prev_combined_sources` untuk file yang content hash-nya cocok → `compile()` melewati lexer+parser.
+- `CompileSession::save_micd()` — simpan metadata/graph/ast/preproc/verify/symbol/types + auto-snapshot saat ada perubahan. Dipanggil `main.rs` sekali per build (bukan di `compile()` — agar statistik `changed_files` per-build akurat).
+- `run_fast`: MICD penuh (restore AST). `run` (legacy): MICD preprocess cache (reuse combined source, skip preprocessor).
+- Root: `.maria/database` (override `MARIA_MICD_DIR`). `--recompile` melewati MICD (full rebuild). `--cache-clear` menghapus MICD.

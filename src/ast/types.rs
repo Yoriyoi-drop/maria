@@ -7,7 +7,7 @@ use crate::intern::Symbol;
 // Re-export constant evaluation functions
 pub use crate::ast::const_eval::{const_eval_simple, const_eval_with_params, string_to_i64};
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Design {
     pub modules: Vec<Module>,
     pub classes: Vec<ClassDecl>,
@@ -27,7 +27,7 @@ pub struct Design {
     pub timescale: Option<(String, String)>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ConfigDecl {
     pub name: Symbol,
     pub design_top: Option<Symbol>,
@@ -35,20 +35,20 @@ pub struct ConfigDecl {
     pub rules: Vec<ConfigRule>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ConfigRule {
     InstanceLiblist { instance: Symbol, liblist: String },
     CellLiblist { cell: Symbol, liblist: String },
     UseLiblist { liblist: String },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BindDecl {
     pub target: Symbol,
     pub instance: ModuleInstance,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ClassDecl {
     pub name: Symbol,
     pub extends: Option<Symbol>,
@@ -56,13 +56,13 @@ pub struct ClassDecl {
     pub members: Vec<ClassMember>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TypeParam {
     pub name: Symbol,
     pub default_type: Option<DataType>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ClassMember {
     Decl(Decl),
     Function(FunctionDecl),
@@ -73,7 +73,7 @@ pub enum ClassMember {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TaskDecl {
     pub name: Symbol,
     pub ports: Vec<FunctionPort>,
@@ -83,13 +83,13 @@ pub struct TaskDecl {
     pub is_static: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ConstraintItem {
     Expr(Expr),
     SolveBefore { vars: Vec<Symbol> },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Module {
     pub name: Symbol,
     pub ports: Vec<Port>,
@@ -98,19 +98,19 @@ pub struct Module {
     pub items: Vec<ModuleItem>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ModportItem {
     pub name: Symbol,
     pub direction: PortDirection,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Modport {
     pub name: Symbol,
     pub items: Vec<ModportItem>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Interface {
     pub name: Symbol,
     pub params: Vec<ParamDecl>,
@@ -120,7 +120,7 @@ pub struct Interface {
     pub modports: Vec<Modport>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Port {
     pub name: Symbol,
     pub direction: PortDirection,
@@ -153,7 +153,7 @@ impl Port {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum PortDirection {
     Input,
     Output,
@@ -161,7 +161,7 @@ pub enum PortDirection {
     Ref,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Range {
     pub msb: usize,
     pub lsb: usize,
@@ -240,7 +240,7 @@ impl DeclKind {
 
 /// A range whose bounds are expressions (may reference parameters).
 /// Resolved during elaboration once parameter values are known.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ExprRange {
     pub msb: Expr,
     pub lsb: Expr,
@@ -267,7 +267,7 @@ pub fn resolve_expr_range(
     })
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ParamDecl {
     pub name: Symbol,
     pub dtype: Option<DataType>,
@@ -278,14 +278,14 @@ pub struct ParamDecl {
     pub type_default: Option<DataType>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Decl {
     pub dtype: DataType,
     pub kind: DeclKind,
     pub names: Vec<DeclVar>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DeclKind {
     Wire,
     Wand,
@@ -321,7 +321,7 @@ impl DeclKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DeclVar {
     pub name: Symbol,
     pub range: Option<Range>,
@@ -405,14 +405,14 @@ impl DeclVar {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StructMember {
     pub name: Symbol,
     pub dtype: Box<DataType>,
     pub range: Option<Range>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DataType {
     Void,
     Bit,
@@ -464,14 +464,14 @@ impl std::fmt::Display for DataType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TypedefDecl {
     pub name: Symbol,
     pub dtype: DataType,
     pub range: Option<ExprRange>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum GateType {
     And,
     Or,
@@ -483,7 +483,7 @@ pub enum GateType {
     Not,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GatePrimitive {
     pub gate_type: GateType,
     pub instance_name: Option<Symbol>,
@@ -492,7 +492,7 @@ pub struct GatePrimitive {
     pub delay: Option<Delay>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CovergroupDecl {
     pub name: Symbol,
     pub clocking_event: Option<Expr>,
@@ -500,34 +500,34 @@ pub struct CovergroupDecl {
     pub crosses: Vec<CrossDef>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CoverpointDef {
     pub name: Symbol,
     pub expr: Expr,
     pub bins: Vec<BinDef>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CrossDef {
     pub name: Symbol,
     pub coverpoints: Vec<Symbol>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BinDef {
     pub name: Symbol,
     pub range_list: Vec<Expr>,
     pub bin_type: BinType,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BinType {
     Normal,
     Illegal,
     Ignore,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DpiImport {
     pub name: Symbol,
     pub return_type: Option<Box<DataType>>,
@@ -535,14 +535,14 @@ pub struct DpiImport {
     pub is_task: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DpiArg {
     pub direction: PortDirection,
     pub dtype: DataType,
     pub name: Symbol,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ModuleItem {
     Always(AlwaysBlock),
     Initial(InitialBlock),
@@ -572,12 +572,12 @@ pub enum ModuleItem {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GenerateBlock {
     pub items: Vec<GenerateItem>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum GenerateItem {
     If {
         cond: Expr,
@@ -605,20 +605,20 @@ pub enum GenerateItem {
     Items(Vec<ModuleItem>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum GenerateCaseType {
     Normal,
     CaseX,
     CaseZ,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CaseGenerateItem {
     pub labels: Vec<Expr>,
     pub body: Vec<ModuleItem>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FunctionDecl {
     pub name: Symbol,
     pub range: Option<ExprRange>,
@@ -630,13 +630,13 @@ pub struct FunctionDecl {
     pub is_static: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PackageDecl {
     pub name: Symbol,
     pub items: Vec<PackageItem>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum PackageItem {
     Decl(Decl),
     Function(FunctionDecl),
@@ -648,7 +648,7 @@ pub enum PackageItem {
     Export { package: Symbol, item: Symbol },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ClockingBlock {
     pub name: Symbol,
     pub clock_event: ClockEvent,
@@ -657,14 +657,14 @@ pub struct ClockingBlock {
     pub items: Vec<ClockingItem>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ClockEvent {
     Posedge(Symbol),
     Negedge(Symbol),
     Edge(Symbol),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ClockingItem {
     Input {
         signals: Vec<Symbol>,
@@ -681,7 +681,7 @@ pub enum ClockingItem {
     DefaultOutputSkew(u64),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FunctionPort {
     pub name: Symbol,
     pub range: Option<Range>,
@@ -702,14 +702,14 @@ impl FunctionPort {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct UdpPort {
     pub direction: PortDirection,
     pub name: Symbol,
     pub is_reg: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum UdpSymbol {
     Zero,
     One,
@@ -719,13 +719,13 @@ pub enum UdpSymbol {
     NoChange,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct UdpTableEntry {
     pub inputs: Vec<UdpSymbol>,
     pub output: UdpSymbol,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct UdpDef {
     pub name: Symbol,
     pub ports: Vec<UdpPort>,
@@ -734,14 +734,14 @@ pub struct UdpDef {
     pub initial_output: Option<UdpSymbol>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ContinuousAssign {
     pub lhs: Expr,
     pub rhs: Expr,
     pub delay: Option<Delay>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ModuleInstance {
     pub module_name: Symbol,
     pub instance_name: Symbol,
@@ -754,13 +754,13 @@ pub struct ModuleInstance {
     pub col: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum PortConnection {
     Positional(Expr),
     Named { port: Symbol, expr: Expr },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Delay {
     pub rise: Option<Expr>,
     pub fall: Option<Expr>,
@@ -768,13 +768,13 @@ pub struct Delay {
 }
 
 /// Arah edge pada timing-check reference event (SIM-24).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EdgeKind {
     PosEdge,
     NegEdge,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SpecifyItem {
     PathDelay {
         src: Symbol,
@@ -857,12 +857,12 @@ pub enum SpecifyItem {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SpecifyBlock {
     pub items: Vec<SpecifyItem>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum VarType {
     Reg,
     Logic,

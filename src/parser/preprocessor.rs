@@ -30,6 +30,10 @@ pub struct Preprocessor {
     pub quiet: bool,
     pub timescale: Option<(String, String)>, // (unit, precision)
     pub warnings: Vec<Diagnostic>,
+    /// Semua file include yang pernah di-resolve (transitif) selama pemrosesan
+    /// file ini. Dipakai MICD untuk memverifikasi header tidak berubah sebelum
+    /// me-reuse AST/preprocessed cache (koreksi correctness).
+    pub resolved_includes: std::collections::HashSet<PathBuf>,
     /// Line ranges (start, end) inklusif, 1-based, dalam koordinat output
     /// preprocessed, yang di-exclude dari coverage oleh `` `coverage_off ``
     /// ... `` `coverage_on `` (IEEE 1800 simulation control directives).
@@ -47,6 +51,7 @@ impl Preprocessor {
             quiet: false,
             timescale: None,
             warnings: Vec::new(),
+            resolved_includes: std::collections::HashSet::new(),
             coverage_exclusions: Vec::new(),
         }
     }
@@ -160,6 +165,7 @@ impl Preprocessor {
                                 }
                                 self.include_stack.push(resolved.clone());
                                 self.include_set.insert(resolved.clone());
+                                self.resolved_includes.insert(resolved.clone());
                                 self.warned_includes.remove(&inc_path);
                                 let inc_result = (|| -> Result<(), SimError> {
                                     let inc_source = fs::read_to_string(&resolved)

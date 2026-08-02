@@ -36,6 +36,26 @@ fn emit_diags(diags: &[maria::diagnostics::diagnostic::Diagnostic]) {
     }
 }
 
+/// Simpan MICD dan cetak statistik ringkas (best-effort, tidak menggagalkan run).
+fn micd_save_and_print(session: &mut CompileSession, quiet: bool) {
+    match session.save_micd() {
+        Ok(Some(st)) => {
+            if !quiet {
+                eprintln!(
+                    "[MICD] files={} restored={} changed={} snapshots={}",
+                    st.files, st.restored_designs, st.changed_files, st.snapshot_id
+                );
+            }
+        }
+        Ok(None) => {}
+        Err(e) => {
+            if !quiet {
+                eprintln!("[MICD] save warning: {}", e);
+            }
+        }
+    }
+}
+
 /// Run formal verification (BMC) and print results.
 /// Returns Err if any assertion fails (counterexample found — for CI/CD integration).
 #[cfg(feature = "formal")]
@@ -222,45 +242,137 @@ fn run(cli: Cli) -> Result<(), SimError> {
     }
 
     // Combine all sources (parallel preprocessing for many files)
-    
+    // ── MICD: hasil preprocess di-cache per file (konten-hash). File yang
+    // tidak berubah di-reuse → preprocessor di-skip. ──
+    let mut micd = maria::micd::MicdDatabase::open(&maria::micd::MicdDatabase::default_root());
+
     let mut combined = String::new();
     let mut design_timescale = None;
 
-    // Preprocess files in parallel using rayon
-    
-    eprintln!("[TIMING] Preprocessing {} files...", sources.len());
+    // Slot per source; diisi dari MICD bila cache valid (konten + include sama).
+    let mut pp_combined: Vec<Option<Result<(String, Option<(String, String)>), String>>> =
+        vec![None; sources.len()];
+    let mut micd_reused = 0usize;
+    let mut need_preprocess: Vec<(usize, &String)> = Vec::new();
+    for (idx, path) in sources.iter().enumerate() {
+        if let Ok(content) = std::fs::read(path) {
+            let h = maria::cache::compute_checksum(&content);
+            // Koreksi correctness: jangan reuse bila header include berubah.
+            let deps_ok = micd.deps_unchanged(std::path::Path::new(path), h).unwrap_or(false);
+            if deps_ok {
+                if let Some(entry) = micd.get_preprocessed(std::path::Path::new(path), h) {
+                    pp_combined[idx] = Some(Ok((entry.combined, entry.timescale)));
+                    micd_reused += 1;
+                    continue;
+                }
+            }
+        }
+        need_preprocess.push((idx, path));
+    }
+
+    eprintln!(
+        "[TIMING] Preprocessing {} files ({} via MICD cache)...",
+        sources.len(),
+        micd_reused
+    );
     let pp_start = std::time::Instant::now();
     let pp_for_parallel = &base_pp;
-    let pp_results: Vec<Result<(String, Option<(String, String)>), String>> = sources
-        .par_iter()
-        .enumerate()
-        .map(|(_idx, path)| {
-
-            let mut pp = pp_for_parallel.clone();
-            match pp.preprocess_file(path) {
-                Ok(processed) => {
-                    let ts = pp.timescale.clone();
-                    Ok((processed, ts))
+    let fresh_results: Vec<Result<(usize, String, Option<(String, String)>, Vec<PathBuf>), String>> =
+        need_preprocess
+            .par_iter()
+            .map(|(idx, path)| {
+                let mut pp = pp_for_parallel.clone();
+                match pp.preprocess_file(path) {
+                    Ok(processed) => {
+                        let combined_str = format!("`line 1 \"{}\"\n{}\n", path, processed);
+                        let includes: Vec<PathBuf> =
+                            pp.resolved_includes.iter().cloned().collect();
+                        Ok((*idx, combined_str, pp.timescale.clone(), includes))
+                    }
+                    Err(e) => Err(format!("preprocessor '{}': {}", path, e)),
                 }
-                Err(e) => Err(format!("preprocessor '{}': {}", path, e)),
-            }
-        })
-        .collect();
+            })
+            .collect();
     eprintln!("[TIMING] Preprocessing done in {:?}", pp_start.elapsed());
 
-    for (i, path) in sources.iter().enumerate() {
-        let (processed, ts) = match &pp_results[i] {
-            Ok(r) => (r.0.clone(), r.1.clone()),
-            Err(e) => {
-                return Err(SimError::with_diag(DiagCode::PreprocessorError, format!("preprocessing failed: {}", e)));
+    for r in &fresh_results {
+        match r {
+            Ok((idx, combined_str, ts, _includes)) => {
+                pp_combined[*idx] = Some(Ok((combined_str.clone(), ts.clone())))
             }
-        };
-        if let Some(ref ts) = ts {
-            design_timescale = Some(ts.clone());
+            Err(e) => {
+                return Err(SimError::with_diag(
+                    DiagCode::PreprocessorError,
+                    format!("preprocessing failed: {}", e),
+                ));
+            }
         }
-        combined.push_str(&format!("`line 1 \"{}\"\n", path));
-        combined.push_str(&processed);
-        combined.push('\n');
+    }
+
+    for (i, _path) in sources.iter().enumerate() {
+        match &pp_combined[i] {
+            Some(Ok((combined_str, ts))) => {
+                if let Some(ts) = ts {
+                    design_timescale = Some(ts.clone());
+                }
+                combined.push_str(combined_str);
+            }
+            Some(Err(e)) => {
+                return Err(SimError::with_diag(
+                    DiagCode::PreprocessorError,
+                    format!("preprocessing failed: {}", e),
+                ));
+            }
+            None => {
+                return Err(SimError::with_diag(
+                    DiagCode::PreprocessorError,
+                    format!("no preprocessed output for source #{}", i),
+                ));
+            }
+        }
+    }
+
+    // ── MICD: simpan hasil preprocess baru untuk run berikutnya ──
+    for r in &fresh_results {
+        if let Ok((idx, combined_str, ts, includes)) = r {
+            if let Ok(content) = std::fs::read(&sources[*idx]) {
+                let h = maria::cache::compute_checksum(&content);
+                let path = std::path::PathBuf::from(&sources[*idx]);
+                micd.cache_preprocessed(
+                    path.clone(),
+                    maria::micd::PreprocEntry {
+                        content_hash: h,
+                        combined: combined_str.clone(),
+                        timescale: ts.clone(),
+                    },
+                );
+                // Metadata + include hashes (verifikasi header saat reuse).
+                let include_hashes: Vec<(std::path::PathBuf, u64)> = includes
+                    .iter()
+                    .map(|inc| {
+                        let hh = std::fs::read(inc)
+                            .map(|b| maria::cache::compute_checksum(&b))
+                            .unwrap_or(0);
+                        (inc.clone(), hh)
+                    })
+                    .collect();
+                let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                micd.record_file(
+                    path,
+                    h,
+                    vec![],
+                    maria::micd::FileStatus::Unchanged,
+                    0,
+                    size,
+                    include_hashes,
+                );
+            }
+        }
+    }
+    if micd_reused > 0 || !fresh_results.is_empty() {
+        if let Err(e) = micd.save() {
+            eprintln!("[MICD] save warning: {}", e);
+        }
     }
 
     eprintln!("[TIMING] Starting lexer (combined size: {} bytes)...", combined.len());
@@ -1032,6 +1144,24 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
 
     let mut session = CompileSession::new(config);
 
+    // ── MICD: persistent incremental compilation database ──
+    // Otomatis (bukan flag tambahan): restore AST/combined-source file yang
+    // tidak berubah → lex/parse di-skip. Di-skip hanya saat --recompile.
+    if !cli.recompile {
+        let micd_root = maria::micd::MicdDatabase::default_root();
+        let db = maria::micd::MicdDatabase::open(&micd_root);
+        let t0 = std::time::Instant::now();
+        let restored = session.attach_micd(db);
+        if restored > 0 && !cli.quiet {
+            eprintln!(
+                "[MICD] restored {} cached design(s) in {:?} ({} file(s) parse di-skip)",
+                restored,
+                t0.elapsed(),
+                restored
+            );
+        }
+    }
+
     if cli.profile {
         session.enable_profiling();
     }
@@ -1048,6 +1178,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
                     println!("HIR query ready: session.elaborate_lazy_module(...)");
                 }
             }
+            micd_save_and_print(&mut session, cli.quiet);
             return Ok(());
         } else {
             session.compile()?
@@ -1057,6 +1188,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
             session.print_timing();
             println!("Modules indexed: {}", index_len);
         }
+        micd_save_and_print(&mut session, cli.quiet);
         if cli.print_ast {
             println!("{:#?}", design);
         }
@@ -1070,12 +1202,12 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
             session.print_timing();
             println!("Modules indexed: {}, lazy HIR modules: {}", index_len, session.lazy_elaborated_count());
         }
+        micd_save_and_print(&mut session, cli.quiet);
         return Ok(());
     }
 
     // ── Full pipeline: compile + elaborate ──
-    let (design, ir_design, index_len) = if cli.recompile {
-        if !cli.quiet { eprintln!("Forcing full recompile..."); }
+    let (design, ir_design, index_len) = if cli.recompile {        if !cli.quiet { eprintln!("Forcing full recompile..."); }
         let all_sources: Vec<PathBuf> = session.config.sources.clone();
         let (design, module_index) = session.compile_incremental(&all_sources)?;
         let index_len = module_index.len();
@@ -1117,6 +1249,10 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         emit_diags(&elab.flush_diagnostics());
         (design_clone, ir_design, index_len)
     };
+
+    // ── MICD: tandai elaborasi sukses + simpan verify cache ──
+    session.micd_mark_elaborated();
+    micd_save_and_print(&mut session, cli.quiet);
 
     if !cli.quiet {
         println!("Modules indexed: {}", index_len);

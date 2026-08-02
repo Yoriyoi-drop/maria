@@ -19,7 +19,7 @@ use crate::simulator::SimulationEngine;
 
 use super::state::{
     CompileInfo, CovergroupRow, CoverageInfo, DepRow, DiagEntry, DiagLevel, FileNode, GuiEvent,
-    SimInfo, SignalRow, WaveformSignal,
+    QuickFix, QuickFixKind, SimInfo, SignalRow, WaveformSignal, blocking_assign_pos, word_count,
 };
 
 /// Scan direktori → pohon file (rekursif, sinkron).
@@ -75,6 +75,7 @@ fn simerr_to_diags(err: &SimError) -> Vec<DiagEntry> {
             line: snip.line,
             message: diag.message.to_string(),
             level: DiagLevel::Error,
+            fix: None,
         });
     }
     if out.is_empty() {
@@ -83,6 +84,7 @@ fn simerr_to_diags(err: &SimError) -> Vec<DiagEntry> {
             line: 0,
             message: diag.message.to_string(),
             level: DiagLevel::Error,
+            fix: None,
         });
     }
     out
@@ -175,6 +177,11 @@ pub fn compile_project(paths: &[PathBuf]) -> Result<(CompileInfo, IrDesign), Vec
         }
     }
 
+    // ── Lint ringan (GUI): unused signal + blocking assignment di blok
+    // sequential — contoh diagnostic dengan Quick Fix di Problems tab. Scan
+    // source mentah (bukan AST) supaya cepat & tidak bergantung elaborasi. ──
+    let lint = lint_sources(paths);
+
     Ok((
         CompileInfo {
             success: true,
@@ -187,9 +194,203 @@ pub fn compile_project(paths: &[PathBuf]) -> Result<(CompileInfo, IrDesign), Vec
             ref_counts,
             signal_info,
             symbol_files,
+            lint,
         },
         ir_design,
     ))
+}
+
+/// ────────────────────────── Lint ringan (Quick Fix) ──────────────────────────
+/// Scan source file untuk masalah umum RTL. Setiap temuan adalah `DiagEntry`
+/// level Warning dengan `fix` (aksi perbaikan otomatis di Problems tab).
+/// Ini bukan pengganti lint penuh compiler — cukup deteksi pola yang jelas
+/// dari teks: (1) signal dideklarasikan tapi tak pernah dipakai, (2) assignment
+/// blocking `=` di dalam blok sequential (`always_ff` / `always @(posedge)`).
+fn lint_sources(paths: &[PathBuf]) -> Vec<DiagEntry> {
+    let mut out: Vec<DiagEntry> = Vec::new();
+    for p in paths {
+        let Ok(text) = std::fs::read_to_string(p) else {
+            continue;
+        };
+        let fname = p.display().to_string();
+        lint_unused_signals(&text, &fname, &mut out);
+        lint_blocking_in_sequential(&text, &fname, &mut out);
+    }
+    out
+}
+
+/// Deteksi signal yang dideklarasikan tapi tidak pernah direferensikan di
+/// file yang sama (heuristik teks per-file; cukup untuk Quick Fix "Hapus").
+fn lint_unused_signals(text: &str, fname: &str, out: &mut Vec<DiagEntry>) {
+    // Kata kunci tipe yang memulai deklarasi signal internal.
+    const DECL_TYPES: &[&str] = &[
+        "logic", "reg", "wire", "bit", "int", "integer", "byte", "shortint",
+        "longint", "time", "real", "tri", "logic signed", "wire signed",
+    ];
+    let mut declared: Vec<(usize, String)> = Vec::new();
+    for (i, raw) in text.lines().enumerate() {
+        let line_no = i + 1;
+        let code = raw.split("//").next().unwrap_or(raw).trim();
+        if code.is_empty() {
+            continue;
+        }
+        // Deklarasi harus diakhiri `;` dan TIDAK di dalam blok always/initial
+        // (assignment `x = ...` bukan deklarasi). Cek kata pertama: tipe.
+        if !code.ends_with(';') {
+            continue;
+        }
+        let first_word = code.split_whitespace().next().unwrap_or("");
+        if !DECL_TYPES.contains(&first_word) {
+            continue;
+        }
+        // Ambil nama signal: token pertama setelah tipe + opsional range
+        // `[7:0]`. Contoh: `logic [7:0] data;` → `data`, `wire a, b;` → a,b.
+        let mut rest = code;
+        if first_word.contains(" ") {
+            rest = rest.splitn(2, ' ').nth(1).unwrap_or("");
+        }
+        let rest = rest.trim_start();
+        // Buang range `[...]` di awal (mengandung angka/`:`/`-`).
+        let rest = rest
+            .strip_prefix('[')
+            .and_then(|r| r.split_once(']').map(|(_, after)| after.trim_start()))
+            .unwrap_or(rest);
+        // Token identifier pertama (hentikan di `,`, `=`, `;`, spasi).
+        let mut names: Vec<String> = Vec::new();
+        let mut cur = String::new();
+        for c in rest.chars() {
+            match c {
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '$' => cur.push(c),
+                ',' => {
+                    if !cur.is_empty() {
+                        names.push(std::mem::take(&mut cur));
+                    }
+                }
+                ' ' | '=' | ';' | '(' | ')' | '[' | ']' | ':' => {
+                    if !cur.is_empty() {
+                        names.push(std::mem::take(&mut cur));
+                        break;
+                    }
+                }
+                _ => {
+                    if !cur.is_empty() {
+                        break;
+                    }
+                }
+            }
+            if !cur.is_empty() && matches!(c, '=' | ';' | '(' | '[') {
+                break;
+            }
+        }
+        if !cur.is_empty() {
+            names.push(cur);
+        }
+        for name in names {
+            // Lewati nama yang terlihat seperti keyword/number.
+            if name.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(true) {
+                continue;
+            }
+            if is_sv_keyword(&name) {
+                continue;
+            }
+            declared.push((line_no, name));
+        }
+    }
+
+    for (line_no, name) in declared {
+        // Hitung semua kemunculan kata utuh (termasuk baris deklarasi).
+        let count = word_count(text, &name);
+        if count <= 1 {
+            out.push(DiagEntry {
+                file: fname.to_string(),
+                line: line_no,
+                message: format!("unused signal '{}' — tidak pernah direferensikan", name),
+                level: DiagLevel::Warning,
+                fix: Some(QuickFix {
+                    action: format!("Hapus '{}'", name),
+                    kind: QuickFixKind::RemoveLine,
+                }),
+            });
+        }
+    }
+}
+
+/// Deteksi assignment blocking `=` di dalam blok sequential. Heuristik: baris
+/// `always_ff` / `always @(posedge|negedge ...)` memulai blok; di dalamnya,
+/// baris dengan `=` (bukan `<=`/`==`/dll, via `blocking_assign_pos`) di-flag
+/// sebagai calon bug — ganti `=` → `<=` via Quick Fix.
+fn lint_blocking_in_sequential(text: &str, fname: &str, out: &mut Vec<DiagEntry>) {
+    let mut in_sequential = false;
+    let mut block_depth: usize = 0;
+    for (i, raw) in text.lines().enumerate() {
+        let line_no = i + 1;
+        let code = raw.split("//").next().unwrap_or(raw);
+        let trimmed = code.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let words: Vec<&str> = trimmed.split_whitespace().collect();
+        let first = words.first().copied().unwrap_or("");
+
+        // Mulai blok sequential: `always_ff ...` atau `always @(posedge ...)`.
+        if !in_sequential && (first == "always_ff"
+            || (first == "always"
+                && (trimmed.contains("posedge") || trimmed.contains("negedge"))))
+        {
+            in_sequential = true;
+            block_depth = 0;
+        }
+        if !in_sequential {
+            continue;
+        }
+
+        // Hitung kedalaman begin/end pada baris ini (sebelum cek assignment).
+        for w in &words {
+            if *w == "begin" {
+                block_depth += 1;
+            } else if *w == "end" {
+                block_depth = block_depth.saturating_sub(1);
+            }
+        }
+
+        // Assignment blocking di baris ini? (Lewati baris deklarasi `;` awal
+        // blok — baris selalu `always_ff ... begin` tidak punya `=`.)
+        if block_depth > 0 && trimmed.contains('=') {
+            if let Some(_pos) = blocking_assign_pos(trimmed) {
+                out.push(DiagEntry {
+                    file: fname.to_string(),
+                    line: line_no,
+                    message:
+                        "blocking assignment '=' di dalam blok sequential (gunakan '<=')".into(),
+                    level: DiagLevel::Warning,
+                    fix: Some(QuickFix {
+                        action: "Ubah '=' → '<='".into(),
+                        kind: QuickFixKind::BlockingToNonBlocking,
+                    }),
+                });
+            }
+        }
+
+        if block_depth == 0 {
+            in_sequential = false;
+        }
+    }
+}
+
+/// Apakah token adalah keyword SystemVerilog (bukan nama signal valid).
+fn is_sv_keyword(w: &str) -> bool {
+    matches!(
+        w,
+        "module" | "endmodule" | "interface" | "endinterface" | "package" | "endpackage"
+            | "always" | "always_ff" | "always_comb" | "always_latch" | "initial" | "final"
+            | "begin" | "end" | "if" | "else" | "for" | "while" | "repeat" | "case"
+            | "casez" | "casex" | "default" | "input" | "output" | "inout" | "parameter"
+            | "localparam" | "genvar" | "assign" | "function" | "endfunction" | "task"
+            | "endtask" | "typedef" | "enum" | "struct" | "union" | "class" | "endclass"
+            | "return" | "break" | "continue" | "logic" | "reg" | "wire" | "bit" | "int"
+            | "integer" | "byte" | "shortint" | "longint" | "time" | "real" | "tri"
+            | "signed" | "unsigned" | "var" | "void" | "import" | "export"
+    )
 }
 
 /// Tipe display signal dari `SignalKind` (untuk Hover tooltip editor).
