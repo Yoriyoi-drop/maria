@@ -71,6 +71,14 @@ impl Elaborator {
                 Ok(IrExpr::Signal(*sig_id, 0))
             }
             Expr::ScopedIdent { package, item } => {
+                // Enum member atau konstanta lain yang sudah di-flatten ke
+                // param_vals sebagai qualified name `pkg::member` oleh
+                // build_pkg_param_ctx (enum member TIDAK terdaftar sebagai
+                // PackageItem, jadi tidak ada di package_symbols).
+                let qualified = Symbol::intern(&format!("{}::{}", package.as_str(), item.as_str()));
+                if let Some(&val) = self.param_vals.get(&qualified) {
+                    return Ok(IrExpr::Const(LogicVec::from_u64(val as u64, 64)));
+                }
                 if let Some(pkg_items) = self.package_symbols.get(package) {
                     if let Some(pkg_item) = pkg_items.get(item) {
                         match pkg_item {

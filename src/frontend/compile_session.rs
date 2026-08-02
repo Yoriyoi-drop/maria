@@ -365,8 +365,20 @@ impl CompileSession {
             }
         }
 
-        // Clone all designs for cache BEFORE merge (one-time O(n) cost)
-        let cache_designs: Vec<Design> = designs.iter().cloned().collect();
+        // Clone all designs for cache BEFORE merge (one-time O(n) cost).
+        // File yang di-restore dari MICD sudah ada di prev_designs (dari
+        // attach) → tidak perlu clone ulang (hemat CPU + memori).
+        let cache_designs: Vec<Option<Design>> = designs
+            .iter()
+            .enumerate()
+            .map(|(i, d)| {
+                if self.micd_restored_paths.contains(&paths[i]) {
+                    None
+                } else {
+                    Some(d.clone())
+                }
+            })
+            .collect();
 
         // Merge by moving (O(n), no cloning per iteration — eliminates O(n²) scaling)
         let mut merged: Design = std::mem::take(&mut designs[0]);
@@ -419,14 +431,16 @@ impl CompileSession {
             self.merged_design = None;
         }
 
-        // Update cache for next incremental compile (use cached clones — designs were consumed by merge)
-        // Store metadata fingerprints (not content checksums) for fast change detection
+        // Update cache for next incremental compile (use cached clones — designs were consumed by merge).
+        // File yang di-restore TIDAK di-clear/di-insert ulang — entry lama di
+        // prev_designs tetap valid (konten identik, diverifikasi saat attach).
         self.prev_checksums.clear();
-        self.prev_designs.clear();
         for (path, design) in paths.iter().zip(cache_designs.iter()) {
             let meta_fp = self.metadata_fingerprint(path);
             self.prev_checksums.insert(path.clone(), meta_fp);
-            self.prev_designs.insert(path.clone(), design.clone());
+            if let Some(d) = design {
+                self.prev_designs.insert(path.clone(), d.clone());
+            }
         }
 
         // ── Phase 7: Rebuild merged source from collected combined strings ──
@@ -763,30 +777,35 @@ impl CompileSession {
             .chain(self.config.libfiles.iter())
             .cloned()
             .collect();
-        for path in sources {
-            let Ok(content) = std::fs::read(&path) else { continue };
-            let hash = compute_checksum(&content);
-            if flags_changed {
-                continue;
-            }
-            // Koreksi correctness: jangan reuse bila header include berubah.
-            let deps_ok = db
-                .deps_unchanged(&path, hash)
-                .unwrap_or(false);
-            if !deps_ok {
-                continue;
-            }
-            // Restore butuh AST DAN combined source yang cocok — jika salah
-            // satu hilang, file diproses ulang (safe fallback).
-            let ast_ok = db
-                .get_ast(&path, hash)
-                .and_then(|bytes| micd::deserialize_design(&bytes));
-            let preproc_ok = db.get_preprocessed(&path, hash);
-            if let (Some(design), Some(preproc)) = (ast_ok, preproc_ok) {
+
+        if !flags_changed {
+            // Parallel restore: baca + hash + deserialize per file (independen).
+            // `&db` aman dibagi antar thread (MicdDatabase adalah Sync).
+            let db_ref = &db;
+            let restored_items: Vec<(PathBuf, Design, String)> = sources
+                .par_iter()
+                .filter_map(|path| {
+                    let Ok(content) = std::fs::read(path) else {
+                        return None;
+                    };
+                    let hash = compute_checksum(&content);
+                    // Koreksi correctness: jangan reuse bila header berubah.
+                    if !db_ref.deps_unchanged(path, hash).unwrap_or(false) {
+                        return None;
+                    }
+                    let ast = db_ref
+                        .get_ast(path, hash)
+                        .and_then(|bytes| micd::deserialize_design(&bytes))?;
+                    let preproc = db_ref.get_preprocessed(path, hash)?;
+                    Some((path.clone(), ast, preproc.combined))
+                })
+                .collect();
+
+            for (path, design, combined) in restored_items {
                 self.prev_designs.insert(path.clone(), design);
                 self.prev_checksums
                     .insert(path.clone(), self.metadata_fingerprint(&path));
-                self.prev_combined_sources.insert(path.clone(), preproc.combined);
+                self.prev_combined_sources.insert(path.clone(), combined);
                 restored += 1;
                 restored_paths.insert(path);
             }
@@ -822,7 +841,8 @@ impl CompileSession {
         let flags = micd::flags_hash(&self.config.defines, &self.config.incdirs);
         let file_deps = self.compute_file_deps();
 
-        // Kumpulkan data per file (borrow self.micd hanya di akhir).
+        // ── Fase 1: kumpulkan data per file (ringan untuk warm run —
+        // file restored tidak dibaca ulang / tidak diserialize). ──
         let t_gather = std::time::Instant::now();
         let mut items: Vec<(
             PathBuf,
@@ -832,18 +852,15 @@ impl CompileSession {
             micd::FileStatus,
             Option<String>,
             Option<Vec<u8>>,
-            Vec<(String, String)>,
             Vec<(PathBuf, u64)>,
         )> = Vec::new();
-        let mut verify_results: Vec<micd::VerifyResult> = Vec::new();
-        let mut type_entries: Vec<(String, u64)> = Vec::new();
+        let mut hash_by_path: HashMap<PathBuf, u64> = HashMap::new();
         let mut built_changed = 0usize;
         for (path, design) in &self.prev_designs {
             let is_restored = self.micd_restored_paths.contains(path);
             let (content_hash, combined, design_bytes) = if is_restored {
-                // File yang di-restore dari MICD: hash konten == hash tersimpan
-                // (diverifikasi saat attach). Tidak perlu baca ulang maupun
-                // re-serialize — AST sudah ada di database.
+                // Hash konten == hash tersimpan (diverifikasi saat attach).
+                // Tidak baca ulang / tidak re-serialize — AST sudah di db.
                 let h = self
                     .micd
                     .as_ref()
@@ -892,20 +909,12 @@ impl CompileSession {
             if prev_hash != Some(content_hash) {
                 built_changed += 1;
             }
-
-            let status = micd::FileStatus::Recompiled;
-            let combined = self.prev_combined_sources.get(path).cloned();
-            let design_bytes = micd::serialize_design(design).ok();
-            let mut symbols = Vec::new();
-            for m in &design.modules {
-                symbols.push((m.name.to_string(), "module".to_string()));
-            }
-            for p in &design.packages {
-                symbols.push((p.name.to_string(), "package".to_string()));
-            }
-            for c in &design.classes {
-                symbols.push((c.name.to_string(), "class".to_string()));
-            }
+            let status = if is_restored {
+                micd::FileStatus::Unchanged
+            } else {
+                micd::FileStatus::Recompiled
+            };
+            hash_by_path.insert(path.clone(), content_hash);
             items.push((
                 path.clone(),
                 content_hash,
@@ -914,45 +923,66 @@ impl CompileSession {
                 status,
                 combined,
                 design_bytes,
-                symbols,
                 include_hashes,
             ));
+        }
+        let full_write = built_changed > 0;
 
-            let mut v = micd::VerifyResult::fresh(content_hash);
-            v.parse_ok = true;
-            v.parse_ms = self
-                .timing
-                .preprocess_ms
-                .saturating_add(self.timing.lex_ms)
-                .saturating_add(self.timing.parse_ms);
-            verify_results.push(v);
+        // ── Fase 2: turunan (symbols / verify / type signatures) hanya
+        // dibangun bila ada perubahan — warm run (0 perubahan) melewatinya
+        // sehingga save menjadi near-no-op dan verify lama tidak di-downgrade. ──
+        let mut symbols: Vec<(String, String, PathBuf)> = Vec::new();
+        let mut verify_results: Vec<micd::VerifyResult> = Vec::new();
+        let mut type_entries: Vec<(String, u64)> = Vec::new();
+        if full_write {
+            for (path, design) in &self.prev_designs {
+                for m in &design.modules {
+                    symbols.push((m.name.to_string(), "module".to_string(), path.clone()));
+                }
+                for p in &design.packages {
+                    symbols.push((p.name.to_string(), "package".to_string(), path.clone()));
+                }
+                for c in &design.classes {
+                    symbols.push((c.name.to_string(), "class".to_string(), path.clone()));
+                }
+                let content_hash = hash_by_path.get(path).copied().unwrap_or(0);
+                let mut v = micd::VerifyResult::fresh(content_hash);
+                v.parse_ok = true;
+                v.parse_ms = self
+                    .timing
+                    .preprocess_ms
+                    .saturating_add(self.timing.lex_ms)
+                    .saturating_add(self.timing.parse_ms);
+                verify_results.push(v);
 
-            // types.mdb: signature module (deteksi perubahan struktural).
-            for m in &design.modules {
-                let mut sig = 0u64;
-                sig = sig
-                    .wrapping_mul(31)
-                    .wrapping_add(compute_checksum(m.name.as_str().as_bytes()));
-                for p in &m.ports {
+                // types.mdb: signature module (deteksi perubahan struktural).
+                for m in &design.modules {
+                    let mut sig = 0u64;
                     sig = sig
                         .wrapping_mul(31)
-                        .wrapping_add(compute_checksum(p.name.as_str().as_bytes()));
+                        .wrapping_add(compute_checksum(m.name.as_str().as_bytes()));
+                    for p in &m.ports {
+                        sig = sig
+                            .wrapping_mul(31)
+                            .wrapping_add(compute_checksum(p.name.as_str().as_bytes()));
+                    }
+                    for pr in &m.params {
+                        sig = sig
+                            .wrapping_mul(31)
+                            .wrapping_add(compute_checksum(pr.name.as_str().as_bytes()));
+                    }
+                    type_entries.push((m.name.to_string(), sig));
                 }
-                for pr in &m.params {
-                    sig = sig
-                        .wrapping_mul(31)
-                        .wrapping_add(compute_checksum(pr.name.as_str().as_bytes()));
-                }
-                type_entries.push((m.name.to_string(), sig));
             }
         }
 
+        // ── Fase 3: terapkan ke db + simpan (hanya store yang dirty). ──
         let db = self.micd.as_mut().expect("checked above");
         if std::env::var("MARIA_DEBUG_MICD").is_ok() {
             eprintln!("[MICD-DBG] gather loop = {:?}", t_gather.elapsed());
         }
         let t_apply = std::time::Instant::now();
-        for (path, content_hash, size, deps, status, combined, design_bytes, symbols, include_hashes) in items {
+        for (path, content_hash, size, deps, status, combined, design_bytes, include_hashes) in items {
             db.record_file(path.clone(), content_hash, deps, status, flags, size, include_hashes);
             if let Some(bytes) = design_bytes {
                 db.cache_ast(path.clone(), content_hash, bytes);
@@ -967,18 +997,20 @@ impl CompileSession {
                     },
                 );
             }
-            for (name, kind) in symbols {
-                db.symbols.add(name, kind, path.clone());
+        }
+        if full_write {
+            for (name, kind, path) in symbols {
+                db.add_symbol(name, kind, path);
             }
-        }
-        for (name, sig) in type_entries {
-            db.type_index.insert(name, sig);
-        }
-        for v in verify_results {
-            db.set_verify(v);
-        }
-        for (file, deps) in &file_deps {
-            db.graph.set_deps(file.clone(), deps.clone());
+            for (name, sig) in type_entries {
+                db.set_module_type(name, sig);
+            }
+            for v in verify_results {
+                db.set_verify(v);
+            }
+            for (file, deps) in &file_deps {
+                db.set_file_deps(file.clone(), deps.clone());
+            }
         }
         if std::env::var("MARIA_DEBUG_MICD").is_ok() {
             eprintln!("[MICD-DBG] apply loop = {:?}", t_apply.elapsed());
@@ -1002,14 +1034,11 @@ impl CompileSession {
         Ok(Some(stats))
     }
 
-    /// Tandai seluruh file sebagai ter-elaborasi (verify cache: elab_ok=true).
-    /// Dipanggil CLI setelah elaborasi berhasil.
+    /// Tandai seluruh file sebagai ter-elaborasi (verify cache: elab_ok=true)
+    /// dan simpan verify.mdb SAJA (ringan, tanpa tulis ulang metadata/ast).
     pub fn micd_mark_elaborated(&mut self) {
         if let Some(db) = self.micd.as_mut() {
-            for v in db.verify.values_mut() {
-                v.elab_ok = true;
-            }
-            db.dirty = true;
+            let _ = db.mark_elaborated();
         }
     }
 

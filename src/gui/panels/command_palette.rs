@@ -6,7 +6,7 @@
 use eframe::egui;
 
 use super::super::app;
-use super::super::state::{BottomTab, GuiState, SidebarTab};
+use super::super::state::{BottomTab, GenKind, GuiState, SidebarTab};
 
 #[derive(Debug, Clone)]
 pub enum PaletteAction {
@@ -29,6 +29,9 @@ pub enum PaletteAction {
     ToggleOutline,
     ShowSearch,
     ClearConsole,
+    GenerateModule,
+    CreateInterface,
+    ExportCoverage,
 }
 
 const ACTIONS: &[(&str, &str, PaletteAction)] = &[
@@ -51,6 +54,9 @@ const ACTIONS: &[(&str, &str, PaletteAction)] = &[
     ("Toggle Outline", "Ctrl+Shift+O", PaletteAction::ToggleOutline),
     ("Open Search", "", PaletteAction::ShowSearch),
     ("Clear Console", "", PaletteAction::ClearConsole),
+    ("Generate Module…", "", PaletteAction::GenerateModule),
+    ("Create Interface…", "", PaletteAction::CreateInterface),
+    ("Export Coverage…", "", PaletteAction::ExportCoverage),
 ];
 
 /// Render palette. Membaca/menulis `state.palette_*`; menutup diri saat
@@ -223,5 +229,16 @@ fn execute(state: &mut GuiState, action: PaletteAction) {
             state.sidebar_tab = SidebarTab::Search;
         }
         PaletteAction::ClearConsole => state.console.clear(),
+        PaletteAction::GenerateModule => {
+            state.gen_open = true;
+            state.gen_kind = GenKind::Module;
+            state.gen_error.clear();
+        }
+        PaletteAction::CreateInterface => {
+            state.gen_open = true;
+            state.gen_kind = GenKind::Interface;
+            state.gen_error.clear();
+        }
+        PaletteAction::ExportCoverage => app::trigger_export_coverage(state),
     }
 }

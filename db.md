@@ -23,7 +23,7 @@ Melainkan object database.
 Struktur Folder
 project/
 
-    .maria/
+    .target/
 
         database/
 

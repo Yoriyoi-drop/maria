@@ -116,6 +116,14 @@ pub struct MicdDatabase {
     pub dirty_ast: bool,
     /// preproc.mdb perlu ditulis ulang.
     pub dirty_preproc: bool,
+    /// verify.mdb perlu ditulis ulang.
+    pub dirty_verify: bool,
+    /// symbol.mdb perlu ditulis ulang.
+    pub dirty_symbol: bool,
+    /// types.mdb perlu ditulis ulang.
+    pub dirty_type: bool,
+    /// graph.mdb perlu ditulis ulang.
+    pub dirty_graph: bool,
     /// Snapshot yang tersedia.
     pub snapshots: Vec<u64>,
     /// Jumlah restore AST pada sesi ini.
@@ -127,16 +135,39 @@ pub struct MicdDatabase {
 }
 
 impl MicdDatabase {
-    /// Root default: `<cwd>/.maria/database` (override via env MARIA_MICD_DIR).
-    pub fn default_root() -> PathBuf {
-        std::env::var("MARIA_MICD_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(".maria").join("database"))
+    /// Lokasi alternatif saat root default tidak bisa dipakai: `.maria` adalah
+    /// FILE (project file untuk `--start`), bukan folder → MICD harus memakai
+    /// folder terpisah agar tidak konflik.
+    fn fallback_root() -> PathBuf {
+        PathBuf::from(".maria_db").join("database")
     }
 
-    /// Buka database. File corrupt/missing → database kosong (best-effort,
-    /// tidak pernah gagal total).
+    /// Pilih root database yang BISA dibuat di lingkungan kerja. Prioritas:
+    /// 1. env `MARIA_MICD_DIR` (override manual, selalu dipakai).
+    /// 2. `.maria/database` bila `.maria` kosong/berupa folder.
+    /// 3. `.maria_db/database` bila `.maria` adalah FILE (project `--start`).
+    pub fn default_root() -> PathBuf {
+        if let Ok(p) = std::env::var("MARIA_MICD_DIR") {
+            return PathBuf::from(p);
+        }
+        let maria_path = PathBuf::from(".maria");
+        match std::fs::metadata(&maria_path) {
+            Ok(m) if m.is_file() => Self::fallback_root(),
+            _ => maria_path.join("database"),
+        }
+    }
+
+    /// Coba buat root; bila gagal (mis. parent berupa file, seperti `.maria`
+    /// project file untuk `--start`), fallback otomatis ke folder terpisah
+    /// agar database tetap tersimpan — bukan hanya "save warning".
     pub fn open(root: &Path) -> MicdDatabase {
+        let root = if std::fs::create_dir_all(root).is_ok() {
+            root.to_path_buf()
+        } else {
+            let alt = Self::fallback_root();
+            let _ = std::fs::create_dir_all(&alt);
+            alt
+        };
         let mut db = MicdDatabase {
             root: root.to_path_buf(),
             flags_hash: 0,
@@ -153,13 +184,17 @@ impl MicdDatabase {
             dirty: false,
             dirty_ast: false,
             dirty_preproc: false,
+            dirty_verify: false,
+            dirty_symbol: false,
+            dirty_type: false,
+            dirty_graph: false,
             snapshots: Vec::new(),
             restored: 0,
             changed: 0,
             last_snapshotted_changed: 0,
         };
 
-        db.snapshots = list_snapshots(root);
+        db.snapshots = list_snapshots(&root);
 
         // metadata.mdb
         if let Ok(r) = MdbReader::open(&root.join(DB_METADATA)) {
@@ -331,6 +366,8 @@ impl MicdDatabase {
     }
 
     /// Daftarkan hasil kompilasi satu file.
+    /// Tidak menandai `dirty` bila metadata identik (mtime diabaikan —
+    /// agar warm run tidak menulis ulang metadata.mdb tanpa perubahan nyata).
     pub fn record_file(
         &mut self,
         path: PathBuf,
@@ -345,6 +382,17 @@ impl MicdDatabase {
         if prev != Some(content_hash) {
             self.changed += 1;
         }
+        let changed = match self.files.get(&path) {
+            Some(p) => {
+                p.content_hash != content_hash
+                    || p.deps != deps
+                    || p.include_hashes != include_hashes
+                    || p.flags_hash != flags_hash
+                    || p.size != size
+                    || p.status != status
+            }
+            None => true,
+        };
         let meta = FileMeta {
             path: path.clone(),
             content_hash,
@@ -365,7 +413,9 @@ impl MicdDatabase {
             ast_format_version: AST_FORMAT_VERSION,
         };
         self.files.insert(path, meta);
-        self.dirty = true;
+        if changed {
+            self.dirty = true;
+        }
     }
 
     /// Verifikasi bahwa seluruh dependensi file (termasuk include) tidak
@@ -395,9 +445,38 @@ impl MicdDatabase {
         self.verify.get(&content_hash)
     }
 
+    /// Tambah simbol + tandai symbol.mdb perlu ditulis ulang.
+    pub fn add_symbol(&mut self, name: String, kind: String, path: PathBuf) {
+        self.symbols.add(name, kind, path);
+        self.dirty_symbol = true;
+    }
+
+    /// Set signature tipe module + tandai types.mdb perlu ditulis ulang.
+    pub fn set_module_type(&mut self, name: String, sig: u64) {
+        self.type_index.insert(name, sig);
+        self.dirty_type = true;
+    }
+
+    /// Set dependensi file di graph + tandai graph.mdb perlu ditulis ulang.
+    pub fn set_file_deps(&mut self, file: PathBuf, deps: Vec<PathBuf>) {
+        self.graph.set_deps(file, deps);
+        self.dirty_graph = true;
+    }
+
     pub fn set_verify(&mut self, result: VerifyResult) {
         self.verify.insert(result.content_hash, result);
         self.dirty = true;
+        self.dirty_verify = true;
+    }
+
+    /// Tandai seluruh verify entry sebagai ter-elaborasi + simpan verify.mdb
+    /// SAJA (ringan — tidak menulis ulang metadata/ast/graph).
+    pub fn mark_elaborated(&mut self) -> io::Result<()> {
+        for v in self.verify.values_mut() {
+            v.elab_ok = true;
+        }
+        self.dirty_verify = true;
+        self.save().map(|_| ())
     }
 
     pub fn get_diags(&self, path: &Path) -> Option<&FileDiags> {
@@ -414,9 +493,17 @@ impl MicdDatabase {
         self.graph.affected(changed)
     }
 
-    /// Simpan seluruh store ke disk (atomik per file).
+    /// Simpan store ke disk (atomik per file). Hanya store yang dirty yang
+    /// ditulis ulang — save kedua (verify-only) tidak menyentuh metadata/ast.
     pub fn save(&mut self) -> io::Result<MicdStats> {
-        if !self.dirty {
+        let any_dirty = self.dirty
+            || self.dirty_ast
+            || self.dirty_preproc
+            || self.dirty_verify
+            || self.dirty_symbol
+            || self.dirty_type
+            || self.dirty_graph;
+        if !any_dirty {
             let stats = MicdStats {
                 files: self.files.len(),
                 restored_designs: self.restored,
@@ -433,17 +520,16 @@ impl MicdDatabase {
         for sub in ["cache/lexer", "cache/parser", "cache/semantic", "cache/verify", "cache/optimize"] {
             let _ = std::fs::create_dir_all(self.root.join(sub));
         }
-
         let mut bytes_written = 0u64;
 
         // metadata.mdb
-        let manifest = MetadataManifest {
-            paths: self.files.keys().cloned().collect(),
-            flags_hash: self.flags_hash,
-            compiler_version: self.compiler_version.clone(),
-            created_ns: self.created_ns,
-        };
-        {
+        if self.dirty {
+            let manifest = MetadataManifest {
+                paths: self.files.keys().cloned().collect(),
+                flags_hash: self.flags_hash,
+                compiler_version: self.compiler_version.clone(),
+                created_ns: self.created_ns,
+            };
             let mut w = MdbWriter::new();
             w.put(
                 KEY_SINGLETON,
@@ -465,8 +551,8 @@ impl MicdDatabase {
 
         // graph.mdb — rebuild reverse index sebelum serialize (set_deps
         // tidak rebuild per-call).
-        self.graph.rebuild();
-        {
+        if self.dirty_graph {
+            self.graph.rebuild();
             let mut w = MdbWriter::new();
             w.put(
                 KEY_SINGLETON,
@@ -479,7 +565,7 @@ impl MicdDatabase {
         }
 
         // verify.mdb
-        {
+        if self.dirty_verify {
             let mut w = MdbWriter::new();
             for (_, v) in self.verify.iter() {
                 w.put(
@@ -494,7 +580,7 @@ impl MicdDatabase {
         }
 
         // diagnostics.mdb
-        {
+        if self.dirty {
             let mut w = MdbWriter::new();
             for (path, d) in self.diags.iter() {
                 w.put(
@@ -509,7 +595,7 @@ impl MicdDatabase {
         }
 
         // symbol.mdb
-        {
+        if self.dirty_symbol {
             let mut w = MdbWriter::new();
             w.put(
                 KEY_SINGLETON,
@@ -522,7 +608,7 @@ impl MicdDatabase {
         }
 
         // types.mdb
-        {
+        if self.dirty_type {
             let mut w = MdbWriter::new();
             w.put(
                 KEY_SINGLETON,
@@ -575,6 +661,10 @@ impl MicdDatabase {
         self.dirty = false;
         self.dirty_ast = false;
         self.dirty_preproc = false;
+        self.dirty_verify = false;
+        self.dirty_symbol = false;
+        self.dirty_type = false;
+        self.dirty_graph = false;
         self.changed = 0;
         Ok(stats)
     }
@@ -662,6 +752,10 @@ impl MicdDatabase {
         self.dirty = false;
         self.dirty_ast = false;
         self.dirty_preproc = false;
+        self.dirty_verify = false;
+        self.dirty_symbol = false;
+        self.dirty_type = false;
+        self.dirty_graph = false;
         Ok(())
     }
 
@@ -744,8 +838,7 @@ mod tests {
                 result_hash: 7,
                 verified_at_ns: 0,
             });
-            db.symbols.add("counter".into(), "module".into(), path.clone());
-            db.save().unwrap();
+            db.add_symbol("counter".into(), "module".into(), path.clone());            db.save().unwrap();
         }
         {
             let mut db = MicdDatabase::open(&root);

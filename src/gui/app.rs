@@ -15,7 +15,9 @@ use std::time::Duration;
 use std::sync::atomic::Ordering;
 
 use super::backend::{scan_tree, spawn_compile, spawn_sim};
-use super::panels::{bottom, command_palette, editor, outline, sidebar, statusbar, toolbar};
+use super::panels::{
+    bottom, command_palette, editor, genwizard, outline, sidebar, statusbar, toolbar,
+};
 use super::state::{DiagEntry, DiagLevel, GuiEvent, GuiState, STAGE_SIMULATOR};
 use super::workspace::{restore_workspace, save_workspace};
 
@@ -283,6 +285,48 @@ pub fn trigger_stop(state: &mut GuiState) {
     // Pesan final ("⏹ Simulasi dihentikan") dikirim worker via SimDone.
 }
 
+/// Trigger: export ringkasan coverage (dari simulasi terakhir) ke file JSON
+/// via dialog simpan native (rfd). Bila belum ada data coverage, hanya log
+/// peringatan — tidak membuka dialog.
+pub fn trigger_export_coverage(state: &mut GuiState) {
+    let c = &state.coverage;
+    let has_data = c.line_items > 0
+        || c.toggle_signals > 0
+        || c.branch_total > 0
+        || c.fsm_signals > 0
+        || !c.covergroups.is_empty();
+    if !has_data {
+        state.log("⚠ Tidak ada data coverage untuk diexport — jalankan simulasi dulu");
+        return;
+    }
+    let Some(path) = rfd::FileDialog::new()
+        .set_title("Export Coverage")
+        .set_file_name("coverage.json")
+        .add_filter("JSON", &["json"])
+        .save_file()
+    else {
+        return;
+    };
+    let json = serde_json::json!({
+        "project": state.project_name,
+        "cycles": state.cycles,
+        "line": {"items": c.line_items, "hits": c.line_hits},
+        "toggle": {"signals": c.toggle_signals, "transitions": c.toggle_transitions},
+        "branch": {"total": c.branch_total, "covered": c.branch_covered, "percent": c.branch_percent},
+        "fsm": {"signals": c.fsm_signals, "states": c.fsm_states},
+        "covergroups": c.covergroups.iter().map(|cg| serde_json::json!({
+            "name": cg.name, "total": cg.total, "hits": cg.hits
+        })).collect::<Vec<_>>(),
+    });
+    match serde_json::to_string_pretty(&json) {
+        Ok(text) => match std::fs::write(&path, text) {
+            Ok(()) => state.log(format!("📊 Coverage diexport → {}", path.display())),
+            Err(e) => state.log(format!("❌ Gagal menulis coverage: {}", e)),
+        },
+        Err(e) => state.log(format!("❌ Gagal serialize coverage: {}", e)),
+    }
+}
+
 fn setup_theme(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
     // Palet: abu-abu gelap tenang, kontras lembut
@@ -375,6 +419,11 @@ impl eframe::App for MariaApp {
         // ── Command Palette (overlay, di atas semua panel) ──
         if self.state.palette_open {
             command_palette::show(ui, &mut self.state);
+        }
+
+        // ── Wizard Generate Module / Create Interface (overlay) ──
+        if self.state.gen_open {
+            genwizard::show(ui, &mut self.state);
         }
 
         // Repaint terus jika worker sibuk (simulasi)

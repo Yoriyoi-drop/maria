@@ -151,11 +151,7 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), SimError> {
-    let mut sources: Vec<String> = if cli.start {
-        read_project_file(".maria")?
-    } else {
-        cli.files.clone()
-    };
+    let mut sources: Vec<String> = cli.files.clone();
 
     // Read file list from -f
     if let Some(ref fpath) = cli.filelist {
@@ -1112,14 +1108,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
 
 /// Run compilation + simulation using the new parallel pipeline (CompileSession + FastLexer).
 fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimError> {
-    let mut sources: Vec<PathBuf> = if cli.start {
-        read_project_file(".maria")?
-            .into_iter()
-            .map(PathBuf::from)
-            .collect()
-    } else {
-        cli.files.iter().map(PathBuf::from).collect()
-    };
+    let mut sources: Vec<PathBuf> = cli.files.iter().map(PathBuf::from).collect();
     if let Some(ref fpath) = cli.filelist {
         let flist = read_project_file(fpath)?;
         sources.extend(flist.into_iter().map(PathBuf::from));
@@ -1135,7 +1124,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect(),
         top_module: cli.top.clone(),
-        auto_incdirs: cli.start || cli.files.is_empty(),
+        auto_incdirs: cli.files.is_empty(),
         libdirs: cli.libdirs.iter().map(PathBuf::from).collect(),
         libfiles: cli.libfiles.iter().map(PathBuf::from).collect(),
         use_fast_lexer: !cli.legacy_lexer,
@@ -1248,9 +1237,8 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     };
     emit_diags(&elab.flush_diagnostics());
 
-    // ── MICD: tandai elaborasi sukses + simpan verify cache ──
+    // ── MICD: tandai elaborasi sukses (verify-only save, ringan) ──
     session.micd_mark_elaborated();
-    micd_save_and_print(&mut session, cli.quiet);
 
     if !cli.quiet {
         println!("Modules indexed: {}", index_len);

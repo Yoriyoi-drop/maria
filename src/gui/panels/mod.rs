@@ -8,6 +8,7 @@ pub mod command_palette;
 pub mod coverage;
 pub mod dependency;
 pub mod editor;
+pub mod genwizard;
 pub mod outline;
 pub mod pipeline;
 pub mod search;

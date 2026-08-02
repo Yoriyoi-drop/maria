@@ -8,7 +8,6 @@ use clap::Parser as ClapParser;
 pub struct Cli {
     /// Input SystemVerilog file(s) — last is top module
     #[arg(
-        required_unless_present = "start",
         required_unless_present = "filelist",
         required_unless_present = "gui"
     )]
@@ -30,10 +29,6 @@ pub struct Cli {
     /// Allows external tools to read waveform during simulation.
     #[arg(long = "waveform-stream")]
     pub waveform_stream: bool,
-
-    /// Start from .maria project file (lists .sv files to compile)
-    #[arg(long = "start")]
-    pub start: bool,
 
     /// Launch the native GUI (egui) — requires --features gui
     #[arg(long = "gui")]

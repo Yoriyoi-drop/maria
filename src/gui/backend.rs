@@ -19,8 +19,8 @@ use crate::simulator::SimulationEngine;
 
 use super::state::{
     CompileInfo, CovergroupRow, CoverageInfo, DepRow, DiagEntry, DiagLevel, FileNode, GuiEvent,
-    MicdInfo, PipelineStage, QuickFix, QuickFixKind, SimInfo, SignalRow, WaveformSignal,
-    blocking_assign_pos, word_count, STAGE_SIMULATOR,
+    InstanceRow, MacroRow, MicdInfo, ParamRow, PipelineStage, QuickFix, QuickFixKind, SimInfo,
+    SignalRow, WaveformSignal, blocking_assign_pos, word_count, STAGE_SIMULATOR,
 };
 
 /// Scan direktori → pohon file (rekursif, sinkron).
@@ -273,6 +273,95 @@ pub fn compile_project(
         }
     }
 
+    // ── Indeks parameter: module → (param name, file) dari module_index.
+    // Tab Search → Find parameter. Deduplikasi per (name, module) — satu
+    // module bisa terdaftar di beberapa file (mis. dua definisi). ──
+    let mut param_index: Vec<ParamRow> = Vec::new();
+    {
+        let mut seen: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+        for (mname, kind, meta) in session.module_index.iter() {
+            if !matches!(kind, EntryKind::Module | EntryKind::Interface) {
+                continue;
+            }
+            for p in &meta.params {
+                let key = (p.name.to_string(), mname.to_string());
+                if seen.insert(key.clone()) {
+                    param_index.push(ParamRow {
+                        name: key.0,
+                        module: key.1,
+                        file: meta.file.clone(),
+                    });
+                }
+            }
+        }
+        param_index.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
+    // ── Indeks macro (`` `define ``): scan source mentah per file — nama +
+    // baris deklarasi (untuk lompat). Heuristik per-baris: token pertama
+    // setelah `` `define `` adalah nama macro (tanpa argumen `` `define FOO(x)``).
+    let mut macro_index: Vec<MacroRow> = Vec::new();
+    for p in paths {
+        let Ok(text) = std::fs::read_to_string(p) else {
+            continue;
+        };
+        for (i, raw) in text.lines().enumerate() {
+            let code = raw.split("//").next().unwrap_or(raw).trim_start();
+            let Some(rest) = code.strip_prefix('`') else {
+                continue;
+            };
+            let rest = rest.trim_start();
+            if !rest.starts_with("define") {
+                continue;
+            }
+            let after = rest["define".len()..].trim_start();
+            // Nama macro: identifier pertama; hentikan di `(` (macro berargumen)
+            // atau spasi/whitespace.
+            let name: String = after
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            if name.is_empty() {
+                continue;
+            }
+            macro_index.push(MacroRow {
+                name,
+                file: p.clone(),
+                line: i + 1,
+            });
+        }
+    }
+    macro_index.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // ── Indeks instance: dari sub_instances seluruh design (top + semua
+    // module). File = module yang diinstansiasi; baris = posisi instansiasi.
+    let mut instance_index: Vec<InstanceRow> = Vec::new();
+    {
+        let mut add_mod = |m: &crate::ir::IrModule| {
+            for inst in &m.sub_instances {
+                let mod_name = inst.module_name.to_string();
+                let file = module_files
+                    .get(&mod_name)
+                    .cloned()
+                    .unwrap_or_default();
+                instance_index.push(InstanceRow {
+                    name: inst.instance_name.to_string(),
+                    module: mod_name,
+                    file,
+                    line: inst.line,
+                });
+            }
+        };
+        add_mod(&ir_design.top);
+        for m in ir_design.modules.values() {
+            if m.name != ir_design.top.name {
+                add_mod(m);
+            }
+        }
+        instance_index.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
     // ── Lint ringan (GUI): unused signal + blocking assignment di blok
     // sequential — contoh diagnostic dengan Quick Fix di Problems tab. Scan
     // source mentah (bukan AST) supaya cepat & tidak bergantung elaborasi. ──
@@ -290,6 +379,9 @@ pub fn compile_project(
             ref_counts,
             signal_info,
             symbol_files,
+            param_index,
+            macro_index,
+            instance_index,
             lint,
             micd,
             pipeline,

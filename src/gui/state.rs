@@ -38,6 +38,32 @@ pub struct StickyScope {
     pub text: String,
 }
 
+/// Jenis entitas yang digenerate wizard (Generate Module / Create Interface).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenKind {
+    Module,
+    Interface,
+}
+
+/// Satu parameter untuk wizard generator module/interface.
+#[derive(Debug, Clone, Default)]
+pub struct GenParam {
+    pub name: String,
+    /// Tipe parameter (kosong = `int`).
+    pub ty: String,
+    /// Nilai default (kosong = tanpa `= default`).
+    pub default: String,
+}
+
+/// Satu port untuk wizard generator module/interface.
+#[derive(Debug, Clone, Default)]
+pub struct GenPort {
+    pub dir: String,
+    pub name: String,
+    /// Range bit (mis. "31:0") atau kosong = skalar 1 bit.
+    pub range: String,
+}
+
 /// File yang terbuka di editor.
 #[derive(Debug, Clone)]
 pub struct OpenFile {
@@ -164,6 +190,42 @@ pub struct DepRow {
     pub module: String,
     /// (child_module, jumlah instance) — deduplikasi dari sub_instances.
     pub children: Vec<(String, usize)>,
+}
+
+/// Satu parameter terindeks (tab Search → Find parameter). Precompute saat
+/// compile dari module_index — hindari scan ulang source per frame.
+#[derive(Debug, Clone)]
+pub struct ParamRow {
+    /// Nama parameter.
+    pub name: String,
+    /// Module pemilik parameter.
+    pub module: String,
+    /// File asal (untuk klik → buka).
+    pub file: std::path::PathBuf,
+}
+
+/// Satu macro `` `define `` terindeks (tab Search → Find macro).
+#[derive(Debug, Clone)]
+pub struct MacroRow {
+    /// Nama macro (tanpa backtick).
+    pub name: String,
+    /// File asal (untuk klik → buka).
+    pub file: std::path::PathBuf,
+    /// Baris deklarasi (1-based) — lompat ke definisi.
+    pub line: usize,
+}
+
+/// Satu instance terindeks (tab Search → Find instance).
+#[derive(Debug, Clone)]
+pub struct InstanceRow {
+    /// Nama instance (mis. u_alu).
+    pub name: String,
+    /// Module yang diinstansiasi (mis. alu).
+    pub module: String,
+    /// File asal (untuk klik → buka).
+    pub file: std::path::PathBuf,
+    /// Baris instansiasi (1-based).
+    pub line: usize,
 }
 
 /// Satu node hasil layout graf dependensi (tab Dependency visual) — posisi dan
@@ -293,6 +355,15 @@ pub struct CompileInfo {
     /// Symbol → file asal (module/interface/package dari module_index) untuk
     /// Go To Definition (Ctrl+Click) — precompute sekali saat compile.
     pub symbol_files: std::collections::HashMap<String, PathBuf>,
+    /// Indeks parameter (nama → module pemilik + file) — tab Search →
+    /// Find parameter. Precompute saat compile dari module_index.params.
+    pub param_index: Vec<ParamRow>,
+    /// Indeks macro (`` `define ``) — tab Search → Find macro. Precompute
+    /// saat compile dari scan source (baris deklarasi tersimpan untuk lompat).
+    pub macro_index: Vec<MacroRow>,
+    /// Indeks instance (instance → module + file + baris) — tab Search →
+    /// Find instance. Precompute saat compile dari sub_instances design.
+    pub instance_index: Vec<InstanceRow>,
     /// Lint warning dari scan source (unused signal, blocking assignment di
     /// blok sequential, dll) — ditampilkan di Problems tab dengan Quick Fix.
     pub lint: Vec<DiagEntry>,
@@ -370,6 +441,18 @@ pub enum SidebarTab {
     Architecture,
     Dependency,
     Search,
+}
+
+/// Kategori pencarian (tab Search sidebar) — sesuai desain "bukan sekadar
+/// grep": Find module, signal, parameter, package, macro, instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SearchCat {
+    Module,
+    Signal,
+    Parameter,
+    Package,
+    Macro,
+    Instance,
 }
 
 /// Tab panel bawah.
@@ -452,6 +535,8 @@ pub struct GuiState {
     pub show_outline: bool,
     pub outline_filter: String,
     pub search_filter: String,
+    /// Kategori aktif tab Search (Module/Signal/Parameter/Package/Macro/Instance).
+    pub search_cat: SearchCat,
 
     // ── Benchmark (hasil sim terakhir) ──
     pub delta_cycles: u64,
@@ -499,6 +584,19 @@ pub struct GuiState {
     pub show_sidebar: bool,
     pub show_bottom: bool,
 
+    // ── Wizard generator (Generate Module / Create Interface) ──
+    /// Dialog wizard sedang terbuka (dibuka dari Command Palette).
+    pub gen_open: bool,
+    pub gen_kind: GenKind,
+    pub gen_name: String,
+    pub gen_params: Vec<GenParam>,
+    pub gen_ports: Vec<GenPort>,
+    /// Tambahkan clock & reset secara otomatis ke daftar port.
+    pub gen_clk_rst: bool,
+    /// Pesan error wizard (mis. nama kosong / gagal menulis file) — ditampilkan
+    /// merah di bagian bawah dialog, tidak memblokir pengeditan.
+    pub gen_error: String,
+
     /// Channel ke worker threads (panels spawn via ini).
     pub tx: Sender<GuiEvent>,
     /// Penerima event dari worker thread (dipoll di app).
@@ -531,6 +629,7 @@ impl GuiState {
             show_outline: true,
             outline_filter: String::new(),
             search_filter: String::new(),
+            search_cat: SearchCat::Module,
             delta_cycles: 0,
             events_processed: 0,
             processes_evaluated: 0,
@@ -555,6 +654,35 @@ impl GuiState {
             bottom_tab: BottomTab::Console,
             show_sidebar: true,
             show_bottom: true,
+            gen_open: false,
+            gen_kind: GenKind::Module,
+            gen_name: String::new(),
+            gen_params: vec![
+                GenParam {
+                    name: "WIDTH".into(),
+                    ty: "int".into(),
+                    default: "32".into(),
+                },
+                GenParam {
+                    name: "DEPTH".into(),
+                    ty: "int".into(),
+                    default: "256".into(),
+                },
+            ],
+            gen_ports: vec![
+                GenPort {
+                    dir: "input".into(),
+                    name: "data_in".into(),
+                    range: "31:0".into(),
+                },
+                GenPort {
+                    dir: "output".into(),
+                    name: "data_out".into(),
+                    range: "31:0".into(),
+                },
+            ],
+            gen_clk_rst: true,
+            gen_error: String::new(),
             tx,
             rx,
         }
