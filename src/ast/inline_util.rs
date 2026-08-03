@@ -773,6 +773,58 @@ pub(crate) fn rename_in_expr(expr: Expr, rename_map: &HashMap<Symbol, Symbol>) -
                 .map(|a| rename_in_expr(a, rename_map))
                 .collect(),
         },
+        Expr::Inside {
+            expr: inner,
+            range_list,
+        } => Expr::Inside {
+            expr: Box::new(rename_in_expr(*inner, rename_map)),
+            range_list: range_list
+                .into_iter()
+                .map(|e| rename_in_expr(e, rename_map))
+                .collect(),
+        },
+        // Member access `payload.addr = tl.a` — rename obj-nya (payload → temp,
+        // tl → argumen aktual) agar elaborasi bisa resolve struct_fields.
+        Expr::MemberAccess { obj, field } => Expr::MemberAccess {
+            obj: Box::new(rename_in_expr(*obj, rename_map)),
+            field,
+        },
+        Expr::Cast { dtype, expr: inner } => Expr::Cast {
+            dtype,
+            expr: Box::new(rename_in_expr(*inner, rename_map)),
+        },
+        Expr::MethodCall {
+            obj,
+            method,
+            args,
+            with_clause,
+        } => Expr::MethodCall {
+            obj: Box::new(rename_in_expr(*obj, rename_map)),
+            method,
+            args: args
+                .into_iter()
+                .map(|a| rename_in_expr(a, rename_map))
+                .collect(),
+            with_clause: with_clause.map(|wc| Box::new(rename_in_expr(*wc, rename_map))),
+        },
+        Expr::StreamingConcat {
+            op,
+            slice_size,
+            slices,
+        } => Expr::StreamingConcat {
+            op,
+            slice_size: slice_size.map(|ss| Box::new(rename_in_expr(*ss, rename_map))),
+            slices: slices
+                .into_iter()
+                .map(|e| rename_in_expr(e, rename_map))
+                .collect(),
+        },
+        Expr::Dist { expr: inner, items } => Expr::Dist {
+            expr: Box::new(rename_in_expr(*inner, rename_map)),
+            items,
+        },
+        Expr::ScopedIdent { package, item } => Expr::ScopedIdent { package, item },
+        Expr::Value(_) | Expr::FillLit(_) | Expr::String(_) | Expr::Null => expr,
         other => other,
     }
 }

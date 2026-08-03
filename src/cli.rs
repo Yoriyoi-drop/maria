@@ -2,15 +2,23 @@
 //! Separated from main.rs for clarity.
 
 use clap::Parser as ClapParser;
+use clap::Subcommand;
+
+/// Subcommands `maria`.
+#[derive(Subcommand)]
+pub enum MariaCmd {
+    /// Bersihkan database MICD (.maria/database)
+    Clean,
+}
 
 #[derive(ClapParser)]
 #[command(name = "maria", about = "RTL Simulator untuk SystemVerilog")]
 pub struct Cli {
+    /// Subcommand (opsional)
+    #[command(subcommand)]
+    pub cmd: Option<MariaCmd>,
+
     /// Input SystemVerilog file(s) — last is top module
-    #[arg(
-        required_unless_present = "filelist",
-        required_unless_present = "gui"
-    )]
     pub files: Vec<String>,
 
     /// Top module name (default: first module)

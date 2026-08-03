@@ -67,9 +67,8 @@ impl SimError {
         Self::Diagnostic(diag)
     }
 
-    /// Ekstrak error code dari message format "[RT0001] message"
-    fn parse_error_code(msg: &str) -> Option<&'static str> {
-        if msg.starts_with('[') {
+        /// Ekstrak error code dari message format "[RT0001] message"
+    fn parse_error_code(msg: &str) -> Option<&'static str> {        if msg.starts_with('[') {
             if let Some(end) = msg.find(']') {
                 let code_str = &msg[1..end];
                 if let Some(code) = crate::diagnostics::codes::lookup_code(code_str) {
@@ -152,6 +151,20 @@ impl SimError {
             SimError::Io(_, _) => "E0004",
             SimError::Diagnostic(diag) => diag.code.as_str(),
         }
+    }
+
+    /// Ekstrak posisi source (line, col) dari error, jika tersedia.
+    /// Prioritas: source_snippet → span pertama → (0,0).
+    pub fn source_position(&self) -> (usize, usize) {
+        if let SimError::Diagnostic(diag) = self {
+            if let Some(snippet) = &diag.source_snippet {
+                return (snippet.line, snippet.col);
+            }
+            if let Some(span) = diag.spans.first() {
+                return (span.start as usize, span.end as usize);
+            }
+        }
+        (0, 0)
     }
 
     /// Convert ke Diagnostic struct untuk formatting penuh.

@@ -30,7 +30,6 @@ use std::io::{self, Write};
 use super::diagnostic::{DiagLevel, DiagSink, Diagnostic};
 
 /// Box drawing characters
-const BOX_H: &str = "━";
 const BOX_V: &str = "│";
 const BOX_TR: &str = "┌─";
 const BOX_EMPTY: &str = "   ";
@@ -114,14 +113,8 @@ impl TerminalEmitter {
     /// ── Rich output dengan warna ──
     fn emit_rich_colored(&mut self, diag: &Diagnostic) -> io::Result<()> {
         let level_color = self.level_color(diag.level);
-        let sep = format!("{}{}{}", DIM, BOX_H.repeat(75), RESET);
 
-        // Separator atas
-        writeln!(self.writer)?;
-        writeln!(self.writer, "{}", sep)?;
-        writeln!(self.writer)?;
-
-        // Header: level[code]: message
+        // Header: level[code]: message (tanpa separator atas/bawah)
         write!(self.writer, "{}", level_color)?;
         write!(self.writer, "{}{}", BOLD, diag.level)?;
         write!(self.writer, "{}", RESET)?;
@@ -129,10 +122,6 @@ impl TerminalEmitter {
         write!(self.writer, "{}", level_color)?;
         write!(self.writer, "]{}: {}{}", RESET, BOLD, diag.message)?;
         writeln!(self.writer, "{}", RESET)?;
-        writeln!(self.writer)?;
-
-        // Separator bawah header
-        writeln!(self.writer, "{}", sep)?;
         writeln!(self.writer)?;
 
         // Source snippet
@@ -248,19 +237,12 @@ impl TerminalEmitter {
 
     /// ── Rich output tanpa warna (plain text) ──
     fn emit_rich_plain(&mut self, diag: &Diagnostic) -> io::Result<()> {
-        let sep = BOX_H.repeat(75);
-
-        // Separator atas
-        writeln!(self.writer)?;
-        writeln!(self.writer, "{}", sep)?;
-        writeln!(self.writer)?;
+        // Header: level[code]: message (tanpa separator atas/bawah)
         writeln!(
             self.writer,
             "{}[{}]: {}",
             diag.level, diag.code, diag.message
         )?;
-        writeln!(self.writer)?;
-        writeln!(self.writer, "{}", sep)?;
         writeln!(self.writer)?;
 
         // Source snippet
@@ -452,8 +434,6 @@ impl TerminalEmitter {
 
         // Summary footer
         if count > 0 && !self.simple_mode {
-            let sep = BOX_H.repeat(75);
-            writeln!(self.writer, "{}", sep)?;
             writeln!(self.writer)?;
 
             if self.use_color {
@@ -524,9 +504,8 @@ fn libc_isatty(fd: i32) -> i32 {
 pub fn format_diagnostic(diag: &Diagnostic) -> String {
     let mut output = String::new();
 
-    // Header
-    let sep = BOX_H.repeat(75);
-    output.push_str(&format!("\n{}\n\n{}[{}]: {}\n\n{}\n\n", sep, diag.level, diag.code, diag.message, sep));
+    // Header (tanpa separator atas/bawah)
+    output.push_str(&format!("{}[{}]: {}\n\n", diag.level, diag.code, diag.message));
 
     // Source snippet
     if let Some(snippet) = &diag.source_snippet {

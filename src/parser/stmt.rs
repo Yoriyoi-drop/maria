@@ -417,11 +417,20 @@ impl Parser {
             self.skip_attribute();
             return self.parse_stmt();
         }
-        // Declaration statement in procedural block (e.g. `logic unused;`).
-        // Parsed and discarded (signals handled via module/function decl collection).
+        // Declaration statement in procedural block (e.g. `int index_x1;` or
+        // `logic unused;` inside an always/initial block). Sebelumnya dibuang
+        // sebagai `Stmt::Null`, sehingga variabel lokal di dalam loop body yang
+        // di-unroll tidak pernah terdaftar (error "signal 'x' not found").
+        // Sekarang disimpan sebagai `Stmt::NamedBlock` dengan `decls`, dan
+        // elaborator mengumpulkan decls tersebut ke signal_map (lihat
+        // `collect_procedural_decls` di elaborator/mod.rs).
         if self.is_decl_stmt_start() {
-            let _ = self.parse_decl()?;
-            return Ok(Stmt::Null);
+            let decl = self.parse_decl()?;
+            return Ok(Stmt::NamedBlock {
+                name: Symbol::EMPTY,
+                stmts: vec![],
+                decls: vec![decl],
+            });
         }
         // Procedural localparam (e.g. `localparam logic [4:0] X = ...;` inside a block).
         // Parsed and discarded; values are resolved by the elaborator's param context.

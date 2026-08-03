@@ -79,7 +79,14 @@ pub struct Elaborator {
     pub pkg_plain_params: HashMap<Symbol, HashMap<Symbol, i64>>,
     pub specialized_classes: std::cell::RefCell<Vec<ClassDecl>>,
     pub diag_sink: DiagSink,
-    pub source_lines: Vec<String>,
+    /// Package tempat function sedang di-inline. Dipakai untuk resolve fungsi
+    /// saudara plain-name di body function (mis. `mubi4_and` dipanggil di dalam
+    /// `mubi4_and_hi`) tanpa perlu import eksplisit di module.
+    pub inline_func_pkg: std::cell::Cell<Option<Symbol>>,
+    /// Peta (nama function → package asal) untuk fungsi package yang disalin ke
+    /// body module via `import pkg::func`. Dipakai resolve fungsi saudara yang
+    /// dipanggil di dalam body function yang di-inline (AST inline pass).
+    pub func_source_pkg: HashMap<Symbol, HashMap<Symbol, Symbol>>,    pub source_lines: Vec<String>,
     pub source_file: String,
     pub current_module: Option<Symbol>,
     // ── Incremental elaboration cache ──
@@ -213,6 +220,8 @@ impl Elaborator {
             pkg_plain_params: HashMap::new(),
             specialized_classes: std::cell::RefCell::new(Vec::new()),
             diag_sink: DiagSink::new(),
+            inline_func_pkg: std::cell::Cell::new(None),
+            func_source_pkg: HashMap::new(),
             source_lines,
             source_file,
             current_module: None,
@@ -297,11 +306,15 @@ impl Elaborator {
                         if let Some(pkg_item) = pkg_items.get(name) {
                             match pkg_item {
                                 PackageItem::Function(f) => {
+                                    let entry = self.func_source_pkg.entry(module.name).or_default();
+                                    entry.insert(f.name, *package);
                                     if !module.items.iter().any(|mi| matches!(mi, ModuleItem::Func(fd) if fd.name == f.name)) {
                                         module.items.push(ModuleItem::Func(f.clone()));
                                     }
                                 }
                                 PackageItem::Task(t) => {
+                                    let entry = self.func_source_pkg.entry(module.name).or_default();
+                                    entry.insert(t.name, *package);
                                     if !module.items.iter().any(|mi| matches!(mi, ModuleItem::Func(fd) if fd.name == t.name)) {
                                         module.items.push(ModuleItem::Func(FunctionDecl {
                                             name: t.name,
@@ -359,9 +372,15 @@ _ => {}
         // Inline function calls in all modules
         for module in &mut self.design.modules {
             let temps = crate::ast::inline::inline_func_calls_in_module(module)?;
-            for (name, width) in temps {
+            for (name, width, typedef_name) in temps {
                 module.decls.push(Decl {
-                    dtype: DataType::Logic,
+                    // Temp signal dari variabel lokal / return function bertipe
+                    // typedef (struct) dipakai untuk member access — set dtype
+                    // UserDefined agar elaborator mengisi struct_fields.
+                    dtype: match typedef_name {
+                        Some(tn) => DataType::UserDefined(tn),
+                        None => DataType::Logic,
+                    },
                     kind: DeclKind::Reg,
                     names: vec![DeclVar {
                         name,
@@ -527,10 +546,18 @@ _ => {}
                         // Module yang gagal elaborasi dilewati dengan warning
                         // (mis. package/type yang dirujuk tidak tersedia), bukan
                         // mematikan seluruh elaborasi.
-                        self.elab_warn(
-                            DiagCode::ModuleNotFound,
-                            format!("module '{}' skipped due to elaboration error: {}", mod_name, e),
-                        );
+                        // Teruskan Diagnostic ASLI dari error (sudah membawa
+                        // source snippet file:line:col) sebagai warning, sehingga
+                        // posisi error tidak hilang saat di-format ke string.
+                        let mut diag = e.to_diagnostic();
+                        diag.level = DiagLevel::Warning;
+                        diag.code = DiagCode::ModuleNotFound;
+                        diag.message = format!(
+                            "module '{}' skipped due to elaboration error: {}",
+                            mod_name, diag.message
+                        )
+                        .into();
+                        self.diag_sink.push(diag);
                     }
                 }
             }
@@ -557,13 +584,15 @@ _ => {}
                     self.modules.insert(iface.name, ir);
                 }
                 Err(e) => {
-                    self.elab_warn(
-                        DiagCode::ModuleNotFound,
-                        format!(
-                            "interface '{}' skipped due to elaboration error: {}",
-                            iface.name, e
-                        ),
-                    );
+                    let mut diag = e.to_diagnostic();
+                    diag.level = DiagLevel::Warning;
+                    diag.code = DiagCode::ModuleNotFound;
+                    diag.message = format!(
+                        "interface '{}' skipped due to elaboration error: {}",
+                        iface.name, diag.message
+                    )
+                    .into();
+                    self.diag_sink.push(diag);
                     self.modules.insert(
                         iface.name,
                         IrModule {
@@ -888,6 +917,16 @@ _ => {}
             for item in &module.items {
                 if let ModuleItem::Func(f) = item {
                     module_functions.insert(f.name, f.clone());
+                }
+            }
+        }
+        // Package functions yang dipanggil runtime (fungsi dengan body statements,
+        // bukan inline satu-return) didaftarkan dengan nama qualified `pkg::func`.
+        for (pkg, items) in &self.package_symbols {
+            for (name, item) in items {
+                if let PackageItem::Function(f) = item {
+                    let qualified = Symbol::intern(&format!("{}::{}", pkg.as_str(), name.as_str()));
+                    module_functions.entry(qualified).or_insert_with(|| f.clone());
                 }
             }
         }
@@ -1415,6 +1454,54 @@ _ => {}
         }
     }
 
+    /// Cari struct fields untuk nama tipe — polos (`reg2hw_t`) atau scoped
+    /// (`pkg::reg2hw_t`). Prioritas: typedef_field_map (typedef yang sudah
+    /// di-store via import/typedef module), lalu package_symbols langsung
+    /// (scoped type tanpa import eksplisit).
+    pub(crate) fn lookup_struct_fields(&self, type_name: &str) -> Option<Vec<StructFieldInfo>> {
+        // 1. Cek map yang sudah di-store (nama polos & scoped).
+        if let Some(f) = self.typedef_field_map.get(type_name) {
+            if !f.is_empty() {
+                return Some(f.clone());
+            }
+        }
+        // 2. Scoped `pkg::type` — cari typedef di package asal.
+        if let Some((pkg, t)) = type_name.split_once("::") {
+            if let Some(items) = self.package_symbols.get(pkg) {
+                if let Some(PackageItem::Typedef(td)) = items.get(t) {
+                    if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. })
+                    {
+                        let fields = Self::compute_struct_fields(&td.dtype);
+                        if !fields.is_empty() {
+                            return Some(fields);
+                        }
+                    }
+                }
+            }
+            // Key map bisa juga `pkg::type` — cek sekali lagi dengan nama asli.
+            if let Some(f) = self.typedef_field_map.get(type_name) {
+                if !f.is_empty() {
+                    return Some(f.clone());
+                }
+            }
+        }
+        // 3. Nama polos — cari typedef di SEMUA package (nested struct field
+        //    bertipe typedef package lain, mis. `intr_test_reg_t` di dalam
+        //    `reg2hw_t` tanpa import eksplisit).
+        for items in self.package_symbols.values() {
+            if let Some(PackageItem::Typedef(td)) = items.get(type_name) {
+                if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. })
+                {
+                    let fields = Self::compute_struct_fields(&td.dtype);
+                    if !fields.is_empty() {
+                        return Some(fields);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     fn resolve_type_width(&self, dtype: &DataType) -> Result<usize, SimError> {
         match dtype {
             DataType::UserDefined(name) if name == "__mailbox" || name == "__semaphore" => Ok(64),
@@ -1434,7 +1521,12 @@ _ => {}
                 // Check package symbols for typedefs
                 for pkg_items in self.package_symbols.values() {
                     if let Some(PackageItem::Typedef(td)) = pkg_items.get(name.as_str()) {
-                        let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
+                        let width = self.resolve_typedef_width_dims(
+                            &td.dtype,
+                            td.range.as_ref(),
+                            &td.extra_packed_dims,
+                            &self.param_vals,
+                        );
                         if width > 0 {
                             return Ok(width);
                         }
@@ -1446,7 +1538,12 @@ _ => {}
                 if let Some((pkg, type_name)) = name.as_str().split_once("::") {
                     if let Some(pkg_items) = self.package_symbols.get(pkg) {
                         if let Some(PackageItem::Typedef(td)) = pkg_items.get(type_name) {
-                            let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
+                            let width = self.resolve_typedef_width_dims(
+                                &td.dtype,
+                                td.range.as_ref(),
+                                &td.extra_packed_dims,
+                                &self.param_vals,
+                            );
                             if width > 0 {
                                 return Ok(width);
                             }
@@ -1464,6 +1561,38 @@ _ => {}
             DataType::Signed(inner) => self.resolve_type_width(inner),
             _ => Ok(dtype.width()),
         }
+    }
+
+    /// Resolve lebar cast type berupa identifier yang tidak dikenali
+    /// `parse_type_spec_str` (hanya base types): parameter modul/package
+    /// (mis. `MuBi4Width'(x)` dari `import prim_mubi_pkg::*`) atau typedef
+    /// package (mis. `mubi4_t'(x)`). Prioritas: param modul → package param
+    /// (default) → typedef package.
+    pub(crate) fn resolve_cast_name_width(&self, type_name: &str) -> Option<usize> {
+        let name = Symbol::intern(type_name);
+        // 1. Parameter modul / konstanta ter-evaluasi.
+        if let Some(&v) = self.param_vals.get(&name) {
+            return Some(v as usize);
+        }
+        // 2. Package param di-import (nama polos) — mis. `MuBi4Width`.
+        for items in self.package_symbols.values() {
+            if let Some(PackageItem::Param(p)) = items.get(&name) {
+                if let Some(expr) = &p.default {
+                    if let Ok(v) = const_eval_with_params(expr, &self.param_vals) {
+                        return Some(v as usize);
+                    }
+                }
+            }
+        }
+        // 3. Typedef package — mis. `mubi4_t'(x)`.
+        for items in self.package_symbols.values() {
+            if let Some(PackageItem::Typedef(td)) = items.get(&name) {
+                if let Ok(w) = self.resolve_type_width(&td.dtype) {
+                    return Some(w);
+                }
+            }
+        }
+        None
     }
 
     fn compute_struct_fields(dtype: &DataType) -> Vec<StructFieldInfo> {
@@ -1633,7 +1762,12 @@ impl Elaborator {
                                     }
                                     PackageItem::Typedef(td) => {
                                         if !self.typedef_map.contains_key(&td.name) {
-                                            let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
+                                            let width = self.resolve_typedef_width_dims(
+                                                &td.dtype,
+                                                td.range.as_ref(),
+                                                &td.extra_packed_dims,
+                                                &effective_params,
+                                            );
                                             self.typedef_map.insert(td.name, width);
                                         }
                                         if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. }) {
@@ -1650,7 +1784,12 @@ impl Elaborator {
                     }
                 }
                 ModuleItem::Typedef(td) => {
-                    let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
+                    let width = self.resolve_typedef_width_dims(
+                        &td.dtype,
+                        td.range.as_ref(),
+                        &td.extra_packed_dims,
+                        &effective_params,
+                    );
                     self.typedef_map.insert(td.name, width);
                     if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. }) {
                         self.store_typedef_fields(td.name, &td.dtype);
@@ -1684,7 +1823,12 @@ impl Elaborator {
         // Pre-pass: process $unit typedefs (top-level typedefs outside any module)
         let unit_typedefs = self.design.unit_typedefs.clone();
         for td in &unit_typedefs {
-            let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
+            let width = self.resolve_typedef_width_dims(
+                &td.dtype,
+                td.range.as_ref(),
+                &td.extra_packed_dims,
+                &effective_params,
+            );
             self.typedef_map.insert(td.name, width);
             if matches!(
                 &td.dtype,
@@ -1704,7 +1848,12 @@ impl Elaborator {
                 for name in names {
                     if let Some(pkg_item) = pkg_items.get(name) {
                         if let PackageItem::Typedef(td) = pkg_item {
-                            let width = self.resolve_typedef_width(&td.dtype, td.range.as_ref());
+                            let width = self.resolve_typedef_width_dims(
+                                &td.dtype,
+                                td.range.as_ref(),
+                                &td.extra_packed_dims,
+                                &effective_params,
+                            );
                             self.typedef_map.insert(td.name, width);
                         }
                     }
@@ -1947,15 +2096,7 @@ impl Elaborator {
             // (`hw2reg.val.d = ...`) bisa di-resolve sebagai lvalue. dtype_name
             // bisa berformat `pkg::type` (scoped) atau nama typedef biasa.
             if let Some(tn) = &port.dtype_name {
-                let lookup = tn.as_str();
-                let resolved: Option<Vec<StructFieldInfo>> = if let Some((_, t)) =
-                    lookup.split_once("::")
-                {
-                    self.typedef_field_map.get(t).cloned()
-                } else {
-                    self.typedef_field_map.get(tn).cloned()
-                };
-                if let Some(fields) = resolved {
+                if let Some(fields) = self.lookup_struct_fields(tn.as_str()) {
                     if !fields.is_empty() {
                         let sig = &mut signals[sid];
                         sig.struct_fields = fields;
@@ -2072,6 +2213,37 @@ impl Elaborator {
                         names: new_vars,
                     });
                 }
+            }
+        }
+
+        // Kumpulkan deklarasi procedural lokal (`int index_x1;` di dalam
+        // always/initial block). Parser menyimpannya sebagai `Stmt::NamedBlock`
+        // dengan `decls`; variabel lokal ini harus terdaftar di signal_map agar
+        // referensi di dalam loop yang di-unroll bisa di-resolve (sebelumnya
+        // parser membuangnya jadi `Stmt::Null` → "signal 'x' not found").
+        let mut procedural_decls: Vec<Decl> = Vec::new();
+        for item in &expanded_items {
+            let stmts: &[Stmt] = match item {
+                ModuleItem::Always(a) => &a.stmts,
+                ModuleItem::Initial(i) => &i.stmts,
+                ModuleItem::Final(f) => &f.stmts,
+                _ => continue,
+            };
+            collect_procedural_decls(stmts, &mut procedural_decls);
+        }
+        for d in procedural_decls {
+            let mut new_vars = Vec::new();
+            for var in &d.names {
+                if seen_names.insert(var.name) {
+                    new_vars.push(var.clone());
+                }
+            }
+            if !new_vars.is_empty() {
+                all_decls.push(Decl {
+                    dtype: d.dtype.clone(),
+                    kind: d.kind.clone(),
+                    names: new_vars,
+                });
             }
         }
 
@@ -2342,9 +2514,9 @@ impl Elaborator {
                             }
                         }
                         DataType::UserDefined(name) => {
-                            if let Some(fields) = self.typedef_field_map.get(name) {
+                            if let Some(fields) = self.lookup_struct_fields(name.as_str()) {
                                 if !fields.is_empty() {
-                                    sig.struct_fields = fields.clone();
+                                    sig.struct_fields = fields;
                                 }
                             }
                         }
@@ -2407,7 +2579,12 @@ impl Elaborator {
                 ModuleItem::Typedef(td) => {
                     // Already collected in pre-pass; register for UserDefined resolution
                     let width = self.typedef_map.get(&td.name).copied().unwrap_or_else(|| {
-                        self.resolve_typedef_width(&td.dtype, td.range.as_ref())
+                        self.resolve_typedef_width_dims(
+                            &td.dtype,
+                            td.range.as_ref(),
+                            &td.extra_packed_dims,
+                            &self.param_vals,
+                        )
                     });
                     self.typedef_map.insert(td.name, width);
                     // Store struct/union field info for member access
@@ -2633,19 +2810,19 @@ impl Elaborator {
                     let mut sig_ids = Vec::new();
                     for port in &gate.ports {
                         let sid = match port {
-                            Expr::Ident { name, .. } => {
+                            Expr::Ident { name, line, col } => {
                                 signal_map.get(name).copied().ok_or_else(|| {
-                                    self.elab_diag(DiagCode::ModuleNotFound, format!(
+                                    self.elab_diag_at(DiagCode::ModuleNotFound, format!(
                                         "signal '{}' not found for gate",
                                         name
-                                    ))
+                                    ), *line, *col)
                                 })?
                             }
                             _ => {
-                                return Err(self.elab_diag(DiagCode::InstanceNotFound, format!(
+                                return Err(self.elab_diag_at(DiagCode::InstanceNotFound, format!(
                                     "gate port must be a simple signal (port expression: {:?})",
                                     port
-                                )))
+                                ), expr_location(port).0, expr_location(port).1))
                             }
                         };
                         sig_ids.push(sid);
@@ -2892,4 +3069,152 @@ impl Elaborator {
         Ok(classes)
     }
 
+}
+
+/// Traverse statements secara rekursif dan kumpulkan deklarasi procedural lokal
+/// (`int index_x1;` di dalam always/initial block). Parser menyimpannya sebagai
+/// `Stmt::NamedBlock` dengan `decls` — variabel ini wajib terdaftar di
+/// signal_map agar referensi di dalam loop yang di-unroll bisa di-resolve.
+pub(crate) fn collect_procedural_decls(stmts: &[Stmt], out: &mut Vec<Decl>) {
+    for s in stmts {
+        match s {
+            Stmt::NamedBlock { stmts, decls, .. } => {
+                out.extend(decls.iter().cloned());
+                collect_procedural_decls(stmts, out);
+            }
+            Stmt::Block { stmts } => collect_procedural_decls(stmts, out),
+            Stmt::IfElse {
+                true_branch,
+                false_branch,
+                ..
+            }
+            | Stmt::UniqueIf {
+                true_branch,
+                false_branch,
+                ..
+            }
+            | Stmt::PriorityIf {
+                true_branch,
+                false_branch,
+                ..
+            } => {
+                collect_procedural_decls(std::slice::from_ref(true_branch), out);
+                if let Some(fb) = false_branch {
+                    collect_procedural_decls(std::slice::from_ref(fb), out);
+                }
+            }
+            Stmt::Case {
+                items,
+                default,
+                ..
+            }
+            | Stmt::CaseX {
+                items,
+                default,
+                ..
+            }
+            | Stmt::CaseZ {
+                items,
+                default,
+                ..
+            }
+            | Stmt::StmtCase {
+                items,
+                default,
+                ..
+            }
+            | Stmt::UniqueCase {
+                items,
+                default,
+                ..
+            }
+            | Stmt::PriorityCase {
+                items,
+                default,
+                ..
+            }
+            | Stmt::CaseInside {
+                items,
+                default,
+                ..
+            } => {
+                for item in items {
+                    collect_procedural_decls(std::slice::from_ref(&item.stmt), out);
+                }
+                if let Some(d) = default {
+                    collect_procedural_decls(std::slice::from_ref(d), out);
+                }
+            }
+            Stmt::LoopForever { stmts } | Stmt::LoopWhile { stmts, .. } => {
+                collect_procedural_decls(stmts, out);
+            }
+            Stmt::DoWhile { stmts, .. } => collect_procedural_decls(stmts, out),
+            Stmt::LoopFor { stmts, .. } => collect_procedural_decls(stmts, out),
+            Stmt::Repeat { stmts, .. } => collect_procedural_decls(stmts, out),
+            Stmt::Delay { stmt, .. } => collect_procedural_decls(std::slice::from_ref(stmt), out),
+            Stmt::Wait { stmt, .. } => {
+                if let Some(s) = stmt {
+                    collect_procedural_decls(std::slice::from_ref(s), out);
+                }
+            }
+            Stmt::EventControl { stmt, .. } => {
+                if let Some(s) = stmt {
+                    collect_procedural_decls(std::slice::from_ref(s), out);
+                }
+            }
+            Stmt::ForeachLoop { stmts, .. } => collect_procedural_decls(stmts, out),
+            Stmt::Assert {
+                pass_stmt,
+                fail_stmt,
+                ..
+            }
+            | Stmt::Assume {
+                pass_stmt,
+                fail_stmt,
+                ..
+            }
+            | Stmt::Expect {
+                pass_stmt,
+                fail_stmt,
+                ..
+            } => {
+                if let Some(p) = pass_stmt {
+                    collect_procedural_decls(std::slice::from_ref(p), out);
+                }
+                if let Some(f) = fail_stmt {
+                    collect_procedural_decls(std::slice::from_ref(f), out);
+                }
+            }
+            Stmt::Cover {
+                pass_stmt, ..
+            } => {
+                if let Some(p) = pass_stmt {
+                    collect_procedural_decls(std::slice::from_ref(p), out);
+                }
+            }
+            Stmt::WaitOrder { fail_stmt, .. } => {
+                if let Some(f) = fail_stmt {
+                    collect_procedural_decls(std::slice::from_ref(f), out);
+                }
+            }
+            Stmt::Fork { processes, .. } => {
+                for p in processes {
+                    collect_procedural_decls(std::slice::from_ref(p), out);
+                }
+            }
+            Stmt::RandCase { items } => {
+                for item in items {
+                    collect_procedural_decls(std::slice::from_ref(&item.stmt), out);
+                }
+            }
+            Stmt::RandSequence { productions } => {
+                for prod in productions {
+                    for item in &prod.items {
+                        collect_procedural_decls(std::slice::from_ref(&item.value), out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }

@@ -252,7 +252,30 @@ fn eval_func(
     };
     match name {
         "$clog2" => Ok(CVal::Scalar(clog2(first_arg(0)?))),
-        "$bits" | "$size" | "$left" | "$right" | "$low" | "$high" => {
+        "$bits" => {
+            let Some(arg) = args.first() else {
+                return Err("$bits needs 1 arg".to_string());
+            };
+            // Prioritas: konstanta biasa (skalar/array) → evaluasi ekspresi.
+            if let Ok(v) = eval_expr(arg, ctx, cur_pkg) {
+                return Ok(v);
+            }
+            // `$bits(typedef)` — argumen adalah nama tipe (ident atau
+            // `pkg::type`). Hitung lebar typedef dari package_symbols,
+            // termasuk nested struct/typedef dan range eksplisit.
+            let type_name: Option<(Option<&str>, &str)> = match arg {
+                Expr::Ident { name, .. } => Some((None, name.as_str())),
+                Expr::ScopedIdent { package, item } => Some((Some(package.as_str()), item.as_str())),
+                _ => None,
+            };
+            if let Some((pkg_opt, type_name)) = type_name {
+                if let Some(w) = resolve_typedef_bits(ctx, pkg_opt, type_name, 0) {
+                    return Ok(CVal::Scalar(w as i64));
+                }
+            }
+            Err(format!("'$bits' argument cannot be evaluated (not a constant or known type)"))
+        }
+        "$size" | "$left" | "$right" | "$low" | "$high" => {
             args.first()
                 .ok_or_else(|| format!("{} needs 1 arg", name))
                 .and_then(|a| eval_expr(a, ctx, cur_pkg))
@@ -276,6 +299,118 @@ fn eval_func(
             eval_function_body(func, args, ctx, cur_pkg)
         }
     }
+}
+
+/// Hitung lebar (dalam bit) sebuah typedef package, dengan rekursi untuk
+/// nested `UserDefined` (typedef merujuk typedef lain) dan anonymous struct.
+/// `pkg_opt`: package wajib untuk nama scoped; None = cari di semua package.
+/// Guard depth mencegah rekursi tak hingga (typedef sirkular).
+fn resolve_typedef_bits(
+    ctx: &PkgCtx,
+    pkg_opt: Option<&str>,
+    type_name: &str,
+    depth: usize,
+) -> Option<usize> {
+    if depth > 32 {
+        return None;
+    }
+    let package_symbols = ctx.package_symbols;
+    // Cari typedef: scoped (pkg::type) atau plain di semua package.
+    // Package disimpan sebagai String milik sendiri agar bebas dari lifetime
+    // borrow pkg_opt / iterator.
+    let (td, typedef_pkg): (&crate::ast::types::TypedefDecl, String) =
+        if let Some(pkg) = pkg_opt {
+            match package_symbols
+                .get(&Symbol::intern(pkg))
+                .and_then(|items| lookup_pkg_typedef(items, type_name))
+            {
+                Some(td) => (td, pkg.to_string()),
+                None => return None,
+            }
+        } else {
+            match package_symbols.iter().find_map(|(pkg, items)| {
+                lookup_pkg_typedef(items, type_name)
+                    .map(|td| (td, pkg.as_str().to_string()))
+            }) {
+                Some((td, pkg)) => (td, pkg),
+                None => return None,
+            }
+        };
+    // Range eksplisit `typedef logic [W-1:0] name;` menang atas width default.
+    if let Some(er) = &td.range {
+        if let (Ok(msb), Ok(lsb)) = (
+            eval_expr(&er.msb, ctx, None).and_then(scalar),
+            eval_expr(&er.lsb, ctx, None).and_then(scalar),
+        ) {
+            return Some(msb.abs_diff(lsb) as usize + 1);
+        }
+    }
+    Some(typedef_dtype_bits(ctx, &td.dtype, Some(typedef_pkg.as_str()), depth))
+}
+
+/// Lebar bit dari DataType dengan resolve `UserDefined` ke typedef lain.
+/// Range member struct dievaluasi via `eval_expr` dengan `cur_pkg` = package
+/// typedef agar parameter package (mis. `logic [KeyLen-1:0] key;` di mana
+/// KeyLen = `pkg::KeyLen`) ter-resolve dari ctx.scalars.
+fn typedef_dtype_bits(
+    ctx: &PkgCtx,
+    dtype: &crate::ast::types::DataType,
+    typedef_pkg: Option<&str>,
+    depth: usize,
+) -> usize {
+    use crate::ast::types::DataType;
+    let member_width = |m: &crate::ast::types::StructMember| -> usize {
+        // StructMember.range sudah `Range` (msb/lsb usize ter-resolve saat
+        // parse); pakai langsung. Kalau belum ter-resolve (range memakai
+        // parameter package, mis. `logic [KeyLen-1:0] key`), evaluasi
+        // expr_range dengan konteks package typedef.
+        if let Some(r) = &m.range {
+            return r.width();
+        }
+        if let Some(er) = &m.expr_range {
+            if let (Ok(msb), Ok(lsb)) = (
+                eval_expr(&er.msb, ctx, typedef_pkg).and_then(scalar),
+                eval_expr(&er.lsb, ctx, typedef_pkg).and_then(scalar),
+            ) {
+                if msb >= 0 && lsb >= 0 {
+                    return msb.abs_diff(lsb) as usize + 1;
+                }
+            }
+        }
+        typedef_dtype_bits(ctx, &m.dtype, typedef_pkg, depth + 1)
+    };
+    match dtype {
+        DataType::UserDefined(name) => {
+            // Coba resolve sebagai typedef package (plain-name, semua package).
+            if let Some(w) = resolve_typedef_bits(ctx, None, name.as_str(), depth + 1) {
+                w
+            } else {
+                64
+            }
+        }
+        DataType::Signed(inner) => typedef_dtype_bits(ctx, inner, typedef_pkg, depth),
+        DataType::StructType { members } => members.iter().map(|m| member_width(m)).sum(),
+        DataType::UnionType { members } => members
+            .iter()
+            .map(|m| member_width(m))
+            .max()
+            .unwrap_or(1),
+        _ => dtype.width(),
+    }
+}
+
+/// Ambil `TypedefDecl` dari peta item package berdasarkan nama.
+fn lookup_pkg_typedef<'a>(
+    pkg_items: &'a HashMap<Symbol, PackageItem>,
+    name: &str,
+) -> Option<&'a crate::ast::types::TypedefDecl> {
+    pkg_items.get(&Symbol::intern(name)).and_then(|item| {
+        if let PackageItem::Typedef(td) = item {
+            Some(td)
+        } else {
+            None
+        }
+    })
 }
 
 fn find_package_func<'a>(
@@ -531,6 +666,36 @@ pub fn eval_package_constants(
                         changed = true;
                     }
                     Err(_) => {}
+                }
+            }
+            // Enum member constants package → scalar (qualified + plain-by-context).
+            // Ini membuat `import pkg::*` bisa memakai nama member enum (mis.
+            // `NumTotalCmdInfo`) sebagai konstanta integer dalam ekspresi parameter.
+            for (name, item) in items {
+                let PackageItem::Typedef(td) = item else { continue };
+                let crate::ast::types::DataType::EnumType { members, .. } = &td.dtype else { continue };
+                let mut last = 0i64;
+                for (mname, mexpr) in members {
+                    let val = match mexpr {
+                        Some(e) => {
+                            let ctx = PkgCtx {
+                                scalars: &scalars,
+                                arrays: &arrays,
+                                package_symbols,
+                            };
+                            match eval_expr(e, &ctx, Some(pkg_name.as_str())) {
+                                Ok(CVal::Scalar(v)) => v,
+                                _ => last,
+                            }
+                        }
+                        None => last,
+                    };
+                    let q = Symbol::intern(&format!("{}::{}", pkg_name.as_str(), mname.as_str()));
+                    if !scalars.contains_key(&q) {
+                        scalars.insert(q, val);
+                        changed = true;
+                    }
+                    last = val + 1;
                 }
             }
         }

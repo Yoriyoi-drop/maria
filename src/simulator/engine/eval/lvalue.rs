@@ -444,10 +444,24 @@ impl SimulationEngine {
                 return Ok(());
             }
         }
-        Err(self.diag_error(crate::diagnostics::DiagCode::NullHandle, format!(
-            "cannot resolve '{}' in method context (not a local or field)",
-            name
-        )))
+        // Nama tak bisa di-resolve sebagai local atau field (mis. variabel yang
+        // dideklarasikan di dalam blok bersarang seperti fork/begin-end yang
+        // tidak terdaftar di scope method). Daripada mematikan seluruh simulasi,
+        // degradasi ke local auto (seperti pembacaan yang sudah warning + default
+        // di evaluate_ast_expr) agar run tetap selesai.
+        if self.method_locals.is_empty() {
+            self.method_locals.push(HashMap::new());
+        }
+        if let Some(scope) = self.method_locals.last_mut() {
+            scope.insert(Symbol::intern(name), val);
+        }
+        self.diag_warn_at(
+            crate::diagnostics::DiagCode::NullHandle,
+            format!("cannot resolve '{}' as local or field; creating implicit local (declared in nested block?)", name),
+            0,
+            0,
+        );
+        Ok(())
     }
 
 }

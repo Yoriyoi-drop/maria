@@ -381,11 +381,13 @@ mod tests {
                     name: Symbol::intern("addr"),
                     dtype: Box::new(DataType::Logic),
                     range: Some(crate::ast::types::Range { msb: 31, lsb: 0 }),
+                    expr_range: None,
                 },
                 StructMember {
                     name: Symbol::intern("data"),
                     dtype: Box::new(DataType::Logic),
                     range: Some(crate::ast::types::Range { msb: 7, lsb: 0 }),
+                    expr_range: None,
                 },
             ],
         };
@@ -413,11 +415,13 @@ mod tests {
                 name: Symbol::intern("my_int"),
                 dtype: DataType::Int,
                 range: None,
+                extra_packed_dims: vec![],
             },
             TypedefDecl {
                 name: Symbol::intern("my_logic"),
                 dtype: DataType::Logic,
                 range: None,
+                extra_packed_dims: vec![],
             },
         ];
 
@@ -467,11 +471,13 @@ mod tests {
                     name: Symbol::intern("byte_data"),
                     dtype: Box::new(DataType::Logic),
                     range: Some(crate::ast::types::Range { msb: 7, lsb: 0 }),
+                    expr_range: None,
                 },
                 StructMember {
                     name: Symbol::intern("word_data"),
                     dtype: Box::new(DataType::Logic),
                     range: Some(crate::ast::types::Range { msb: 31, lsb: 0 }),
+                    expr_range: None,
                 },
             ],
         };

@@ -132,7 +132,12 @@ impl Elaborator {
                         Ok(IrExpr::ExprRangeSelect(Box::new(inner_expr), msb_c, lsb_c))
                     }
                 } else {
-                    Err(self.elab_diag(DiagCode::ModuleNotFound, "dynamic range select not supported"))
+                    Err(self.elab_diag_at(
+                        DiagCode::ModuleNotFound,
+                        "dynamic range select not supported",
+                        expr_location(expr).0,
+                        expr_location(expr).1,
+                    ))
                 }
             }
             Expr::BitSelect { expr: inner, index } => {
@@ -192,8 +197,16 @@ impl Elaborator {
                 } else if let Ok(idx) = const_eval_params(index, &self.param_vals) {
                     Ok(IrExpr::ExprBitSelect(Box::new(inner_expr), idx as usize))
                 } else {
-                    Err(self.elab_diag(DiagCode::ModuleNotFound,
-                        "dynamic bit-select on non-signal not supported",
+                    // Index dinamis pada ekspresi non-signal (mis. hasil
+                    // `c[idx_x][idx_z]` dengan `idx_z` variabel lokal). Simulator
+                    // mengevaluasi `ExprPartSelect` dengan base dinamis, jadi
+                    // bit-select dinamis cukup diterjemahkan ke part-select
+                    // lebar 1 dengan base = index.
+                    let index_expr = self.elaborate_expr(index, signal_map, signals)?;
+                    Ok(IrExpr::ExprPartSelect(
+                        Box::new(inner_expr),
+                        Box::new(index_expr),
+                        Box::new(IrExpr::Const(LogicVec::from_u64(1, 32))),
                     ))
                 }
             }
@@ -701,7 +714,10 @@ impl Elaborator {
                 let inner_ir = self.elaborate_expr(inner, signal_map, signals)?;
                 let cast_width = match                        parse_type_spec_str(dtype.as_str()) {
                     Some(dt) => self.resolve_type_width(&dt).unwrap_or(1),
-                    None => 1,
+                    // Identifier (parameter/typedef package) — resolve width
+                    // agar runtime tidak resize ke 1 bit (data loss). Mis.
+                    // `MuBi4Width'(x)` dari `import prim_mubi_pkg::*`.
+                    None => self.resolve_cast_name_width(dtype.as_str()).unwrap_or(1),
                 };
                 Ok(IrExpr::Cast {
                     width: cast_width,
@@ -800,6 +816,14 @@ impl Elaborator {
                         self.elaborate_package_func_call(name.as_str(), args, signal_map, signals)
             }
             Expr::FuncCall { name, args } if name != "new" => {
+                if std::env::var("DBG_PKG").is_ok() && name.as_str() == "aes_circ_byte_shift" {
+                    let func_exists = self.design.modules.iter().any(|m| {
+                        m.items
+                            .iter()
+                            .any(|mi| matches!(mi, ModuleItem::Func(fd) if fd.name == *name))
+                    });
+                    eprintln!("DBG-PKG: aes_circ_byte_shift module={:?} func_exists={} import_sets={:?}", self.current_module, func_exists, self.collect_import_sets().iter().map(|(p,i)| format!("{}::{}", p.as_str(), i.as_str())).collect::<Vec<_>>());
+                }
                 let is_dpi = self
                     .design
                     .modules
@@ -855,12 +879,12 @@ impl Elaborator {
                     {
                         return Ok(ir);
                     }
-                    Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
+                    Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!(
                         "function '{}' not found (not a DPI import)",
                         name
-                    )))
+                    ), expr_location(expr).0, expr_location(expr).1))
                 }
-            }              _ => Err(self.elab_diag(DiagCode::ModuleNotFound, "expression type not yet supported".to_string())),
+            }              _ => Err(self.elab_diag_at(DiagCode::ModuleNotFound, "expression type not yet supported".to_string(), expr_location(expr).0, expr_location(expr).1)),
         }
     }
 
@@ -917,6 +941,37 @@ impl Elaborator {
             if matched {
                 let ir = self.elaborate_package_func(package.as_str(), name, args, signal_map, signals)?;
                 return Ok(Some(ir));
+            }
+        }
+        // Fallback: fungsi plain-name yang dipanggil dari dalam body function
+        // package (inline). Simbol di scope package harus ter-resolve dari
+        // package asal, bukan hanya dari import module.
+        if let Some(inline_pkg) = self.inline_func_pkg.get() {
+            if let Some(pkg_items) = self.package_symbols.get(&inline_pkg) {
+                if matches!(pkg_items.get(name), Some(PackageItem::Function(_))) {
+                    let ir = self.elaborate_package_func(inline_pkg.as_str(), name, args, signal_map, signals)?;
+                    return Ok(Some(ir));
+                }
+            }
+        }
+        // Fallback 2: fungsi package yang disalin ke body module via `import pkg::func`.
+        // Setelah AST inline pass, body function berisi panggilan fungsi saudara plain-name
+        // yang berasal dari package yang sama dengan fungsi yang disalin.
+        if let Some(mod_name) = self.current_module {
+            if let Some(src_pkgs) = self.func_source_pkg.get(&mod_name) {
+                let mut seen: Vec<Symbol> = Vec::new();
+                for &pkg in src_pkgs.values() {
+                    if seen.contains(&pkg) {
+                        continue;
+                    }
+                    seen.push(pkg);
+                    if let Some(pkg_items) = self.package_symbols.get(&pkg) {
+                        if matches!(pkg_items.get(name), Some(PackageItem::Function(_))) {
+                            let ir = self.elaborate_package_func(pkg.as_str(), name, args, signal_map, signals)?;
+                            return Ok(Some(ir));
+                        }
+                    }
+                }
             }
         }
         Ok(None)
@@ -1018,6 +1073,23 @@ impl Elaborator {
                 self.elab_diag(DiagCode::ModuleNotFound, format!("function '{}::{}' has no return expression", pkg_name, func_name))
             })?;
 
+        // Function body hanya boleh inline bila berisi TEPAT satu statement
+        // `return <expr>;`. Fungsi dengan assignment/lokal/loop (mis. mubi4_and
+        // yang menulis `out[k]` dalam loop) tidak bisa di-inline sederhana —
+        // pakai pemanggilan runtime agar statement body dieksekusi di engine.
+        let body_is_trivial = func.stmts.len() == 1 && matches!(func.stmts.first(), Some(Stmt::Return(_)));
+        if !body_is_trivial {
+            let ir_args: Result<Vec<IrExpr>, SimError> = args
+                .iter()
+                .map(|a| self.elaborate_expr(a, signal_map, signals))
+                .collect();
+            let qualified = Symbol::intern(&format!("{}::{}", pkg_name, func_name));
+            return Ok(IrExpr::FuncCall {
+                func_name: qualified,
+                args: ir_args?,
+            });
+        }
+
         // Substitute formal parameters with actual arguments
         let mut result = *ret_expr;
 
@@ -1057,7 +1129,14 @@ impl Elaborator {
             }
         }
 
-        self.elaborate_expr(&result, signal_map, signals)
+        // Resolve fungsi saudara plain-name di body inline dari package asal
+        // (mis. `mubi4_and` di dalam `mubi4_and_hi`), bukan hanya dari import
+        // module. Disimpan di Cell sementara lalu di-restore.
+        let prev_inline_pkg = self.inline_func_pkg.get();
+        self.inline_func_pkg.set(Some(Symbol::intern(pkg_name)));
+        let elaborated = self.elaborate_expr(&result, signal_map, signals);
+        self.inline_func_pkg.set(prev_inline_pkg);
+        elaborated
     }
 
     fn substitute_ident_in_expr(expr: Expr, target: &str, replacement: Expr) -> Expr {
@@ -1388,14 +1467,47 @@ impl Elaborator {
     }
 
     pub(crate) fn resolve_typedef_width(&self, dtype: &DataType, range: Option<&ExprRange>) -> usize {
-        if let Some(er) = range {
-            if let (Ok(msb), Ok(lsb)) = (const_eval_simple(&er.msb), const_eval_simple(&er.lsb)) {
-                return if msb >= lsb {
+        self.resolve_typedef_width_dims(dtype, range, &[], &self.param_vals)
+    }
+
+    /// Resolve lebar typedef, mengalikan semua packed dimensions (range
+    /// pertama + `extra_packed_dims`). Untuk `[4:0][4:0][W-1:0]` hasilnya
+    /// 5 * 5 * W. `const_eval_params` dipakai agar batas yang memakai
+    /// parameter modul (mis. `W`) bisa di-resolve.
+    pub(crate) fn resolve_typedef_width_dims(
+        &self,
+        dtype: &DataType,
+        range: Option<&ExprRange>,
+        extra_packed_dims: &[ExprRange],
+        params: &HashMap<Symbol, i64>,
+    ) -> usize {
+        let mut total = 1usize;
+        let mut any = false;
+        let mut eval = |er: &ExprRange, total: &mut usize, any: &mut bool| {
+            let msb = const_eval_params(&er.msb, params)
+                .or_else(|_| const_eval_simple(&er.msb));
+            let lsb = const_eval_params(&er.lsb, params)
+                .or_else(|_| const_eval_simple(&er.lsb));
+            if let (Ok(msb), Ok(lsb)) = (msb, lsb) {
+                let w = if msb >= lsb {
                     (msb - lsb + 1) as usize
                 } else {
                     (lsb - msb + 1) as usize
                 };
+                if w > 0 {
+                    *total *= w;
+                    *any = true;
+                }
             }
+        };
+        if let Some(er) = range {
+            eval(er, &mut total, &mut any);
+        }
+        for er in extra_packed_dims {
+            eval(er, &mut total, &mut any);
+        }
+        if any {
+            return total;
         }
         match dtype {
             DataType::UserDefined(name) => self.typedef_map.get(name).copied().unwrap_or(64),

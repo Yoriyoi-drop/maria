@@ -65,7 +65,7 @@ impl From<ElabError> for crate::error::SimError {
 }
 
 /// Extract the best available source location from an expression.
-fn expr_location(expr: &Expr) -> (usize, usize) {
+pub(crate) fn expr_location(expr: &Expr) -> (usize, usize) {
     match expr {
         Expr::Ident { line, col, .. } => (*line, *col),
         Expr::Value(_) | Expr::FillLit(_) | Expr::String(_) | Expr::Null => (0, 0),
@@ -90,7 +90,12 @@ fn expr_location(expr: &Expr) -> (usize, usize) {
             items.first().map(expr_location).unwrap_or((0, 0))
         }
         Expr::Replicate { expr: inner, .. } => expr_location(inner),
-        Expr::ScopedIdent { .. } | Expr::MemberAccess { .. } => (0, 0),
+        Expr::MemberAccess { obj, .. } => {
+            // Member access tidak menyimpan line/col sendiri — ambil posisi
+            // dari objek paling dalam (chain `a.b.c` → posisi `a`).
+            expr_location(obj)
+        }
+        Expr::ScopedIdent { .. } => (0, 0),
     }
 }
 
@@ -186,8 +191,8 @@ pub fn expand_generate_block(
                         let branch = if val != 0 { true_items } else { false_items };
                         result.extend(expand_item_list(branch, param_vals, diag_sink)?);
                     }
-                    Err(_) => {
-                        diag_sink.push(Diagnostic::new(DiagLevel::Warning, DiagCode::NotImplemented, "non-constant condition in generate if, taking true branch"));
+                    Err(e) => {
+                        diag_sink.push(Diagnostic::new(DiagLevel::Warning, DiagCode::NotImplemented, format!("non-constant condition in generate if at line {}:{} ({}), taking true branch", cond_line, cond_col, e)));
                         result.extend(expand_item_list(true_items, param_vals, diag_sink)?);
                     }
                 }
@@ -1053,7 +1058,83 @@ fn scope_rename_module_item(item: &mut ModuleItem, map: &HashMap<Symbol, Symbol>
                 *stmt = scope_rename_stmt(&old, map);
             }
         }
+        ModuleItem::Generate(gen) => {
+            for gi in &mut gen.items {
+                scope_rename_generate_item(gi, map);
+            }
+        }
         _ => {}
+    }
+}
+
+/// Rename sinyal lokal di dalam GenerateItem (rekursif) — dipakai scope-rename
+/// iterasi generate for BERSARANG: deklarasi lokal `mubi_out` di body outer
+/// loop menjadi `label[k].mubi_out`, dan referensinya di dalam nested generate
+/// (mis. `mubi_out[i]` di body `for genvar k`) juga harus ikut di-rename.
+/// Loop var nested tidak di-rename (hanya sinyal yang di-declararasikan).
+fn scope_rename_generate_item(item: &mut GenerateItem, map: &HashMap<Symbol, Symbol>) {
+    match item {
+        GenerateItem::If {
+            cond,
+            true_items,
+            false_items,
+            ..
+        } => {
+            *cond = scope_rename_expr(cond, map);
+            for i in true_items.iter_mut() {
+                scope_rename_module_item(i, map);
+            }
+            for i in false_items.iter_mut() {
+                scope_rename_module_item(i, map);
+            }
+        }
+        GenerateItem::For {
+            var: _,
+            init,
+            cond,
+            step,
+            body_items,
+            ..
+        } => {
+            if let Some(stmt) = init {
+                *stmt = scope_rename_stmt(stmt, map);
+            }
+            if let Some(e) = cond {
+                *e = scope_rename_expr(e, map);
+            }
+            if let Some(stmt) = step {
+                *stmt = scope_rename_stmt(stmt, map);
+            }
+            for i in body_items.iter_mut() {
+                scope_rename_module_item(i, map);
+            }
+        }
+        GenerateItem::Case {
+            expr,
+            items,
+            default,
+            ..
+        } => {
+            *expr = scope_rename_expr(expr, map);
+            for ci in items.iter_mut() {
+                for label in ci.labels.iter_mut() {
+                    *label = scope_rename_expr(label, map);
+                }
+                for i in ci.body.iter_mut() {
+                    scope_rename_module_item(i, map);
+                }
+            }
+            if let Some(d) = default {
+                for i in d.iter_mut() {
+                    scope_rename_module_item(i, map);
+                }
+            }
+        }
+        GenerateItem::Items(items) => {
+            for i in items.iter_mut() {
+                scope_rename_module_item(i, map);
+            }
+        }
     }
 }
 

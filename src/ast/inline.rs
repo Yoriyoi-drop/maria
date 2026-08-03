@@ -6,7 +6,7 @@ use super::stmt::Stmt;
 use super::types::{CaseGenerateItem, FunctionDecl, GenerateBlock, GenerateItem, Module, ModuleItem};
 use crate::ast::inline_util::*;
 use crate::intern::Symbol;
-pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(Symbol, usize)>, String> {
+pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(Symbol, usize, Option<Symbol>)>, String> {
     let funcs: HashMap<Symbol, FunctionDecl> = module
         .items
         .iter()
@@ -19,6 +19,13 @@ pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(Symbol, u
         })
         .collect();
 
+    if std::env::var("MARIA_DEBUG_INLINE").is_ok() {
+        eprintln!(
+            "[DBG-INLINE] module '{}' funcs={:?}",
+            module.name.as_str(),
+            funcs.keys().map(|s| s.as_str()).collect::<Vec<_>>()
+        );
+    }
     if funcs.is_empty() {
         return Ok(Vec::new());
     }
@@ -28,7 +35,7 @@ pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(Symbol, u
 
     let mut counter = 0usize;
     let prefix = module.name;
-    let mut temp_signals: Vec<(Symbol, usize)> = Vec::new();
+    let mut temp_signals: Vec<(Symbol, usize, Option<Symbol>)> = Vec::new();
 
     let old_items = std::mem::take(&mut module.items);
     let mut new_items: Vec<ModuleItem> = Vec::new();
@@ -167,7 +174,7 @@ fn inline_funcs_in_generate(
     funcs: &HashMap<Symbol, FunctionDecl>,
     prefix: Symbol,
     counter: &mut usize,
-    temp_signals: &mut Vec<(Symbol, usize)>,
+    temp_signals: &mut Vec<(Symbol, usize, Option<Symbol>)>,
     recursive_funcs: &HashSet<Symbol>,
 ) -> GenerateBlock {
     let items = gen
@@ -183,7 +190,7 @@ fn inline_generate_item(
     funcs: &HashMap<Symbol, FunctionDecl>,
     prefix: Symbol,
     counter: &mut usize,
-    temp_signals: &mut Vec<(Symbol, usize)>,
+    temp_signals: &mut Vec<(Symbol, usize, Option<Symbol>)>,
     recursive_funcs: &HashSet<Symbol>,
 ) -> GenerateItem {
     match gi {
@@ -277,7 +284,7 @@ fn inline_module_items(
     funcs: &HashMap<Symbol, FunctionDecl>,
     prefix: Symbol,
     counter: &mut usize,
-    temp_signals: &mut Vec<(Symbol, usize)>,
+    temp_signals: &mut Vec<(Symbol, usize, Option<Symbol>)>,
     recursive_funcs: &HashSet<Symbol>,
 ) -> Vec<ModuleItem> {
     let mut out = Vec::new();
@@ -389,7 +396,7 @@ fn inline_funcs_in_stmt(
     funcs: &HashMap<Symbol, FunctionDecl>,
     prefix: Symbol,
     counter: &mut usize,
-    temp_signals: &mut Vec<(Symbol, usize)>,
+    temp_signals: &mut Vec<(Symbol, usize, Option<Symbol>)>,
     recursive_funcs: &HashSet<Symbol>,
 ) -> Stmt {
     match stmt {
@@ -861,15 +868,22 @@ fn inline_funcs_in_stmt(
                                 expr_range: None,
                                 direction: None,
                             }
-                        });                            let temp_arg_name = Symbol::intern(&format!("__func_{}_{}_{}_{}", prefix, name, c, port.name));
-                    let port_width = func_port_width(func, port.name);
-                    temp_signals.push((temp_arg_name, port_width));
-                    rename_map.insert(port.name, temp_arg_name);
-                    preamble.push(Stmt::BlockingAssign {
-                        lhs: Expr::Ident { name: temp_arg_name, line: 0, col: 0 },
-                            rhs: arg,
-                            delay: None,
                         });
+                        if let Expr::Ident { name: arg_name, .. } = &arg {
+                            // Argumen berupa signal → rename langsung ke argumen
+                            // aktual (pertahankan tipe asli, mis. struct).
+                            rename_map.insert(port.name, *arg_name);
+                        } else {
+                            let temp_arg_name = Symbol::intern(&format!("__func_{}_{}_{}_{}", prefix, name, c, port.name));
+                            let port_width = func_port_width(func, port.name);
+                            temp_signals.push((temp_arg_name, port_width, None));
+                            rename_map.insert(port.name, temp_arg_name);
+                            preamble.push(Stmt::BlockingAssign {
+                                lhs: Expr::Ident { name: temp_arg_name, line: 0, col: 0 },
+                                rhs: arg,
+                                delay: None,
+                            });
+                        }
                     }
 
                     // Add internal declarations (non-port variables)
@@ -927,7 +941,11 @@ fn inline_funcs_in_stmt(
                         } else {
                             dtype_width.max(decl_width)
                         };
-                        temp_signals.push((new_name_sym, width));
+                        let typedef_name = match &decl.dtype {
+                            super::types::DataType::UserDefined(tn) => Some(*tn),
+                            _ => None,
+                        };
+                        temp_signals.push((new_name_sym, width, typedef_name));
                         rename_map.insert(var.name, new_name_sym);
                     }
                 }
@@ -1777,7 +1795,7 @@ fn replace_func_calls_in_expr(
     prefix: Symbol,
     counter: &mut usize,
     preamble: &mut Vec<Stmt>,
-    temp_signals: &mut Vec<(Symbol, usize)>,
+    temp_signals: &mut Vec<(Symbol, usize, Option<Symbol>)>,
     recursive_funcs: &HashSet<Symbol>,
 ) -> Expr {
     match expr {
@@ -1809,9 +1827,16 @@ fn replace_func_calls_in_expr(
 
                 let ret_width = func_return_width(func);
                 let is_void = ret_width == 0;
+                // Return type typedef (struct) — temp signal hasil harus punya
+                // tipe asli agar elaborator bisa resolve struct_fields untuk
+                // member access / assign struct penuh.
+                let ret_typedef = func.return_type.as_deref().and_then(|dt| match dt {
+                    super::types::DataType::UserDefined(tn) => Some(*tn),
+                    _ => None,
+                });
                 let ret_name = if !is_void {
                     let rn = Symbol::intern(&format!("__func_{}_{}_{}_result", prefix, name, c));
-                    temp_signals.push((rn, ret_width));
+                    temp_signals.push((rn, ret_width, ret_typedef));
                     Some(rn)
                 } else {
                     None
@@ -1838,6 +1863,7 @@ fn replace_func_calls_in_expr(
                 }
 
                 let orig_args: Vec<Expr> = new_args.clone();
+                let mut direct_ports: HashSet<usize> = HashSet::new();
 
                 for (i, arg) in new_args.into_iter().enumerate() {
                     let port =
@@ -1849,15 +1875,25 @@ fn replace_func_calls_in_expr(
                                 range: None,
                                 expr_range: None,
                                 direction: None,
-                            });                    let temp_arg_name = Symbol::intern(&format!("__func_{}_{}_{}_{}", prefix, name, c, port.name));
+                            });
+                    if let Expr::Ident { name: arg_name, .. } = &arg {
+                        // Argumen berupa signal → rename langsung ke argumen
+                        // aktual. Mempertahankan tipe asli (mis. struct) sehingga
+                        // member access `tl.a_address` tetap ter-resolve di
+                        // elaborator (tanpa temp signal ber-dtype Logic).
+                        rename_map.insert(port.name, *arg_name);
+                        direct_ports.insert(i);
+                    } else {
+                        let temp_arg_name = Symbol::intern(&format!("__func_{}_{}_{}_{}", prefix, name, c, port.name));
                         let port_width = func_port_width(func, port.name);
-                        temp_signals.push((temp_arg_name, port_width));
+                        temp_signals.push((temp_arg_name, port_width, None));
                         rename_map.insert(port.name, temp_arg_name);
                         preamble.push(Stmt::BlockingAssign {
                             lhs: Expr::Ident { name: temp_arg_name, line: 0, col: 0 },
-                        rhs: arg,
-                        delay: None,
-                    });
+                            rhs: arg,
+                            delay: None,
+                        });
+                    }
                 }
 
                 // Add internal function declarations (non-port variables)
@@ -1913,7 +1949,11 @@ fn replace_func_calls_in_expr(
                         } else {
                             dtype_width.max(decl_width)
                         };
-                        temp_signals.push((new_name_sym, width));
+                        let typedef_name = match &decl.dtype {
+                            super::types::DataType::UserDefined(tn) => Some(*tn),
+                            _ => None,
+                        };
+                        temp_signals.push((new_name_sym, width, typedef_name));
                         rename_map.insert(var.name, new_name_sym);
                     }
                 }
@@ -1948,7 +1988,11 @@ fn replace_func_calls_in_expr(
                 }
 
                 // Write-back output/inout port values to caller's signals
+                // (port yang di-rename langsung di-skip — sudah terhubung).
                 for (i, orig_arg) in orig_args.into_iter().enumerate() {
+                    if direct_ports.contains(&i) {
+                        continue;
+                    }
                     let port =
                         func.ports
                             .get(i)

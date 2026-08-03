@@ -352,6 +352,14 @@ impl Parser {
                 self.skip_extra_packed_dims()?;
                 // Parse port name(s)
                 while let Token::Ident(pname) = self.peek() {
+                    // Jika setelah nama ada ident lagi, ini bukan nama
+                    // port kedua melainkan tipe port baru (`(mubi4_t a, mubi4_t b)`).
+                    // Inner loop hanya boleh memakan nama dgn tipe yang sama.
+                    // Catatan: `Ident LBrack` TIDAK boleh break — itu unpacked
+                    // array dim (`logic [7:0] mat_a [8]`), bukan tipe baru.
+                    if matches!(self.peek_ahead(1), Token::Ident(_)) {
+                        break;
+                    }
                     let pn = *pname;
                     self.advance();
                     ports.push(FunctionPort {

@@ -252,14 +252,15 @@ pub fn resolve_expr_range(
 ) -> Result<Range, String> {
     let msb = const_eval_with_params(&er.msb, param_vals)?;
     let lsb = const_eval_with_params(&er.lsb, param_vals)?;
-    // Range negatif (msb/lsb hasil konstanta tak valid) ditolak agar tidak
-    // menghasilkan width raksasa (cast negatif ke usize) yang mem-blow-up
-    // alokasi sinyal.
+    // Range negatif VALID di SystemVerilog (mis. `[-1:0]` = 2 bit). Offset
+    // index minimum ke 0 — width & arah range tetap, representasi usize aman
+    // (tidak mem-blow-up alokasi sinyal). Contoh: [-1:0] → [0:1] (msb<lsb).
     if msb < 0 || lsb < 0 {
-        return Err(format!(
-            "negative range bound msb={} lsb={} in [{}:{}]",
-            msb, lsb, msb, lsb
-        ));
+        let offset = -msb.min(lsb);
+        return Ok(Range {
+            msb: (msb + offset) as usize,
+            lsb: (lsb + offset) as usize,
+        });
     }
     Ok(Range {
         msb: msb as usize,
@@ -415,6 +416,11 @@ pub struct StructMember {
     pub name: Symbol,
     pub dtype: Box<DataType>,
     pub range: Option<Range>,
+    /// Range asli `[msb:lsb]` dalam bentuk ekspresi — disimpan bila bound
+    /// memakai parameter/konstanta yang belum ter-resolve saat parse
+    /// (mis. `logic [KeyLen-1:0] key` di package). Dipakai untuk menghitung
+    /// width member saat `$bits(typedef)` / evaluasi konstanta.
+    pub expr_range: Option<ExprRange>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -474,6 +480,11 @@ pub struct TypedefDecl {
     pub name: Symbol,
     pub dtype: DataType,
     pub range: Option<ExprRange>,
+    /// Packed dimensions tambahan untuk tipe multidimensi
+    /// (`typedef logic [4:0][4:0][W-1:0] box_t;`). Sebelumnya dibuang di
+    /// parser sehingga width typedef salah (hanya range pertama dihitung) —
+    /// sekarang disimpan agar `resolve_typedef_width` mengalikan semua dims.
+    pub extra_packed_dims: Vec<ExprRange>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

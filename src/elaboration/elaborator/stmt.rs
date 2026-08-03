@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use super::Elaborator;
 use super::super::util::*;
-use crate::ast::types::const_eval_with_params;
+use crate::ast::types::{const_eval_simple, const_eval_with_params};
 use crate::ast::*;
 use crate::diagnostics::diagnostic::DiagCode;
 use crate::error::SimError;
@@ -78,6 +78,8 @@ impl Elaborator {
         lhs_signal_id: Option<SignalId>,
         rhs: &IrExpr,
         signals: &[SignalInfo],
+        line: usize,
+        col: usize,
     ) {
         let Some(sid) = lhs_signal_id else { return };
         let Some(lhs_sig) = signals.get(sid) else { return };
@@ -110,9 +112,11 @@ impl Elaborator {
                     }
                 }
             }
-            self.elab_warn(
+            self.elab_warn_at(
                 DiagCode::WidthMismatchWarning,
                 format!("width mismatch in assignment to '{}' (lhs={}, rhs={})", lhs_sig.name, lhs_w, rhs_w),
+                line,
+                col,
             );
         }
     }
@@ -183,7 +187,8 @@ impl Elaborator {
                     }
                 }
                 let lhs_sid = lvalue_signal_id(&ir_lhs);
-                self.check_width_mismatch(lhs_sid, &ir_rhs, signals);
+                let (lhs_line, lhs_col) = expr_location(lhs);
+                self.check_width_mismatch(lhs_sid, &ir_rhs, signals, lhs_line, lhs_col);
                 check_signed_mismatch(lhs_sid, &ir_rhs, signals);
                 Ok(IrStmt::BlockingAssign {
                     lhs: ir_lhs,
@@ -225,7 +230,8 @@ impl Elaborator {
                     }
                 }
                 let lhs_sid = lvalue_signal_id(&ir_lhs);
-                self.check_width_mismatch(lhs_sid, &ir_rhs, signals);
+                let (lhs_line, lhs_col) = expr_location(lhs);
+                self.check_width_mismatch(lhs_sid, &ir_rhs, signals, lhs_line, lhs_col);
                 check_signed_mismatch(lhs_sid, &ir_rhs, signals);
                 Ok(IrStmt::NonBlockingAssign {
                     lhs: ir_lhs,
@@ -616,18 +622,29 @@ impl Elaborator {
                 stmts,
             } => {
                 // Try to unroll constant-bounded for loops at elaboration time
-                if let Ok(Some(unrolled)) = try_unroll_for_loop(
+                let unroll_result = try_unroll_for_loop(
                     init.as_deref(),
                     cond.as_ref(),
                     step.as_deref(),
                     stmts,
                     &|stmts, var_name, iter_val| {
                         let subst_stmts = substitute_loop_var_in_stmts(stmts, var_name, iter_val);
+                        if std::env::var("DBG_LOOP").is_ok() {
+                            eprintln!("[DBG-LOOP] iter {}={} body={:?}", var_name, iter_val, subst_stmts);
+                        }
                         self.elaborate_stmt_block(&subst_stmts, signal_map, known_modules, signals)
                             .map_err(|e| e.to_string())
                     },
                     &self.param_vals,
-                ) {
+                );
+                if std::env::var("DBG_LOOP").is_ok() {
+                    match &unroll_result {
+                        Ok(Some(u)) => eprintln!("[DBG-LOOP] unrolled {} stmts", u.len()),
+                        Ok(None) => eprintln!("[DBG-LOOP] unroll None (fallback runtime)"),
+                        Err(e) => eprintln!("[DBG-LOOP] unroll Err: {}", e),
+                    }
+                }
+                if let Ok(Some(unrolled)) = unroll_result {
                     return Ok(IrStmt::Block { stmts: unrolled });
                 }
                 // Fallback: generate runtime LoopFor
@@ -1071,7 +1088,19 @@ impl Elaborator {
                         msb: msb_c,
                         lsb: lsb_c,
                     }),
-                    _ => Err(self.elab_diag(DiagCode::NotImplemented, "nested range select not supported")),
+                    // Range select di atas bit select (`sig[a][b][msb:lsb]` —
+                    // packed multidimensi setelah unroll). Akumulasi offset bit.
+                    IrLValue::BitSelect(sid, base_bit) => {
+                        let start = base_bit + msb_c.min(lsb_c);
+                        let end = base_bit + msb_c.max(lsb_c);
+                        Ok(IrLValue::RangeSelect(sid, end, start))
+                    }
+                    _ => Err(self.elab_diag_at(
+                        DiagCode::NotImplemented,
+                        "nested range select not supported",
+                        expr_location(expr).0,
+                        expr_location(expr).1,
+                    )),
                 }
             }
             Expr::BitSelect {
@@ -1148,12 +1177,37 @@ impl Elaborator {
                                 bit: idx as usize,
                             })
                         } else {
-                            Err(self.elab_diag(DiagCode::NotImplemented,
+                            Err(self.elab_diag_at(
+                                DiagCode::NotImplemented,
                                 "dynamic bit-select on array element not supported",
+                                expr_location(expr).0,
+                                expr_location(expr).1,
                             ))
                         }
                     }
-                    _ => Err(self.elab_diag(DiagCode::NotImplemented, "nested bit select not supported")),
+                    // Bit select di atas bit select (`sig[a][b]` — packed
+                    // multidimensi setelah unroll, mis. `result[0][0][0]`).
+                    // Akumulasi offset bit.
+                    IrLValue::BitSelect(sid, inner_bit) => {
+                        if let Ok(idx) = const_eval_params(bs_index, &self.param_vals) {
+                            Ok(IrLValue::BitSelect(sid, inner_bit + idx as usize))
+                        } else {
+                            let index_expr =
+                                self.elaborate_expr(bs_index, signal_map, signals)?;
+                            Ok(IrLValue::ArrayBitSelect {
+                                sig_id: sid,
+                                index: Box::new(index_expr),
+                                elem_width: 1,
+                                bit: inner_bit,
+                            })
+                        }
+                    }
+                    _ => Err(self.elab_diag_at(
+                        DiagCode::NotImplemented,
+                        "nested bit select not supported",
+                        expr_location(expr).0,
+                        expr_location(expr).1,
+                    )),
                 }
             }
             Expr::PartSelect {
@@ -1166,7 +1220,12 @@ impl Elaborator {
                 let width_r = const_eval_params(width, &self.param_vals);
                 let (base_c, width_c) = match (base_r, width_r) {
                     (Ok(b), Ok(w)) => (b as usize, w as usize),
-                    _ => return Err(self.elab_diag(DiagCode::NotImplemented, "dynamic part-select not supported")),
+                    _ => return Err(self.elab_diag_at(
+                        DiagCode::NotImplemented,
+                        "dynamic part-select not supported",
+                        expr_location(expr).0,
+                        expr_location(expr).1,
+                    )),
                 };
                 match inner_lv {
                     IrLValue::Signal(sid, _) => {
@@ -1212,8 +1271,11 @@ impl Elaborator {
                             })
                         }
                     }
-                    _ => Err(self.elab_diag(DiagCode::NotImplemented,
+                    _ => Err(self.elab_diag_at(
+                        DiagCode::NotImplemented,
                         "nested part-select in lvalue not supported",
+                        expr_location(expr).0,
+                        expr_location(expr).1,
                     )),
                 }
             }
@@ -1224,8 +1286,11 @@ impl Elaborator {
                     .collect();
                 Ok(IrLValue::Concat(parts?))
             }
-            Expr::MethodCall { .. } => Err(self.elab_diag(DiagCode::NotImplemented,
+            Expr::MethodCall { .. } => Err(self.elab_diag_at(
+                DiagCode::NotImplemented,
                 "method calls cannot be used as lvalues",
+                expr_location(expr).0,
+                expr_location(expr).1,
             )),
             Expr::MemberAccess { obj, field } => {
                 // Try struct/union field write
@@ -1242,41 +1307,75 @@ impl Elaborator {
                         if !base_info.struct_fields.is_empty() {
                             let mut offset = 0usize;
                             let mut width = 1usize;
-                            // Cari tipe fields awal dari signal base.
                             let mut cur_fields: Option<Vec<StructFieldInfo>> =
                                 Some(base_info.struct_fields.clone());
+                            let mut last_field: Option<StructFieldInfo> = None;
                             let mut ok = true;
-                            for (i, fname) in chain.iter().enumerate() {
-                                let fields = match &cur_fields {
-                                    Some(fs) => fs.clone(),
-                                    None => {
-                                        ok = false;
-                                        break;
-                                    }
-                                };
-                                let found = fields.iter().find(|f| f.name == *fname);
-                                match found {
-                                    Some(f) => {
-                                        offset += f.offset;
-                                        width = f.width;
-                                        // Level berikutnya: pakai fields dari tipe field
-                                        // (nested struct). Prioritas: typedef yang dikenal;
-                                        // fallback ke sub_fields untuk anonymous struct
-                                        // inline (`struct packed {...} data;` pola register
-                                        // file OpenTitan).
-                                        if i + 1 < chain.len() {
-                                            let mut nxt = f.type_name.as_ref().and_then(|tn| {
-                                                self.typedef_field_map.get(tn).cloned()
-                                            });
-                                            if nxt.is_none() {
-                                                nxt = Some(f.sub_fields.clone());
+                            for (i, step) in chain.iter().enumerate() {
+                                match step {
+                                    ChainStep::Index(idx) => {
+                                        // Elemen ke-idx dari field struct array
+                                        // (atau base signal bila di posisi awal).
+                                        let elem_width = if let Some(f) = &last_field {
+                                            f.type_name
+                                                .as_ref()
+                                                .and_then(|tn| {
+                                                    self.lookup_struct_fields(tn.as_str())
+                                                })
+                                                .map(|fs| {
+                                                    fs.iter()
+                                                        .map(|sf| sf.width)
+                                                        .sum::<usize>()
+                                                        .max(1)
+                                                })
+                                                .unwrap_or(1)
+                                        } else {
+                                            base_info.elem_width.max(1)
+                                        };
+                                        offset = offset.saturating_add(
+                                            (*idx as usize).saturating_mul(elem_width),
+                                        );
+                                        // Fields elemen struct (untuk field berikutnya).
+                                        if let Some(f) = &last_field {
+                                            if let Some(tn) = &f.type_name {
+                                                cur_fields =
+                                                    self.lookup_struct_fields(tn.as_str());
                                             }
-                                            cur_fields = nxt;
                                         }
+                                        last_field = None;
                                     }
-                                    None => {
-                                        ok = false;
-                                        break;
+                                    ChainStep::Field(fname) => {
+                                        let fields = match &cur_fields {
+                                            Some(fs) => fs.clone(),
+                                            None => {
+                                                ok = false;
+                                                break;
+                                            }
+                                        };
+                                        let found = fields.iter().find(|f| f.name == *fname);
+                                        match found {
+                                            Some(f) => {
+                                                offset += f.offset;
+                                                width = f.width;
+                                                last_field = Some(f.clone());
+                                                if i + 1 < chain.len() {
+                                                    let mut nxt = f
+                                                        .type_name
+                                                        .as_ref()
+                                                        .and_then(|tn| {
+                                                            self.lookup_struct_fields(tn.as_str())
+                                                        });
+                                                    if nxt.is_none() {
+                                                        nxt = Some(f.sub_fields.clone());
+                                                    }
+                                                    cur_fields = nxt;
+                                                }
+                                            }
+                                            None => {
+                                                ok = false;
+                                                break;
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1299,10 +1398,10 @@ impl Elaborator {
                                 let msb = f.offset + f.width - 1;
                                 return Ok(IrLValue::RangeSelect(sig_id, lsb, msb));
                             }
-                            return Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
+                            return Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!(
                                 "field '{}' not found in struct type",
                                 field
-                            )));
+                            ), expr_location(expr).0, expr_location(expr).1));
                         }
                         // Class object handle: obj = signal berisi obj id → field.
                         if sig_info.class_name.is_some() {
@@ -1311,24 +1410,31 @@ impl Elaborator {
                                 field: *field,
                             });
                         }
-                        Err(self.elab_diag(DiagCode::ModuleNotFound, format!("member access on signal '{:?}' that has no struct fields (cannot use as lvalue)", obj)))
+                        Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!("member access on signal '{:?}' that has no struct fields (cannot use as lvalue)", obj), expr_location(expr).0, expr_location(expr).1))
                     }
-                    _ => Err(self.elab_diag(DiagCode::NotImplemented,
+                    _ => Err(self.elab_diag_at(
+                        DiagCode::NotImplemented,
                         "member access cannot be used as lvalues",
+                        expr_location(expr).0,
+                        expr_location(expr).1,
                     )),
                 }
             }
-            _ => Err(self.elab_diag(DiagCode::InvalidSyntax, format!(
-                "invalid lvalue expression: {:?}",
-                expr
-            ))),
+            _ => Err(self.elab_diag_at(
+                DiagCode::InvalidSyntax,
+                format!("invalid lvalue expression: {:?}", expr),
+                expr_location(expr).0,
+                expr_location(expr).1,
+            )),
         }
     }
 
-    /// Kumpulkan chain member access `a.b.c` → (nama signal base, urutan field
-    /// dari luar ke dalam). Contoh: `hw2reg.val.d` → ("hw2reg", [val, d]).
-    fn collect_member_chain(obj: &Expr, leaf_field: Symbol) -> Option<(String, Vec<Symbol>)> {
-        let mut chain = vec![leaf_field];
+    /// Kumpulkan chain member access `a.b.c` → (nama signal base, urutan step
+    /// dari luar ke dalam). Contoh: `hw2reg.val.d` → ("hw2reg", [val, d]);
+    /// `reg2hw.key_share0[0].qe` → ("reg2hw", [key_share0, Index(0), qe]).
+    /// Index konstanta (genvar sudah di-substitute saat generate expansion).
+    fn collect_member_chain(obj: &Expr, leaf_field: Symbol) -> Option<(String, Vec<ChainStep>)> {
+        let mut chain = vec![ChainStep::Field(leaf_field)];
         let mut cur = obj;
         loop {
             match cur {
@@ -1336,16 +1442,31 @@ impl Elaborator {
                     obj: inner,
                     field,
                 } => {
-                    chain.push(*field);
+                    chain.push(ChainStep::Field(*field));
                     cur = inner;
+                }
+                Expr::BitSelect { expr: inner, index } => {
+                    if let Ok(idx) = const_eval_simple(index) {
+                        chain.push(ChainStep::Index(idx));
+                        cur = inner;
+                    } else {
+                        return None;
+                    }
                 }
                 Expr::Ident { name, .. } => {
                     let base = name.as_str().to_string();
-                    chain.reverse(); // [base_field, ..., leaf_field]
+                    chain.reverse(); // [base_step, ..., leaf_step]
                     return Some((base, chain));
                 }
                 _ => return None,
             }
         }
     }
+}
+
+/// Langkah dalam chain member access — field struct atau index array konstanta.
+#[derive(Debug, Clone)]
+enum ChainStep {
+    Field(Symbol),
+    Index(i64),
 }

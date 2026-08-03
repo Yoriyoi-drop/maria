@@ -948,7 +948,18 @@ let mut _last_pos = self.pos.get();
                 if self.class_names.contains(name)
                     || self.typedef_names.contains(name)
                     || self.module_type_params.contains(name)
-                {                            let dtype = DataType::UserDefined(*name);
+                {
+                    let dtype = DataType::UserDefined(*name);
+                    // User-defined type with array dimension: `Type [1:0] varname`
+                    // atau `Type [N] nama, nama2`. parse_decl menangani unpacked
+                    // array dgn benar; branch manual di bawah hanya untuk polos.
+                    let ahead_is_lbrack = matches!(self.peek_ahead(1), Token::LBrack);
+                    if ahead_is_lbrack {
+                        let decl = self.parse_decl();
+                        if let Ok(decl) = decl {
+                            return Ok(Some(ModuleItem::Decl(decl)));
+                        }
+                    }
                     self.advance();
                     // Handle parameterized class: Class #(type) varname — skip type args, use base class name
                     if self.peek() == &Token::Hash {

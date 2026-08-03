@@ -7,11 +7,13 @@ use clap::Parser as ClapParser;
 use std::path::PathBuf;
 use std::process;
 
+use maria::animasi::{Phase, PipelineAnimator};
 use maria::frontend::CompileSession;
 use maria::SessionConfig;
 use maria::debugger::Debugger;
 use maria::elaboration::Elaborator;
 use maria::diagnostics::DiagCode;
+use maria::diagnostics::DiagLevel;
 use maria::error::SimError;
 use maria::ir::LogicVec;
 use maria::parser::lexer::Lexer;
@@ -36,11 +38,34 @@ fn emit_diags(diags: &[maria::diagnostics::diagnostic::Diagnostic]) {
     }
 }
 
+/// Bersihkan database MICD (`.maria/database`). Menghapus isi
+/// `<root>/.maria/database` (atau `MARIA_MICD_DIR` bila di-set).
+fn run_clean() -> ! {
+    use maria::micd::MicdDatabase;
+    let root = MicdDatabase::default_root();
+    if root.exists() {
+        match std::fs::remove_dir_all(&root) {
+            Ok(()) => {
+                eprintln!("MICD database dihapus: {}", root.display());
+                process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Gagal menghapus MICD database '{}': {}", root.display(), e);
+                process::exit(1);
+            }
+        }
+    } else {
+        eprintln!("Tidak ada MICD database di '{}'", root.display());
+        process::exit(0);
+    }
+}
+
 /// Simpan MICD dan cetak statistik ringkas (best-effort, tidak menggagalkan run).
-fn micd_save_and_print(session: &mut CompileSession, quiet: bool) {
+/// `suppress` menekan output (saat animasi pipeline aktif di terminal).
+fn micd_save_and_print(session: &mut CompileSession, quiet: bool, suppress: bool) {
     match session.save_micd() {
         Ok(Some(st)) => {
-            if !quiet {
+            if !quiet && !suppress {
                 eprintln!(
                     "[MICD] files={} restored={} changed={} snapshots={}",
                     st.files, st.restored_designs, st.changed_files, st.snapshot_id
@@ -49,10 +74,66 @@ fn micd_save_and_print(session: &mut CompileSession, quiet: bool) {
         }
         Ok(None) => {}
         Err(e) => {
-            if !quiet {
+            if !quiet && !suppress {
                 eprintln!("[MICD] save warning: {}", e);
             }
         }
+    }
+}
+
+/// Apakah animasi pipeline aktif (menggambar di terminal).
+fn anim_active(anim: &Option<PipelineAnimator>) -> bool {
+    anim.as_ref().map(|a| a.is_active()).unwrap_or(false)
+}
+
+/// Kapan animasi pipeline diizinkan: bukan quiet, bukan mode debug/step,
+/// bukan compile-only/lazy (output verbose akan merusak area animasi).
+fn anim_enabled(cli: &Cli) -> bool {
+    !cli.quiet
+        && !cli.compile_only
+        && !cli.lazy
+        && !cli.debug
+        && !cli.step
+        && cli.break_cycle.is_empty()
+        && cli.break_change.is_empty()
+        && cli.break_eq.is_empty()
+        && cli.watch.is_empty()
+}
+
+/// Helpers ringkas untuk memanggil method animator tanpa unwrap.
+fn anim_phase_running(anim: &Option<PipelineAnimator>, phase: Phase) {
+    if let Some(a) = anim.as_ref() {
+        a.phase_running(phase);
+    }
+}
+
+fn anim_phase_done(anim: &Option<PipelineAnimator>, phase: Phase) {
+    if let Some(a) = anim.as_ref() {
+        a.phase_done(phase);
+    }
+}
+
+fn anim_set_files(anim: &Option<PipelineAnimator>, total: u64, done: u64) {
+    if let Some(a) = anim.as_ref() {
+        a.set_files(total, done);
+    }
+}
+
+fn anim_set_modules(anim: &Option<PipelineAnimator>, n: u64) {
+    if let Some(a) = anim.as_ref() {
+        a.set_modules(n);
+    }
+}
+
+fn anim_finish(anim: &mut Option<PipelineAnimator>, ok: bool, errors: usize, warnings: usize) {
+    if let Some(a) = anim.as_mut() {
+        a.finish(ok, errors, warnings);
+    }
+}
+
+fn anim_abort(anim: &mut Option<PipelineAnimator>, errors: usize, warnings: usize) {
+    if let Some(a) = anim.as_mut() {
+        a.abort(errors, warnings);
     }
 }
 
@@ -112,6 +193,11 @@ fn main() {
 
     let cli = Cli::parse();
 
+    // ── Subcommand: bersihkan database MICD (seperti `cargo clean`) ──
+    if let Some(crate::cli::MariaCmd::Clean) = cli.cmd {
+        return run_clean();
+    }
+
     // ── GUI mode: launch the native egui application ──
     #[cfg(feature = "gui")]
     if cli.gui {
@@ -159,6 +245,13 @@ fn run(cli: Cli) -> Result<(), SimError> {
         sources.extend(flist);
     }
 
+    if sources.is_empty() && !cli.gui {
+        return Err(SimError::with_diag(
+            maria::diagnostics::DiagCode::InvalidSyntax,
+            "no input files: berikan file .sv atau gunakan `--filelist <file>` (bantuan: `maria --help`)",
+        ));
+    }
+
     // Create shared preprocessor with CLI config
     let mut base_pp = Preprocessor::new();
     base_pp.quiet = cli.quiet;
@@ -178,6 +271,9 @@ fn run(cli: Cli) -> Result<(), SimError> {
     if cli.fast || cli.filelist.is_some() {
         return run_fast(cli, None);
     }
+
+    // ── Animasi pipeline (terminal EDA) ──
+    let mut anim = PipelineAnimator::start(anim_enabled(&cli));
 
     // Auto-detect include paths: consolidated single-pass scan
     // Walk up from each source dir's ancestors, recursively scan for SV files (depth ≤ 4)
@@ -266,11 +362,17 @@ fn run(cli: Cli) -> Result<(), SimError> {
         need_preprocess.push((idx, path));
     }
 
-    eprintln!(
-        "[TIMING] Preprocessing {} files ({} via MICD cache)...",
-        sources.len(),
-        micd_reused
-    );
+    if !anim_active(&anim) {
+        eprintln!(
+            "[TIMING] Preprocessing {} files ({} via MICD cache)...",
+            sources.len(),
+            micd_reused
+        );
+    }
+    if anim_active(&anim) {
+        anim_phase_running(&anim, Phase::Lex);
+        anim_set_files(&anim, sources.len() as u64, 0);
+    }
     let pp_start = std::time::Instant::now();
     let pp_for_parallel = &base_pp;
     let fresh_results: Vec<Result<(usize, String, Option<(String, String)>, Vec<PathBuf>), String>> =
@@ -289,7 +391,9 @@ fn run(cli: Cli) -> Result<(), SimError> {
                 }
             })
             .collect();
-    eprintln!("[TIMING] Preprocessing done in {:?}", pp_start.elapsed());
+    if !anim_active(&anim) {
+        eprintln!("[TIMING] Preprocessing done in {:?}", pp_start.elapsed());
+    }
 
     for r in &fresh_results {
         match r {
@@ -371,7 +475,9 @@ fn run(cli: Cli) -> Result<(), SimError> {
         }
     }
 
-    eprintln!("[TIMING] Starting lexer (combined size: {} bytes)...", combined.len());
+    if !anim_active(&anim) {
+        eprintln!("[TIMING] Starting lexer (combined size: {} bytes)...", combined.len());
+    }
     let lex_start = std::time::Instant::now();
     let mut lexer = Lexer::new(&combined);
     let mut tokens = Vec::new();
@@ -386,7 +492,13 @@ fn run(cli: Cli) -> Result<(), SimError> {
         }
         tokens.push((tok, line, col));
     }
-    eprintln!("[TIMING] Lexer done: {} tokens in {:?}", tokens.len(), lex_start.elapsed());
+    if !anim_active(&anim) {
+        eprintln!("[TIMING] Lexer done: {} tokens in {:?}", tokens.len(), lex_start.elapsed());
+    }
+    if anim_active(&anim) {
+        anim_phase_done(&anim, Phase::Lex);
+        anim_phase_running(&anim, Phase::Par);
+    }
 
     if tokens.is_empty() {
         return Err(SimError::with_diag(DiagCode::InvalidSyntax, "no tokens found (empty source?)"));
@@ -395,14 +507,23 @@ fn run(cli: Cli) -> Result<(), SimError> {
     let first_source = sources.first().map(|s| s.as_str()).unwrap_or("<unknown>");
 
     let file_line_map = lexer.file_line_map.clone();
-    eprintln!("[TIMING] Starting parser...");
+    if !anim_active(&anim) {
+        eprintln!("[TIMING] Starting parser...");
+    }
     let parse_start = std::time::Instant::now();
     let mut parser = Parser::new(tokens, first_source)
         .with_source_lines(&combined)
         .with_file_line_map(file_line_map);
     let mut design = match parser.parse_design() {
         Ok(d) => {
-            eprintln!("[TIMING] Parser done in {:?}", parse_start.elapsed());
+            if anim_active(&anim) {
+                anim_phase_done(&anim, Phase::Par);
+                anim_set_modules(&anim, d.modules.len() as u64);
+                anim_set_files(&anim, sources.len() as u64, sources.len() as u64);
+            }
+            if !anim_active(&anim) {
+                eprintln!("[TIMING] Parser done in {:?}", parse_start.elapsed());
+            }
             d
         },
         Err(e) => {
@@ -538,24 +659,45 @@ fn run(cli: Cli) -> Result<(), SimError> {
     }
 
     let top_name = cli.top.as_deref();
-    if !cli.quiet {
+    if !cli.quiet && !anim_active(&anim) {
         println!("Compiling design ({} file sources)...", sources.len());
     }
-    eprintln!("[TIMING] Starting elaboration...");
+    if anim_active(&anim) {
+        anim_phase_running(&anim, Phase::Ela);
+    }
+    if !anim_active(&anim) {
+        eprintln!("[TIMING] Starting elaboration...");
+    }
     let elab_start = std::time::Instant::now();
     let source_lines: Vec<String> = combined.lines().map(|s| s.to_string()).collect();
     let mut elaborator = Elaborator::with_source(design, source_lines, first_source.to_string());
     let mut ir_design = match elaborator.elaborate(top_name) {
         Ok(d) => d,
         Err(e) => {
-            emit_diags(&elaborator.flush_diagnostics());
+            let diags = elaborator.flush_diagnostics();
+            if anim_active(&anim) {
+                let w = diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
+                anim_abort(&mut anim, 1, w);
+            }
+            emit_diags(&diags);
             return Err(e);
         }
     };
-    eprintln!("[TIMING] Elaboration done in {:?}", elab_start.elapsed());
+    let elab_diags = elaborator.flush_diagnostics();
+    if anim_active(&anim) {
+        anim_phase_done(&anim, Phase::Ela);
+        anim_phase_done(&anim, Phase::Opt);
+        anim_phase_done(&anim, Phase::Ver);
+        let w = elab_diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
+        let e = elab_diags.iter().filter(|d| d.is_error()).count();
+        anim_finish(&mut anim, e == 0, e, w);
+    }
+    if !anim_active(&anim) {
+        eprintln!("[TIMING] Elaboration done in {:?}", elab_start.elapsed());
+    }
 
     // Flush elaboration-time diagnostics (warnings like WR0102)
-    emit_diags(&elaborator.flush_diagnostics());
+    emit_diags(&elab_diags);
 
     ir_design.timescale = ts_for_ir;
 
@@ -1133,6 +1275,9 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
 
     let mut session = CompileSession::new(config);
 
+    // ── Animasi pipeline (terminal EDA) ──
+    let mut anim = PipelineAnimator::start(anim_enabled(&cli));
+
     // ── MICD: persistent incremental compilation database ──
     // Otomatis (bukan flag tambahan): restore AST/combined-source file yang
     // tidak berubah → lex/parse di-skip. Di-skip hanya saat --recompile.
@@ -1141,7 +1286,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         let db = maria::micd::MicdDatabase::open(&micd_root);
         let t0 = std::time::Instant::now();
         let restored = session.attach_micd(db);
-        if restored > 0 && !cli.quiet {
+        if restored > 0 && !cli.quiet && !anim_active(&anim) {
             eprintln!(
                 "[MICD] restored {} cached design(s) in {:?} ({} file(s) parse di-skip)",
                 restored,
@@ -1167,7 +1312,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
                     println!("HIR query ready: session.elaborate_lazy_module(...)");
                 }
             }
-            micd_save_and_print(&mut session, cli.quiet);
+            micd_save_and_print(&mut session, cli.quiet, anim_active(&anim));
             return Ok(());
         } else {
             session.compile()?
@@ -1177,7 +1322,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
             session.print_timing();
             println!("Modules indexed: {}", index_len);
         }
-        micd_save_and_print(&mut session, cli.quiet);
+        micd_save_and_print(&mut session, cli.quiet, anim_active(&anim));
         if cli.print_ast {
             println!("{:#?}", design);
         }
@@ -1191,28 +1336,39 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
             session.print_timing();
             println!("Modules indexed: {}, lazy HIR modules: {}", index_len, session.lazy_elaborated_count());
         }
-        micd_save_and_print(&mut session, cli.quiet);
+        micd_save_and_print(&mut session, cli.quiet, anim_active(&anim));
         return Ok(());
     }
 
     // ── Full pipeline: compile + elaborate ──
+    if anim_active(&anim) {
+        anim_phase_running(&anim, Phase::Lex);
+        anim_phase_running(&anim, Phase::Par);
+        anim_set_files(&anim, session.config.sources.len() as u64, 0);
+    }
     let (design, index_len) = if cli.recompile {
-        if !cli.quiet { eprintln!("Forcing full recompile..."); }
+        if !cli.quiet && !anim_active(&anim) { eprintln!("Forcing full recompile..."); }
         let all_sources: Vec<PathBuf> = session.config.sources.clone();
         let (design, module_index) = session.compile_incremental(&all_sources)?;
         let index_len = module_index.len();
-        if !cli.quiet { session.print_timing(); }
+        if !cli.quiet && !anim_active(&anim) { session.print_timing(); }
         (design, index_len)
     } else {
         let (design, module_index) = session.compile()?;
         let index_len = module_index.len();
-        if !cli.quiet { session.print_timing(); }
+        if !cli.quiet && !anim_active(&anim) { session.print_timing(); }
         (design, index_len)
     };
+    if anim_active(&anim) {
+        anim_phase_done(&anim, Phase::Lex);
+        anim_phase_done(&anim, Phase::Par);
+        anim_set_modules(&anim, design.modules.len() as u64);
+        anim_set_files(&anim, session.config.sources.len() as u64, session.config.sources.len() as u64);
+    }
 
     // ── MICD: simpan hasil parse SEGERA (sebelum elaborate) agar cache
     // parse tetap tersimpan walau elaborasi gagal. ──
-    micd_save_and_print(&mut session, cli.quiet);
+    micd_save_and_print(&mut session, cli.quiet, anim_active(&anim));
 
     if design.modules.is_empty() {
         return Err(SimError::with_diag(DiagCode::ModuleNotFound, "no modules found in design"));
@@ -1222,6 +1378,9 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     }
 
     // Elaborate (source info dari merged source — sudah tersimpan di MICD).
+    if anim_active(&anim) {
+        anim_phase_running(&anim, Phase::Ela);
+    }
     let (source_lines, source_file) = session.source_info().unwrap_or_default();
     let mut elab = if source_lines.is_empty() {
         Elaborator::new(design)
@@ -1231,11 +1390,25 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     let ir_design = match elab.elaborate(top_name) {
         Ok(d) => d,
         Err(e) => {
-            emit_diags(&elab.flush_diagnostics());
+            let diags = elab.flush_diagnostics();
+            if anim_active(&anim) {
+                let w = diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
+                anim_abort(&mut anim, 1, w);
+            }
+            emit_diags(&diags);
             return Err(e);
         }
     };
-    emit_diags(&elab.flush_diagnostics());
+    let elab_diags = elab.flush_diagnostics();
+    if anim_active(&anim) {
+        anim_phase_done(&anim, Phase::Ela);
+        anim_phase_done(&anim, Phase::Opt);
+        anim_phase_done(&anim, Phase::Ver);
+        let w = elab_diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
+        let e = elab_diags.iter().filter(|d| d.is_error()).count();
+        anim_finish(&mut anim, e == 0, e, w);
+    }
+    emit_diags(&elab_diags);
 
     // ── MICD: tandai elaborasi sukses (verify-only save, ringan) ──
     session.micd_mark_elaborated();

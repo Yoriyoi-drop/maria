@@ -76,6 +76,11 @@ pub fn compute_expr_width(
                             } else {
                                 1
                             }
+                        } else if let Some(rt) = &f.return_type {
+                            // Return type berupa typedef package (mis.
+                            // `function automatic mubi4_t mubi4_or_hi(...)`)
+                            // — resolve width dari typedef.
+                            resolve_dtype_width(rt, package_symbols)
                         } else {
                             1
                         };
@@ -185,13 +190,34 @@ pub fn compute_expr_width(
         }
         Expr::Cast { dtype, .. } => match crate::elaboration::util::parse_type_spec_str(dtype.as_str()) {
             Some(dt) => match dt {
-                DataType::UserDefined(name) => param_vals
-                    .get(&name)
-                    .map(|&v| v as usize)
-                    .ok_or_else(|| format!("unknown type '{}'", name)),
+                DataType::UserDefined(name) => {
+                    // 1) Parameter/konstanta: nilai = width (mis. `Width'(...)`).
+                    if let Some(&v) = param_vals.get(&name) {
+                        return Ok(v as usize);
+                    }
+                    // 2) Package param di-import (nama polos) — mis.
+                    //    `MuBi4Width'(x)` dari `import prim_mubi_pkg::*`.
+                    if let Some(v) = resolve_pkg_param_width(&name, package_symbols) {
+                        return Ok(v as usize);
+                    }
+                    // 3) Typedef package (mis. `mubi4_t'(...)`) — resolve width
+                    //    dari typedef di semua package.
+                    Ok(resolve_dtype_width(&dt, package_symbols))
+                }
                 _ => Ok(dt.width()),
             },
-            None => Err(format!("unknown type '{}' in cast", dtype)),
+            // dtype bukan base type — bisa jadi parameter/typedef package
+            // (mis. `MuBi4Width'(x)`, `k'(x)`). Perlakukan sebagai identifier.
+            None => {
+                let name = Symbol::intern(dtype.as_str());
+                if let Some(&v) = param_vals.get(&name) {
+                    return Ok(v as usize);
+                }
+                if let Some(v) = resolve_pkg_param_width(&name, package_symbols) {
+                    return Ok(v as usize);
+                }
+                Ok(resolve_dtype_width(&DataType::UserDefined(name), package_symbols))
+            }
         },
         Expr::MethodCall { .. } | Expr::StreamingConcat { .. } | Expr::Dist { .. } => {
             Err("width not computable for this expression type".to_string())
@@ -232,5 +258,52 @@ pub fn compute_expr_width(
             ))
         }
         _ => Err("cannot determine width of expression".to_string()),
+    }
+}
+
+/// Hitung lebar DataType dengan resolve typedef package / enum base.
+/// Dipakai untuk return type function (`mubi4_t`) dan cast ke typedef
+/// (`mubi4_t'(...)`). UserDefined di-resolve lewat `package_symbols`
+/// (bukan default 64), EnumType via base-nya.
+/// Cari parameter package dengan nama polos (hasil `import pkg::*`) dan
+/// evaluasi default-nya. Dipakai untuk cast `MuBi4Width'(...)` di mana
+/// `MuBi4Width` adalah `parameter` di package, bukan typedef.
+fn resolve_pkg_param_width(
+    name: &Symbol,
+    package_symbols: &HashMap<Symbol, HashMap<Symbol, PackageItem>>,
+) -> Option<i64> {
+    for items in package_symbols.values() {
+        if let Some(PackageItem::Param(p)) = items.get(name) {
+            if let Some(expr) = &p.default {
+                if let Ok(v) = const_eval_with_params(expr, &HashMap::new()) {
+                    return Some(v);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn resolve_dtype_width(
+    dt: &DataType,
+    package_symbols: &HashMap<Symbol, HashMap<Symbol, PackageItem>>,
+) -> usize {
+    match dt {
+        DataType::UserDefined(name) => {
+            for items in package_symbols.values() {
+                if let Some(PackageItem::Typedef(td)) = items.get(name) {
+                    return resolve_dtype_width(&td.dtype, package_symbols);
+                }
+            }
+            64
+        }
+        DataType::EnumType { base, .. } => {
+            if let Some(b) = base {
+                resolve_dtype_width(b, package_symbols)
+            } else {
+                32
+            }
+        }
+        _ => dt.width(),
     }
 }

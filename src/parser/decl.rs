@@ -693,9 +693,9 @@ impl Parser {
                     return Err(self.err("expected type in struct/union member"))
                 }
             };
-            let range = if self.peek() == &Token::LBrack {
+            let (range, expr_range) = if self.peek() == &Token::LBrack {
                 let er = self.parse_range()?;
-                er.as_ref().and_then(|er| {
+                let resolved = er.as_ref().and_then(|er| {
                     if let (Ok(m), Ok(l)) = (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
                     {
                         Some(Range {
@@ -705,9 +705,10 @@ impl Parser {
                     } else {
                         None
                     }
-                })
+                });
+                (resolved, er)
             } else {
-                None
+                (None, None)
             };
             self.skip_extra_packed_dims()?;
             let name = self.expect_ident()?;
@@ -716,13 +717,14 @@ impl Parser {
                 name,
                 dtype: Box::new(member_type),
                 range,
+                expr_range,
             });
         }
     }
 
     pub(crate) fn parse_typedef(&mut self) -> Result<TypedefDecl, SimError> {
         self.advance(); // consume typedef
-        let (name, dtype, range) = match self.peek() {
+        let (name, dtype, range, extra_packed_dims) = match self.peek() {
             Token::Enum => {
                 self.advance();
                 let base = match self.peek() {
@@ -782,7 +784,7 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = *name;
                     self.advance();
-                    (name, DataType::EnumType { base, members }, None)
+                    (name, DataType::EnumType { base, members }, None, Vec::new())
                 } else {
                     return Err(self.err("expected name after typedef enum"));
                 }
@@ -802,11 +804,11 @@ impl Parser {
                 } else {
                     None
                 };
-                self.skip_extra_packed_dims()?;
+                let extra_packed_dims = self.parse_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = *name;
                     self.advance();
-                    (name, dtype, range)
+                    (name, dtype, range, extra_packed_dims)
                 } else {
                     return Err(self.err("expected name after typedef bit"));
                 }
@@ -826,11 +828,11 @@ impl Parser {
                 } else {
                     None
                 };
-                self.skip_extra_packed_dims()?;
+                let extra_packed_dims = self.parse_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = *name;
                     self.advance();
-                    (name, dtype, range)
+                    (name, dtype, range, extra_packed_dims)
                 } else {
                     return Err(self.err("expected name after typedef byte"));
                 }
@@ -850,11 +852,11 @@ impl Parser {
                 } else {
                     None
                 };
-                self.skip_extra_packed_dims()?;
+                let extra_packed_dims = self.parse_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = *name;
                     self.advance();
-                    (name, dtype, range)
+                    (name, dtype, range, extra_packed_dims)
                 } else {
                     return Err(self.err("expected name after typedef shortint"));
                 }
@@ -874,11 +876,11 @@ impl Parser {
                 } else {
                     None
                 };
-                self.skip_extra_packed_dims()?;
+                let extra_packed_dims = self.parse_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = *name;
                     self.advance();
-                    (name, dtype, range)
+                    (name, dtype, range, extra_packed_dims)
                 } else {
                     return Err(self.err("expected name after typedef longint"));
                 }
@@ -890,11 +892,11 @@ impl Parser {
                 } else {
                     None
                 };
-                self.skip_extra_packed_dims()?;
+                let extra_packed_dims = self.parse_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = *name;
                     self.advance();
-                    (name, DataType::Time, range)
+                    (name, DataType::Time, range, extra_packed_dims)
                 } else {
                     return Err(self.err("expected name after typedef time"));
                 }
@@ -914,11 +916,11 @@ impl Parser {
                 } else {
                     None
                 };
-                self.skip_extra_packed_dims()?;
+                let extra_packed_dims = self.parse_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = *name;
                     self.advance();
-                    (name, dtype, range)
+                    (name, dtype, range, extra_packed_dims)
                 } else {
                     return Err(self.err("expected name after typedef int"));
                 }
@@ -938,11 +940,11 @@ impl Parser {
                 } else {
                     None
                 };
-                self.skip_extra_packed_dims()?;
+                let extra_packed_dims = self.parse_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = *name;
                     self.advance();
-                    (name, dtype, range)
+                    (name, dtype, range, extra_packed_dims)
                 } else {
                     return Err(self.err("expected name after typedef integer"));
                 }
@@ -962,11 +964,11 @@ impl Parser {
                 } else {
                     None
                 };
-                self.skip_extra_packed_dims()?;
+                let extra_packed_dims = self.parse_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = *name;
                     self.advance();
-                    (name, dtype, range)
+                    (name, dtype, range, extra_packed_dims)
                 } else {
                     return Err(self.err("expected name after typedef logic"));
                 }
@@ -979,11 +981,11 @@ impl Parser {
                 } else {
                     None
                 };
-                self.skip_extra_packed_dims()?;
+                let extra_packed_dims = self.parse_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = *name;
                     self.advance();
-                    (name, dtype, range)
+                    (name, dtype, range, extra_packed_dims)
                 } else {
                     return Err(self.err("expected name after typedef reg"));
                 }
@@ -997,7 +999,7 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = *name;
                     self.advance();
-                    (name, DataType::StructType { members }, None)
+                    (name, DataType::StructType { members }, None, Vec::new())
                 } else {
                     return Err(self.err("expected name after typedef struct"));
                 }
@@ -1011,7 +1013,7 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = *name;
                     self.advance();
-                    (name, DataType::UnionType { members }, None)
+                    (name, DataType::UnionType { members }, None, Vec::new())
                 } else {
                     return Err(self.err("expected name after typedef union"));
                 }
@@ -1046,11 +1048,11 @@ impl Parser {
                 } else {
                     None
                 };
-                self.skip_extra_packed_dims()?;
+                let extra_packed_dims = self.parse_extra_packed_dims()?;
                 if let Token::Ident(name) = self.peek() {
                     let name = *name;
                     self.advance();
-                    (name, dtype, range)
+                    (name, dtype, range, extra_packed_dims)
                 } else {
                     return Err(self.err("expected name after typedef type"));
                 }
@@ -1060,7 +1062,12 @@ impl Parser {
             }
         };
         self.skip_semi();
-        Ok(TypedefDecl { name, dtype, range })
+        Ok(TypedefDecl {
+            name,
+            dtype,
+            range,
+            extra_packed_dims,
+        })
     }
 
     pub(crate) fn parse_type_expr(&mut self) -> Result<DataType, SimError> {
@@ -1274,10 +1281,21 @@ impl Parser {
     /// Skip packed dimensions tambahan `[msb:lsb][msb:lsb]...` setelah range pertama.
     /// Dipakai di typedef agar `typedef logic [W-1:0][N-1:0] name;` tidak gagal parse.
     pub(crate) fn skip_extra_packed_dims(&mut self) -> Result<(), SimError> {
-        while self.peek() == &Token::LBrack {
-            self.parse_range()?;
-        }
+        let _ = self.parse_extra_packed_dims()?;
         Ok(())
+    }
+
+    /// Parse packed dimensions tambahan `[msb:lsb][msb:lsb]...` setelah range
+    /// pertama dan kumpulkan sebagai `Vec<ExprRange>` — dipakai di `parse_typedef`
+    /// agar width typedef multidimensi (`[4:0][4:0][W-1:0]`) bisa dihitung penuh.
+    pub(crate) fn parse_extra_packed_dims(&mut self) -> Result<Vec<ExprRange>, SimError> {
+        let mut dims = Vec::new();
+        while self.peek() == &Token::LBrack {
+            if let Some(r) = self.parse_range()? {
+                dims.push(r);
+            }
+        }
+        Ok(dims)
     }
 
     /// True jika token saat ini adalah packed dimension `[msb:lsb]` (bukan

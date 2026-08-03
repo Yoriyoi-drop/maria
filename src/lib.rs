@@ -16,6 +16,9 @@ pub mod formal;
 pub mod arena;
 pub mod intern;
 
+// ── Pipeline Animator (terminal EDA waveform) ──
+pub mod animasi;
+
 // ── Legacy Modules ──
 pub mod ast;
 pub mod debugger;

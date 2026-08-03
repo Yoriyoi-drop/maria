@@ -116,6 +116,17 @@ impl Preprocessor {
                     break;
                 }
             }
+            // Macro invocation dapat menjalar beberapa baris tanpa `\` di baris
+            // pertama (OpenTitan menulis `ASSERT_STATIC_IN_PACKAGE(Check,
+            //     (a == b))` — paren argumen belum tertutup di baris pertama).
+            // Gabungkan baris berikutnya selama parens invokasi belum seimbang.
+            if unbalanced_macro_call(&raw_line) {
+                while i + 1 < lines.len() && unbalanced_macro_call(&raw_line) {
+                    i += 1;
+                    raw_line.push('\n');
+                    raw_line.push_str(lines[i]);
+                }
+            }
             let trimmed = raw_line.trim();
 
             if !trimmed.starts_with('`') {
@@ -504,7 +515,6 @@ impl Preprocessor {
     }
 
     /// Expand inline macros with recursive depth tracking.
-    /// If `depth` exceeds MAX_MACRO_EXPANSION_DEPTH, returns the line as-is
     /// to prevent infinite recursion from circular macro definitions.
     fn expand_inline_macros_depth(&self, line: &str, depth: usize) -> String {
         if depth >= MAX_MACRO_EXPANSION_DEPTH {
@@ -621,4 +631,49 @@ impl Preprocessor {
         }
         args
     }
+}
+
+/// True jika baris berisi invokasi macro (`` `name(...) ``) yang parennya belum
+/// seimbang. Dipakai untuk menggabungkan baris-baris lanjutan argumen macro.
+fn unbalanced_macro_call(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    let mut paren_depth = 0i64;
+    let mut in_string = false;
+    let mut macro_open = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'"' && !in_string {
+            in_string = true;
+            i += 1;
+            continue;
+        }
+        if c == b'"' && in_string {
+            // handle \" escape
+            if i > 0 && bytes[i - 1] == b'\\' {
+                i += 1;
+                continue;
+            }
+            in_string = false;
+            i += 1;
+            continue;
+        }
+        if in_string {
+            i += 1;
+            continue;
+        }
+        // '//' comment ends macro detection
+        if c == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+            break;
+        }
+        if c == b'`' {
+            macro_open = true;
+        } else if c == b'(' {
+            paren_depth += 1;
+        } else if c == b')' {
+            paren_depth -= 1;
+        }
+        i += 1;
+    }
+    macro_open && paren_depth > 0
 }
