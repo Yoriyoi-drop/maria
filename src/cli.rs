@@ -9,6 +9,345 @@ use clap::Subcommand;
 pub enum MariaCmd {
     /// Bersihkan database MICD (.maria/database)
     Clean,
+
+    // ── Tools terminal (tools.md) ──
+    /// minspect — inspeksi struktur project (stats/modules/hierarchy/...)
+    Inspect(MinspectArgs),
+    /// mlint — static RTL linter (unused signal, width, latch, loop, FSM)
+    Lint(MlintArgs),
+    /// melab — standalone elaborator (parameter resolve, generate, hierarchy)
+    Elab(MelabArgs),
+    /// msim — simulator (VCD/FST/wave/assertion/coverage)
+    Sim(MsimArgs),
+    /// mcov — coverage analyzer → coverage.json / coverage.html
+    Cov(McovArgs),
+    /// mwave — wave utility (merge/export/filter VCD)
+    Wave(MwaveArgs),
+    /// mfmt — formatter Verilog/SystemVerilog
+    Fmt(MfmtArgs),
+    /// mprof — performance profiler pipeline (lexer→parser→elab→sim)
+    Prof(MprofArgs),
+    /// mcheck — project health checker (missing file, circular include, deps)
+    Check(McheckArgs),
+    /// mbench — benchmark tool (compile speed, memori, CPU, throughput)
+    Bench(MbenchArgs),
+}
+
+/// minspect — Maria Inspect.
+#[derive(clap::Args)]
+pub struct MinspectArgs {
+    /// Target input: file .sv, direktori, atau file list (.f/.maria).
+    /// Subcommand output (stats/modules/hierarchy/...) boleh diletakkan
+    /// di posisi pertama (mis. `minspect stats rtl/`).
+    #[arg(required = true)]
+    pub targets: Vec<String>,
+
+    /// Add include search path
+    #[arg(short = 'I', long = "incdir", num_args = 1)]
+    pub incdirs: Vec<String>,
+
+    /// Define preprocessor macro
+    #[arg(short = 'D', long = "define", num_args = 1)]
+    pub defines: Vec<String>,
+
+    /// Top module name
+    #[arg(short = 't', long = "top")]
+    pub top: Option<String>,
+
+    /// Output sebagai JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// mlint — Static RTL Linter.
+#[derive(clap::Args)]
+pub struct MlintArgs {
+    /// Target input: file .sv, direktori, atau file list (.f/.maria)
+    #[arg(required = true)]
+    pub targets: Vec<String>,
+
+    /// Tambahkan include search path
+    #[arg(short = 'I', long = "incdir", num_args = 1)]
+    pub incdirs: Vec<String>,
+
+    /// Define preprocessor macro
+    #[arg(short = 'D', long = "define", num_args = 1)]
+    pub defines: Vec<String>,
+
+    /// Aktifkan semua check
+    #[arg(long)]
+    pub all: bool,
+
+    /// Check: unused signal
+    #[arg(long)]
+    pub unused: bool,
+
+    /// Check: width mismatch
+    #[arg(long)]
+    pub width: bool,
+
+    /// Check: latch detection
+    #[arg(long)]
+    pub latch: bool,
+
+    /// Check: combinational loop
+    #[arg(long)]
+    pub loop_check: bool,
+
+    /// Check: FSM state register
+    #[arg(long)]
+    pub fsm: bool,
+
+    /// Suppress output sukses
+    #[arg(short = 'q', long)]
+    pub quiet: bool,
+}
+
+/// melab — Standalone Elaborator.
+#[derive(clap::Args)]
+pub struct MelabArgs {
+    /// Input file .sv (bisa lebih dari satu)
+    #[arg(required = true)]
+    pub files: Vec<String>,
+
+    /// Top module name (default: module pertama)
+    #[arg(short = 't', long = "top")]
+    pub top: Option<String>,
+
+    /// Cetak hierarchy tree
+    #[arg(long)]
+    pub tree: bool,
+
+    /// Cetak parameter ter-resolve per module
+    #[arg(long)]
+    pub params: bool,
+
+    /// Cetak sinyal per module
+    #[arg(long)]
+    pub signals: bool,
+}
+
+/// msim — Simulator.
+#[derive(clap::Args)]
+pub struct MsimArgs {
+    /// Input file .sv (bisa lebih dari satu)
+    #[arg(required = true)]
+    pub files: Vec<String>,
+
+    /// Maximum simulation time (default: unlimited — run until $finish/$fatal)
+    #[arg(short = 'T', long = "max-time", alias = "time", value_name = "NS")]
+    pub max_time: Option<u64>,
+
+    /// Top module name
+    #[arg(short = 't', long = "top")]
+    pub top: Option<String>,
+
+    /// VCD/FST output file
+    #[arg(short = 'o', long = "output")]
+    pub output: Option<String>,
+
+    /// Tulis FST waveform juga
+    #[arg(long)]
+    pub fst: bool,
+
+    /// Cetak ringkasan assertion setelah simulasi
+    #[arg(long)]
+    pub assertions: bool,
+
+    /// Cetak ringkasan coverage setelah simulasi
+    #[arg(long)]
+    pub coverage: bool,
+
+    /// Tambahkan include search path
+    #[arg(short = 'I', long = "incdir", num_args = 1)]
+    pub incdirs: Vec<String>,
+
+    /// Define preprocessor macro
+    #[arg(short = 'D', long = "define", num_args = 1)]
+    pub defines: Vec<String>,
+}
+
+/// mcov — Coverage Analyzer.
+#[derive(clap::Args)]
+pub struct McovArgs {
+    /// Input file .sv (bisa lebih dari satu)
+    #[arg(required = true)]
+    pub files: Vec<String>,
+
+    /// Maximum simulation time (default: unlimited — run until $finish/$fatal)
+    #[arg(short = 'T', long = "max-time", alias = "time", value_name = "NS")]
+    pub max_time: Option<u64>,
+
+    /// Top module name
+    #[arg(short = 't', long = "top")]
+    pub top: Option<String>,
+
+    /// Prefix output (default: <top>). Menghasilkan <prefix>.coverage.json
+    /// dan <prefix>.coverage.html
+    #[arg(short = 'o', long = "output")]
+    pub output: Option<String>,
+
+    /// Tulis coverage.json
+    #[arg(long)]
+    pub json: bool,
+
+    /// Tulis coverage.html
+    #[arg(long)]
+    pub html: bool,
+
+    /// Threshold branch coverage (%) — exit error bila di bawah
+    #[arg(long)]
+    pub threshold: Option<f64>,
+
+    /// Tambahkan include search path
+    #[arg(short = 'I', long = "incdir", num_args = 1)]
+    pub incdirs: Vec<String>,
+
+    /// Define preprocessor macro
+    #[arg(short = 'D', long = "define", num_args = 1)]
+    pub defines: Vec<String>,
+}
+
+/// mwave — Wave Utility.
+#[derive(clap::Args)]
+pub struct MwaveArgs {
+    /// Subcommand: merge, export, filter
+    #[command(subcommand)]
+    pub cmd: MwaveCmd,
+}
+
+/// mwave subcommand.
+#[derive(Subcommand)]
+pub enum MwaveCmd {
+    /// Gabungkan beberapa VCD menjadi satu (offset waktu otomatis kumulatif)
+    Merge {
+        /// VCD input (2+)
+        #[arg(required = true)]
+        inputs: Vec<String>,
+        /// Output VCD
+        #[arg(short = 'o', long = "output")]
+        output: Option<String>,
+    },
+    /// Ekspor VCD ke format lain (csv/txt)
+    Export {
+        /// VCD input
+        #[arg(required = true)]
+        input: String,
+        /// Format output: csv (default) | txt
+        #[arg(short = 'f', long = "format", default_value = "csv")]
+        format: String,
+        /// Output file
+        #[arg(short = 'o', long = "output")]
+        output: Option<String>,
+    },
+    /// Filter subset sinyal dari VCD
+    Filter {
+        /// VCD input
+        #[arg(required = true)]
+        input: String,
+        /// Sinyal yang dipertahankan (koma/space terpisah)
+        #[arg(required = true)]
+        signals: Vec<String>,
+        /// Output VCD
+        #[arg(short = 'o', long = "output")]
+        output: Option<String>,
+    },
+}
+
+/// mfmt — Formatter.
+#[derive(clap::Args)]
+pub struct MfmtArgs {
+    /// File .sv untuk diformat
+    #[arg(required = true)]
+    pub files: Vec<String>,
+
+    /// Tulis kembali ke file (tanpa ini hanya ke stdout)
+    #[arg(short = 'i', long)]
+    pub inplace: bool,
+
+    /// Lebar indentasi (default: 4)
+    #[arg(long, default_value = "4")]
+    pub indent: usize,
+
+    /// Periksa saja — report file yang berbeda format (exit 1 bila ada)
+    #[arg(long)]
+    pub check: bool,
+}
+
+/// mprof — Performance Profiler.
+#[derive(clap::Args)]
+pub struct MprofArgs {
+    /// Target input: file .sv, direktori, atau file list (.f/.maria)
+    #[arg(required = true)]
+    pub targets: Vec<String>,
+
+    /// Maximum simulation time (default: unlimited — run until $finish/$fatal)
+    #[arg(short = 'T', long = "max-time", alias = "time", value_name = "NS")]
+    pub max_time: Option<u64>,
+
+    /// Top module name
+    #[arg(short = 't', long = "top")]
+    pub top: Option<String>,
+
+    /// Tambahkan include search path
+    #[arg(short = 'I', long = "incdir", num_args = 1)]
+    pub incdirs: Vec<String>,
+
+    /// Define preprocessor macro
+    #[arg(short = 'D', long = "define", num_args = 1)]
+    pub defines: Vec<String>,
+}
+
+/// mcheck — Project Health Checker.
+#[derive(clap::Args)]
+pub struct McheckArgs {
+    /// Target input: file .sv, direktori, atau file list (.f/.maria)
+    #[arg(required = true)]
+    pub targets: Vec<String>,
+
+    /// Aktifkan semua check
+    #[arg(long)]
+    pub all: bool,
+
+    /// Check: missing file (`include / file list)
+    #[arg(long)]
+    pub missing: bool,
+
+    /// Check: circular include
+    #[arg(long)]
+    pub circular: bool,
+
+    /// Check: unresolved dependency module
+    #[arg(long)]
+    pub deps: bool,
+
+    /// Check: module instantiation cycle
+    #[arg(long)]
+    pub cycles: bool,
+
+    /// Check: inkonsistensi timescale
+    #[arg(long)]
+    pub timescale: bool,
+}
+
+/// mbench — Benchmark Tool.
+#[derive(clap::Args)]
+pub struct MbenchArgs {
+    /// Target input: file .sv, direktori, atau file list (.f/.maria)
+    #[arg(required = true)]
+    pub targets: Vec<String>,
+
+    /// Jumlah run (default: 3)
+    #[arg(short = 'n', long, default_value = "3")]
+    pub runs: usize,
+
+    /// Tambahkan include search path
+    #[arg(short = 'I', long = "incdir", num_args = 1)]
+    pub incdirs: Vec<String>,
+
+    /// Define preprocessor macro
+    #[arg(short = 'D', long = "define", num_args = 1)]
+    pub defines: Vec<String>,
 }
 
 #[derive(ClapParser)]
@@ -25,9 +364,9 @@ pub struct Cli {
     #[arg(short = 't', long = "top")]
     pub top: Option<String>,
 
-    /// Maximum simulation time
-    #[arg(short = 'T', long = "time", default_value = "1000")]
-    pub max_time: u64,
+    /// Maximum simulation time (default: unlimited — run until $finish/$fatal)
+    #[arg(short = 'T', long = "max-time", alias = "time", value_name = "NS")]
+    pub max_time: Option<u64>,
 
     /// VCD/FST output file (default: <module>.vcd)
     #[arg(short = 'o', long = "output")]

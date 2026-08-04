@@ -41,6 +41,8 @@ pub fn compute_expr_width(
                     64 - (abs.leading_zeros() as usize)
                 }
                 .max(1))
+            } else if let Some(w) = resolve_typedef_ident_width(name, package_symbols) {
+                Ok(w)
             } else {
                 Err(format!("cannot determine width of '{}'", name))
             }
@@ -53,6 +55,13 @@ pub fn compute_expr_width(
             Value::Real(_) => Ok(64),
         },
         Expr::FillLit(_) => Ok(1),
+        Expr::FuncCall { name, args } if name == "$bits" || name == "$size" => {
+            if let Some(arg) = args.first() {
+                compute_expr_width(arg, signal_map, signals, param_vals, package_symbols)
+            } else {
+                Err("$bits requires one argument".to_string())
+            }
+        }
         Expr::FuncCall { name, .. } => {
             if let Some(width) = param_vals.get(name) {
                 let abs = width.unsigned_abs();
@@ -261,6 +270,115 @@ pub fn compute_expr_width(
     }
 }
 
+/// Evaluasi default localparam secara width-aware: untuk `$bits(expr)` /
+/// `$size(expr)` nilai param = lebar expr, di-resolve dari sinyal yang sudah
+/// terdaftar (port) via `compute_expr_width`. Dipakai saat const-eval skalar
+/// gagal (mis. `localparam int NumInBufBits = $bits({a, b, c});`).
+pub fn eval_width_aware_param(
+    expr: &Expr,
+    signal_map: &HashMap<Symbol, SignalId>,
+    signals: &[SignalInfo],
+    effective_params: &HashMap<Symbol, i64>,
+    package_symbols: &HashMap<Symbol, HashMap<Symbol, PackageItem>>,
+) -> Option<i64> {
+    match expr {
+        Expr::Value(Value::Decimal(n)) => Some(*n),
+        Expr::Value(Value::Binary { bits, .. }) => {
+            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 2).ok()
+        }
+        Expr::Value(Value::Hex { bits, .. }) => {
+            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 16).ok()
+        }
+        Expr::Value(Value::Octal { bits, .. }) => {
+            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 8).ok()
+        }
+        Expr::String(s) => Some(crate::ast::const_eval::string_to_i64(s)),
+        Expr::Ident { name, .. } => effective_params.get(name).copied(),
+        Expr::Paren(inner) => eval_width_aware_param(inner, signal_map, signals, effective_params, package_symbols),
+        Expr::FuncCall { name, args } if name == "$bits" || name == "$size" => {
+            let arg = args.first()?;
+            compute_expr_width(arg, signal_map, signals, effective_params, package_symbols)
+                .ok()
+                .map(|w| w as i64)
+        }
+        Expr::FuncCall { name, args } if name == "$clog2" => {
+            let arg = args.first()?;
+            let v = eval_width_aware_param(arg, signal_map, signals, effective_params, package_symbols)?;
+            Some(clog2_value(v))
+        }
+        Expr::UnaryOp {
+            op: UnaryOp::Minus,
+            expr: inner,
+        } => eval_width_aware_param(inner, signal_map, signals, effective_params, package_symbols)
+            .map(|v| -v),
+        Expr::UnaryOp {
+            op: UnaryOp::BitNot,
+            expr: inner,
+        } => eval_width_aware_param(inner, signal_map, signals, effective_params, package_symbols)
+            .map(|v| !v),
+        Expr::UnaryOp {
+            op: UnaryOp::Not,
+            expr: inner,
+        } => eval_width_aware_param(inner, signal_map, signals, effective_params, package_symbols)
+            .map(|v| if v == 0 { 1 } else { 0 }),
+        Expr::BinaryOp { op, lhs, rhs } => {
+            let l = eval_width_aware_param(lhs, signal_map, signals, effective_params, package_symbols)?;
+            let r = eval_width_aware_param(rhs, signal_map, signals, effective_params, package_symbols)?;
+            match op {
+                BinaryOp::Add => Some(l.wrapping_add(r)),
+                BinaryOp::Sub => Some(l.wrapping_sub(r)),
+                BinaryOp::Mul => Some(l.wrapping_mul(r)),
+                BinaryOp::Div => if r == 0 { None } else { Some(l.wrapping_div(r)) },
+                BinaryOp::Mod => if r == 0 { None } else { Some(l.wrapping_rem(r)) },
+                BinaryOp::Power => Some(l.pow(r.max(0).min(31) as u32)),
+                BinaryOp::BitAnd => Some(l & r),
+                BinaryOp::BitOr => Some(l | r),
+                BinaryOp::BitXor => Some(l ^ r),
+                BinaryOp::BitXnor => Some(!(l ^ r)),
+                BinaryOp::Shl => Some(l << (r.max(0).min(63) as u32)),
+                BinaryOp::Shr => Some(l >> (r.max(0).min(63) as u32)),
+                BinaryOp::Sshl => Some(l << (r.max(0).min(63) as u32)),
+                BinaryOp::Sshr => Some(l >> (r.max(0).min(63) as u32)),
+                BinaryOp::Eq => Some(if l == r { 1 } else { 0 }),
+                BinaryOp::Neq => Some(if l != r { 1 } else { 0 }),
+                BinaryOp::Lt => Some(if l < r { 1 } else { 0 }),
+                BinaryOp::Le => Some(if l <= r { 1 } else { 0 }),
+                BinaryOp::Gt => Some(if l > r { 1 } else { 0 }),
+                BinaryOp::Ge => Some(if l >= r { 1 } else { 0 }),
+                BinaryOp::LogicalAnd => Some(if l != 0 && r != 0 { 1 } else { 0 }),
+                BinaryOp::LogicalOr => Some(if l != 0 || r != 0 { 1 } else { 0 }),
+                BinaryOp::CaseEq | BinaryOp::CaseNeq | BinaryOp::EqWild | BinaryOp::NeqWild => {
+                    Some(if l == r { 1 } else { 0 })
+                }
+            }
+        }
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => {
+            let c = eval_width_aware_param(cond, signal_map, signals, effective_params, package_symbols)?;
+            if c != 0 {
+                eval_width_aware_param(true_expr, signal_map, signals, effective_params, package_symbols)
+            } else {
+                eval_width_aware_param(false_expr, signal_map, signals, effective_params, package_symbols)
+            }
+        }
+        Expr::Cast { expr: inner, .. } => eval_width_aware_param(inner, signal_map, signals, effective_params, package_symbols),
+        _ => None,
+    }
+}
+
+fn clog2_value(v: i64) -> i64 {
+    if v <= 1 {
+        0
+    } else {
+        let n = v as u64;
+        let msb = (64 - n.leading_zeros()) as i64;
+        if n.is_power_of_two() { msb - 1 } else { msb }
+    }
+}
+
 /// Hitung lebar DataType dengan resolve typedef package / enum base.
 /// Dipakai untuk return type function (`mubi4_t`) dan cast ke typedef
 /// (`mubi4_t'(...)`). UserDefined di-resolve lewat `package_symbols`
@@ -278,6 +396,23 @@ fn resolve_pkg_param_width(
                 if let Ok(v) = const_eval_with_params(expr, &HashMap::new()) {
                     return Some(v);
                 }
+            }
+        }
+    }
+    None
+}
+
+/// Cari typedef package dengan nama polos (hasil `import pkg::*`) dan kembalikan
+/// lebarnya. Dipakai untuk `$bits(typedef_name)` di constant/width context.
+fn resolve_typedef_ident_width(
+    name: &Symbol,
+    package_symbols: &HashMap<Symbol, HashMap<Symbol, PackageItem>>,
+) -> Option<usize> {
+    for items in package_symbols.values() {
+        if let Some(PackageItem::Typedef(td)) = items.get(name) {
+            let w = resolve_dtype_width(&td.dtype, package_symbols);
+            if w > 0 {
+                return Some(w);
             }
         }
     }

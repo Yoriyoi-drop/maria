@@ -134,6 +134,96 @@ where
     Ok(Some(all_stmts))
 }
 
+/// Kumpulkan nama loop variable dari SEMUA `for` loop di statements (rekursif).
+/// Dipakai pre-pass elaborasi: loop var bukan signal module, tapi runtime
+/// LoopFor memakai signal — daftarkan sebagai signal sintetis 32-bit dulu.
+pub fn collect_loop_var_names(stmts: &[Stmt], out: &mut Vec<Symbol>) {
+    for s in stmts {
+        collect_loop_var_names_stmt(s, out);
+    }
+}
+
+fn collect_loop_var_names_stmt(stmt: &Stmt, out: &mut Vec<Symbol>) {
+    match stmt {
+        Stmt::Block { stmts } | Stmt::LoopForever { stmts } => collect_loop_var_names(stmts, out),
+        Stmt::BlockingAssign { .. } | Stmt::NonBlockingAssign { .. } | Stmt::StmtAssign { .. }
+        | Stmt::Null | Stmt::SysFinish | Stmt::Break | Stmt::Continue | Stmt::Return(_)
+        | Stmt::Expr { .. } | Stmt::SysCall { .. } | Stmt::EventTrigger { .. }
+        | Stmt::Release { .. } | Stmt::Deassign { .. } | Stmt::Disable { .. }
+        | Stmt::Force { .. } => {}
+        Stmt::IfElse { true_branch, false_branch, .. } => {
+            collect_loop_var_names_stmt(true_branch, out);
+            if let Some(fb) = false_branch {
+                collect_loop_var_names_stmt(fb, out);
+            }
+        }
+        Stmt::Case { items, default, .. }
+        | Stmt::CaseX { items, default, .. }
+        | Stmt::CaseZ { items, default, .. }
+        | Stmt::StmtCase { items, default, .. } => {
+            for item in items {
+                collect_loop_var_names_stmt(&item.stmt, out);
+            }
+            if let Some(d) = default {
+                collect_loop_var_names_stmt(d, out);
+            }
+        }
+        Stmt::LoopFor {
+            init,
+            step,
+            stmts,
+            ..
+        } => {
+            if let Some(Stmt::BlockingAssign {
+                lhs: Expr::Ident { name, .. },
+                ..
+            }) = init.as_deref()
+            {
+                if !out.contains(name) {
+                    out.push(*name);
+                }
+            }
+            if let Some(s) = init {
+                collect_loop_var_names_stmt(s, out);
+            }
+            if let Some(s) = step {
+                collect_loop_var_names_stmt(s, out);
+            }
+            collect_loop_var_names(stmts, out);
+        }
+        Stmt::LoopWhile { stmts, .. } | Stmt::DoWhile { stmts, .. } => {
+            collect_loop_var_names(stmts, out)
+        }
+        Stmt::Repeat { stmts, .. } => collect_loop_var_names(stmts, out),
+        Stmt::Wait { stmt, .. } => {
+            if let Some(s) = stmt {
+                collect_loop_var_names_stmt(s, out);
+            }
+        }
+        Stmt::EventControl { stmt, .. } => {
+            if let Some(s) = stmt {
+                collect_loop_var_names_stmt(s, out);
+            }
+        }
+        Stmt::NamedBlock { stmts, .. } => collect_loop_var_names(stmts, out),
+        Stmt::ForeachLoop { stmts, .. } => collect_loop_var_names(stmts, out),
+        Stmt::RandCase { items } => {
+            for item in items {
+                collect_loop_var_names_stmt(&item.stmt, out);
+            }
+        }
+        Stmt::Fork { processes, .. } => {
+            for p in processes {
+                collect_loop_var_names_stmt(p, out);
+            }
+        }
+        Stmt::Delay { stmt, .. } => {
+            collect_loop_var_names_stmt(stmt, out);
+        }
+        _ => {}
+    }
+}
+
 /// Substitusi loop variable di semua statements.
 pub fn substitute_loop_var_in_stmts(stmts: &[Stmt], var_name: &str, value: i64) -> Vec<Stmt> {
     stmts

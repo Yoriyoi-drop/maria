@@ -8048,7 +8048,13 @@ fn test_elab_err_always_no_sens_undeclared() {
 
 #[test]
 fn test_elab_err_cont_assign_undeclared_lhs() {
-    assert!(compile_str("module top; assign x = 1; endmodule").is_err());
+    // Semantik SV: identifier tak dideklarasi di LHS continuous assign menjadi
+    // implicit net 1-bit (bukan error). Verifikasi sim tetap jalan.
+    let res = simulate_signals("module top; assign x = 1'b1; endmodule", 10).unwrap();
+    assert!(
+        res.iter().any(|(n, v)| n == "x" && v.to_u64() == 1),
+        "implicit net 'x' harus = 1"
+    );
 }
 
 #[test]

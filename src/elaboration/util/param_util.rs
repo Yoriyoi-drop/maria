@@ -68,10 +68,19 @@ pub fn resolve_param_values_with_ctx(
         }
     }
 
-    let eval_param_default = |e: &Expr, existing_vals: &HashMap<Symbol, i64>| -> i64 {
+    /// Evaluasi default param menjadi `Some(i64)` hanya bila itu konstanta
+    /// SKALAR. Localparam ARRAY (`localparam logic [63:0] RC [24] = '{...}` —
+    /// default diparse sebagai `Expr::Concat` multi-elemen) mengembalikan None
+    /// agar TIDAK masuk param_vals sebagai skalar 0 — kalau masuk, `RC[rnd]`
+    /// salah di-resolve sebagai bit-select lebar 1 dan `RC[rnd][63:0]` gagal
+    /// dengan "range select out of bounds: 63:0 on width 1". Array param
+    /// didaftarkan sebagai signal const array oleh elaborator (lihat
+    /// elaborate_module_with_params_and_type).
+    let eval_param_default = |e: &Expr, existing_vals: &HashMap<Symbol, i64>| -> Option<i64> {
         match e {
-            Expr::String(s) => string_to_i64(s),
-            _ => const_eval_with_params(e, existing_vals).unwrap_or(0),
+            Expr::Concat(parts) if parts.len() > 1 => None,
+            Expr::String(s) => Some(string_to_i64(s)),
+            _ => const_eval_with_params(e, existing_vals).ok(),
         }
     };
 
@@ -79,8 +88,9 @@ pub fn resolve_param_values_with_ctx(
         if !vals.contains_key(&param.name) {
             match &param.default {
                 Some(e) => {
-                    let v = eval_param_default(e, &vals);
-                    vals.insert(param.name, v);
+                    if let Some(v) = eval_param_default(e, &vals) {
+                        vals.insert(param.name, v);
+                    }
                 }
                 None => {
                     vals.insert(param.name, 0);
@@ -92,7 +102,9 @@ pub fn resolve_param_values_with_ctx(
     for (i, param) in module.params.iter().enumerate() {
         if param.is_localparam {
             if let Some(e) = &param.default {
-                vals.insert(param.name, eval_param_default(e, &vals));
+                if let Some(v) = eval_param_default(e, &vals) {
+                    vals.insert(param.name, v);
+                }
             } else {
                 vals.insert(param.name, 0);
             }
@@ -104,7 +116,7 @@ pub fn resolve_param_values_with_ctx(
             *override_val
         } else {
             match &param.default {
-                Some(e) => eval_param_default(e, &vals),
+                Some(e) => eval_param_default(e, &vals).unwrap_or(0),
                 None => 0,
             }
         };

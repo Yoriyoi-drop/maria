@@ -194,8 +194,20 @@ fn main() {
     let cli = Cli::parse();
 
     // ── Subcommand: bersihkan database MICD (seperti `cargo clean`) ──
-    if let Some(crate::cli::MariaCmd::Clean) = cli.cmd {
-        return run_clean();
+    if let Some(cmd) = &cli.cmd {
+        match cmd {
+            crate::cli::MariaCmd::Clean => run_clean(),
+            crate::cli::MariaCmd::Inspect(a) => dispatch_inspect(a),
+            crate::cli::MariaCmd::Lint(a) => dispatch_lint(a),
+            crate::cli::MariaCmd::Elab(a) => dispatch_elab(a),
+            crate::cli::MariaCmd::Sim(a) => dispatch_sim(a),
+            crate::cli::MariaCmd::Cov(a) => dispatch_cov(a),
+            crate::cli::MariaCmd::Wave(a) => dispatch_wave(a),
+            crate::cli::MariaCmd::Fmt(a) => dispatch_fmt(a),
+            crate::cli::MariaCmd::Prof(a) => dispatch_prof(a),
+            crate::cli::MariaCmd::Check(a) => dispatch_check(a),
+            crate::cli::MariaCmd::Bench(a) => dispatch_bench(a),
+        }
     }
 
     // ── GUI mode: launch the native egui application ──
@@ -763,7 +775,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
             ..Default::default()
         };
         let mut master = maria::simulator::distributed::DistributedMaster::new(config);
-        master.run(&ir_design, cli.max_time)?;
+        master.run(&ir_design, cli.max_time.unwrap_or(u64::MAX))?;
         if !cli.quiet {
             println!("Distributed simulation (master) complete");
         }
@@ -774,7 +786,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
         let config = maria::simulator::distributed::SlaveConfig {
             master_host: cli.master_host.clone(),
             master_port: cli.dist_port,
-            max_time: cli.max_time,
+            max_time: cli.max_time.unwrap_or(u64::MAX),
             verbose: !cli.quiet,
         };
         let mut slave = maria::simulator::distributed::DistributedSlave::new(config);
@@ -785,7 +797,14 @@ fn run(cli: Cli) -> Result<(), SimError> {
         return Ok(());
     }
 
-    let mut engine = SimulationEngine::new(ir_design, cli.max_time);
+    // Default: unlimited — berhenti saat $finish/$fatal; user bisa membatasi
+    // dengan `--max-time <n>`. Tidak ada konstanta batas "ajaib".
+    let sim_limit = cli
+        .max_time
+        .map(maria::simulator::SimulationLimit::Finite)
+        .unwrap_or(maria::simulator::SimulationLimit::Unlimited);
+    let mut engine = SimulationEngine::new_with_limit(ir_design, sim_limit);
+    engine.report_progress = !cli.quiet;
 
     // ── Set SDF timing mode ──
     if let Some(mode) = maria::simulator::sdf::TimingMode::from_str(&cli.timing_mode) {
@@ -1023,7 +1042,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
         if !cli.quiet {
             println!(
                 "\nStarting simulation (max time={}, vcd={})",
-                cli.max_time, vcd_path
+                sim_limit.display(), vcd_path
             );
         }
         debugger.run()?;
@@ -1520,7 +1539,14 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         return Err(SimError::with_diag(DiagCode::InvalidSyntax, format!("invalid --xprop '{}': use optimistic, pessimistic, or x-anywhere", cli.xprop)));
     }
 
-    let mut engine = SimulationEngine::new(ir_design, cli.max_time);
+    // Default: unlimited — berhenti saat $finish/$fatal; user bisa membatasi
+    // dengan `--max-time <n>`. Tidak ada konstanta batas "ajaib".
+    let sim_limit = cli
+        .max_time
+        .map(maria::simulator::SimulationLimit::Finite)
+        .unwrap_or(maria::simulator::SimulationLimit::Unlimited);
+    let mut engine = SimulationEngine::new_with_limit(ir_design, sim_limit);
+    engine.report_progress = !cli.quiet;
 
     // ── SDF Annotation (applies timing delays from Standard Delay Format file) ──
     if let Some(ref sdf_path) = cli.sdf {
@@ -1698,7 +1724,11 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         }
     } else {
         if !cli.quiet {
-            println!("\nStarting simulation (max time={}, vcd={})", cli.max_time, vcd_path);
+            println!(
+                "\nStarting simulation (max time={}, vcd={})",
+                sim_limit.display(),
+                vcd_path
+            );
         }
         debugger.run()?;
     }
@@ -1846,5 +1876,177 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     }
 
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Subcommand tools (tools.md) — dispatch dari main()
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn dispatch_inspect(a: &crate::cli::MinspectArgs) -> ! {
+    // Subcommand output bisa di posisi pertama (tools.md: `minspect stats`)
+    const CMDS: [&str; 8] = [
+        "stats", "modules", "hierarchy", "packages", "classes", "interfaces", "parameters", "deps",
+    ];
+    let (command, targets): (Option<String>, Vec<String>) =
+        match (a.targets.first().map(|s| s.as_str()), a.targets.last().map(|s| s.as_str())) {
+            // Command di posisi pertama: `minspect stats rtl/`
+            (Some(first), _) if CMDS.contains(&first) => {
+                (Some(first.to_string()), a.targets[1..].to_vec())
+            }
+            // Command di posisi terakhir: `minspect rtl/ stats`
+            (_, Some(last)) if CMDS.contains(&last) && a.targets.len() > 1 => {
+                let mut t = a.targets.clone();
+                t.pop();
+                (Some(last.to_string()), t)
+            }
+            _ => (None, a.targets.clone()),
+        };
+    let args = maria::tools::inspect::InspectArgs {
+        targets: &targets,
+        command,
+        incdirs: &a.incdirs,
+        defines: &a.defines,
+        top: a.top.as_deref(),
+        json: a.json,
+    };
+    exit_tool(maria::tools::inspect::run(&args));
+}
+
+fn dispatch_lint(a: &crate::cli::MlintArgs) -> ! {
+    let args = maria::tools::lint::LintArgs {
+        targets: &a.targets,
+        incdirs: &a.incdirs,
+        defines: &a.defines,
+        all: a.all,
+        unused: a.unused,
+        width: a.width,
+        latch: a.latch,
+        loop_check: a.loop_check,
+        fsm: a.fsm,
+        quiet: a.quiet,
+    };
+    exit_tool(maria::tools::lint::run(&args));
+}
+
+fn dispatch_elab(a: &crate::cli::MelabArgs) -> ! {
+    let args = maria::tools::elab::ElabArgs {
+        files: &a.files,
+        incdirs: &[],
+        defines: &[],
+        top: a.top.as_deref(),
+        tree: a.tree,
+        params: a.params,
+        signals: a.signals,
+    };
+    exit_tool(maria::tools::elab::run(&args));
+}
+
+fn dispatch_sim(a: &crate::cli::MsimArgs) -> ! {
+    let args = maria::tools::sim::SimArgs {
+        files: &a.files,
+        incdirs: &a.incdirs,
+        defines: &a.defines,
+        top: a.top.as_deref(),
+        max_time: a.max_time.unwrap_or(u64::MAX),
+        output: a.output.as_deref(),
+        fst: a.fst,
+        assertions: a.assertions,
+        coverage: a.coverage,
+    };
+    exit_tool(maria::tools::sim::run(&args));
+}
+
+fn dispatch_cov(a: &crate::cli::McovArgs) -> ! {
+    let args = maria::tools::cov::CovArgs {
+        files: &a.files,
+        incdirs: &a.incdirs,
+        defines: &a.defines,
+        top: a.top.as_deref(),
+        max_time: a.max_time.unwrap_or(u64::MAX),
+        output: a.output.as_deref(),
+        json: a.json,
+        html: a.html,
+        threshold: a.threshold,
+    };
+    exit_tool(maria::tools::cov::run(&args));
+}
+
+fn dispatch_wave(a: &crate::cli::MwaveArgs) -> ! {
+    let args = match &a.cmd {
+        crate::cli::MwaveCmd::Merge { inputs, output } => maria::tools::wave::WaveArgs::Merge {
+            inputs: inputs.clone(),
+            output: output.clone(),
+        },
+        crate::cli::MwaveCmd::Export { input, format, output } => {
+            maria::tools::wave::WaveArgs::Export {
+                input: input.clone(),
+                format: format.clone(),
+                output: output.clone(),
+            }
+        }
+        crate::cli::MwaveCmd::Filter { input, signals, output } => {
+            maria::tools::wave::WaveArgs::Filter {
+                input: input.clone(),
+                signals: signals.clone(),
+                output: output.clone(),
+            }
+        }
+    };
+    exit_tool(maria::tools::wave::run(&args));
+}
+
+fn dispatch_fmt(a: &crate::cli::MfmtArgs) -> ! {
+    let args = maria::tools::fmt::FmtArgs {
+        files: &a.files,
+        inplace: a.inplace,
+        check: a.check,
+        indent: a.indent,
+    };
+    exit_tool(maria::tools::fmt::run(&args));
+}
+
+fn dispatch_prof(a: &crate::cli::MprofArgs) -> ! {
+    let args = maria::tools::prof::ProfArgs {
+        targets: &a.targets,
+        incdirs: &a.incdirs,
+        defines: &a.defines,
+        top: a.top.as_deref(),
+        max_time: a.max_time.unwrap_or(u64::MAX),
+    };
+    exit_tool(maria::tools::prof::run(&args));
+}
+
+fn dispatch_check(a: &crate::cli::McheckArgs) -> ! {
+    let args = maria::tools::check::CheckArgs {
+        targets: &a.targets,
+        all: a.all,
+        missing: a.missing,
+        circular: a.circular,
+        deps: a.deps,
+        cycles: a.cycles,
+        timescale: a.timescale,
+    };
+    exit_tool(maria::tools::check::run(&args));
+}
+
+fn dispatch_bench(a: &crate::cli::MbenchArgs) -> ! {
+    let args = maria::tools::bench::BenchArgs {
+        targets: &a.targets,
+        incdirs: &a.incdirs,
+        defines: &a.defines,
+        runs: a.runs,
+    };
+    exit_tool(maria::tools::bench::run(&args));
+}
+
+/// Jalankan tool, cetak error via TerminalEmitter, exit dengan kode.
+fn exit_tool(result: Result<(), SimError>) -> ! {
+    if let Err(e) = result {
+        let mut emitter = maria::diagnostics::TerminalEmitter::new();
+        let diag = e.to_diagnostic();
+        let _ = emitter.emit(&diag);
+        process::exit(1);
+    }
+    process::exit(0);
 }
 

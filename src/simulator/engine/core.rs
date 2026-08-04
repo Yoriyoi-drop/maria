@@ -1,4 +1,5 @@
 use super::SimulationEngine;
+use super::SimulationLimit;
 use super::EVENT_COMPACT_THRESHOLD;
 use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, RuntimeContext, SourceSnippet};
 use crate::error::SimError;
@@ -16,12 +17,18 @@ use std::collections::{HashMap, HashSet};
 
 impl SimulationEngine {
     pub fn new(design: IrDesign, max_time: u64) -> Self {
+        Self::new_with_limit(design, SimulationLimit::Finite(max_time))
+    }
+
+    /// Konstruktor dengan batas eksplisit (`Unlimited` atau `Finite(n)`).
+    pub fn new_with_limit(design: IrDesign, sim_limit: SimulationLimit) -> Self {
         let state = SimulationState::new(&design);
         SimulationEngine {
             state,
             coverage_exclusions: design.coverage_exclusions.clone(),
             design,
-            max_time,
+            sim_limit,
+            report_progress: false,
             running: true,
             cancel_flag: None,
             events: Vec::new(),
@@ -155,6 +162,12 @@ impl SimulationEngine {
             power_intent: None,
             process_body_cache: HashMap::new(),
         }
+    }
+
+    /// Batas numerik saat ini (u64::MAX bila unlimited) — kompatibilitas
+    /// dengan API legacy yang masih bertipe u64.
+    pub fn max_time_limit(&self) -> u64 {
+        self.sim_limit.bound()
     }
 
     /// Buat RuntimeContext dari state engine saat ini.
@@ -1345,10 +1358,21 @@ impl SimulationEngine {
             }
         }
 
+        // ── Progress + stall detection ──
+        // Laporan berkala tiap `PROGRESS_INTERVAL` tick ke stderr; deteksi
+        // stall: tidak ada event yang diproses selama `STALL_WALL_LIMIT`
+        // wall-clock → peringatan (bukan langsung mematikan simulasi).
+        let progress_interval: u64 = 1_000_000;
+        let stall_wall_limit = std::time::Duration::from_secs(10);
+        let mut last_report_wall = std::time::Instant::now();
+        let mut last_active_wall = std::time::Instant::now();
+        let mut stall_warned = false;
+
         while self.running
-            && self.state.time <= self.max_time
+            && self.sim_limit.allows(self.state.time)
             && !self.is_cancelled()
         {
+            let step_start_events = self.sim_perf.counters.events_processed;
             let t = self.state.time as usize;
             // events_base konstan selama satu time step (hanya berubah di
             // retire_events, yang dipanggil setelah step selesai).
@@ -1798,7 +1822,36 @@ impl SimulationEngine {
             // events tidak pernah tumbuh O(max_time)).
             self.retire_events(t);
             self.state.time += 1;
-            if self.state.time > self.max_time {
+
+            // ── Progress report + deteksi stall ──
+            let processed_this_step = self.sim_perf.counters.events_processed - step_start_events;
+            if processed_this_step > 0 {
+                last_active_wall = std::time::Instant::now();
+                stall_warned = false;
+            } else if !stall_warned && last_active_wall.elapsed() >= stall_wall_limit {
+                eprintln!(
+                    "[maria] Warning: simulation appears stalled — no event processed \
+                     for {:.0}s (time={}, delta={}). Press Ctrl+C to terminate.",
+                    last_active_wall.elapsed().as_secs_f64(),
+                    self.state.time,
+                    self.current_delta
+                );
+                stall_warned = true;
+            }
+            if self.report_progress && self.state.time % progress_interval == 0 {
+                let elapsed = last_report_wall.elapsed().as_secs_f64().max(1e-9);
+                let speed = progress_interval as f64 / elapsed / 1e6; // M steps/s
+                eprintln!(
+                    "[maria] progress: time={} events={} processes={} speed={:.2} M steps/s",
+                    self.state.time,
+                    self.sim_perf.counters.events_processed,
+                    self.design.top.processes.len(),
+                    speed
+                );
+                last_report_wall = std::time::Instant::now();
+            }
+
+            if !self.sim_limit.allows(self.state.time) {
                 break;
             }
 

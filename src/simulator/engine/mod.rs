@@ -40,11 +40,57 @@ pub struct SequenceAttempt {
     pub clock_event: crate::ast::types::ClockEvent,
 }
 
+/// Batas simulasi.
+///
+/// - `Unlimited` (default untuk CLI): simulasi berjalan sampai `$finish` /
+///   `$fatal` / assertion fatal / error internal / Ctrl+C. Paling mendekati
+///   simulator industri — testbench lah yang memutuskan kapan selesai.
+/// - `Finite(n)`: simulasi berhenti saat `state.time > n` (mirip `-T`).
+///
+/// Tidak ada konstanta "ajaib" — pengguna yang membatasi waktu memakai
+/// `--max-time <n>`, sisanya unlimited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimulationLimit {
+    Unlimited,
+    Finite(u64),
+}
+
+impl SimulationLimit {
+    /// true bila waktu `t` masih dalam batas (dipanggil sebagai guard loop).
+    pub fn allows(&self, t: u64) -> bool {
+        match self {
+            SimulationLimit::Unlimited => true,
+            SimulationLimit::Finite(m) => t <= *m,
+        }
+    }
+
+    /// Batas numerik (u64::MAX untuk Unlimited) — dipakai API legacy
+    /// (debugger, distributed) yang masih bertipe u64.
+    pub fn bound(&self) -> u64 {
+        match self {
+            SimulationLimit::Unlimited => u64::MAX,
+            SimulationLimit::Finite(m) => *m,
+        }
+    }
+
+    /// Representasi display ("unlimited" atau angka).
+    pub fn display(&self) -> String {
+        match self {
+            SimulationLimit::Unlimited => "unlimited".to_string(),
+            SimulationLimit::Finite(m) => m.to_string(),
+        }
+    }
+}
+
 /// Main simulation engine — event-driven SystemVerilog simulator.
 pub struct SimulationEngine {
     pub design: IrDesign,
     pub state: SimulationState,
-    pub max_time: u64,
+    pub sim_limit: SimulationLimit,
+    /// Aktifkan laporan progres berkala (tiap 1M tick) + deteksi stall ke
+    /// stderr. Di-set true oleh CLI (default false agar output library/test
+    /// tetap bersih).
+    pub report_progress: bool,
     pub running: bool,
     /// Flag pembatalan eksternal (GUI "Stop"). Diperiksa setiap time step di
     /// run loop — jika bernilai true, simulasi berhenti lebih awal.

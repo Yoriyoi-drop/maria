@@ -217,6 +217,35 @@ pub fn eval_expr(
                 }
             }
         }
+        // Indexed part-select `[base +: width]` (sama dengan const_eval.rs —
+        // arah `+:` diasumsikan). Mendukung skalar & array.
+        Expr::PartSelect { expr, base, width } => {
+            let b = scalar(eval_expr(base, ctx, cur_pkg)?)?;
+            let w = scalar(eval_expr(width, ctx, cur_pkg)?)?;
+            if w <= 0 {
+                return Err("part-select width must be positive".to_string());
+            }
+            match eval_expr(expr, ctx, cur_pkg)? {
+                CVal::Scalar(v) => {
+                    let width = w as usize;
+                    if b < 0 || b >= 64 {
+                        return Ok(CVal::Scalar(0));
+                    }
+                    if width >= 64 {
+                        Ok(CVal::Scalar(v >> b))
+                    } else {
+                        Ok(CVal::Scalar((v >> b) & ((1i64 << width) - 1)))
+                    }
+                }
+                CVal::Array(a) => {
+                    if b >= 0 && (b as usize + w as usize) <= a.len() {
+                        Ok(CVal::Array(a[(b as usize)..(b as usize + w as usize)].to_vec()))
+                    } else {
+                        Err("part-select out of bounds".to_string())
+                    }
+                }
+            }
+        }
         Expr::Concat(items) => {
             let mut out = Vec::new();
             for it in items {

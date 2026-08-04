@@ -132,12 +132,38 @@ impl Elaborator {
                         Ok(IrExpr::ExprRangeSelect(Box::new(inner_expr), msb_c, lsb_c))
                     }
                 } else {
-                    Err(self.elab_diag_at(
-                        DiagCode::ModuleNotFound,
-                        "dynamic range select not supported",
-                        expr_location(expr).0,
-                        expr_location(expr).1,
-                    ))
+                    // Fallback width-aware: bound memakai `$bits(typedef)` dsb yang
+                    // tidak bisa const-eval skalar tapi lebar typenya diketahui.
+                    let msb_v = width::eval_width_aware_param(
+                        msb,
+                        signal_map,
+                        signals,
+                        &self.param_vals,
+                        &self.package_symbols,
+                    );
+                    let lsb_v = width::eval_width_aware_param(
+                        lsb,
+                        signal_map,
+                        signals,
+                        &self.param_vals,
+                        &self.package_symbols,
+                    );
+                    match (msb_v, lsb_v) {
+                        (Some(m), Some(l)) => {
+                            let (msb_c, lsb_c) = (m as usize, l as usize);
+                            if let IrExpr::Signal(sid, _) = &inner_expr {
+                                Ok(IrExpr::RangeSelect(*sid, msb_c, lsb_c))
+                            } else {
+                                Ok(IrExpr::ExprRangeSelect(Box::new(inner_expr), msb_c, lsb_c))
+                            }
+                        }
+                        _ => Err(self.elab_diag_at(
+                            DiagCode::ModuleNotFound,
+                            "dynamic range select not supported",
+                            expr_location(expr).0,
+                            expr_location(expr).1,
+                        )),
+                    }
                 }
             }
             Expr::BitSelect { expr: inner, index } => {
@@ -193,6 +219,48 @@ impl Elaborator {
                             index: Box::new(index_expr),
                             elem_width: sig.elem_width,
                         })
+                    }
+                } else if let IrExpr::RangeSelect(sid, outer_msb, outer_lsb) = &inner_expr {
+                    // Bit-select bertingkat pada chunk packed multi-dimensi:
+                    // `state[0]` → RangeSelect(319:0) (320-bit), lalu `[0]`
+                    // memilih ELEMEN (64-bit), bukan bit tunggal. Hitung lebar
+                    // sub-elemen dari packed_dims.
+                    let chunk_w = outer_msb.abs_diff(*outer_lsb) + 1;
+                    let elem_w = sub_elem_width_from_packed(signals, *sid, chunk_w);
+                    if let Some(elem_w) = elem_w {
+                        if let Ok(idx) = const_eval_params(index, &self.param_vals) {
+                            let base = (*outer_msb).min(*outer_lsb);
+                            let lsb = base + idx as usize * elem_w;
+                            let msb = lsb + elem_w - 1;
+                            Ok(IrExpr::RangeSelect(*sid, msb, lsb))
+                        } else {
+                            let index_expr = self.elaborate_expr(index, signal_map, signals)?;
+                            let base_expr = IrExpr::BinaryOp(
+                                BinaryIrOp::Mul,
+                                Box::new(index_expr),
+                                Box::new(IrExpr::Const(LogicVec::from_u64(
+                                    elem_w as u64,
+                                    32,
+                                ))),
+                            );
+                            Ok(IrExpr::ExprPartSelect(
+                                Box::new(IrExpr::RangeSelect(*sid, *outer_msb, *outer_lsb)),
+                                Box::new(base_expr),
+                                Box::new(IrExpr::Const(LogicVec::from_u64(
+                                    elem_w as u64,
+                                    32,
+                                ))),
+                            ))
+                        }
+                    } else if let Ok(idx) = const_eval_params(index, &self.param_vals) {
+                        Ok(IrExpr::ExprBitSelect(Box::new(inner_expr), idx as usize))
+                    } else {
+                        let index_expr = self.elaborate_expr(index, signal_map, signals)?;
+                        Ok(IrExpr::ExprPartSelect(
+                            Box::new(inner_expr),
+                            Box::new(index_expr),
+                            Box::new(IrExpr::Const(LogicVec::from_u64(1, 32))),
+                        ))
                     }
                 } else if let Ok(idx) = const_eval_params(index, &self.param_vals) {
                     Ok(IrExpr::ExprBitSelect(Box::new(inner_expr), idx as usize))
@@ -1515,6 +1583,37 @@ impl Elaborator {
             _ => dtype.width(),
         }
     }
+}
+
+/// Hitung lebar sub-elemen dari sebuah chunk `RangeSelect(sid, msb, lsb)` pada
+/// packed array multi-dimensi. Contoh: `state` bertipe `logic [4:0][4:0][W-1:0]`
+/// (packed_dims [5,5,W]). `state[0]` → chunk 320-bit (5*W); BitSelect `[0]`
+/// pada chunk tersebut memilih ELEMEN (W-bit), bukan bit tunggal. Rumus:
+///   chunk_w = sig.width / (packed_dims[0] * ... * packed_dims[k-1])
+///   sub-elemen = chunk_w / packed_dims[k]
+fn sub_elem_width_from_packed(
+    signals: &[crate::ir::SignalInfo],
+    sid: crate::ir::SignalId,
+    chunk_w: usize,
+) -> Option<usize> {
+    let sig = signals.get(sid as usize)?;
+    if sig.packed_dims.is_empty() {
+        return None;
+    }
+    if chunk_w >= sig.width {
+        return Some(sig.width / sig.packed_dims[0]);
+    }
+    let mut acc = 1usize;
+    for (k, d) in sig.packed_dims.iter().enumerate() {
+        acc *= *d;
+        if acc * chunk_w == sig.width {
+            if let Some(next) = sig.packed_dims.get(k + 1) {
+                return Some(chunk_w / *next);
+            }
+            return Some(1);
+        }
+    }
+    None
 }
 
 // CATATAN: impl DataType { fn width() } dan impl DeclKind { fn default_width() }

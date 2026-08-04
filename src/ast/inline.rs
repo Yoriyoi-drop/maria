@@ -3,10 +3,26 @@ use std::collections::{HashMap, HashSet};
 use super::expr::Expr;
 use super::expr::Value;
 use super::stmt::Stmt;
-use super::types::{CaseGenerateItem, FunctionDecl, GenerateBlock, GenerateItem, Module, ModuleItem};
+use super::types::{CaseGenerateItem, ExprRange, FunctionDecl, GenerateBlock, GenerateItem, Module, ModuleItem, Range};
 use crate::ast::inline_util::*;
 use crate::intern::Symbol;
-pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(Symbol, usize, Option<Symbol>)>, String> {
+
+/// Temp signal dari inline function:
+/// (nama, lebar-estimasi, typedef, range-asli, array_range, array_size_expr).
+/// `range-asli` (mis. `[Width-1:0]` dengan parameter) diteruskan agar elaborator
+/// bisa me-resolve lebar sebenarnya dengan `effective_params` — tanpa ini
+/// lebar function return/local var bertipe `[Width-1:0]` jatuh ke 1. Demikian
+/// juga `array_range`/`array_size_expr` untuk array unpacked lokal
+/// (`automatic logic [W-1:0] C [5]`) yang harus tetap jadi array saat didaftarkan.
+pub type TempSignal = (
+    Symbol,
+    usize,
+    Option<Symbol>,
+    Option<ExprRange>,
+    Option<Range>,
+    Option<Expr>,
+);
+pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<TempSignal>, String> {
     let funcs: HashMap<Symbol, FunctionDecl> = module
         .items
         .iter()
@@ -35,7 +51,7 @@ pub fn inline_func_calls_in_module(module: &mut Module) -> Result<Vec<(Symbol, u
 
     let mut counter = 0usize;
     let prefix = module.name;
-    let mut temp_signals: Vec<(Symbol, usize, Option<Symbol>)> = Vec::new();
+    let mut temp_signals: Vec<TempSignal> = Vec::new();
 
     let old_items = std::mem::take(&mut module.items);
     let mut new_items: Vec<ModuleItem> = Vec::new();
@@ -174,7 +190,7 @@ fn inline_funcs_in_generate(
     funcs: &HashMap<Symbol, FunctionDecl>,
     prefix: Symbol,
     counter: &mut usize,
-    temp_signals: &mut Vec<(Symbol, usize, Option<Symbol>)>,
+    temp_signals: &mut Vec<TempSignal>,
     recursive_funcs: &HashSet<Symbol>,
 ) -> GenerateBlock {
     let items = gen
@@ -190,7 +206,7 @@ fn inline_generate_item(
     funcs: &HashMap<Symbol, FunctionDecl>,
     prefix: Symbol,
     counter: &mut usize,
-    temp_signals: &mut Vec<(Symbol, usize, Option<Symbol>)>,
+    temp_signals: &mut Vec<TempSignal>,
     recursive_funcs: &HashSet<Symbol>,
 ) -> GenerateItem {
     match gi {
@@ -284,7 +300,7 @@ fn inline_module_items(
     funcs: &HashMap<Symbol, FunctionDecl>,
     prefix: Symbol,
     counter: &mut usize,
-    temp_signals: &mut Vec<(Symbol, usize, Option<Symbol>)>,
+    temp_signals: &mut Vec<TempSignal>,
     recursive_funcs: &HashSet<Symbol>,
 ) -> Vec<ModuleItem> {
     let mut out = Vec::new();
@@ -396,7 +412,7 @@ fn inline_funcs_in_stmt(
     funcs: &HashMap<Symbol, FunctionDecl>,
     prefix: Symbol,
     counter: &mut usize,
-    temp_signals: &mut Vec<(Symbol, usize, Option<Symbol>)>,
+    temp_signals: &mut Vec<TempSignal>,
     recursive_funcs: &HashSet<Symbol>,
 ) -> Stmt {
     match stmt {
@@ -876,7 +892,9 @@ fn inline_funcs_in_stmt(
                         } else {
                             let temp_arg_name = Symbol::intern(&format!("__func_{}_{}_{}_{}", prefix, name, c, port.name));
                             let port_width = func_port_width(func, port.name);
-                            temp_signals.push((temp_arg_name, port_width, None));
+                            let port_range = func.ports.get(i).and_then(|p| p.expr_range.clone());
+                            let port_arr = func.ports.get(i).and_then(|p| p.range.clone());
+                            temp_signals.push((temp_arg_name, port_width, None, port_range, port_arr, None));
                             rename_map.insert(port.name, temp_arg_name);
                             preamble.push(Stmt::BlockingAssign {
                                 lhs: Expr::Ident { name: temp_arg_name, line: 0, col: 0 },
@@ -945,7 +963,15 @@ fn inline_funcs_in_stmt(
                             super::types::DataType::UserDefined(tn) => Some(*tn),
                             _ => None,
                         };
-                        temp_signals.push((new_name_sym, width, typedef_name));
+                        // Range asli `[Width-1:0]` + array unpacked diteruskan
+                        // agar elaborator bisa resolve lebar dengan
+                        // effective_params (width gagal saat bound memakai
+                        // parameter modul; array `[W-1:0] C [5]` harus tetap
+                        // array saat didaftarkan).
+                        let var_range = var.expr_range.clone();
+                        let var_arr = var.array_range.clone();
+                        let var_arr_size = var.array_size_expr.clone();
+                        temp_signals.push((new_name_sym, width, typedef_name, var_range, var_arr, var_arr_size));
                         rename_map.insert(var.name, new_name_sym);
                     }
                 }
@@ -1795,7 +1821,7 @@ fn replace_func_calls_in_expr(
     prefix: Symbol,
     counter: &mut usize,
     preamble: &mut Vec<Stmt>,
-    temp_signals: &mut Vec<(Symbol, usize, Option<Symbol>)>,
+    temp_signals: &mut Vec<TempSignal>,
     recursive_funcs: &HashSet<Symbol>,
 ) -> Expr {
     match expr {
@@ -1836,7 +1862,10 @@ fn replace_func_calls_in_expr(
                 });
                 let ret_name = if !is_void {
                     let rn = Symbol::intern(&format!("__func_{}_{}_{}_result", prefix, name, c));
-                    temp_signals.push((rn, ret_width, ret_typedef));
+                    // Range asli `[Width-1:0]` diteruskan agar elaborator bisa
+                    // resolve lebar dengan effective_params (ret_width gagal
+                    // saat bound memakai parameter modul).
+                    temp_signals.push((rn, ret_width, ret_typedef, func.range.clone(), None, None));
                     Some(rn)
                 } else {
                     None
@@ -1886,7 +1915,9 @@ fn replace_func_calls_in_expr(
                     } else {
                         let temp_arg_name = Symbol::intern(&format!("__func_{}_{}_{}_{}", prefix, name, c, port.name));
                         let port_width = func_port_width(func, port.name);
-                        temp_signals.push((temp_arg_name, port_width, None));
+                        let port_range = func.ports.get(i).and_then(|p| p.expr_range.clone());
+                        let port_arr = func.ports.get(i).and_then(|p| p.range.clone());
+                        temp_signals.push((temp_arg_name, port_width, None, port_range, port_arr, None));
                         rename_map.insert(port.name, temp_arg_name);
                         preamble.push(Stmt::BlockingAssign {
                             lhs: Expr::Ident { name: temp_arg_name, line: 0, col: 0 },
@@ -1953,7 +1984,15 @@ fn replace_func_calls_in_expr(
                             super::types::DataType::UserDefined(tn) => Some(*tn),
                             _ => None,
                         };
-                        temp_signals.push((new_name_sym, width, typedef_name));
+                        // Range asli `[Width-1:0]` + array unpacked diteruskan
+                        // agar elaborator bisa resolve lebar dengan
+                        // effective_params (width gagal saat bound memakai
+                        // parameter modul; array `[W-1:0] C [5]` harus tetap
+                        // array saat didaftarkan).
+                        let var_range = var.expr_range.clone();
+                        let var_arr = var.array_range.clone();
+                        let var_arr_size = var.array_size_expr.clone();
+                        temp_signals.push((new_name_sym, width, typedef_name, var_range, var_arr, var_arr_size));
                         rename_map.insert(var.name, new_name_sym);
                     }
                 }

@@ -25,7 +25,34 @@ cargo test --lib              # same, excludes main.rs
 cargo test <test_name>        # single test (no --lib needed if unique)
 ```
 
-No CI, no lint, no typecheck shortcuts. Just `cargo test`. 1238 tests pass (+16 ignored).
+No CI, no lint, no typecheck shortcuts. Just `cargo test`. 1247 tests pass (+16 ignored).
+
+## CLI Tools (`src/tools/`, subcommand `maria <tool>`)
+
+10 tool terminal dari tools.md — satu file per tool (aturan 1 file = 1 tanggung jawab):
+
+| Tool | File | Fungsi |
+|------|------|--------|
+| `minspect` | `inspect.rs` | X-ray project: `stats`, `modules`, `hierarchy`, `packages`, `classes`, `interfaces`, `parameters`, `deps`. Subcommand boleh di posisi pertama (`minspect stats rtl/`) |
+| `mlint` | `lint.rs` | Static linter: unused signal, width mismatch, latch, combinational loop, FSM |
+| `melab` | `elab.rs` | Elaborasi saja: hierarchy tree, param, signal top |
+| `msim` | `sim.rs` | Simulasi: VCD (+FST), ringkasan assertion/coverage |
+| `mcov` | `cov.rs` | Coverage → `coverage.json` + `coverage.html` (via CoverageDatabase) |
+| `mwave` | `wave.rs` | Utility VCD: `merge` (offset kumulatif), `export` (csv/txt), `filter` (subset sinyal) |
+| `mfmt` | `fmt.rs` | Formatter SV/Verilog berbasis lexer (stdout/--inplace/--check) |
+| `mprof` | `prof.rs` | Profiler pipeline: timing per fase + bottleneck + hint |
+| `mcheck` | `check.rs` | Health check: missing `include, circular include, unresolved deps, cycle module, timescale |
+| `mbench` | `bench.rs` | Benchmark: compile speed, throughput, peak RSS (VmHWM), cache hit |
+
+Shared infra di `src/tools/mod.rs`:
+- `collect_targets()` — expand file/direktori/file list
+- `open_project()` — CompileSession → merged `Design` (parse saja, cepat, MICD cache)
+- `open_elaborated()` — + elaborasi penuh → `IrDesign` (dipakai melab/msim/mcov/mprof)
+- `expr_to_string()`, `section()`, `kv()`, `human_bytes()` — output konsisten
+
+Cara kerja: semua tool memakai `CompileSession` (parallel parse + MICD), bukan pipeline legacy. Subcommand di-dispatch di `main.rs` via `dispatch_*()` + `exit_tool()`. CLI args di `src/cli.rs` (`MariaCmd` enum + struct args per tool).
+
+Catatan formatter (`mfmt`): token-based, 1 file = 1 tanggung jawab, tidak pakai `Token::Display` untuk operator (Debug output `Plus` bukan `+`) — pakai `token_text()` manual.
 
 ## Pipeline architecture
 

@@ -41,6 +41,9 @@ pub mod plugin;
 pub mod profiling;
 pub mod scheduler;
 
+// ── CLI Tools (tools.md) — backend bersama CLI & GUI ──
+pub mod tools;
+
 // ── Native GUI (egui) — pengganti frontend Tauri ──
 #[cfg(feature = "gui")]
 pub mod gui;

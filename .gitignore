@@ -18,3 +18,5 @@
 /.maria/database/
 /.maria/database/*.mdb
 /XiangShan/
+/out/
+/.tools/

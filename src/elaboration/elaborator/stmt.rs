@@ -22,6 +22,16 @@ fn lvalue_signal_id(lv: &IrLValue) -> Option<SignalId> {
     }
 }
 
+/// Ambil nilai konstanta dari IrExpr bila berupa literal — dipakai untuk
+/// part-select width yang tidak ter-fold saat elaborasi (base dinamis seperti
+/// `sig[i*32 +: 32]` → width tetap `Const(32)`).
+fn ir_const_u64(e: &IrExpr) -> Option<u64> {
+    match e {
+        IrExpr::Const(lv) => Some(lv.to_u64()),
+        _ => None,
+    }
+}
+
 /// Compute approximate width of an IrExpr at elaboration time (best-effort).
 fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
     match expr {
@@ -32,14 +42,47 @@ fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
         IrExpr::BitSelect(_, _) => 1,
         IrExpr::ExprRangeSelect(_, hi, lo) => hi.saturating_sub(*lo).saturating_add(1),
         IrExpr::ExprBitSelect(_, _) => 1,
+        // Part-select dinamis (`sig[base +: width]`): lebar = argumen `width`
+        // (biasanya konstanta/param yang sudah di-fold).
+        IrExpr::ExprPartSelect(_, _, width) => {
+            ir_const_u64(width).map(|w| w as usize).unwrap_or(1)
+        }
         IrExpr::ArrayIndex { elem_width, .. } => *elem_width,
         IrExpr::Concat(items) => items.iter().map(|e| expr_approx_width(e, signals)).sum(),
         IrExpr::Replicate(n, inner) => n * expr_approx_width(inner, signals),
-        IrExpr::UnaryOp(_, inner) => expr_approx_width(inner, signals),
-        IrExpr::BinaryOp(_, a, b) => {
+        // Unary logika & reduksi menghasilkan 1 bit (`!x`, `&x`, `|x`, `^x`);
+        // sisanya (aritmetika, bitwise) selebar operand.
+        IrExpr::UnaryOp(op, inner) => match op {
+            UnaryIrOp::Not
+            | UnaryIrOp::RedAnd
+            | UnaryIrOp::RedNand
+            | UnaryIrOp::RedOr
+            | UnaryIrOp::RedNor
+            | UnaryIrOp::RedXor
+            | UnaryIrOp::RedXnor => 1,
+            _ => expr_approx_width(inner, signals),
+        },
+        IrExpr::BinaryOp(op, a, b) => {
             let wa = expr_approx_width(a, signals);
             let wb = expr_approx_width(b, signals);
-            wa.max(wb)
+            // Perbandingan (`==`, `<`, ...) & logika (`&&`, `||`) → 1 bit;
+            // shift → selebar lhs; aritmetika/bitwise → max operand.
+            match op {
+                BinaryIrOp::Eq
+                | BinaryIrOp::Neq
+                | BinaryIrOp::CaseEq
+                | BinaryIrOp::CaseNeq
+                | BinaryIrOp::EqWild
+                | BinaryIrOp::NeqWild
+                | BinaryIrOp::Lt
+                | BinaryIrOp::Le
+                | BinaryIrOp::Gt
+                | BinaryIrOp::Ge
+                | BinaryIrOp::LogicalAnd
+                | BinaryIrOp::LogicalOr => 1,
+                BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl | BinaryIrOp::Sshr => wa,
+                _ => wa.max(wb),
+            }
         }
         IrExpr::Cond(_, a, b) => {
             let wa = expr_approx_width(a, signals);
@@ -53,6 +96,7 @@ fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
         IrExpr::StreamingConcat { slices, .. } => {
             slices.iter().map(|e| expr_approx_width(e, signals)).sum()
         }
+        IrExpr::Inside { .. } => 1,
         _ => 1,
     }
 }
@@ -73,17 +117,45 @@ fn check_signed_mismatch(
 
 impl Elaborator {
     /// Check width mismatch between LHS signal and RHS expression at elaboration.
+    /// Lebar LHS dihitung dari bentuk `IrLValue` aktual (bukan width penuh
+    /// signal) — mis. `RangeSelect(sid, msb, lsb)` lebarnya `msb-lsb+1`,
+    /// `BitSelect` = 1. Tanpa ini `result[0][0][W-1:0] = ...` (64-bit)
+    /// memicu false-positive "lhs=1600" karena memakai width signal penuh.
     fn check_width_mismatch(
         &self,
-        lhs_signal_id: Option<SignalId>,
+        lhs: &IrLValue,
         rhs: &IrExpr,
         signals: &[SignalInfo],
         line: usize,
         col: usize,
     ) {
-        let Some(sid) = lhs_signal_id else { return };
+        // Fill literal (`'0`, `'1`, `'x`, `'z`) menyesuaikan lebar konteks
+        // LHS (dipanjangkan ke lebar target saat assign) — selalu kompatibel
+        // dengan lebar apa pun, jadi jangan pernah warning.
+        if matches!(rhs, IrExpr::FillLit(_)) {
+            return;
+        }
+        let Some(sid) = lvalue_signal_id(lhs) else { return };
         let Some(lhs_sig) = signals.get(sid) else { return };
-        let lhs_w = lhs_sig.width;
+        // Signal sintetis dari inlining function (temp `__func_*`) atau tanpa
+        // lokasi source (line==0): lebar temp best-effort dan runtime selalu
+        // menyesuaikan lebar LHS saat assign — warning di sini false-positive.
+        if line == 0 || lhs_sig.name.as_str().starts_with("__func_") {
+            return;
+        }
+        let lhs_w = match lhs {
+            IrLValue::RangeSelect(_, msb, lsb) => msb.saturating_sub(*lsb).saturating_add(1),
+            IrLValue::BitSelect(_, _) => 1,
+            IrLValue::ArrayIndex { elem_width, .. } => *elem_width,
+            IrLValue::ArrayBitSelect { elem_width, .. } => *elem_width,
+            // `mem[i][msb:lsb]` / `rf[i][0+:W]`: lebar seleksi = msb-lsb+1
+            // (bukan elemen penuh) — `.max(elem_width)` memicu false-positive
+            // mis. `rf[i][0+:ExtWLEN/2]` (lhs dihitung 312, harusnya 156).
+            IrLValue::ArrayRangeSelect { msb, lsb, .. } => {
+                msb.saturating_sub(*lsb).saturating_add(1)
+            }
+            _ => lhs_sig.width,
+        };
         let rhs_w = expr_approx_width(rhs, signals);
         if lhs_w != rhs_w && rhs_w > 0 {
             // Jangan warning bila RHS adalah konstanta hasil const-fold yang
@@ -188,7 +260,7 @@ impl Elaborator {
                 }
                 let lhs_sid = lvalue_signal_id(&ir_lhs);
                 let (lhs_line, lhs_col) = expr_location(lhs);
-                self.check_width_mismatch(lhs_sid, &ir_rhs, signals, lhs_line, lhs_col);
+                self.check_width_mismatch(&ir_lhs, &ir_rhs, signals, lhs_line, lhs_col);
                 check_signed_mismatch(lhs_sid, &ir_rhs, signals);
                 Ok(IrStmt::BlockingAssign {
                     lhs: ir_lhs,
@@ -231,7 +303,7 @@ impl Elaborator {
                 }
                 let lhs_sid = lvalue_signal_id(&ir_lhs);
                 let (lhs_line, lhs_col) = expr_location(lhs);
-                self.check_width_mismatch(lhs_sid, &ir_rhs, signals, lhs_line, lhs_col);
+                self.check_width_mismatch(&ir_lhs, &ir_rhs, signals, lhs_line, lhs_col);
                 check_signed_mismatch(lhs_sid, &ir_rhs, signals);
                 Ok(IrStmt::NonBlockingAssign {
                     lhs: ir_lhs,
@@ -647,7 +719,10 @@ impl Elaborator {
                 if let Ok(Some(unrolled)) = unroll_result {
                     return Ok(IrStmt::Block { stmts: unrolled });
                 }
-                // Fallback: generate runtime LoopFor
+                // Fallback: generate runtime LoopFor. Loop var (`for (int j = 0 ...)`)
+                // sudah didaftarkan sebagai signal sintetis oleh pre-pass
+                // `ensure_loop_var_signals` di module elaboration (lihat mod.rs),
+                // jadi init/cond/step/body bisa di-resolve di sini.
                 let ir_init = match init {
                     Some(s) => Some(Box::new(self.elaborate_stmt(
                         s,

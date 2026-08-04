@@ -401,6 +401,19 @@ pub fn const_eval_with_params(
                     return Ok(v);
                 }
             }
+            // 2D array lookup via flattened keys `name[r][c]` (mis. PiRotate [5][5]).
+            // `PiRotate[r][c]` → BitSelect(BitSelect(Ident PiRotate, r), c); cari
+            // key `PiRotate[r][c]` langsung.
+            if let Expr::BitSelect { expr: inner, index: row_idx } = expr.as_ref() {
+                if let Expr::Ident { name, .. } = inner.as_ref() {
+                    let r = const_eval_with_params(row_idx, param_vals)?;
+                    let c = const_eval_with_params(index, param_vals)?;
+                    let key = format!("{}[{}][{}]", name.as_str(), r, c);
+                    if let Some(&v) = param_vals.get(key.as_str()) {
+                        return Ok(v);
+                    }
+                }
+            }
             let base_val = const_eval_with_params(expr, param_vals)?;
             let idx = const_eval_with_params(index, param_vals)?;
             if idx < 0 || idx >= 64 {
@@ -421,6 +434,29 @@ pub fn const_eval_with_params(
             } else {
                 let mask = (1i64 << width) - 1;
                 Ok((base_val >> l) & mask)
+            }
+        }
+        // Indexed part-select `[base +: width]` (pola OpenTitan:
+        // `localparam bit [AW-1:0] TopAddr = TopAddrInt[0 +: AW];`). Maria
+        // mengasumsikan arah `+:`. Tanpa ini localparam semacam itu gagal
+        // di-const-eval → tidak terdaftar → "signal not found" di pemakaian.
+        Expr::PartSelect { expr, base, width } => {
+            let src = const_eval_with_params(expr, param_vals)?;
+            let b = const_eval_with_params(base, param_vals)?;
+            let w = const_eval_with_params(width, param_vals)?;
+            if w <= 0 {
+                return Err("part-select width must be positive".to_string());
+            }
+            let width = w as usize;
+            let lsb = b;
+            if lsb < 0 || lsb >= 64 {
+                return Ok(0);
+            }
+            if width >= 64 {
+                Ok(src >> lsb)
+            } else {
+                let mask = (1i64 << width) - 1;
+                Ok((src >> lsb) & mask)
             }
         }
         Expr::FuncCall { name, args } if name == "$clog2" => {
