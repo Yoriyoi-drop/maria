@@ -50,12 +50,23 @@ pub struct Parser {
     pub errors: Vec<Diagnostic>,
 }
 
-/// Maximum number of token advances per `parse_design()` call.
-/// A normal file with N tokens should consume at most ~2N advances.
-/// 10M is a generous safety limit for very large files.
-const MAX_PARSE_STEPS: usize = 10_000_000;
-
 impl Parser {
+    /// Batas advance per token (budget amat luas untuk backtracking normal,
+    /// yang memanggil advance berkali-kali per token). Dihitung dinamis dari
+    /// ukuran input agar desain besar (ribuan module / jutaan token) tidak
+    /// kena limit statis; anti infinite-loop tetap efektif karena budget per
+    /// token yang wajar jauh di bawah ini.
+    fn step_limit(&self) -> usize {
+        self.tokens.len().saturating_mul(256).max(10_000_000)
+    }
+
+    /// Batas panggilan peek per parse_design. peek() dipanggil beberapa kali
+    /// per token (lookahead); 64× token adalah budget luas. Di-reset setiap
+    /// `parse_design()` agar counter tidak akumulatif lintas pemanggilan.
+    fn peek_limit(&self) -> usize {
+        self.tokens.len().saturating_mul(64).max(1_000_000)
+    }
+
     pub fn new(tokens: Vec<(Token, usize, usize)>, source_file: &str) -> Self {
         Self {
             tokens,
@@ -162,7 +173,7 @@ impl Parser {
         self.peek_count.set(pc);
         // Guard: if peek() called excessively without advance(), force EOF
         // This catches infinite loops that peek() without calling advance()
-        if pc > 1_000_000 {
+        if pc > self.peek_limit() {
             self.pos.set(self.tokens.len());
             return &Token::Eof;
         }
@@ -257,7 +268,7 @@ impl Parser {
         self.parse_steps += 1;
         // Safety guard: if step limit exceeded, force EOF to break
         // out of any sub-parser infinite loop (parse_class, parse_module, etc.)
-        if self.parse_steps > MAX_PARSE_STEPS {
+        if self.parse_steps > self.step_limit() {
             self.pos.set(self.tokens.len());
         }
     }
@@ -337,6 +348,7 @@ impl Parser {
         let mut udp_defs = Vec::new();
         // Reset safety counters for this parse_design() call
         self.parse_steps = 0;
+        self.peek_count.set(0);
         // First pass: collect all class names — with error recovery
         // If parsing fails, error is saved and we skip to next construct
 let saved_pos = self.pos.get();
@@ -344,7 +356,7 @@ let saved_pos = self.pos.get();
         let mut _stuck = 0u32;
         while self.peek() != &Token::Eof {
             // Step limit guard: prevent infinite loops
-            if self.parse_steps > MAX_PARSE_STEPS {
+            if self.parse_steps > self.step_limit() {
                 return Err(self.err("parser exceeded maximum step limit (possible infinite loop)"));
             }
             // Stuck detection: if pos hasn't changed for too many iterations, abort
@@ -531,7 +543,7 @@ let mut _last_pos = self.pos.get();
         let mut _n_package = 0u32;
         while self.peek() != &Token::Eof {
             // Step limit guard: prevent infinite loops
-            if self.parse_steps > MAX_PARSE_STEPS {
+            if self.parse_steps > self.step_limit() {
                 return Err(self.err("parser exceeded maximum step limit (possible infinite loop)"));
             }
             // Stuck detection: if pos hasn't changed for too many iterations, abort
@@ -945,6 +957,13 @@ let mut _last_pos = self.pos.get();
                         format!("{}", self.peek_ahead(1))
                     );
                 }
+                // `chandle` adalah built-in SV type untuk C pointer (DPI).
+                // Tidak ada Token::Chandle sehingga harus dicek di sini sebelum
+                // mencoba parse sebagai instance.
+                if *name == Symbol::intern("chandle") {
+                    let decl = self.parse_decl()?;
+                    return Ok(Some(ModuleItem::Decl(decl)));
+                }
                 if self.class_names.contains(name)
                     || self.typedef_names.contains(name)
                     || self.module_type_params.contains(name)
@@ -1208,7 +1227,12 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                     }
                 }
                 let mut range = None;
-                if self.peek() == &Token::LBrack {
+                // Packed dimensi bertingkat: `[NumCnt-1:0][Width-1:0] name = ...`.
+                // Sebelumnya hanya 1 dim yang dikonsumsi → sisa `[Width-1:0]`
+                // membuat `name` tak ter-parse → "signal 'name' not found".
+                // Konsumsi semua dim berturut-turut; `range` = dim terakhir
+                // (lebar elemen skalar, dipakai resolusi width param/array).
+                while self.peek() == &Token::LBrack {
                     self.advance();
                     let msb = self.parse_expr(0)?;
                     self.expect(Token::Colon)?;

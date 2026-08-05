@@ -96,6 +96,18 @@ impl Elaborator {
                                     package, item
                                 )));
                             }
+                            PackageItem::Typedef(td) => {
+                                // `pkg::TypeName` dipakai sebagai ekspresi (mis. cast atau
+                                // type-param). Kembalikan lebar typedef sebagai konstanta
+                                // sehingga ekspresi yang memakai hasil ini masih valid.
+                                let w = self.resolve_typedef_width_dims(
+                                    &td.dtype,
+                                    td.range.as_ref(),
+                                    &td.extra_packed_dims,
+                                    &self.param_vals.clone(),
+                                );
+                                return Ok(IrExpr::Const(LogicVec::from_u64(w as u64, 32)));
+                            }
                             _ => {
                                 return Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
                                     "'{}' is not a constant in package '{}'",
@@ -648,10 +660,22 @@ impl Elaborator {
                                 let msb = f.offset + f.width - 1;
                                 return Ok(IrExpr::RangeSelect(sig_id, lsb, msb));
                             }
-                            return Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
-                                "field '{}' not found in struct type (width {})",
-                                field, sig_info.width
-                            )));
+                            // Field tidak ditemukan di struct — mungkin struct dari package
+                            // yang belum fully resolved. Emit warning dan fallback ke
+                            // MemberAccess runtime agar elaborasi tidak gagal.
+                            let (fl, fc) = expr_location(obj);
+                            self.elab_warn_at(
+                                DiagCode::ModuleNotFound,
+                                format!(
+                                    "field '{}' not found in struct type (width {})",
+                                    field, sig_info.width
+                                ),
+                                fl, fc,
+                            );
+                            return Ok(IrExpr::MemberAccess {
+                                obj: Box::new(IrExpr::Signal(sig_id, 0)),
+                                field: *field,
+                            });
                         }
                         Ok(IrExpr::MemberAccess {
                             obj: Box::new(IrExpr::Signal(sig_id, 0)),

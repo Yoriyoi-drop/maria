@@ -5,7 +5,7 @@ use clap::Parser as ClapParser;
 use clap::Subcommand;
 
 /// Subcommands `maria`.
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 pub enum MariaCmd {
     /// Bersihkan database MICD (.maria/database)
     Clean,
@@ -34,7 +34,7 @@ pub enum MariaCmd {
 }
 
 /// minspect — Maria Inspect.
-#[derive(clap::Args)]
+#[derive(clap::Args, Clone)]
 pub struct MinspectArgs {
     /// Target input: file .sv, direktori, atau file list (.f/.maria).
     /// Subcommand output (stats/modules/hierarchy/...) boleh diletakkan
@@ -60,7 +60,7 @@ pub struct MinspectArgs {
 }
 
 /// mlint — Static RTL Linter.
-#[derive(clap::Args)]
+#[derive(clap::Args, Clone)]
 pub struct MlintArgs {
     /// Target input: file .sv, direktori, atau file list (.f/.maria)
     #[arg(required = true)]
@@ -104,7 +104,7 @@ pub struct MlintArgs {
 }
 
 /// melab — Standalone Elaborator.
-#[derive(clap::Args)]
+#[derive(clap::Args, Clone)]
 pub struct MelabArgs {
     /// Input file .sv (bisa lebih dari satu)
     #[arg(required = true)]
@@ -128,7 +128,7 @@ pub struct MelabArgs {
 }
 
 /// msim — Simulator.
-#[derive(clap::Args)]
+#[derive(clap::Args, Clone)]
 pub struct MsimArgs {
     /// Input file .sv (bisa lebih dari satu)
     #[arg(required = true)]
@@ -137,6 +137,11 @@ pub struct MsimArgs {
     /// Maximum simulation time (default: unlimited — run until $finish/$fatal)
     #[arg(short = 'T', long = "max-time", alias = "time", value_name = "NS")]
     pub max_time: Option<u64>,
+
+    /// Force simulation + VCD even when elaboration errors/skipped modules exist
+    /// (default: Maria refuses to simulate until the design elaborates cleanly)
+    #[arg(long = "force-sim")]
+    pub force_sim: bool,
 
     /// Top module name
     #[arg(short = 't', long = "top")]
@@ -168,7 +173,7 @@ pub struct MsimArgs {
 }
 
 /// mcov — Coverage Analyzer.
-#[derive(clap::Args)]
+#[derive(clap::Args, Clone)]
 pub struct McovArgs {
     /// Input file .sv (bisa lebih dari satu)
     #[arg(required = true)]
@@ -177,6 +182,11 @@ pub struct McovArgs {
     /// Maximum simulation time (default: unlimited — run until $finish/$fatal)
     #[arg(short = 'T', long = "max-time", alias = "time", value_name = "NS")]
     pub max_time: Option<u64>,
+
+    /// Force simulation + VCD even when elaboration errors/skipped modules exist
+    /// (default: Maria refuses to simulate until the design elaborates cleanly)
+    #[arg(long = "force-sim")]
+    pub force_sim: bool,
 
     /// Top module name
     #[arg(short = 't', long = "top")]
@@ -209,7 +219,7 @@ pub struct McovArgs {
 }
 
 /// mwave — Wave Utility.
-#[derive(clap::Args)]
+#[derive(clap::Args, Clone)]
 pub struct MwaveArgs {
     /// Subcommand: merge, export, filter
     #[command(subcommand)]
@@ -217,7 +227,7 @@ pub struct MwaveArgs {
 }
 
 /// mwave subcommand.
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 pub enum MwaveCmd {
     /// Gabungkan beberapa VCD menjadi satu (offset waktu otomatis kumulatif)
     Merge {
@@ -255,7 +265,7 @@ pub enum MwaveCmd {
 }
 
 /// mfmt — Formatter.
-#[derive(clap::Args)]
+#[derive(clap::Args, Clone)]
 pub struct MfmtArgs {
     /// File .sv untuk diformat
     #[arg(required = true)]
@@ -275,7 +285,7 @@ pub struct MfmtArgs {
 }
 
 /// mprof — Performance Profiler.
-#[derive(clap::Args)]
+#[derive(clap::Args, Clone)]
 pub struct MprofArgs {
     /// Target input: file .sv, direktori, atau file list (.f/.maria)
     #[arg(required = true)]
@@ -284,6 +294,11 @@ pub struct MprofArgs {
     /// Maximum simulation time (default: unlimited — run until $finish/$fatal)
     #[arg(short = 'T', long = "max-time", alias = "time", value_name = "NS")]
     pub max_time: Option<u64>,
+
+    /// Force simulation + VCD even when elaboration errors/skipped modules exist
+    /// (default: Maria refuses to simulate until the design elaborates cleanly)
+    #[arg(long = "force-sim")]
+    pub force_sim: bool,
 
     /// Top module name
     #[arg(short = 't', long = "top")]
@@ -299,7 +314,7 @@ pub struct MprofArgs {
 }
 
 /// mcheck — Project Health Checker.
-#[derive(clap::Args)]
+#[derive(clap::Args, Clone)]
 pub struct McheckArgs {
     /// Target input: file .sv, direktori, atau file list (.f/.maria)
     #[arg(required = true)]
@@ -331,7 +346,7 @@ pub struct McheckArgs {
 }
 
 /// mbench — Benchmark Tool.
-#[derive(clap::Args)]
+#[derive(clap::Args, Clone)]
 pub struct MbenchArgs {
     /// Target input: file .sv, direktori, atau file list (.f/.maria)
     #[arg(required = true)]
@@ -350,7 +365,7 @@ pub struct MbenchArgs {
     pub defines: Vec<String>,
 }
 
-#[derive(ClapParser)]
+#[derive(ClapParser, Clone)]
 #[command(name = "maria", about = "RTL Simulator untuk SystemVerilog")]
 pub struct Cli {
     /// Subcommand (opsional)
@@ -367,6 +382,11 @@ pub struct Cli {
     /// Maximum simulation time (default: unlimited — run until $finish/$fatal)
     #[arg(short = 'T', long = "max-time", alias = "time", value_name = "NS")]
     pub max_time: Option<u64>,
+
+    /// Force simulation + VCD even when elaboration errors/skipped modules exist
+    /// (default: Maria refuses to simulate until the design elaborates cleanly)
+    #[arg(long = "force-sim")]
+    pub force_sim: bool,
 
     /// VCD/FST output file (default: <module>.vcd)
     #[arg(short = 'o', long = "output")]
@@ -501,6 +521,11 @@ pub struct Cli {
     /// Cache stats (show AST/HIR cache hit rates after run)
     #[arg(long = "cache-stats")]
     pub cache_stats: bool,
+
+    /// Tampilkan Global Diagnostic Engine report (semua diagnostic lintas
+    /// komponen, coverage posisi + registry error code) setelah run.
+    #[arg(long = "gdiag")]
+    pub gdiag: bool,
 
     /// Save checksums to file for change detection across runs
     #[arg(long = "checksum-file")]

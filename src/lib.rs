@@ -8,6 +8,7 @@ pub mod vpi;
 #[cfg(feature = "lsp")]
 pub mod lsp;
 
+
 // ── Formal Verification Engine ──
 #[cfg(feature = "formal")]
 pub mod formal;
@@ -54,6 +55,8 @@ pub use diagnostics::{DiagCode, DiagLevel, Diagnostic, DiagSink, RuntimeContext,
 pub use frontend::compile_session::{CompileSession, SessionConfig};
 pub use frontend::discovery::FileDiscovery;
 pub use intern::{init_string_table, Span, Symbol};
+use crate::elaboration::ElaborateMode;
+
 
 use parser::lexer::Lexer;
 use parser::preprocessor::Preprocessor;
@@ -236,7 +239,7 @@ pub fn compile_str(source: &str) -> Result<ir::IrDesign, SimError> {
 
     let source_lines: Vec<String> = preprocessed.lines().map(|s| s.to_string()).collect();
     let mut elaborator = elaboration::Elaborator::with_source(design, source_lines, first_source);
-    let ir_design = elaborator.elaborate(None)?;
+    let ir_design = elaborator.elaborate(None, ElaborateMode::StrictSimulation)?;
 
     // SIM-29: bawa exclusion ranges dari `` `coverage_off ``/`` `coverage_on ``
     // (koordinat output preprocessed) ke design untuk engine line coverage.

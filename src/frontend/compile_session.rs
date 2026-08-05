@@ -4,7 +4,7 @@
 //! parallel parsing → merge designs → build module index.
 //!
 //! Now with CacheManager + IncrementalTracker integration for incremental builds.
-//! LazilyElaborator integration for on-demand HIR elaboration.
+use crate::elaboration::elaborator::ElaborateMode;
 
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -1235,7 +1235,48 @@ impl CompileSession {
             elaborator.set_cache(std::mem::take(&mut self.cached_elab_modules));
         }
 
-        let ir_design = elaborator.elaborate(top_name)?;
+        let ir_design = elaborator.elaborate(top_name, ElaborateMode::StrictSimulation)?;
+        self.timing.elab_ms = elab_start.elapsed().as_millis() as u64;
+
+        // Store module cache back for next incremental compile
+        self.cached_elab_modules = elaborator.take_cache();
+
+        // Cache IR design for access after compile
+        self.cached_ir_design = Some(ir_design.clone());
+
+        Ok((design, ir_design, index_len))
+    }
+
+    /// Compile AND elaborate with specified mode.
+    ///
+    /// Similar to `compile_and_elaborate` but allows specifying the elaboration mode
+    /// (StrictSimulation for simulation, AnalysisRecovery for analysis tools).
+    pub fn compile_and_elaborate_with_mode(
+        &mut self,
+        top_name: Option<&str>,
+        mode: ElaborateMode,
+    ) -> Result<(Design, crate::ir::IrDesign, usize), SimError> {
+        let (design, module_index) = self.compile()?;
+        let index_len = module_index.len();
+
+        // Ukur waktu elaborasi secara terpisah (untuk panel Pipeline GUI).
+        let elab_start = Instant::now();
+
+        // Create elaborator with source info for rich diagnostics
+        let (source_lines, source_file) = self.source_info()
+            .unwrap_or_default();
+        let mut elaborator = if source_lines.is_empty() {
+            crate::elaboration::Elaborator::new(design.clone())
+        } else {
+            crate::elaboration::Elaborator::with_source(design.clone(), source_lines, source_file)
+        };
+
+        // Prime with session-level cache from previous compile
+        if !self.cached_elab_modules.is_empty() {
+            elaborator.set_cache(std::mem::take(&mut self.cached_elab_modules));
+        }
+
+        let ir_design = elaborator.elaborate(top_name, mode)?;
         self.timing.elab_ms = elab_start.elapsed().as_millis() as u64;
 
         // Store module cache back for next incremental compile

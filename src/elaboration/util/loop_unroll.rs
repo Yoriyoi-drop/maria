@@ -108,12 +108,14 @@ where
 
     let mut all_stmts = Vec::new();
     let mut ivar = init_val;
-    // Jaring pengaman: maks 1 juta iterasi agar loop yang gagal konvergen
-    // (mis. step arah salah) tidak menggantung elaborasi.
+    // Jaring pengaman: maks 100k iterasi unroll — loop yang lebih besar
+    // tidak di-unroll (fallback runtime loop, di mana MAX_LOOP_ITER engine
+    // menghentikan loop tak berujung). Unroll 1M+ iterasi membuang waktu
+    // elaborasi untuk loop besar yang biasanya bukan generate.
     let mut guard = 0usize;
     loop {
         guard += 1;
-        if guard > 1_000_000 {
+        if guard > 100_000 {
             return Ok(None);
         }
         let keep = match cmp_op {

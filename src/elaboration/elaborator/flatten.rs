@@ -126,11 +126,19 @@ impl Elaborator {
                         parent_sig_info.elem_width
                     };
                     if child_width != parent_width {
-                        return Err(self.elab_diag_at(DiagCode::ParamMismatch, format!(
-                            "port width mismatch on instance '{}': port '{}' expects width {}, connected signal '{}' has width {}",
-                            inst.instance_name, port_name, child_width,
-                            parent_sig_info.name, parent_width
-                        ), inst.line, inst.col));
+                        // SV LRM: koneksi signal dengan lebar berbeda ke port adalah
+                        // legal — implisit zero-extension / truncation saat sim. Jadi
+                        // cukup warning (WR0102), bukan error yang memblokir design.
+                        self.elab_warn_at(
+                            DiagCode::WidthMismatchWarning,
+                            format!(
+                                "port width mismatch on instance '{}': port '{}' expects width {}, connected signal '{}' has width {}",
+                                inst.instance_name, port_name, child_width,
+                                parent_sig_info.name, parent_width
+                            ),
+                            inst.line,
+                            inst.col,
+                        );
                     }
                     // Untuk port unpacked-array, pastikan lebar ELEMEN juga cocok.
                     // Dua kasus bisa punya total width sama tapi elemen beda

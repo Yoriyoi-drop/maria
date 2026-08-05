@@ -3,12 +3,12 @@
 //! Ukur waktu tiap fase pipeline (discovery → preprocess → parse → index →
 //! elab → simulation) dan sorot bottleneck.
 
-use std::time::Instant;
-
+use crate::elaboration::elaborator::ElaborateMode;
 use crate::error::SimError;
 use crate::frontend::CompileSession;
 use crate::simulator::SimulationEngine;
 use crate::tools::{collect_targets, make_session_config, section, kv};
+use std::time::Instant;
 
 /// Opsi mprof.
 pub struct ProfArgs<'a> {
@@ -32,7 +32,8 @@ pub fn run(args: &ProfArgs) -> Result<(), SimError> {
     let mut session = CompileSession::new(cfg);
 
     let compile_start = Instant::now();
-    let (_design, ir, _len) = session.compile_and_elaborate(args.top)?;
+    // Use StrictSimulation mode for simulation profiling
+    let (_design, ir, _len) = session.compile_and_elaborate_with_mode(args.top, ElaborateMode::StrictSimulation)?;
     let compile_ms = compile_start.elapsed().as_millis() as u64;
 
     // Simulation

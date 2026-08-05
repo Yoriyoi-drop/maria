@@ -1224,11 +1224,16 @@ impl Parser {
                 self.expect(Token::RBrack)?;
             }
 
+            // Type default untuk `parameter type T = <type>` (mis. `T = int`,
+            // `T = logic`). Dipakai elaborator untuk menghitung lebar deklarasi
+            // `T x;` (int→32, logic→1, byte→8, dst) — sebelumnya selalu None
+            // sehingga `T x;` jatuh ke fallback lebar 1.
+            let mut type_default: Option<DataType> = None;
             let default = if self.peek() == &Token::BlockingAssign {
                 self.advance();
                 if is_type_param {
                     // Parse default type expression: logic [7:0], bit, int, etc.
-                    let _ = self.parse_type_expr()?;
+                    type_default = Some(self.parse_type_expr()?);
                     // Skip optional range after type: logic [7:0]
                     if self.peek() == &Token::LBrack {
                         self.parse_range()?;
@@ -1241,8 +1246,6 @@ impl Parser {
             } else {
                 None
             };
-
-            let type_default = None; // Type default parsing TBD for full feature
 
             // Use type_ident as UserDefined dtype if set
             let resolved_dtype = type_ident

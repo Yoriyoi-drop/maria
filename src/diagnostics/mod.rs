@@ -5,11 +5,13 @@
 pub mod codes;
 pub mod diagnostic;
 pub mod emitter;
+pub mod global;
 pub mod recovery;
 
 pub use codes::{all_codes, lookup_code};
 pub use diagnostic::{DiagCode, DiagLevel, DiagNote, DiagSink, DiagSpan, Diagnostic, RuntimeContext, SourceSnippet};
 pub use emitter::{format_diagnostic, TerminalEmitter};
+pub use global::{diag_global, GlobalDiagnosticEngine};
 pub use recovery::ParserRecovery;
 
 /// Resolve nama file + baris relatif-file untuk posisi di merged source.

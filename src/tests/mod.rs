@@ -633,7 +633,7 @@ fn test_include_with_line_directive() {
     let inc_path = dir.join("inc.sv");
     fs::write(&inc_path, "module top;\n    wire a;\nendmodule\n").unwrap();
     let source = format!(
-        "`include \"{}\"\nmodule main;\n    wire b;\nendmodule\n",
+        "`include \"{}\"\nmodule main;\n    wire b;\n    top u_top();\nendmodule\n",
         inc_path.display()
     );
     let mut pp = Preprocessor::new();
@@ -4720,7 +4720,7 @@ endmodule
     let source_lines: Vec<String> = preprocessed.lines().map(|s| s.to_string()).collect();
     let mut elaborator =
         crate::elaboration::Elaborator::with_source(design, source_lines, "<string>".to_string());
-    elaborator.elaborate(None).unwrap();
+    elaborator.elaborate(None, crate::elaboration::elaborator::ElaborateMode::StrictSimulation).unwrap();
 
     let diags = elaborator.flush_diagnostics();
     let warn_msgs: Vec<String> = diags
@@ -4918,6 +4918,10 @@ endmodule
 
 #[test]
 fn test_endmodule_colon_name_suffix() {
+    // Suffix `endpackage : name` / `endmodule : name` / `endprogram : name`
+    // harus bisa di-parse. Dipisah jadi dua design yang masing-masing punya
+    // TEPAT SATU top candidate — StrictSimulation menolak design dengan
+    // banyak candidate tops (program main + module top = ambigu).
     let source = r#"
 package pkg;
     parameter int W = 8;
@@ -4926,13 +4930,24 @@ endpackage : pkg
 module top;
     wire a;
 endmodule : top
-
+"#;
+    let sigs = simulate_signals(source, 2);
+    assert!(
+        sigs.is_ok(),
+        "endpackage/endmodule : name suffix should parse: {:?}",
+        sigs.err()
+    );
+    let source2 = r#"
 program main;
     initial #1 $finish;
 endprogram : main
 "#;
-    let sigs = simulate_signals(source, 2);
-    assert!(sigs.is_ok(), "endpackage/endmodule/endprogram : name suffix should parse: {:?}", sigs.err());
+    let sigs2 = simulate_signals(source2, 2);
+    assert!(
+        sigs2.is_ok(),
+        "endprogram : name suffix should parse: {:?}",
+        sigs2.err()
+    );
 }
 
 #[test]
@@ -7842,10 +7857,10 @@ fn test_elab_err_module_not_found() {
 
 #[test]
 fn test_elab_err_instance_signal_not_found() {
-    // Elaboration error pada module dilewati dengan warning (resilient);
-    // fallback ke module pertama yang bisa dielaborasi. Bukan error fatal.
+    // Error di satu tempat bersifat GLOBAL: signal port tidak dikenal saat
+    // instantiation adalah error elaborasi → compile gagal (tidak resilient).
     assert!(compile_str("module top; wire a; mod inst(.port(nonexistent)); endmodule; module mod; input port; endmodule")
-            .is_ok());
+            .is_err());
 }
 
 #[test]
@@ -8071,12 +8086,12 @@ fn test_elab_err_initial_assign_undeclared() {
 
 #[test]
 fn test_elab_err_instance_bad_port_signal() {
-    // Elaboration error pada module dilewati dengan warning (resilient);
-    // module pertama yang bisa dielaborasi jadi top. Bukan error fatal.
+    // Error di satu tempat bersifat GLOBAL: signal port tidak dikenal adalah
+    // error elaborasi → compile gagal total (bukan fallback diam-diam).
     assert!(compile_str(
         "module mod(input a); endmodule; module top; mod inst(.a(nonexistent)); endmodule"
     )
-    .is_ok());
+    .is_err());
 }
 
 // ===== Category 24: System function with non-signal arguments =====

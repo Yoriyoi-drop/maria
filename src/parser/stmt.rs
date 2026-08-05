@@ -240,35 +240,76 @@ impl Parser {
                                                     _ => BinType::Normal,
                                                 };
                                                 self.advance();
-                                                let bin_name = self.expect_ident()?;
-                                                self.expect(Token::BlockingAssign)?;
-                                                self.expect(Token::LBrace)?;
-                                                let mut range_list = Vec::new();
-                                                loop {
-                                                    if self.peek() == &Token::LBrack {
+                                                // Wildcard modifier opsional sebelum nama bin
+                                                if let Token::Ident(s) = self.peek() {
+                                                    if *s == Symbol::intern("wildcard") {
                                                         self.advance();
-                                                        let low = self.parse_expr(0)?;
-                                                        self.expect(Token::Colon)?;
-                                                        let high = self.parse_expr(0)?;
-                                                        self.expect(Token::RBrack)?;
-                                                        range_list.push(low);
-                                                        range_list.push(high);
-                                                    } else {
-                                                        range_list.push(self.parse_expr(0)?);
                                                     }
-                                                    if self.peek() == &Token::Comma {
-                                                        let ahead = self.peek_ahead(1).clone();
-                                                        let is_new_port = ahead == Token::Input
-                                                            || ahead == Token::Output
-                                                            || ahead == Token::Inout
-                                                            || (matches!(&ahead, Token::Ident(_))
-                                                                && matches!(self.peek_ahead(2), Token::Scope));
-                                                        if !is_new_port { self.advance(); } else { break; }
-                                                    } else { break; }
                                                 }
-                                                self.expect(Token::RBrace)?;
+                                                let bin_name = self.expect_ident()?;
+                                                // Opsional: `[N]` atau `[]` setelah nama (array bins)
+                                                if self.peek() == &Token::LBrack {
+                                                    self.advance();
+                                                    if self.peek() != &Token::RBrack {
+                                                        let _ = self.parse_expr(0);
+                                                    }
+                                                    let _ = self.expect(Token::RBrack);
+                                                }
+                                                self.expect(Token::BlockingAssign)?;
+                                                let mut range_list = Vec::new();
+                                                // Cek apakah rhs adalah binsof(...) atau {range_list}
+                                                let is_binsof = if let Token::Ident(s) = self.peek() {
+                                                    s.as_str() == "binsof" || s.as_str() == "default"
+                                                } else {
+                                                    false
+                                                };
+                                                if is_binsof {
+                                                    // binsof(coverpoint) intersect {values} — skip sampai ';'
+                                                    // Implementasi nyata: konsumsi expression binsof
+                                                    let mut depth = 0i32;
+                                                    loop {
+                                                        match self.peek() {
+                                                            Token::Semi if depth == 0 => break,
+                                                            Token::LParen | Token::LBrace => { depth += 1; self.advance(); }
+                                                            Token::RParen | Token::RBrace if depth > 0 => { depth -= 1; self.advance(); }
+                                                            Token::RBrace if depth == 0 => break,
+                                                            Token::Eof => break,
+                                                            _ => { self.advance(); }
+                                                        }
+                                                    }
+                                                } else if self.peek() == &Token::LBrace {
+                                                    self.advance();
+                                                    loop {
+                                                        if self.peek() == &Token::RBrace { self.advance(); break; }
+                                                        if self.peek() == &Token::LBrack {
+                                                            self.advance();
+                                                            let low = self.parse_expr(0)?;
+                                                            self.expect(Token::Colon)?;
+                                                            let high = self.parse_expr(0)?;
+                                                            self.expect(Token::RBrack)?;
+                                                            range_list.push(low);
+                                                            range_list.push(high);
+                                                        } else {
+                                                            range_list.push(self.parse_expr(0)?);
+                                                        }
+                                                        if self.peek() == &Token::Comma {
+                                                            let ahead = self.peek_ahead(1).clone();
+                                                            let is_new_port = ahead == Token::Input
+                                                                || ahead == Token::Output
+                                                                || ahead == Token::Inout
+                                                                || (matches!(&ahead, Token::Ident(_))
+                                                                    && matches!(self.peek_ahead(2), Token::Scope));
+                                                            if !is_new_port { self.advance(); } else { break; }
+                                                        } else { break; }
+                                                    }
+                                                }
                                                 self.skip_semi();
                                                 bins.push(BinDef { name: bin_name, range_list, bin_type });
+                                            }
+                                            // `default` bin — skip sampai ';'
+                                            Token::Default => {
+                                                self.advance();
+                                                self.skip_until_semi_or_end()?;
                                             }
                                             _ => break,
                                         }
@@ -287,14 +328,38 @@ impl Parser {
                                 self.skip_semi();
                                 crosses.push(CrossDef { name: ident, coverpoints: cps });
                             }
-                            _ => return Err(self.err("unexpected token after ':' in covergroup body")),
+                            _ => {
+                                // Konstruk SV tidak dikenal setelah ':' — skip sampai ';'
+                                // Contoh: `name : assume ...` atau `name : restrict ...`
+                                self.skip_until_semi_or_end()?;
+                            }
                         }
                     } else {
-                        return Err(self.err("unexpected token after identifier in covergroup body"));
+                        // Identifier tanpa ':' — kemungkinan `option.weight = 0` atau
+                        // `type_option.name = "..."`. Skip sampai ';'.
+                        self.skip_until_semi_or_end()?;
                     }
                 }
                 Token::Option_ => { self.advance(); self.skip_until_semi_or_end()?; }
-                _ => return Err(self.err(format!("unexpected token in covergroup body: {}", self.peek()))),
+                _ => {
+                    // Token tidak dikenal di body covergroup — skip sampai ';' atau '}'
+                    // agar parsing tidak berhenti di sini. Contoh: `type_option.weight = 0;`
+                    // atau konstruk SV coverage lain yang belum diimplementasikan.
+                    self.advance();
+                    // Skip jika ada expression atau assignment setelah token ini
+                    let mut depth = 0i32;
+                    loop {
+                        match self.peek() {
+                            Token::Semi if depth == 0 => { self.advance(); break; }
+                            Token::EndGroup | Token::Eof => break,
+                            Token::LBrace | Token::LParen => { depth += 1; self.advance(); }
+                            Token::RBrace if depth > 0 => { depth -= 1; self.advance(); }
+                            Token::RBrace if depth == 0 => break,
+                            Token::RParen if depth > 0 => { depth -= 1; self.advance(); }
+                            _ => { self.advance(); }
+                        }
+                    }
+                }
             }
         }
         Ok(CovergroupDecl { name, clocking_event, coverpoints, crosses })

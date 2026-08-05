@@ -42,6 +42,12 @@ pub const ELAB_ERRORS: &[(DiagCode, &str)] = &[
     (DiagCode::CircularDependency, "circular dependency"),
     (DiagCode::ParamMismatch, "parameter mismatch"),
     (DiagCode::InstanceNotFound, "instance not found"),
+    (DiagCode::TopResolutionFailed, "unable to determine top-level design"),
+    (DiagCode::MultipleCandidateTops, "multiple candidate top modules"),
+    (DiagCode::MissingRootModule, "missing root module"),
+    (DiagCode::UnresolvedInstantiation, "unresolved instantiation"),
+    (DiagCode::CircularHierarchy, "circular hierarchy"),
+    (DiagCode::ExcludedByFilelist, "excluded by filelist"),
 ];
 
 /// All runtime memory error codes (RT0xxx)
@@ -199,10 +205,10 @@ mod tests {
     #[test]
     fn test_all_codes_count() {
         let codes = all_codes();
-        // Parse: 5, Semantic: 4, Elab: 4, Memory: 5, Signal: 5, Scheduler: 5,
+        // Parse: 5, Semantic: 4, Elab: 10, Memory: 5, Signal: 5, Scheduler: 5,
         // Event: 3, Module: 2, Interface: 2, Clock: 2, Assertion: 4, DPI: 3,
-        // Internal: 3, Other: 1, Legacy: 3, Warnings: 9 = 60 total
-        assert_eq!(codes.len(), 63);
+        // Internal: 3, Other: 1, Legacy: 3, Warnings: 9 = 63 total
+        assert_eq!(codes.len(), 69);
     }
 
     #[test]

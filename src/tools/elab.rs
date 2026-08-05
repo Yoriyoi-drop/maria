@@ -3,6 +3,7 @@
 //! Hanya melakukan: parameter resolve, generate expansion, hierarchy.
 //! Tidak menjalankan simulasi.
 
+use crate::elaboration::elaborator::ElaborateMode;
 use crate::error::SimError;
 use crate::tools::{open_elaborated, section, kv};
 
@@ -19,7 +20,8 @@ pub struct ElabArgs<'a> {
 
 /// Jalankan melab.
 pub fn run(args: &ElabArgs) -> Result<(), SimError> {
-    let (session, design, ir) = open_elaborated(args.files, args.incdirs, args.defines, args.top)?;
+    // Use AnalysisRecovery mode for analysis tools (Rule 10)
+    let (session, design, ir) = open_elaborated(args.files, args.incdirs, args.defines, args.top, ElaborateMode::AnalysisRecovery)?;
     let top_name = ir.top.name.as_str();
 
     section("Elaboration Result");

@@ -134,7 +134,9 @@ impl SimError {
         match self {
             SimError::Parse(ref _msg) => Self::parse_code(&msg).as_str(),
             SimError::Elaborate(_) => {
-                if msg.contains("not found") || msg.contains("module") {
+                if msg.contains("Unable to determine top-level design") || msg.contains("Top resolution failed") {
+                    "EL3001"
+                } else if msg.contains("not found") || msg.contains("module") {
                     "E3001"
                 } else if msg.contains("circular") {
                     "E3002"
@@ -261,6 +263,38 @@ impl SimError {
             return format_diagnostic(diag);
         }
         self.to_string()
+    }
+
+    /// Get exit code for CI/CD integration (Rule 9).
+    /// 0  Success
+    /// 10 Parse Error
+    /// 20 Semantic Error
+    /// 30 Elaboration Error
+    /// 40 Top Resolution Failed
+    /// 50 Scheduler Failed
+    /// 60 Simulation Failed
+    /// 70 DPI Link Failed
+    pub fn exit_code(&self) -> i32 {
+        let code = self.error_code();
+        match code {
+            // Parse errors (E1xxx)
+            c if c.starts_with("E1") => 10,
+            // Semantic errors (E2xxx)
+            c if c.starts_with("E2") => 20,
+            // Elaboration errors (E3xxx)
+            c if c.starts_with("E3") => 30,
+            // Top resolution failed (EL3001)
+            "EL3001" => 40,
+            // Runtime Scheduler (RT2xxx)
+            c if c.starts_with("RT2") => 50,
+            // Runtime Simulation (RT7xxx assertions, RT1xxx signals, RT9xxx internal)
+            c if c.starts_with("RT7") || c.starts_with("RT1") || c.starts_with("RT9") || c == "E9001" => 60,
+            // DPI Link failed (RT8xxx)
+            c if c.starts_with("RT8") => 70,
+            // Preprocessor, IO, Debugger, Waveform
+            "E0101" | "E0003" | "E0004" | "W0001" => 10,
+            _ => 1,
+        }
     }
 }
 

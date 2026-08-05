@@ -18,7 +18,7 @@ use crate::ast::types::const_eval_simple;
 const MAX_GENERATED_ITEMS: usize = 1_000_000;
 use crate::ast::types::const_eval_with_params;
 use crate::ast::*;
-use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic};
+use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, SourceSnippet};
 use crate::diagnostics::DiagSink;
 use crate::intern::Symbol;
 
@@ -101,17 +101,19 @@ pub(crate) fn expr_location(expr: &Expr) -> (usize, usize) {
 
 /// Perluas SEMUA generate block di module dengan nilai parameter tertentu.
 /// Block yang gagal diekspansi (mis. limit non-constant karena konstanta
-/// package tidak tersedia) dilewati dengan warning, bukan mematikan elaborasi.
+/// package tidak tersedia) menghasilkan error elaborasi.
 pub fn expand_all_generates(
     module: &mut Module,
     param_vals: &HashMap<Symbol, i64>,
     diag_sink: &DiagSink,
+    source_lines: &[String],
+    source_file: &str,
 ) -> Result<(), ElabError> {
     let mut i = 0;
     let mut total_items = 0usize;
     while i < module.items.len() {
         if let ModuleItem::Generate(gen) = &module.items[i] {
-            match expand_generate_block(gen, param_vals, diag_sink) {
+            match expand_generate_block(gen, param_vals, diag_sink, source_lines, source_file) {
                 Ok(expanded) => {
                     total_items += expanded.len();
                     if total_items > MAX_GENERATED_ITEMS {
@@ -129,7 +131,7 @@ pub fn expand_all_generates(
                 }
                 Err(e) => {
                     diag_sink.push(Diagnostic::new(
-                        DiagLevel::Warning,
+                        DiagLevel::Error,
                         DiagCode::NotImplemented,
                         format!(
                             "generate block expansion skipped in '{}': {} (at line {}:{})",
@@ -174,6 +176,8 @@ pub fn expand_generate_block(
     gen: &GenerateBlock,
     param_vals: &HashMap<Symbol, i64>,
     diag_sink: &DiagSink,
+    source_lines: &[String],
+    source_file: &str,
 ) -> Result<Vec<ModuleItem>, ElabError> {
     let mut result = Vec::new();
     for item in &gen.items {
@@ -189,11 +193,38 @@ pub fn expand_generate_block(
                 match eval_result {
                     Ok(val) => {
                         let branch = if val != 0 { true_items } else { false_items };
-                        result.extend(expand_item_list(branch, param_vals, diag_sink)?);
+                        result.extend(expand_item_list(branch, param_vals, diag_sink, source_lines, source_file)?);
                     }
                     Err(e) => {
-                        diag_sink.push(Diagnostic::new(DiagLevel::Warning, DiagCode::NotImplemented, format!("non-constant condition in generate if at line {}:{} ({}), taking true branch", cond_line, cond_col, e)));
-                        result.extend(expand_item_list(true_items, param_vals, diag_sink)?);
+                        // `member access not allowed in constant expression` adalah kasus
+                        // normal di interface/module OpenTitan (mis. `if (SomeStruct.field)`
+                        // di generate if). Turunkan ke Warning dan ambil true branch agar
+                        // elaborasi tetap berlanjut tanpa merusak modul.
+                        let level = if e.contains("member access") || e.contains("method calls") {
+                            DiagLevel::Warning
+                        } else {
+                            DiagLevel::Error
+                        };
+                        let mut diag = Diagnostic::new(
+                            level,
+                            DiagCode::NotImplemented,
+                            format!("non-constant condition in generate if ({}), taking true branch", e),
+                        );
+                        // Posisi kondisi generate di-render sebagai snippet
+                        // file:line:col (sebelumnya hanya ditulis di teks pesan).
+                        if cond_line > 0 && cond_line <= source_lines.len() {
+                            let (file, display_line) =
+                                crate::diagnostics::resolve_source_location(source_lines, source_file, cond_line);
+                            let snippet = SourceSnippet::new(
+                                file,
+                                display_line,
+                                cond_col,
+                                &source_lines[cond_line - 1],
+                            );
+                            diag = diag.with_source_snippet(snippet);
+                        }
+                        diag_sink.push(diag);
+                        result.extend(expand_item_list(true_items, param_vals, diag_sink, source_lines, source_file)?);
                     }
                 }
             }
@@ -274,7 +305,7 @@ pub fn expand_generate_block(
                             substitute_genvar_in_module_item(item, var.as_str(), cur);
                         }
                         scope_rename_generate_iteration(&mut substituted, label.as_ref(), cur);
-                        result.extend(expand_item_list(&substituted, param_vals, diag_sink)?);
+                        result.extend(expand_item_list(&substituted, param_vals, diag_sink, source_lines, source_file)?);
                         cur += step_val;
                     }
                 } else if step_val < 0 {
@@ -293,7 +324,7 @@ pub fn expand_generate_block(
                             substitute_genvar_in_module_item(item, var.as_str(), cur);
                         }
                         scope_rename_generate_iteration(&mut substituted, label.as_ref(), cur);
-                        result.extend(expand_item_list(&substituted, param_vals, diag_sink)?);
+                        result.extend(expand_item_list(&substituted, param_vals, diag_sink, source_lines, source_file)?);
                         cur += step_val;
                     }
                 }
@@ -307,12 +338,15 @@ pub fn expand_generate_block(
                 let (case_line, case_col) = expr_location(expr);
                 let case_val = match const_eval_with_params(expr, param_vals) {
                     Ok(v) => v,
-                    Err(_) => {
-                        diag_sink.push(Diagnostic::new(DiagLevel::Warning, DiagCode::NotImplemented, format!("non-constant expression in generate case at line {}:{}, taking first case", case_line, case_col)));
+                    Err(e) => {
+                        // Generate case dengan ekspresi non-constant — ambil cabang
+                        // pertama sebagai fallback. Turunkan ke warning (bukan error)
+                        // karena ini sering terjadi di interface coverage OpenTitan.
+                        diag_sink.push(Diagnostic::new(DiagLevel::Warning, DiagCode::NotImplemented, format!("non-constant expression in generate case at line {}:{} ({}), taking first case", case_line, case_col, e)));
                         if let Some(first) = items.first() {
-                            result.extend(expand_item_list(&first.body, param_vals, diag_sink)?);
+                            result.extend(expand_item_list(&first.body, param_vals, diag_sink, source_lines, source_file)?);
                         } else if let Some(default_items) = default {
-                            result.extend(expand_item_list(default_items, param_vals, diag_sink)?);
+                            result.extend(expand_item_list(default_items, param_vals, diag_sink, source_lines, source_file)?);
                         }
                         continue;
                     }
@@ -324,7 +358,7 @@ pub fn expand_generate_block(
                         let label_val = const_eval_with_params(label, param_vals)
                             .map_err(|e| ElabError::new(format!("generate case label eval failed: {}", e), lab_line, lab_col))?;
                         if label_val == case_val {
-                            result.extend(expand_item_list(&ci.body, param_vals, diag_sink)?);
+                            result.extend(expand_item_list(&ci.body, param_vals, diag_sink, source_lines, source_file)?);
                             matched = true;
                             break;
                         }
@@ -335,12 +369,12 @@ pub fn expand_generate_block(
                 }
                 if !matched {
                     if let Some(default_items) = default {
-                        result.extend(expand_item_list(default_items, param_vals, diag_sink)?);
+                        result.extend(expand_item_list(default_items, param_vals, diag_sink, source_lines, source_file)?);
                     }
                 }
             }
             GenerateItem::Items(items) => {
-                result.extend(expand_item_list(items, param_vals, diag_sink)?);
+                result.extend(expand_item_list(items, param_vals, diag_sink, source_lines, source_file)?);
             }
         }
     }
@@ -354,6 +388,8 @@ fn expand_item_list(
     items: &[ModuleItem],
     param_vals: &HashMap<Symbol, i64>,
     diag_sink: &DiagSink,
+    source_lines: &[String],
+    source_file: &str,
 ) -> Result<Vec<ModuleItem>, ElabError> {
     let mut extended = param_vals.clone();
     for item in items {
@@ -374,7 +410,7 @@ fn expand_item_list(
     for item in items {
         match item {
             ModuleItem::Generate(gen) => {
-                result.extend(expand_generate_block(gen, &extended, diag_sink)?);
+                result.extend(expand_generate_block(gen, &extended, diag_sink, source_lines, source_file)?);
             }
             other => result.push(other.clone()),
         }

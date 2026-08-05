@@ -25,7 +25,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
 
 
-pub(crate) const MAX_LOOP_ITER: usize = 10_000_000;
+/// Maks iterasi loop runtime tanpa delay sebelum dihentikan (anti-hang).
+/// Loop testbench yang sah hampir selalu < 100k iterasi; loop tanpa delay
+/// yang lebih besar hampir pasti tak disengaja (infinite loop).
+pub(crate) const MAX_LOOP_ITER: usize = 100_000;
 
 /// Jumlah slot time-step yang dipertahankan di `events` sebelum leading
 /// retired slots di-drain (lihat `SimulationEngine::retire_events`).

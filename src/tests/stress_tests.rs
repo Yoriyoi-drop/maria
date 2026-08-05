@@ -16,8 +16,7 @@ fn generate_n_modules(count: usize) -> String {
     input clk,
     input rst_n,
     output reg [7:0] count
-);
-    always_ff @(posedge clk or negedge rst_n) begin
+);            always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n)
             count <= 8'h00;
         else
@@ -26,6 +25,19 @@ fn generate_n_modules(count: usize) -> String {
 endmodule
 "#, i));
     }
+    // Top tunggal yang meng-instansiasi semua counter → tepat satu top candidate
+    // (StrictSimulation menolak design dengan banyak candidate tops).
+    source.push_str("module top;\n    wire clk;\n    wire rst_n;\n");
+    for i in 0..count {
+        source.push_str(&format!("    wire [7:0] c{}_out;\n", i));
+    }
+    for i in 0..count {
+        source.push_str(&format!(
+            "    counter_{} u{}(.clk(clk), .rst_n(rst_n), .count(c{}_out));\n",
+            i, i, i
+        ));
+    }
+    source.push_str("endmodule\n");
     source
 }
 
@@ -65,7 +77,7 @@ fn test_stress_100_modules() {
     // So total = modules.len() + 1
     let total = design.modules.len() + 1;
     eprintln!("Stress 100 modules: {:?} ({} modules + 1 top = {})", elapsed, design.modules.len(), total);
-    assert_eq!(total, 100, "100 modules total (99 in modules + 1 in .top)");
+    assert_eq!(total, 101, "100 modules + 1 top = 101 total");
     assert!(elapsed.as_secs() < 5, "100 modules took too long: {:?}", elapsed);
 }
 
@@ -78,7 +90,7 @@ fn test_stress_1000_modules() {
     // Note: top module is stored in IrDesign.top, not in IrDesign.modules
     let total = design.modules.len() + 1;
     eprintln!("Stress 1000 modules: {:?} ({} modules + 1 top = {})", elapsed, design.modules.len(), total);
-    assert_eq!(total, 1000, "1000 modules total (999 in modules + 1 in .top)");
+    assert_eq!(total, 1001, "1000 modules + 1 top = 1001 total");
     assert!(elapsed.as_secs() < 30, "1000 modules took too long: {:?}", elapsed);
 }
 

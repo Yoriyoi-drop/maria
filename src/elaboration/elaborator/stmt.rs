@@ -32,6 +32,62 @@ fn ir_const_u64(e: &IrExpr) -> Option<u64> {
     }
 }
 
+/// Apakah konstanta (u64) muat dalam `w` bit — unsigned ATAU sebagai nilai
+/// negatif two's complement (sign bit di lebar asli konstanta). Dipakai untuk
+/// context sizing literal unsized: `cnt + 1` (1 default 32-bit) seharusnya
+/// selebar operan lain (4-bit), bukan membuat ekspresi jadi 32-bit.
+fn const_fits_in(lv: &LogicVec, w: usize) -> bool {
+    if w == 0 {
+        return true;
+    }
+    if w >= 64 {
+        return true;
+    }
+    let raw = lv.to_u64();
+    if raw < (1u64 << w) {
+        return true;
+    }
+    // Nilai negatif: sign bit terpasang di lebar asli konstanta → interpretasi
+    // signed (mis. -1 = 0xFFFFFFFF) muat dalam rentang signed `w` bit.
+    if lv.width >= 2 && lv.width <= 64 {
+        let sign_bit = 1u64 << (lv.width - 1);
+        if raw & sign_bit != 0 {
+            let mask = if lv.width >= 64 {
+                u64::MAX
+            } else {
+                (1u64 << lv.width) - 1
+            };
+            let signed = (raw | !mask) as i64;
+            let min = -(1i64 << (w - 1));
+            let max = (1i64 << (w - 1)) - 1;
+            if signed >= min && signed <= max {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Lebar operan dalam konteks operasi biner: konstanta unsized (width >= 32,
+/// literal default SV) yang nilainya muat di lebar operan lain → mengambil
+/// lebar operan lain (context-determined sizing). Mencegah false-positive
+/// `cnt <= cnt + 1` (rhs dihitung 32 padahal idiom umum 4-bit counter).
+///
+/// `own_w` = lebar `e` yang SUDAH dihitung pemanggil. Untuk operand
+/// non-konstanta hasilnya persis `own_w` — sehingga subtree tidak pernah
+/// di-traverse ulang. Sebelumnya di sini memanggil `expr_approx_width(e)`
+/// lagi, yang membuat tiap `BinaryOp`/`Cond` menelusuri kedua operand dua
+/// kali → eksponensial O(2^n) pada rantai ekspresi dalam.
+fn context_width(e: &IrExpr, own_w: usize, other_w: usize) -> usize {
+    if let IrExpr::Const(lv) = e {
+        if lv.width >= 32 && const_fits_in(lv, other_w) {
+            return other_w;
+        }
+        return lv.width;
+    }
+    own_w
+}
+
 /// Compute approximate width of an IrExpr at elaboration time (best-effort).
 fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
     match expr {
@@ -81,13 +137,13 @@ fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
                 | BinaryIrOp::LogicalAnd
                 | BinaryIrOp::LogicalOr => 1,
                 BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl | BinaryIrOp::Sshr => wa,
-                _ => wa.max(wb),
+                _ => context_width(a, wa, wb).max(context_width(b, wb, wa)),
             }
         }
         IrExpr::Cond(_, a, b) => {
             let wa = expr_approx_width(a, signals);
             let wb = expr_approx_width(b, signals);
-            wa.max(wb)
+            context_width(a, wa, wb).max(context_width(b, wb, wa))
         }
         IrExpr::Signed(inner) => expr_approx_width(inner, signals),
         IrExpr::Cast { width, .. } => *width,
@@ -1473,10 +1529,16 @@ impl Elaborator {
                                 let msb = f.offset + f.width - 1;
                                 return Ok(IrLValue::RangeSelect(sig_id, lsb, msb));
                             }
-                            return Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!(
-                                "field '{}' not found in struct type",
-                                field
-                            ), expr_location(expr).0, expr_location(expr).1));
+                            // Field tidak ditemukan — mungkin struct dari package yang
+                            // belum fully resolved. Emit warning dan fallback ke
+                            // ObjectField agar elaborasi tidak gagal total.
+                            self.elab_warn_at(
+                                DiagCode::ModuleNotFound,
+                                format!("field '{}' not found in struct type", field),
+                                expr_location(expr).0,
+                                expr_location(expr).1,
+                            );
+                            return Ok(IrLValue::ObjectField { sig_id, field: *field });
                         }
                         // Class object handle: obj = signal berisi obj id → field.
                         if sig_info.class_name.is_some() {

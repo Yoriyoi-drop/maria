@@ -370,6 +370,34 @@ impl Parser {
         let mut items = Vec::new();
         let mut modports = Vec::new();
 
+        // Parse header import clause: `interface foo import pkg::*; (...)`
+        // Package import di header interface perlu di-collect ke items agar
+        // params dari package ter-import tersedia di generate expansion context.
+        while self.peek() == &Token::Import {
+            self.advance(); // consume 'import'
+            loop {
+                let pkg = match self.peek() {
+                    Token::Ident(s) => { let n = *s; self.advance(); n }
+                    _ => break,
+                };
+                if self.peek() == &Token::Scope {
+                    self.advance(); // consume '::'
+                    let item_name = match self.peek() {
+                        Token::Star => { self.advance(); Symbol::intern("*") }
+                        Token::Ident(s) => { let n = *s; self.advance(); n }
+                        _ => Symbol::intern("*"),
+                    };
+                    items.push(ModuleItem::Import { package: pkg, item: item_name });
+                }
+                if self.peek() == &Token::Comma {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            self.skip_semi();
+        }
+
         // Parse #(parameter ...) list (like module syntax)
         if self.peek() == &Token::Hash {
             self.advance();

@@ -3,10 +3,10 @@
 //! Wrapper ringkas pipeline simulasi: compile → elaborate → run engine →
 //! VCD/FST + ringkasan assertion/coverage.
 
-use std::time::Instant;
-
+use crate::elaboration::elaborator::ElaborateMode;
 use crate::error::SimError;
 use crate::simulator::SimulationEngine;
+use std::time::Instant;
 use crate::tools::{open_elaborated, section, kv};
 
 /// Opsi msim.
@@ -24,7 +24,8 @@ pub struct SimArgs<'a> {
 
 /// Jalankan msim.
 pub fn run(args: &SimArgs) -> Result<(), SimError> {
-    let (session, _design, ir) = open_elaborated(args.files, args.incdirs, args.defines, args.top)?;
+    // Use StrictSimulation mode for simulation tools (Rule 10)
+    let (session, _design, ir) = open_elaborated(args.files, args.incdirs, args.defines, args.top, ElaborateMode::StrictSimulation)?;
     let top_name = ir.top.name.as_str();
 
     let mut engine = SimulationEngine::new(ir, args.max_time);

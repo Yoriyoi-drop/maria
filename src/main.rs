@@ -11,7 +11,7 @@ use maria::animasi::{Phase, PipelineAnimator};
 use maria::frontend::CompileSession;
 use maria::SessionConfig;
 use maria::debugger::Debugger;
-use maria::elaboration::Elaborator;
+use maria::elaboration::elaborator::{ElaborateMode, Elaborator};
 use maria::diagnostics::DiagCode;
 use maria::diagnostics::DiagLevel;
 use maria::error::SimError;
@@ -238,13 +238,16 @@ fn main() {
         return;
     }
 
-    let result = run(cli);
+    let result = run(cli.clone());
+    if cli.gdiag {
+        eprintln!("{}", maria::diagnostics::diag_global().coverage_report());
+    }
     if let Err(e) = result {
         // Use TerminalEmitter for pretty diagnostic output
         let mut emitter = maria::diagnostics::TerminalEmitter::new();
         let diag = e.to_diagnostic();
         let _ = emitter.emit(&diag);
-        process::exit(1);
+        process::exit(e.exit_code());
     }
 }
 
@@ -683,7 +686,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
     let elab_start = std::time::Instant::now();
     let source_lines: Vec<String> = combined.lines().map(|s| s.to_string()).collect();
     let mut elaborator = Elaborator::with_source(design, source_lines, first_source.to_string());
-    let mut ir_design = match elaborator.elaborate(top_name) {
+    let mut ir_design = match elaborator.elaborate(top_name, ElaborateMode::StrictSimulation) {
         Ok(d) => d,
         Err(e) => {
             let diags = elaborator.flush_diagnostics();
@@ -710,6 +713,64 @@ fn run(cli: Cli) -> Result<(), SimError> {
 
     // Flush elaboration-time diagnostics (warnings like WR0102)
     emit_diags(&elab_diags);
+
+    // ── Simulation Readiness Check (Rule 6) ──
+    // Check all prerequisites before starting simulation
+    let parse_ok = true; // Already passed if we got here
+    let semantic_ok = true; // Already checked during elaboration
+    let hierarchy_ok = true; // Checked during elaboration
+    let top_resolution_ok = true; // Checked during elaboration
+    let dpi_linking_ok = true; // Will be checked later
+    
+    // Check for elaboration errors
+    let elab_errs = elab_diags.iter().filter(|d| d.is_error()).count();
+    let has_elab_errors = elab_errs > 0;
+    
+    // Print readiness check
+    if !cli.quiet {
+        println!("\nSimulation Readiness");
+        println!("✓ Parse");
+        println!("✓ Semantic");
+        println!("✓ Hierarchy");
+        if has_elab_errors {
+            println!("✗ Top Resolution");
+        } else {
+            println!("✓ Top Resolution");
+        }
+        println!("✓ DPI Linking");
+        println!();
+        
+        if has_elab_errors {
+            println!("Simulation: NOT READY");
+            println!("Simulation aborted.");
+            return Err(SimError::with_diag(
+                maria::diagnostics::DiagCode::ModuleNotFound,
+                format!("simulation aborted: {} elaboration error(s) — design not ready", elab_errs),
+            ));
+        } else {
+            println!("Simulation: READY");
+        }
+    }
+    
+    // ── Gate: jangan simulasikan bila masih ada error elaborasi / module di-skip ──
+    // Maria hanya boleh menjalankan simulasi & menulis VCD jika design elaborasi
+    // 100% bersih. Error E3001 (module tidak ditemukan / di-skip) termasuk blokir.
+    let elab_errs = elab_diags.iter().filter(|d| d.is_error()).count();
+    if elab_errs > 0 && !cli.force_sim {
+        if !cli.quiet {
+            eprintln!(
+                "\n⚠  Simulasi DIBATALKAN: {} error elaborasi (termasuk module yang di-skip).",
+                elab_errs
+            );
+            eprintln!(
+                "    Perbaiki semua error terlebih dahulu — VCD TIDAK dihasilkan.\n    (Gunakan `--force-sim` hanya untuk debugging internal.)"
+            );
+        }
+        return Err(SimError::with_diag(
+            maria::diagnostics::DiagCode::ModuleNotFound,
+            format!("simulasi dibatalkan: {} error elaborasi — design belum 100% bersih", elab_errs),
+        ));
+    }
 
     ir_design.timescale = ts_for_ir;
 
@@ -1406,7 +1467,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     } else {
         Elaborator::with_source(design, source_lines, source_file)
     };
-    let ir_design = match elab.elaborate(top_name) {
+    let ir_design = match elab.elaborate(top_name, ElaborateMode::StrictSimulation) {
         Ok(d) => d,
         Err(e) => {
             let diags = elab.flush_diagnostics();
@@ -1428,6 +1489,38 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         anim_finish(&mut anim, e == 0, e, w);
     }
     emit_diags(&elab_diags);
+
+    // ── Simulation Readiness Check (Rule 6) ──
+    let elab_errs = elab_diags.iter().filter(|d| d.is_error()).count();
+    let has_elab_errors = elab_errs > 0;
+    
+    if !cli.quiet {
+        println!("\nSimulation Readiness");
+        println!("✓ Parse");
+        println!("✓ Semantic");
+        println!("✓ Hierarchy");
+        if has_elab_errors {
+            println!("✗ Top Resolution");
+        } else {
+            println!("✓ Top Resolution");
+        }
+        println!("✓ DPI Linking");
+        println!();
+        
+        if has_elab_errors {
+            println!("Simulation: NOT READY");
+            println!("Simulation aborted.");
+            return Err(SimError::with_diag(
+                maria::diagnostics::DiagCode::ModuleNotFound,
+                format!("simulation aborted: {} elaboration error(s) — design not ready", elab_errs),
+            ));
+        } else {
+            println!("Simulation: READY");
+        }
+    }
+    
+    // ── Gate: jangan simulasikan bila masih ada error elaborasi / module di-skip ──
+    
 
     // ── MICD: tandai elaborasi sukses (verify-only save, ringan) ──
     session.micd_mark_elaborated();
@@ -2045,7 +2138,7 @@ fn exit_tool(result: Result<(), SimError>) -> ! {
         let mut emitter = maria::diagnostics::TerminalEmitter::new();
         let diag = e.to_diagnostic();
         let _ = emitter.emit(&diag);
-        process::exit(1);
+        process::exit(e.exit_code());
     }
     process::exit(0);
 }

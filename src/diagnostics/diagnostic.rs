@@ -134,6 +134,17 @@ pub enum DiagCode {
     CircularDependency,
     ParamMismatch,
     InstanceNotFound,
+    TopResolutionFailed,
+    /// Multiple candidate top modules found (E3006)
+    MultipleCandidateTops,
+    /// Missing root module (E3007)
+    MissingRootModule,
+    /// Unresolved instantiation in hierarchy (E3008)
+    UnresolvedInstantiation,
+    /// Circular hierarchy detected (E3009)
+    CircularHierarchy,
+    /// Module excluded by filelist (E3010)
+    ExcludedByFilelist,
 
     // ── Runtime Memory: RT0xxx ──
     /// Null handle access (RT0001)
@@ -284,6 +295,12 @@ impl DiagCode {
             DiagCode::CircularDependency => "E3002",
             DiagCode::ParamMismatch => "E3003",
             DiagCode::InstanceNotFound => "E3004",
+            DiagCode::TopResolutionFailed => "EL3001",
+            DiagCode::MultipleCandidateTops => "E3006",
+            DiagCode::MissingRootModule => "E3007",
+            DiagCode::UnresolvedInstantiation => "E3008",
+            DiagCode::CircularHierarchy => "E3009",
+            DiagCode::ExcludedByFilelist => "E3010",
             // Runtime Memory
             DiagCode::NullHandle => "RT0001",
             DiagCode::InvalidReference => "RT0002",
@@ -370,6 +387,12 @@ impl DiagCode {
             DiagCode::CircularDependency => "circular dependency",
             DiagCode::ParamMismatch => "parameter mismatch",
             DiagCode::InstanceNotFound => "instance not found",
+            DiagCode::TopResolutionFailed => "unable to determine top-level design",
+            DiagCode::MultipleCandidateTops => "multiple candidate top modules",
+            DiagCode::MissingRootModule => "missing root module",
+            DiagCode::UnresolvedInstantiation => "unresolved instantiation",
+            DiagCode::CircularHierarchy => "circular hierarchy",
+            DiagCode::ExcludedByFilelist => "excluded by filelist",
             // Runtime Memory
             DiagCode::NullHandle => "null handle access",
             DiagCode::InvalidReference => "invalid object reference",
@@ -466,6 +489,18 @@ impl DiagCode {
                 "A parameter value does not match its declaration type or range constraints.",
             DiagCode::InstanceNotFound =>
                 "A module instance could not be found in the design hierarchy.",
+            DiagCode::TopResolutionFailed =>
+                "The simulator could not determine a valid top-level design module to simulate.",
+            DiagCode::MultipleCandidateTops =>
+                "Multiple top-level modules match the top-resolution criteria — the design hierarchy is ambiguous.",
+            DiagCode::MissingRootModule =>
+                "The root module referenced by the filelist or --top option does not exist in the design.",
+            DiagCode::UnresolvedInstantiation =>
+                "An instantiation references a module, interface, or package that could not be resolved in the design hierarchy.",
+            DiagCode::CircularHierarchy =>
+                "A circular hierarchy was detected — module A instantiates module B which (directly or indirectly) instantiates module A.",
+            DiagCode::ExcludedByFilelist =>
+                "A required module was excluded by the filelist, so the design hierarchy is incomplete.",
             DiagCode::NullHandle =>
                 "An object handle was used (method call or member access) but the handle is null.",
             DiagCode::InvalidReference =>
@@ -598,6 +633,18 @@ impl DiagCode {
                 "Verify parameter values match the declared types and ranges in the module definition.",
             DiagCode::InstanceNotFound =>
                 "Check that the instance name is correct and that the module is properly instantiated.",
+            DiagCode::TopResolutionFailed =>
+                "Check that the top module name is correct and all its dependencies are resolved.",
+            DiagCode::MultipleCandidateTops =>
+                "Specify the top module explicitly with --top <name>, or remove duplicate module definitions from the filelist.",
+            DiagCode::MissingRootModule =>
+                "Verify the top/root module name and ensure the source file that defines it is included in the filelist.",
+            DiagCode::UnresolvedInstantiation =>
+                "Check that the instantiated module/interface is defined and that its source file is included in the filelist.",
+            DiagCode::CircularHierarchy =>
+                "Restructure the design to remove recursive instantiation between modules.",
+            DiagCode::ExcludedByFilelist =>
+                "Add the missing source file to the filelist, or remove the exclusion directive that dropped the module.",
             DiagCode::NullHandle =>
                 "Initialize the object handle with 'new()' before accessing its members.",
             DiagCode::InvalidReference =>
@@ -716,7 +763,13 @@ impl DiagCode {
             DiagCode::ModuleNotFound
             | DiagCode::CircularDependency
             | DiagCode::ParamMismatch
-            | DiagCode::InstanceNotFound => "Elaboration",
+            | DiagCode::InstanceNotFound
+            | DiagCode::TopResolutionFailed
+            | DiagCode::MultipleCandidateTops
+            | DiagCode::MissingRootModule
+            | DiagCode::UnresolvedInstantiation
+            | DiagCode::CircularHierarchy
+            | DiagCode::ExcludedByFilelist => "Elaboration",
             DiagCode::NullHandle
             | DiagCode::InvalidReference
             | DiagCode::NullInterface
@@ -1222,8 +1275,11 @@ impl DiagSink {
     /// Push a diagnostic (non-blocking, lock-free fast path).
     /// Channel bounded: bila penuh, diagnostic DIBUANG (dihitung di `dropped`)
     /// daripada menumpuk memori tanpa batas.
+    /// Setiap diagnostic juga diteruskan ke Global Diagnostic Engine
+    /// (`crate::diagnostics::global`) — agregator global lintas komponen.
     pub fn push(&self, diag: Diagnostic) {
         self.total_pushed.fetch_add(1, Ordering::Relaxed);
+        super::global::diag_global().report(diag.clone());
         if self.sender.try_send(diag).is_err() {
             self.dropped.fetch_add(1, Ordering::Relaxed);
         }

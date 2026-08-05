@@ -54,6 +54,12 @@ const BUILTIN_UVM_CLASSES: &[&str] = &[
     "uvm_resource_db",
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElaborateMode {
+    StrictSimulation,
+    AnalysisRecovery,
+}
+
 pub struct Elaborator {
     pub design: Design,
     pub modules: HashMap<Symbol, IrModule>,
@@ -236,7 +242,7 @@ impl Elaborator {
         }
     }
 
-    pub fn elaborate(&mut self, top_module: Option<&str>) -> Result<IrDesign, SimError> {
+    pub fn elaborate(&mut self, top_module: Option<&str>, mode: ElaborateMode) -> Result<IrDesign, SimError> {
         let elab_t0 = std::time::Instant::now();
         if std::env::var("DBG_ELAB").is_ok() {
             eprintln!("[DBG-ELAB] elaborate() start (n_modules={})", self.design.modules.len());
@@ -262,7 +268,29 @@ impl Elaborator {
                     .items
                     .push(ModuleItem::Instance(bind.instance.clone()));
             } else {
-                self.elab_warn(DiagCode::ModuleNotFound, format!("bind target '{}' not found", bind.target));
+                let (file, dl) = self.resolve_source_location(bind.instance.line);
+                let source_line = if bind.instance.line > 0 && bind.instance.line <= self.source_lines.len() {
+                    Some(self.source_lines[bind.instance.line - 1].clone())
+                } else {
+                    None
+                };
+                let mut diag = Diagnostic::new(
+                    DiagLevel::Error,
+                    DiagCode::ModuleNotFound,
+                    format!("bind target '{}' not found", bind.target),
+                )
+                .with_code_context();
+                if let Some(snippet) = source_line {
+                    diag = diag.with_source_snippet(
+                        SourceSnippet::new(file, dl, bind.instance.col, &snippet),
+                    );
+                }
+                if let Some(ref mod_name) = self.current_module {
+                    diag = diag.with_runtime_context(
+                        RuntimeContext::new().with_module(mod_name.as_str()),
+                    );
+                }
+                self.diag_sink.push(diag);
             }
         }
 
@@ -440,7 +468,7 @@ _ => {}
             // Process generate expansion in isolated block to release mutable borrow before elab_diag_at
             let gen_result = {
                 let module = &mut self.design.modules[i];
-                expand_all_generates(module, &param_vals, &self.diag_sink)
+                expand_all_generates(module, &param_vals, &self.diag_sink, &self.source_lines, &self.source_file)
             };
             if let Err(e) = gen_result {
                 return Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!("generate expansion failed in '{}': {}", module_name, e.msg), e.line, e.col));
@@ -457,6 +485,23 @@ _ => {}
             let module_map: HashMap<Symbol, &Module> =
                 self.design.modules.iter().map(|m| (m.name, m)).collect();
             let all_names: HashSet<Symbol> = module_map.keys().copied().collect();
+            // Satu pass scan merged source: nama module → (baris, kolom)
+            // deklarasi. Dipakai untuk posisi warning "module unreachable".
+            let mut module_decl_lines: HashMap<Symbol, (usize, usize)> = HashMap::new();
+            for (i, line) in self.source_lines.iter().enumerate() {
+                if let Some(off) = line.find("module ") {
+                    // Token identifier pertama setelah `module ` — buang
+                    // trailing `;`/`(`/`,` dsb (`module top;`, `module foo(`).
+                    if let Some(name) = line[off + "module ".len()..]
+                        .split(|c: char| !c.is_alphanumeric() && c != '_')
+                        .next()
+                        .filter(|s| !s.is_empty())
+                    {
+                        let col = off + "module ".len() + 1;
+                        module_decl_lines.entry(Symbol::intern(name)).or_insert((i + 1, col));
+                    }
+                }
+            }
             let mut reachable: HashSet<Symbol> = HashSet::new();
             let mut queue: VecDeque<Symbol> = VecDeque::new();
             if let Some(ref top) = top_sym {
@@ -486,26 +531,35 @@ _ => {}
                 if !reachable.contains(&m.name)
                     && top_sym.as_ref().map(|t| *t != m.name).unwrap_or(true)
                 {
-                    self.diag_sink.push(
-                        Diagnostic::new(
-                            DiagLevel::Warning,
-                            DiagCode::UnusedSignal,
-                            format!(
-                                "module '{}' is unreachable (not instantiated from top)",
-                                m.name
-                            ),
-                        )
-                        .with_explanation(
-                            "The module is defined in the source files but never \
-                             instantiated from the top module, so it is not part \
-                             of the elaborated design and will not be simulated.",
-                        )
-                        .with_suggestion(
-                            "Remove the module from the source list, or instantiate \
-                             it from the top module if it should be part of the \
-                             simulation.",
+                    let mut diag = Diagnostic::new(
+                        DiagLevel::Warning,
+                        DiagCode::UnusedSignal,
+                        format!(
+                            "module '{}' is unreachable (not instantiated from top)",
+                            m.name
                         ),
+                    )
+                    .with_explanation(
+                        "The module is defined in the source files but never \
+                         instantiated from the top module, so it is not part \
+                         of the elaborated design and will not be simulated.",
+                    )
+                    .with_suggestion(
+                        "Remove the module from the source list, or instantiate \
+                         it from the top module if it should be part of the \
+                         simulation.",
                     );
+                    // Posisi deklarasi module (bila ditemukan di merged source)
+                    // — tanpa ini warning hanya menampilkan nama module tanpa
+                    // file:line:col.
+                    if let Some(&(ml, mc)) = module_decl_lines.get(&m.name) {
+                        if ml > 0 && ml <= self.source_lines.len() {
+                            let (file, dl) = self.resolve_source_location(ml);
+                            let snippet = SourceSnippet::new(file, dl, mc, &self.source_lines[ml - 1]);
+                            diag = diag.with_source_snippet(snippet);
+                        }
+                    }
+                    self.diag_sink.push(diag);
                 }
             }
         }
@@ -565,8 +619,21 @@ _ => {}
                 self.modules.insert(mod_name, cached_ir.clone());
                 self.cache_hits += 1;
             } else {
+                let mod_t0 = std::time::Instant::now();
+                if std::env::var("DBG_ELAB").is_ok() {
+                    eprintln!("[DBG-ELAB] >> elaborate module '{}' ({}/{})", mod_name.as_str(), self.cache_hits + self.cache_misses + 1, topo_order.len());
+                }
                 match self.elaborate_module(module, &module_names) {
                     Ok(ir) => {
+                        if std::env::var("DBG_ELAB").is_ok()
+                            && mod_t0.elapsed().as_millis() > 100
+                        {
+                            eprintln!(
+                                "[DBG-ELAB]   module '{}' elaborated in {:?}",
+                                mod_name.as_str(),
+                                mod_t0.elapsed()
+                            );
+                        }
                         self.module_cache.insert(dep_aware, ir.clone());
                         self.modules.insert(mod_name, ir);
                         self.cache_misses += 1;
@@ -643,23 +710,112 @@ _ => {}
             eprintln!("[DBG-ELAB] interfaces done in {:?}", elab_t0.elapsed());
         }
         // Find top module
-        let top_name = match top_module {
-            Some(name) => Symbol::intern(name),
-            None => self
-                .design
-                .modules
-                .first()
-                .map(|m| m.name)
-                .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, "no modules in design"))?,
+        let mut instantiated_modules = std::collections::HashSet::new();
+        for m in &self.design.modules {
+            for item in &m.items {
+                if let ModuleItem::Instance(inst) = item {
+                    instantiated_modules.insert(inst.module_name);
+                }
+            }
+        }
+        let candidate_tops: Vec<Symbol> = self.design.modules.iter()
+            .map(|m| m.name)
+            .filter(|name| !instantiated_modules.contains(name))
+            .collect();
+
+let top_name = match top_module {
+            Some(name) => {
+                let sym = Symbol::intern(name);
+                if !self.design.modules.iter().any(|m| m.name == sym) {
+                    if mode == ElaborateMode::StrictSimulation {
+                        return Err(self.elab_diag(
+                            DiagCode::TopResolutionFailed,
+                            format!(
+                                "Unable to determine top-level design.\n\
+                                 Simulation cancelled.\n\n\
+                                 Reason:\n\
+                                 • missing root module (requested top module '{}' not found in design)",
+                                name
+                            )
+                        ));
+                    }
+                }
+                sym
+            }
+            None => {
+                if candidate_tops.is_empty() {
+                    if self.design.modules.is_empty() {
+                        if mode == ElaborateMode::StrictSimulation {
+                            return Err(self.elab_diag(
+                                DiagCode::TopResolutionFailed,
+                                "Unable to determine top-level design.\n\
+                                 Simulation cancelled.\n\n\
+                                 Reason:\n\
+                                 • missing root module (no modules found in design)".to_string()
+                            ));
+                        }
+                        self.design.modules.first().map(|m| m.name).unwrap_or(Symbol::EMPTY)
+                    } else {
+                        if mode == ElaborateMode::StrictSimulation {
+                            return Err(self.elab_diag(
+                                DiagCode::TopResolutionFailed,
+                                "Unable to determine top-level design.\n\
+                                 Simulation cancelled.\n\n\
+                                 Reason:\n\
+                                 • circular hierarchy (all modules are instantiated by others)".to_string()
+                            ));
+                        }
+                        self.design.modules.first().map(|m| m.name).unwrap_or(Symbol::EMPTY)
+                    }
+                } else if candidate_tops.len() > 1 {
+                    if mode == ElaborateMode::StrictSimulation {
+                        let mut reason = "Unable to determine top-level design.\n\
+                                          Simulation cancelled.\n\n\
+                                          Reason:\n\
+                                          • multiple candidate tops:".to_string();
+                        for cand in &candidate_tops {
+                            reason.push_str(&format!("\n   - {}", cand.as_str()));
+                        }
+                        return Err(self.elab_diag(DiagCode::MultipleCandidateTops, reason));
+                    }
+                    candidate_tops[0]
+                } else {
+                    candidate_tops[0]
+                }
+            }
         };
 
-        let mut top = match self.modules.remove(&top_name) {
+let mut top = match self.modules.remove(&top_name) {
             Some(m) => m,
             None => {
-                // Top otomatis (tanpa --top) gagal elaborasi. Fallback ke modul
-                // pertama yang BERHASIL elaborasi agar simulasi tetap berjalan;
-                // module yang gagal dilewati dengan warning. Untuk top eksplisit
-                // tetap error agar tidak menyesatkan pengguna.
+                if mode == ElaborateMode::StrictSimulation {
+                    return Err(self.elab_diag(
+                        DiagCode::TopResolutionFailed,
+                        format!(
+                            "Unable to determine top-level design.\n\
+                             Simulation cancelled.\n\n\
+                             Reason:\n\
+                             • unresolved instantiation or compilation error in top module '{}'",
+                            top_name.as_str()
+                        )
+                    ));
+                }
+
+                // Fallback only for AnalysisRecovery (Rule 2)
+                let total_modules = self.design.modules.len();
+                let success_modules = self.modules.len();
+                
+                // Explicit Recovery Mode warning (Rule 4)
+                eprintln!(
+                    "\nWARNING\n\n\
+                     Top-level design not found.\n\n\
+                     Recovered module:\n\n\
+                         {}\n\n\
+                     Recovery mode enabled.\n\n\
+                     Simulation disabled.\n",
+                    top_name.as_str()
+                );
+                
                 let fallback = self
                     .design
                     .modules
@@ -667,36 +823,17 @@ _ => {}
                     .filter_map(|m| self.modules.get(&m.name).cloned())
                     .next();
                 match fallback {
-                    Some(fb) if top_module.is_none() => {
-                        // Top module yang diminta gagal elaborasi → simulasi
-                        // memakai module lain. Ini bukan sekadar peringatan:
-                        // design yang diminta tidak disimulasikan.
-                        self.diag_sink.push(
-                            Diagnostic::new(
-                                DiagLevel::Error,
-                                DiagCode::ModuleNotFound,
-                                format!(
-                                    "top module '{}' not elaborated (skipped due to \
-                                     elaboration error); falling back to first \
-                                     elaboratable module '{}'",
-                                    top_name, fb.name
-                                ),
-                            )
-                            .with_explanation(
-                                "The requested top module could not be elaborated, so \
-                                 simulation will use a different module as the top. \
-                                 This means the intended design is not being simulated.",
-                            ),
-                        );
-                        fb
-                    }
+                    Some(fb) => fb,
                     _ => {
                         return Err(self.elab_diag(
-                            DiagCode::ModuleNotFound,
+                            DiagCode::TopResolutionFailed,
                             format!(
-                                "top module '{}' not found: no module could be elaborated (all skipped due to elaboration errors)",
-                                top_name
-                            ),
+                                "Unable to determine top-level design.\n\
+                                 Simulation cancelled.\n\n\
+                                 Reason:\n\
+                                 • unresolved instantiation or compilation error in top module '{}'",
+                                top_name.as_str()
+                            )
                         ))
                     }
                 }
@@ -971,6 +1108,19 @@ _ => {}
                     let qualified = Symbol::intern(&format!("{}::{}", pkg.as_str(), name.as_str()));
                     module_functions.entry(qualified).or_insert_with(|| f.clone());
                 }
+            }
+        }
+
+        // Error di satu tempat bersifat GLOBAL: dalam mode StrictSimulation,
+        // kehadiran diagnostic error apa pun (statement gagal, module gagal
+        // elaborasi, unresolved instantiation, dll) membuat elaborasi gagal
+        // total → caller (compile_str / run) tahu design tidak valid dan tidak
+        // boleh disimulasikan. AnalysisRecovery tetap lanjut (untuk index/
+        // lint/report tanpa simulasi).
+        if mode == ElaborateMode::StrictSimulation {
+            let diags = self.diag_sink.diagnostics();
+            if let Some(first_err) = diags.iter().find(|d| d.is_error()) {
+                return Err(SimError::from_diagnostic(first_err));
             }
         }
 
@@ -1605,10 +1755,28 @@ _ => {}
         Ok((msb.abs_diff(lsb) + 1) as usize)
     }
 
+    /// Lebar dtype dengan dukungan parameter type (mis. `parameter type T = int`).
+    /// `T x;` di body harus pakai lebar dari `type_param_widths` (bila T adalah
+    /// type param), bukan jatuh ke fallback "unknown type".
+    fn resolve_dtype_width(
+        &self,
+        dtype: &DataType,
+        type_param_widths: &HashMap<Symbol, usize>,
+    ) -> Result<usize, SimError> {
+        if let DataType::UserDefined(tn) = dtype {
+            if let Some(&tw) = type_param_widths.get(tn) {
+                return Ok(tw);
+            }
+        }
+        self.resolve_type_width(dtype)
+    }
+
     fn resolve_type_width(&self, dtype: &DataType) -> Result<usize, SimError> {
         match dtype {
             DataType::UserDefined(name) if name == "__mailbox" || name == "__semaphore" => Ok(64),
             DataType::UserDefined(name) if name == "process" => Ok(64),
+            // `chandle` — built-in SV type untuk C pointer (DPI). 64-bit opaque pointer.
+            DataType::UserDefined(name) if name == "chandle" => Ok(64),
             DataType::UserDefined(name) if BUILTIN_UVM_CLASSES.contains(&name.as_str()) => Ok(64),
             DataType::UserDefined(name) => {
                 if self.design.classes.iter().any(|c| c.name == *name) {
@@ -1657,9 +1825,16 @@ _ => {}
                 if let Some(&width) = self.typedef_map.get(name) {
                     return Ok(width);
                 }
-                // Type not found — warn and return default width of 32 (common SV default)
-                self.elab_warn(DiagCode::UninitializedRegister, format!("unknown type '{}' is not defined in this scope (using default width 32)", name));
-                Ok(32)
+                // Type tidak ditemukan — emit warning dan gunakan lebar 1 agar
+                // elaborasi tetap berlanjut. Type yang hilang biasanya karena
+                // package belum di-import ke scope interface/module ini.
+                self.elab_warn_at(
+                    DiagCode::UndefinedSignal,
+                    format!("unknown type '{}' is not defined in this scope", name),
+                    0,
+                    0,
+                );
+                return Ok(1);
             }
             DataType::Signed(inner) => self.resolve_type_width(inner),
             _ => Ok(dtype.width()),
@@ -1672,6 +1847,13 @@ _ => {}
     /// package (mis. `mubi4_t'(x)`). Prioritas: param modul → package param
     /// (default) → typedef package.
     pub(crate) fn resolve_cast_name_width(&self, type_name: &str) -> Option<usize> {
+        // 0. Size cast numerik eksplisit (`22'(x)`, `8'(y)`): lebar = angka.
+        // Sebelumnya tak ter-resolve → fallback 1 → warning width mismatch
+        // palsu (mis. `data_o = 22'(data_i)` dilaporkan rhs=1).
+        let digits: String = type_name.chars().filter(|c| *c != '_').collect();
+        if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+            return digits.parse::<usize>().ok();
+        }
         let name = Symbol::intern(type_name);
         // 1. Parameter modul / konstanta ter-evaluasi.
         if let Some(&v) = self.param_vals.get(&name) {
@@ -1797,6 +1979,13 @@ impl Elaborator {
         param_vals: &HashMap<Symbol, i64>,
         type_param_overrides: &HashMap<Symbol, usize>,
     ) -> Result<IrModule, SimError> {
+        let dbg_step = std::env::var("DBG_ELAB_STEP").is_ok();
+        let step_t0 = std::time::Instant::now();
+        let step_ck = |name: &str, t0: &std::time::Instant| {
+            if dbg_step {
+                eprintln!("[DBG-STEP] {}: {} in {:?}", module.name.as_str(), name, t0.elapsed());
+            }
+        };
         let mut effective_params = param_vals.clone();
         let module_idx: HashMap<Symbol, usize> =
             self.design.modules.iter().enumerate().map(|(i, m)| (m.name, i)).collect();
@@ -2061,11 +2250,12 @@ impl Elaborator {
             if param.is_type_param {
                 let width = if let Some(w) = type_param_overrides.get(&param.name) {
                     *w
+                } else if let Some(td) = &param.type_default {
+                    // `parameter type T = int` → 32-bit; `T = logic` → 1-bit;
+                    // `T = byte` → 8-bit. Sebelumnya semua default 8-bit.
+                    td.width()
                 } else {
-                    match &param.default {
-                        Some(_) => 8,
-                        None => 1,
-                    }
+                    1
                 };
                 type_param_widths.insert(param.name, width);
             }
@@ -2246,6 +2436,8 @@ impl Elaborator {
             }
         }
 
+        step_ck("after ports", &step_t0);
+
         // ── Generate expansion (SEBELUM pemrosesan deklarasi) ──
         // Expand generate blocks in module items — dilakukan lebih awal agar
         // deklarasi yang dihasilkan branch generate (mis. `logic wptr_err;`
@@ -2289,7 +2481,7 @@ impl Elaborator {
             for item in &module.items {
                 match item {
                     ModuleItem::Generate(gen) => {
-                        let expanded = expand_generate_block(gen, &effective_params, &self.diag_sink)
+                        let expanded = expand_generate_block(gen, &effective_params, &self.diag_sink, &self.source_lines, &self.source_file)
                             .map_err(|e| self.elab_diag_at(DiagCode::InvalidSyntax, format!("generate block expansion failed: {}", e.msg), e.line, e.col))?;
                         // Collect params from expanded generate items too
                         for ei in &expanded {
@@ -2385,6 +2577,8 @@ impl Elaborator {
             }
         }
 
+        step_ck("after generate+decls", &step_t0);
+
         // Process declarations with parameter-aware width resolution
         for decl in &all_decls {
             let class_name = match &decl.dtype {
@@ -2432,7 +2626,7 @@ impl Elaborator {
                     continue;
                 }
                 if var.is_dynamic || var.is_queue {
-                    let dtype_width = self.resolve_type_width(&decl.dtype)?;
+                    let dtype_width = self.resolve_dtype_width(&decl.dtype, &type_param_widths)?;
                     let elem_width = dtype_width
                         .max(self.var_resolved_width_aware(var, &effective_params, &signal_map, &signals)?)
                         .max(decl.kind.default_width());
@@ -2470,7 +2664,7 @@ impl Elaborator {
                         iface_modport: None,
                     });
                 }
-                let dtype_width = self.resolve_type_width(&decl.dtype)?;
+                let dtype_width = self.resolve_dtype_width(&decl.dtype, &type_param_widths)?;
                 let elem_width = dtype_width
                     .max(self.var_resolved_width_aware(var, &effective_params, &signal_map, &signals)?)
                     .max(decl.kind.default_width());
@@ -2705,6 +2899,8 @@ impl Elaborator {
             }
         }
 
+        step_ck("after decls loop", &step_t0);
+
         // ── Localparam ARRAY (`localparam logic [63:0] RC [24] = '{...}`) ──
         // Parser membuang unpacked dims `[24]` dan menyimpan default `'{...}`
         // sebagai `Expr::Concat` multi-elemen. Array ini TIDAK boleh masuk
@@ -2727,6 +2923,15 @@ impl Elaborator {
             }
         }
         for p in param_array_srcs {
+            if std::env::var("MARIA_DBG_LP").is_ok() {
+                eprintln!(
+                    "[DBG-LP] {} is_lp={} in_sigmap={} default={:?}",
+                    p.name.as_str(),
+                    p.is_localparam,
+                    signal_map.contains_key(&p.name),
+                    p.default.as_ref().map(|e| format!("{:?}", e).chars().take(80).collect::<String>())
+                );
+            }
             if !p.is_localparam || signal_map.contains_key(&p.name) {
                 continue;
             }
@@ -2829,6 +3034,8 @@ impl Elaborator {
             }
         }
 
+        step_ck("after localparam array", &step_t0);
+
         // Process module items
         let mut proc_counter = 0usize;
         // Pre-pass: daftarkan loop variable dari `for` loops sebagai signal
@@ -2891,30 +3098,57 @@ impl Elaborator {
         for item in &expanded_items {
             match item {
                 ModuleItem::Always(always) => {
-                    let process = self.elaborate_always(always, &signal_map, &signals)?;
-                    processes.push(process);
+                    match self.elaborate_always(always, &signal_map, &signals) {
+                        Ok(process) => {
+                            processes.push(process);
+                        }
+                        Err(e) => {
+                            // Process ini di-skip agar module tetap terdaftar dengan
+                            // signal-nya, TAPI error dipertahankan level aslinya
+                            // (Error). Error di satu tempat bersifat GLOBAL: gate di
+                            // main.rs memblokir simulasi & VCD sampai semua bersih.
+                            let diag = e.to_diagnostic();
+                            self.diag_sink.push(diag);
+                        }
+                    }
                 }
                 ModuleItem::Initial(initial) => {
-                    let body = self.elaborate_stmt_block(
+                    match self.elaborate_stmt_block(
                         &initial.stmts,
                         &signal_map,
                         known_modules,
                         &signals,
-                    )?;
-                    let name = format_sym(b"initial_", proc_counter);
-                    proc_counter += 1;
-                    processes.push(Process::Initial { name, body });
+                    ) {
+                        Ok(body) => {
+                            let name = format_sym(b"initial_", proc_counter);
+                            proc_counter += 1;
+                            processes.push(Process::Initial { name, body });
+                        }
+                        Err(e) => {
+                            // Error GLOBAL (lihat komentar di Always).
+                            let diag = e.to_diagnostic();
+                            self.diag_sink.push(diag);
+                        }
+                    }
                 }
                 ModuleItem::Final(final_block) => {
-                    let body = self.elaborate_stmt_block(
+                    match self.elaborate_stmt_block(
                         &final_block.stmts,
                         &signal_map,
                         known_modules,
                         &signals,
-                    )?;
-                    let name = format_sym(b"final_", proc_counter);
-                    proc_counter += 1;
-                    processes.push(Process::Final { name, body });
+                    ) {
+                        Ok(body) => {
+                            let name = format_sym(b"final_", proc_counter);
+                            proc_counter += 1;
+                            processes.push(Process::Final { name, body });
+                        }
+                        Err(e) => {
+                            // Error GLOBAL (lihat komentar di Always).
+                            let diag = e.to_diagnostic();
+                            self.diag_sink.push(diag);
+                        }
+                    }
                 }
                 ModuleItem::Assign(assign) => {
                     // Undeclared LHS identifier → implicit net (semantik SV).
@@ -2975,23 +3209,34 @@ impl Elaborator {
                         }
                     }
                     // Convert to a combinational process
-                    let lhs = self.elaborate_lvalue(&assign.lhs, &signal_map, &signals)?;
-                    let rhs = self.elaborate_expr(&assign.rhs, &signal_map, &signals)?;
-                    let stmts = vec![IrStmt::BlockingAssign {
-                        lhs,
-                        rhs,
-                        delay: None,
-                    }];
-                    let sensitivity = collect_sensitivity(&assign.rhs, &signal_map)
-                        .into_iter()
-                        .map(SignalSensitivity::whole)
-                        .collect();
-                    processes.push(Process::Combinational {
-                        name: format_sym(b"assign_", proc_counter),
-                        sensitivity,
-                        body: stmts,
-                    });
-                    proc_counter += 1;
+                    let lhs_result = self.elaborate_lvalue(&assign.lhs, &signal_map, &signals);
+                    let rhs_result = self.elaborate_expr(&assign.rhs, &signal_map, &signals);
+                    match (lhs_result, rhs_result) {
+                        (Ok(lhs), Ok(rhs)) => {
+                            let stmts = vec![IrStmt::BlockingAssign {
+                                lhs,
+                                rhs,
+                                delay: None,
+                            }];
+                            let sensitivity = collect_sensitivity(&assign.rhs, &signal_map)
+                                .into_iter()
+                                .map(SignalSensitivity::whole)
+                                .collect();
+                            processes.push(Process::Combinational {
+                                name: format_sym(b"assign_", proc_counter),
+                                sensitivity,
+                                body: stmts,
+                            });
+                            proc_counter += 1;
+                        }
+                        (Err(e), _) | (_, Err(e)) => {
+                            // Assign ini di-skip agar module tetap terdaftar, TAPI error
+                            // dipertahankan level aslinya (Error). Error di satu tempat
+                            // bersifat GLOBAL: gate memblokir simulasi & VCD.
+                            let diag = e.to_diagnostic();
+                            self.diag_sink.push(diag);
+                        }
+                    }
                 }
                 ModuleItem::Typedef(td) => {
                     // Already collected in pre-pass; register for UserDefined resolution
@@ -3382,6 +3627,8 @@ impl Elaborator {
                 }
             }
         }
+
+        step_ck("after items loop", &step_t0);
 
         Ok(IrModule {
             name: module.name,

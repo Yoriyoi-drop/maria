@@ -9,7 +9,7 @@ use rand::Rng;
 
 /// Cap iterasi loop AST (method/task context) untuk mencegah hang ketika loop
 /// berisi blocking event (`@(...)`) yang tidak memajukan waktu simulasi.
-const AST_LOOP_ITER_CAP: u64 = 10_000_000;
+const AST_LOOP_ITER_CAP: u64 = 100_000;
 
 impl SimulationEngine {
     pub(crate) fn evaluate_block_with_delay(&mut self, stmts: &[IrStmt]) -> Result<bool, SimError> {

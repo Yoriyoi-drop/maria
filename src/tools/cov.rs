@@ -3,10 +3,10 @@
 //! Menghasilkan `coverage.json` + `coverage.html` dari hasil simulasi.
 //! Jenis coverage: line, toggle, branch, FSM, covergroup, assertion.
 
-use std::time::Instant;
-
+use crate::elaboration::elaborator::ElaborateMode;
 use crate::error::SimError;
 use crate::simulator::SimulationEngine;
+use std::time::Instant;
 use crate::tools::{open_elaborated, section, kv};
 
 /// Opsi mcov.
@@ -24,7 +24,8 @@ pub struct CovArgs<'a> {
 
 /// Jalankan mcov.
 pub fn run(args: &CovArgs) -> Result<(), SimError> {
-    let (_session, _design, ir) = open_elaborated(args.files, args.incdirs, args.defines, args.top)?;
+    // Use StrictSimulation mode for coverage (requires simulation)
+    let (_session, _design, ir) = open_elaborated(args.files, args.incdirs, args.defines, args.top, ElaborateMode::StrictSimulation)?;
     let top_name = ir.top.name.as_str();
 
     let mut engine = SimulationEngine::new(ir, args.max_time);

@@ -369,10 +369,18 @@ pub fn const_eval_with_params(
         Expr::ScopedIdent { package, item } => {
             let qualified = Symbol::intern(&format!("{}::{}", package, item));
             if let Some(&val) = param_vals.get(&qualified) {
-                Ok(val)
-            } else {
-                Err(format!("cannot evaluate package parameter '{}'", qualified))
+                return Ok(val);
             }
+            // Juga coba tanpa package prefix — enum member yang sudah di-flatten
+            // ke param_vals tanpa qualified name (mis. dari `import pkg::*`).
+            if let Some(&val) = param_vals.get(item) {
+                return Ok(val);
+            }
+            // `pkg::TypeName` (typedef/enum type) dipakai sebagai type-cast argument
+            // atau di ekspresi generate — ini bukan nilai integer yang bisa dievaluasi.
+            // Kembalikan error yang informatif; generate.rs akan menangani kasus ini
+            // sebagai warning (member access / type expression tidak bisa di-const-eval).
+            Err(format!("cannot evaluate package parameter '{}'", qualified))
         }
         Expr::MethodCall { .. } => {
             Err("method calls not allowed in constant expression".to_string())

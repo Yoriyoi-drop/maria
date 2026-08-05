@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 
 use crate::ast::types::Design;
 use crate::diagnostics::DiagCode;
+use crate::elaboration::elaborator::ElaborateMode;
 use crate::error::SimError;
 use crate::frontend::compile_session::CompileSession;
 use crate::SessionConfig;
@@ -113,11 +114,12 @@ pub fn open_elaborated(
     incdirs: &[String],
     defines: &[String],
     top: Option<&str>,
+    mode: ElaborateMode,
 ) -> Result<(CompileSession, Design, crate::ir::IrDesign), SimError> {
     let files = collect_targets(targets)?;
     let cfg = make_session_config(files, incdirs, defines, top.map(|s| s.to_string()));
     let mut session = CompileSession::new(cfg);
-    let (design, ir, _len) = session.compile_and_elaborate(top)?;
+    let (design, ir, _len) = session.compile_and_elaborate_with_mode(top, mode)?;
     Ok((session, design, ir))
 }
 
