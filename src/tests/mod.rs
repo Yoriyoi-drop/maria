@@ -8910,6 +8910,108 @@ endmodule
 }
 
 #[test]
+fn test_inside_range_expression() {
+    // Range inside `{[lo:hi]}` (pola reg_top OpenTitan) — konstanta dan runtime.
+    let source = r#"
+module tb;
+    int a, b, c;
+    initial begin
+        a = 5000;
+        if (a inside {[4096:7487]}) b = 1; else b = 0;
+        if (a inside {[0:100], [1000:2000]}) c = 1; else c = 0;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 10).unwrap();
+    let (_, b) = sigs.iter().find(|(n, _)| n == "b").unwrap();
+    assert_eq!(b.to_u64(), 1, "5000 inside {{[4096:7487]}} should be true");
+    let (_, c) = sigs.iter().find(|(n, _)| n == "c").unwrap();
+    assert_eq!(c.to_u64(), 0, "5000 inside {{[0:100],[1000:2000]}} should be false");
+}
+
+#[test]
+fn test_case_inside_range() {
+    // `case (x) inside` dengan label rentang `[lo:hi]` — termasuk bentuk
+    // `unique case (x) inside` yang sebelumnya tidak terdeteksi (pola dm_csrs
+    // OpenTitan) sehingga isi case di-parse sebagai generate if.
+    let source = r#"
+module tb;
+  int x;
+  logic [2:0] sel, sel2;
+  initial begin
+    x = 10;
+    case (x) inside
+      [1:5]:  sel = 3'd1;
+      [6:12]: sel = 3'd2;
+      default: sel = 3'd7;
+    endcase
+    x = 7;
+    unique case (x) inside
+      [1:5]:  sel2 = 3'd1;
+      [6:12]: sel2 = 3'd2;
+      default: sel2 = 3'd7;
+    endcase
+    #1 $finish;
+  end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 10).unwrap();
+    let (_, sel) = sigs.iter().find(|(n, _)| n == "sel").unwrap();
+    assert_eq!(sel.to_u64(), 2, "10 inside {{[6:12]}} should select 2");
+    let (_, sel2) = sigs.iter().find(|(n, _)| n == "sel2").unwrap();
+    assert_eq!(sel2.to_u64(), 2, "unique case 7 inside {{[6:12]}} should select 2");
+}
+
+#[test]
+fn test_scoped_type_cast_shift() {
+    // Cast tipe scoped `pkg::type'(expr)` diikuti operator shift — sebelumnya
+    // `'('b0001)` tidak ter-parse sebagai cast sehingga selalu block rusak.
+    let source = r#"
+package top_pkg;
+  typedef logic [7:0] tl_dhw_t;
+endpackage
+module tb;
+  import top_pkg::*;
+  logic [7:0] dst_addr_d, req_dst_be_d;
+  always_comb begin
+    req_dst_be_d = top_pkg::tl_dhw_t'('b0001) << dst_addr_d[1:0];
+  end
+  initial begin
+    dst_addr_d = 8'h03;
+    #1 $finish;
+  end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 10).unwrap();
+    let (_, v) = sigs.iter().find(|(n, _)| n == "req_dst_be_d").unwrap();
+    // 8'h01 << 3 = 8'h08 (dst_addr_d[1:0] = 3 setelah #1)
+    assert_eq!(v.to_u64(), 8, "scoped cast + shift should produce 8");
+}
+
+#[test]
+fn test_genvar_for_with_typed_var() {
+    // Generate for dengan tipe var `for (int unsigned i = ...)` — sebelumnya
+    // gagal "expected genvar name" sehingga modul besar terpotong.
+    let source = r#"
+module tb;
+  logic [72:0] addr_hit;
+  if (1) begin : gen_racl_hit
+    for (int unsigned slice_idx = 0; slice_idx < 4; slice_idx++) begin
+      assign addr_hit[slice_idx] = 1'b0;
+    end
+  end
+  initial begin
+    #1 $finish;
+  end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 10).unwrap();
+    let (_, v) = sigs.iter().find(|(n, _)| n == "addr_hit").unwrap();
+    assert_eq!(v.to_u64(), 0, "addr_hit semua bit harus 0");
+}
+
+#[test]
 fn test_automatic_function() {
     let source = r#"
 module tb;

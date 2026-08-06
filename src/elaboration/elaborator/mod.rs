@@ -1825,6 +1825,13 @@ let mut top = match self.modules.remove(&top_name) {
                 if let Some(&width) = self.typedef_map.get(name) {
                     return Ok(width);
                 }
+                // Class handle (UVM dsb.) — tipe VALID, bukan "unknown type".
+                // Class di body module/interface dikumpulkan parser ke
+                // `design.classes` (contoh: `prim_count_if_proxy` di dalam
+                // interface `prim_count_if`). Jangan warn; lebar handle = 64.
+                if self.design.classes.iter().any(|c| c.name == *name) {
+                    return Ok(64);
+                }
                 // Type tidak ditemukan — emit warning dan gunakan lebar 1 agar
                 // elaborasi tetap berlanjut. Type yang hilang biasanya karena
                 // package belum di-import ke scope interface/module ini.
@@ -1869,11 +1876,46 @@ let mut top = match self.modules.remove(&top_name) {
                 }
             }
         }
-        // 3. Typedef package — mis. `mubi4_t'(x)`.
+        // 3. Typedef package — mis. `mubi4_t'(x)`. Lebar dihitung dari range
+        // typedef (`typedef logic [7:0] tl_dhw_t;` → 8) × packed dims tambahan;
+        // `td.dtype` saja hanya berisi base type (Logic → 1).
         for items in self.package_symbols.values() {
             if let Some(PackageItem::Typedef(td)) = items.get(&name) {
-                if let Ok(w) = self.resolve_type_width(&td.dtype) {
+                let w = self.resolve_typedef_width_dims(
+                    &td.dtype,
+                    td.range.as_ref(),
+                    &td.extra_packed_dims,
+                    &self.param_vals,
+                );
+                if w > 0 {
                     return Some(w);
+                }
+            }
+        }
+        // 4. Qualified package member: `top_pkg::tl_dhw_t'(x)` — package_symbols
+        // menyimpan item bare per-package (`pkg → {item → PackageItem}`), jadi
+        // nama full-qualified perlu di-split dulu sebelum lookup.
+        if let Some(idx) = type_name.find("::") {
+            let pkg_sym = Symbol::intern(&type_name[..idx]);
+            let item_sym = Symbol::intern(&type_name[idx + 2..]);
+            if let Some(items) = self.package_symbols.get(&pkg_sym) {
+                if let Some(PackageItem::Param(p)) = items.get(&item_sym) {
+                    if let Some(expr) = &p.default {
+                        if let Ok(v) = const_eval_with_params(expr, &self.param_vals) {
+                            return Some(v as usize);
+                        }
+                    }
+                }
+                if let Some(PackageItem::Typedef(td)) = items.get(&item_sym) {
+                    let w = self.resolve_typedef_width_dims(
+                        &td.dtype,
+                        td.range.as_ref(),
+                        &td.extra_packed_dims,
+                        &self.param_vals,
+                    );
+                    if w > 0 {
+                        return Some(w);
+                    }
                 }
             }
         }

@@ -793,6 +793,10 @@ pub(crate) fn rename_in_expr(expr: Expr, rename_map: &HashMap<Symbol, Symbol>) -
             dtype,
             expr: Box::new(rename_in_expr(*inner, rename_map)),
         },
+        Expr::CastWidth { width, expr: inner } => Expr::CastWidth {
+            width: Box::new(rename_in_expr(*width, rename_map)),
+            expr: Box::new(rename_in_expr(*inner, rename_map)),
+        },
         Expr::MethodCall {
             obj,
             method,
@@ -823,7 +827,12 @@ pub(crate) fn rename_in_expr(expr: Expr, rename_map: &HashMap<Symbol, Symbol>) -
             expr: Box::new(rename_in_expr(*inner, rename_map)),
             items,
         },
-        Expr::ScopedIdent { package, item } => Expr::ScopedIdent { package, item },
+        Expr::ScopedIdent { package, item, .. } => Expr::ScopedIdent {
+            package,
+            item,
+            line: 0,
+            col: 0,
+        },
         Expr::Value(_) | Expr::FillLit(_) | Expr::String(_) | Expr::Null => expr,
         other => other,
     }

@@ -406,6 +406,7 @@ fn expr_width(e: &Expr, declared: &HashMap<Symbol, usize>) -> Option<usize> {
         Expr::Paren(inner) => expr_width(inner, declared),
         Expr::FillLit(_) => Some(1),
         Expr::Cast { expr, .. } => expr_width(expr, declared),
+        Expr::CastWidth { width, .. } => expr_width(width, declared),
         Expr::MemberAccess { .. } => None,
         _ => None,
     }
@@ -459,7 +460,7 @@ fn scan_expr_reads(e: &Expr, reads: &mut HashSet<Symbol>, writes: &mut HashSet<S
                 scan_expr_reads(a, reads, writes);
             }
         }
-        Expr::ScopedIdent { package, item } => {
+        Expr::ScopedIdent { package, item, .. } => {
             reads.insert(*package);
             reads.insert(*item);
         }
@@ -527,6 +528,10 @@ fn scan_expr_reads(e: &Expr, reads: &mut HashSet<Symbol>, writes: &mut HashSet<S
         }
         Expr::Cast { dtype, expr } => {
             reads.insert(*dtype);
+            scan_expr_reads(expr, reads, writes);
+        }
+        Expr::CastWidth { width, expr } => {
+            scan_expr_reads(width, reads, writes);
             scan_expr_reads(expr, reads, writes);
         }
         Expr::Dist { expr, items } => {

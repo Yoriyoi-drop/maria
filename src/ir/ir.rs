@@ -304,6 +304,9 @@ pub enum CaseType {
     Normal,
     CaseX,
     CaseZ,
+    /// `case (x) inside` — label bisa berupa nilai tunggal (equality) atau
+    /// rentang `[lo:hi]` (direpresentasikan sebagai IrExpr::InsideRange).
+    Inside,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -537,6 +540,13 @@ pub enum IrExpr {
     Inside {
         expr: Box<IrExpr>,
         list: Vec<IrExpr>,
+    },
+    /// Range inside `{[lo:hi]}` — nilai dalam rentang inklusif. Dipakai
+    /// runtime (engine) saat `inside {[a:b]}` dengan operan non-konstan.
+    InsideRange {
+        expr: Box<IrExpr>,
+        lo: Box<IrExpr>,
+        hi: Box<IrExpr>,
     },
     Cast {
         width: usize,

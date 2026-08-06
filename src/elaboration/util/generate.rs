@@ -77,6 +77,7 @@ pub(crate) fn expr_location(expr: &Expr) -> (usize, usize) {
         | Expr::Paren(inner)
         | Expr::BitSelect { expr: inner, .. }
         | Expr::Cast { expr: inner, .. }
+        | Expr::CastWidth { expr: inner, .. }
         | Expr::Dist { expr: inner, .. } => expr_location(inner),
         Expr::BinaryOp { lhs, rhs, .. } => {
             let (ll, lc) = expr_location(lhs);
@@ -95,7 +96,7 @@ pub(crate) fn expr_location(expr: &Expr) -> (usize, usize) {
             // dari objek paling dalam (chain `a.b.c` → posisi `a`).
             expr_location(obj)
         }
-        Expr::ScopedIdent { .. } => (0, 0),
+        Expr::ScopedIdent { line, col, .. } => (*line, *col),
     }
 }
 
@@ -766,9 +767,15 @@ fn scope_rename_expr(expr: &Expr, map: &HashMap<Symbol, Symbol>) -> Expr {
             dtype: *dtype,
             expr: Box::new(scope_rename_expr(inner, map)),
         },
-        Expr::ScopedIdent { package, item } => Expr::ScopedIdent {
+        Expr::CastWidth { width, expr: inner } => Expr::CastWidth {
+            width: Box::new(scope_rename_expr(width, map)),
+            expr: Box::new(scope_rename_expr(inner, map)),
+        },
+        Expr::ScopedIdent { package, item, .. } => Expr::ScopedIdent {
             package: *package,
             item: *item,
+            line: 0,
+            col: 0,
         },
     }
 }

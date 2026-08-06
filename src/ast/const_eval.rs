@@ -366,7 +366,8 @@ pub fn const_eval_with_params(
         }
         Expr::Paren(inner) => const_eval_with_params(inner, param_vals),
         Expr::Cast { expr: inner, .. } => const_eval_with_params(inner, param_vals),
-        Expr::ScopedIdent { package, item } => {
+        Expr::CastWidth { expr: inner, .. } => const_eval_with_params(inner, param_vals),
+        Expr::ScopedIdent { package, item, .. } => {
             let qualified = Symbol::intern(&format!("{}::{}", package, item));
             if let Some(&val) = param_vals.get(&qualified) {
                 return Ok(val);
@@ -385,7 +386,16 @@ pub fn const_eval_with_params(
         Expr::MethodCall { .. } => {
             Err("method calls not allowed in constant expression".to_string())
         }
-        Expr::MemberAccess { .. } => {
+        Expr::MemberAccess { obj, field } => {
+            // Struct field lookup via flattened keys `base.field` (mis.
+            // `PartInfo[k].offset`, `hw2reg.key.q`) — dipakai generate if /
+            // konstanta dengan struct localparam array.
+            if let Some(bk) = expr_base_key(obj, param_vals) {
+                let key = format!("{}.{}", bk, field.as_str());
+                if let Some(&v) = param_vals.get(key.as_str()) {
+                    return Ok(v);
+                }
+            }
             Err("member access not allowed in constant expression".to_string())
         }
         Expr::Inside {
@@ -394,7 +404,23 @@ pub fn const_eval_with_params(
         } => {
             let val = const_eval_with_params(inner, param_vals)?;
             for item in range_list {
-                if const_eval_with_params(item, param_vals)? == val {
+                // Range inside `{[a:b], c}` — parser menyisipkan RangeSelect
+                // dengan base literal 0 sebagai penanda rentang [lsb, msb].
+                // HANYA base literal 0 yang dimaknai rentang — slice ekspresi
+                // user (`inside {y[3:0]}`) tetap dievaluasi sebagai bit-slice
+                // agar tidak salah diartikan sebagai rentang.
+                if let Expr::RangeSelect { expr: base, msb, lsb } = item {
+                    if matches!(base.as_ref(), Expr::Value(Value::Decimal(0))) {
+                        // `inside {[a:b]}`: msb=a adalah batas BAWAH, lsb=b batas atas.
+                        let lo = const_eval_with_params(msb, param_vals)?;
+                        let hi = const_eval_with_params(lsb, param_vals)?;
+                        if val >= lo && val <= hi {
+                            return Ok(1);
+                        }
+                    } else if const_eval_with_params(item, param_vals)? == val {
+                        return Ok(1);
+                    }
+                } else if const_eval_with_params(item, param_vals)? == val {
                     return Ok(1);
                 }
             }
@@ -518,5 +544,21 @@ pub fn const_eval_with_params(
             "non-constant expression in parameter context: {:?}",
             expr
         )),
+    }
+}
+
+/// Bangun key lookup untuk base sebuah member access: `name` untuk Ident,
+/// `name[idx]` untuk BitSelect konstanta, `name[r][c]` untuk BitSelect 2D.
+/// Dipakai `const_eval_with_params` pada `Expr::MemberAccess` untuk mencari
+/// key ter-flatten `name[idx].field` di param_vals.
+fn expr_base_key(expr: &Expr, param_vals: &std::collections::HashMap<Symbol, i64>) -> Option<String> {
+    match expr {
+        Expr::Ident { name, .. } => Some(name.as_str().to_string()),
+        Expr::BitSelect { expr: inner, index } => {
+            let base = expr_base_key(inner, param_vals)?;
+            let idx = const_eval_with_params(index, param_vals).ok()?;
+            Some(format!("{}[{}]", base, idx))
+        }
+        _ => None,
     }
 }

@@ -911,17 +911,29 @@ impl Parser {
     pub(crate) fn parse_case_stmt(&mut self) -> Result<Stmt, SimError> {
         let is_casex = self.peek() == &Token::CaseX;
         let is_casez = self.peek() == &Token::CaseZ;
-        let is_case_inside = if self.peek() == &Token::Case {
+        // `inside` dapat muncul dalam dua bentuk:
+        //   `case (x) inside`            — keyword setelah `(expr)`
+        //   `unique/priority case (x) inside` — dipanggil setelah qualifier
+        // Deteksi di depan `case` hanya menangkap bentuk tanpa qualifier;
+        // deteksi setelah `(expr)` menangkap SEMUA bentuk termasuk yang
+        // di-qualifier `unique`/`priority` (mis. dm_csrs OpenTitan).
+        let mut is_case_inside = if self.peek() == &Token::Case {
             let saved = self.pos.get(); self.advance();
             let is_inside = self.peek() == &Token::Inside;
             self.pos.set(saved);
             is_inside
         } else { false };
-        if is_case_inside { self.advance(); self.advance(); }
+        if is_case_inside { self.advance(); }
         else { self.advance(); }
         self.expect(Token::LParen)?;
         let expr = self.parse_expr(0)?;
         self.expect(Token::RParen)?;
+        // Bentuk `case (x) inside` dan `unique case (x) inside`: token `inside`
+        // muncul tepat setelah `(expr)` — konsumsi di sini.
+        if !is_case_inside && self.peek() == &Token::Inside {
+            self.advance();
+            is_case_inside = true;
+        }
         let mut items = Vec::new();
         let mut default = None;
         loop {
@@ -934,7 +946,24 @@ impl Parser {
             } else {
                 let mut labels = Vec::new();
                 loop {
-                    labels.push(self.parse_expr(0)?);
+                    if is_case_inside && self.peek() == &Token::LBrack {
+                        // Label range dalam case-inside: `[lo:hi]` (bukan bit-select).
+                        // Representasikan sebagai RangeSelect dengan base 0 —
+                        // elaborator CaseInside mengenali pola ini dan mengubahnya
+                        // menjadi IrExpr::InsideRange.
+                        self.advance();
+                        let lo = self.parse_expr(0)?;
+                        self.expect(Token::Colon)?;
+                        let hi = self.parse_expr(0)?;
+                        self.expect(Token::RBrack)?;
+                        labels.push(Expr::RangeSelect {
+                            expr: Box::new(Expr::Value(Value::Decimal(0))),
+                            msb: Box::new(lo),
+                            lsb: Box::new(hi),
+                        });
+                    } else {
+                        labels.push(self.parse_expr(0)?);
+                    }
                     if self.peek() == &Token::Comma { self.advance(); } else { break; }
                 }
                 self.expect(Token::Colon)?;

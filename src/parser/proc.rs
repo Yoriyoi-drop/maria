@@ -826,6 +826,37 @@ impl Parser {
                 if self.peek() == &Token::GenVar {
                     self.advance();
                 }
+                // Skip optional tipe var: `for (int i = ...)`, `for (int unsigned
+                // i = ...)`, `for (logic [3:0] i = ...)` — pola umum di reg_top
+                // OpenTitan. Sebelumnya `int unsigned slice_idx` gagal dengan
+                // "expected genvar name" → modul besar terpotong.
+                while matches!(
+                    self.peek(),
+                    Token::Int
+                        | Token::Integer
+                        | Token::Bit
+                        | Token::Logic
+                        | Token::Reg
+                        | Token::Byte
+                        | Token::Shortint
+                        | Token::Longint
+                        | Token::Time
+                        | Token::Signed
+                        | Token::Unsigned
+                ) {
+                    self.advance();
+                }
+                // Range tipe di generate for: `for (logic [7:0] i = ...)`.
+                // Urutan token: `[` msb `:` lsb `]` — parse msb dulu, baru
+                // harapkan Colon (sebelumnya expect(Colon) langsung setelah
+                // LBrack → selalu gagal karena token berikutnya adalah msb).
+                if self.peek() == &Token::LBrack {
+                    self.advance();
+                    let _ = self.parse_expr(0)?;
+                    self.expect(Token::Colon)?;
+                    let _ = self.parse_expr(0)?;
+                    self.expect(Token::RBrack)?;
+                }
                 let var_tok = self.peek().clone();
                 let var = match &var_tok {
                     Token::Ident(n) => {

@@ -153,12 +153,7 @@ impl SimulationEngine {
         for (item_idx, case_item) in items.iter().enumerate() {
             let mut item_matched = false;
             for pat in &case_item.labels {
-                let pat_val = self.evaluate_expr(pat)?;
-                let eq = match case_type {
-                    CaseType::CaseX => case_val.casex_eq(&pat_val),
-                    CaseType::CaseZ => case_val.casez_eq(&pat_val),
-                    CaseType::Normal => case_val.eq(&pat_val),
-                };
+                let eq = self.case_label_match(case_type, &case_val, pat)?;
                 if eq {
                     self.record_branch_hit(case_key, &format!("item{}_matched", item_idx));
                     if !self.evaluate_block_with_delay_fork(&case_item.body, fork_id)? {
@@ -188,6 +183,34 @@ impl SimulationEngine {
         Ok(true)
     }
 
+    /// Cek apakah nilai case cocok dengan satu label. Untuk `CaseType::Inside`,
+    /// label berupa `IrExpr::InsideRange` dicocokkan dengan rentang inklusif;
+    /// label lain memakai equality biasa.
+    fn case_label_match(
+        &mut self,
+        case_type: &CaseType,
+        case_val: &LogicVec,
+        pat: &IrExpr,
+    ) -> Result<bool, SimError> {
+        match (case_type, pat) {
+            (CaseType::Inside, IrExpr::InsideRange { lo, hi, .. }) => {
+                let lo_v = self.evaluate_expr(lo)?.to_u64();
+                let hi_v = self.evaluate_expr(hi)?.to_u64();
+                let v = case_val.to_u64();
+                Ok(v >= lo_v.min(hi_v) && v <= lo_v.max(hi_v))
+            }
+            _ => {
+                let pat_val = self.evaluate_expr(pat)?;
+                let eq = match case_type {
+                    CaseType::CaseX => case_val.casex_eq(&pat_val),
+                    CaseType::CaseZ => case_val.casez_eq(&pat_val),
+                    CaseType::Normal | CaseType::Inside => case_val.eq(&pat_val),
+                };
+                Ok(eq)
+            }
+        }
+    }
+
     /// Evaluate a Case statement without delay/fork (stmt context).
     pub(crate) fn evaluate_case_stmt(
         &mut self,
@@ -207,12 +230,7 @@ impl SimulationEngine {
         for (item_idx, case_item) in items.iter().enumerate() {
             let mut item_matched = false;
             for pat in &case_item.labels {
-                let pat_val = self.evaluate_expr(pat)?;
-                let eq = match case_type {
-                    CaseType::CaseX => case_val.casex_eq(&pat_val),
-                    CaseType::CaseZ => case_val.casez_eq(&pat_val),
-                    CaseType::Normal => case_val.eq(&pat_val),
-                };
+                let eq = self.case_label_match(case_type, &case_val, pat)?;
                 if eq {
                     self.record_branch_hit(case_key, &format!("item{}_matched", item_idx));
                     self.evaluate_stmt_block(&case_item.body)?;

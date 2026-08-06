@@ -350,8 +350,21 @@ fn run(cli: Cli) -> Result<(), SimError> {
 
     // Combine all sources (parallel preprocessing for many files)
     // ── MICD: hasil preprocess di-cache per file (konten-hash). File yang
-    // tidak berubah di-reuse → preprocessor di-skip. ──
-    let mut micd = maria::micd::MicdDatabase::open(&maria::micd::MicdDatabase::default_root());
+    // tidak berubah di-reuse → preprocessor di-skip. Database scoped per
+    // project (ProjectID) agar tidak tercampur antar project. ──
+    let micd_root = maria::micd::MicdDatabase::default_root();
+    let proot = std::env::current_dir().unwrap_or_default();
+    let pid = maria::micd::MicdDatabase::project_id(
+        &proot,
+        &sources.iter().map(PathBuf::from).collect::<Vec<_>>(),
+        &cli.incdirs.iter().map(PathBuf::from).collect::<Vec<_>>(),
+        &cli.defines
+            .iter()
+            .filter_map(|d| d.split_once('='))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect::<Vec<_>>(),
+    );
+    let mut micd = maria::micd::MicdDatabase::open_project(&micd_root, &pid);
 
     let mut combined = String::new();
     let mut design_timescale = None;
@@ -481,12 +494,36 @@ fn run(cli: Cli) -> Result<(), SimError> {
                     size,
                     include_hashes,
                 );
+                // verify.mdb: jalur legacy juga menandai file terverifikasi
+                // (parse) agar store lengkap walau tanpa `--fast`.
+                let mut v = maria::micd::VerifyResult::fresh(h);
+                v.parse_ok = true;
+                v.set_check(
+                    maria::micd::VerifyCheckKind::Parse,
+                    maria::micd::CheckResult::pass(0),
+                );
+                micd.set_verify(v);
             }
         }
     }
     if micd_reused > 0 || !fresh_results.is_empty() {
+        let changed_before = micd.changed;
         if let Err(e) = micd.save() {
             eprintln!("[MICD] save warning: {}", e);
+        }
+        // Kritik 14 db.md: rekam profil build legacy (stats.mdb). Jalur legacy
+        // tidak punya SessionTiming — isi yang tersedia saja.
+        let mut prof = micd.stats_db.next_profile();
+        prof.files = micd.files.len();
+        prof.changed_files = changed_before;
+        prof.dirty_nodes = changed_before;
+        prof.restored_designs = micd_reused;
+        prof.cache_hits = micd_reused;
+        prof.cache_misses = micd.files.len().saturating_sub(micd_reused);
+        prof.peak_mem_kb = maria::micd::peak_rss_kb();
+        micd.set_stats(prof);
+        if let Err(e) = micd.save() {
+            eprintln!("[MICD] stats save warning: {}", e);
         }
     }
 
@@ -656,6 +693,117 @@ fn run(cli: Cli) -> Result<(), SimError> {
                 "warning: library file '{}' preprocess error: {}",
                 libfile, e
             ),
+        }
+    }
+
+    // ── MICD tanpa `--fast`: lengkapi store yang tidak diisi jalur preproc-only. ──
+    // Jalur `run` (legacy) hanya menulis preproc/metadata/stats. Agar
+    // types.mdb / symbol.mdb / graph.mdb tetap ada (sejalan dengan `--fast`),
+    // populasikan dari design yang sudah di-parse. Atribusi simbol → file
+    // lewat scan teks sumber (`module X`, `package X`, dst) karena AST legacy
+    // tidak membawa info file.
+    {
+        use maria::ast::ModuleItem;
+        let mut syms: Vec<(String, String)> = Vec::new();
+        for m in &design.modules {
+            syms.push((m.name.to_string(), "module".to_string()));
+        }
+        for p in &design.packages {
+            syms.push((p.name.to_string(), "package".to_string()));
+        }
+        for i in &design.interfaces {
+            syms.push((i.name.to_string(), "interface".to_string()));
+        }
+        for c in &design.classes {
+            syms.push((c.name.to_string(), "class".to_string()));
+        }
+        let mut def_file: std::collections::HashMap<String, PathBuf> = std::collections::HashMap::new();
+        let mut all_src: Vec<PathBuf> = sources.iter().map(PathBuf::from).collect();
+        all_src.extend(cli.libfiles.iter().map(PathBuf::from));
+        for src in &all_src {
+            if let Ok(text) = std::fs::read_to_string(src) {
+                for (name, kind) in &syms {
+                    if def_file.contains_key(name) {
+                        continue;
+                    }
+                    if text.contains(&format!("{} {}", kind, name)) {
+                        def_file.insert(name.clone(), src.clone());
+                    }
+                }
+            }
+        }
+        let fallback = sources.first().map(PathBuf::from).unwrap_or_default();
+        for m in &design.modules {
+            let mut sig = 0u64;
+            sig = sig
+                .wrapping_mul(31)
+                .wrapping_add(maria::cache::compute_checksum(m.name.as_str().as_bytes()));
+            for p in &m.ports {
+                sig = sig
+                    .wrapping_mul(31)
+                    .wrapping_add(maria::cache::compute_checksum(p.name.as_str().as_bytes()));
+            }
+            for pr in &m.params {
+                sig = sig
+                    .wrapping_mul(31)
+                    .wrapping_add(maria::cache::compute_checksum(pr.name.as_str().as_bytes()));
+            }
+            micd.set_module_type(m.name.to_string(), sig);
+            let file = def_file
+                .get(m.name.as_str())
+                .cloned()
+                .unwrap_or_else(|| fallback.clone());
+            micd.add_symbol(m.name.to_string(), "module".to_string(), file.clone());
+        }
+        for (name, kind) in &syms {
+            let file = def_file
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| fallback.clone());
+            // Definisikan di graph (level simbol) → graph.mdb selalu terisi
+            // walau tidak ada instance/import lintas file.
+            micd.set_symbol_def(name.clone(), file.clone());
+            if kind != "module" {
+                micd.add_symbol(name.clone(), kind.clone(), file.clone());
+            }
+        }
+        // graph.mdb: file deps via instance + import.
+        for m in &design.modules {
+            let file = def_file
+                .get(m.name.as_str())
+                .cloned()
+                .unwrap_or_else(|| fallback.clone());
+            let mut deps: Vec<PathBuf> = Vec::new();
+            for item in &m.items {
+                match item {
+                    ModuleItem::Instance(inst) => {
+                        if let Some(f) = def_file.get(inst.module_name.as_str()) {
+                            if *f != file && !deps.contains(f) {
+                                deps.push(f.clone());
+                            }
+                            micd.set_symbol_def(inst.module_name.to_string(), f.clone());
+                            micd.add_symbol_use(file.clone(), inst.module_name.to_string());
+                        }
+                    }
+                    ModuleItem::Import { package, item } => {
+                        if let Some(f) = def_file.get(package.as_str()) {
+                            if *f != file && !deps.contains(f) {
+                                deps.push(f.clone());
+                            }
+                            if item.as_str() != "*" {
+                                micd.add_symbol_use(file.clone(), item.to_string());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if !deps.is_empty() {
+                micd.set_file_deps(file, deps);
+            }
+        }
+        if let Err(e) = micd.save() {
+            eprintln!("[MICD] symbol/type/graph save warning: {}", e);
         }
     }
 
@@ -1362,8 +1510,17 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     // Otomatis (bukan flag tambahan): restore AST/combined-source file yang
     // tidak berubah → lex/parse di-skip. Di-skip hanya saat --recompile.
     if !cli.recompile {
+        // MICD scoped per project (ProjectID): OpenTitan dan test/counter.sv
+        // tidak pernah berbagi database → tidak ada kontaminasi lintas project.
         let micd_root = maria::micd::MicdDatabase::default_root();
-        let db = maria::micd::MicdDatabase::open(&micd_root);
+        let proot = std::env::current_dir().unwrap_or_default();
+        let pid = maria::micd::MicdDatabase::project_id(
+            &proot,
+            &session.config.sources,
+            &session.config.incdirs,
+            &session.config.defines,
+        );
+        let db = maria::micd::MicdDatabase::open_project(&micd_root, &pid);
         let t0 = std::time::Instant::now();
         let restored = session.attach_micd(db);
         if restored > 0 && !cli.quiet && !anim_active(&anim) {

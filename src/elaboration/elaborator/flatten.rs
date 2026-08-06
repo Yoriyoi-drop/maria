@@ -817,6 +817,11 @@ impl Elaborator {
                     .map(|e| self.translate_expr(e, map_sig))
                     .collect(),
             },
+            IrExpr::InsideRange { expr, lo, hi } => IrExpr::InsideRange {
+                expr: Box::new(self.translate_expr(expr, map_sig)),
+                lo: Box::new(self.translate_expr(lo, map_sig)),
+                hi: Box::new(self.translate_expr(hi, map_sig)),
+            },
             IrExpr::Cast { width, expr } => IrExpr::Cast {
                 width: *width,
                 expr: Box::new(self.translate_expr(expr, map_sig)),

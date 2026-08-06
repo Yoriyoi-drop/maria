@@ -829,6 +829,13 @@ impl CompileSession {
                 self.prev_checksums
                     .insert(path.clone(), self.metadata_fingerprint(&path));
                 self.prev_combined_sources.insert(path.clone(), combined);
+                // Touch LRU (Kritik 6 db.md): file yang di-restore dianggap
+                // baru diakses → tidak di-evict GC.
+                if let Some(h) = db.files.get(&path).map(|m| m.content_hash) {
+                    db.touch_ast(&path, h);
+                    db.touch_preproc(&path, h);
+                    db.touch_verify(h);
+                }
                 restored += 1;
                 restored_paths.insert(path);
             }
@@ -957,6 +964,8 @@ impl CompileSession {
         let mut symbols: Vec<(String, String, PathBuf)> = Vec::new();
         let mut verify_results: Vec<micd::VerifyResult> = Vec::new();
         let mut type_entries: Vec<(String, u64)> = Vec::new();
+        let mut symbol_defs: Vec<(String, PathBuf)> = Vec::new();
+        let mut symbol_uses: Vec<(PathBuf, String)> = Vec::new();
         if full_write {
             for (path, design) in &self.prev_designs {
                 for m in &design.modules {
@@ -969,16 +978,43 @@ impl CompileSession {
                     symbols.push((c.name.to_string(), "class".to_string(), path.clone()));
                 }
                 let content_hash = hash_by_path.get(path).copied().unwrap_or(0);
+                // Multi-level hash (Kritik 1 db.md): AST hash untuk reuse saat
+                // content hash berubah tapi AST identik (mis. komentar).
+                let is_restored = self.micd_restored_paths.contains(path);
+                let ast_hash = if is_restored {
+                    self.micd
+                        .as_ref()
+                        .and_then(|d| d.get_verify(content_hash))
+                        .map(|v| v.ast_hash)
+                        .unwrap_or(0)
+                } else {
+                    micd::serialize_design(design)
+                        .map(|b| compute_checksum(&b))
+                        .unwrap_or(0)
+                };
                 let mut v = micd::VerifyResult::fresh(content_hash);
+                v.ast_hash = ast_hash;
                 v.parse_ok = true;
                 v.parse_ms = self
                     .timing
                     .preprocess_ms
                     .saturating_add(self.timing.lex_ms)
                     .saturating_add(self.timing.parse_ms);
+                // Kritik 9: hasil verifikasi dipisah per kategori.
+                v.set_check(
+                    micd::VerifyCheckKind::Parse,
+                    micd::CheckResult::pass(ast_hash),
+                );
+                v.set_check(
+                    micd::VerifyCheckKind::Elaborate,
+                    micd::CheckResult::fresh(),
+                );
                 verify_results.push(v);
 
-                // types.mdb: signature module (deteksi perubahan struktural).
+                // types.mdb: signature module (deteksi perubahan struktural)
+                // sekaligus semantic hash (Kritik 1 — reuse bila signature
+                // tipe/port/param tidak berubah).
+                let mut semantic = 0u64;
                 for m in &design.modules {
                     let mut sig = 0u64;
                     sig = sig
@@ -994,7 +1030,39 @@ impl CompileSession {
                             .wrapping_mul(31)
                             .wrapping_add(compute_checksum(pr.name.as_str().as_bytes()));
                     }
+                    semantic = semantic.wrapping_mul(31).wrapping_add(sig);
                     type_entries.push((m.name.to_string(), sig));
+                }
+                if let Some(v) = verify_results.last_mut() {
+                    v.semantic_hash = semantic;
+                }
+            }
+            // Kritik 2 db.md: dependency level simbol. Definisikan simbol yang
+            // ada di file ini + catat simbol yang dipakai (instance & import
+            // item). Wildcard import ("*") dilewati — dependensinya sudah
+            // ditangkap oleh edge file-level. Dikumpulkan di sini, diterapkan
+            // ke db di Fase 3.
+            let sym_to_file: HashMap<Symbol, PathBuf> = self
+                .module_index
+                .iter()
+                .map(|(name, _kind, meta)| (name, meta.file.clone()))
+                .collect();
+            for (name, kind, meta) in self.module_index.iter() {
+                if kind != EntryKind::Module {
+                    continue;
+                }
+                symbol_defs.push((name.as_str().to_string(), meta.file.clone()));
+                for inst in &meta.instances {
+                    symbol_uses.push((meta.file.clone(), inst.as_str().to_string()));
+                }
+                for (_pkg, item) in &meta.imports {
+                    if item.as_str() == "*" {
+                        continue;
+                    }
+                    symbol_uses.push((meta.file.clone(), item.as_str().to_string()));
+                    if let Some(def_file) = sym_to_file.get(item) {
+                        symbol_defs.push((item.as_str().to_string(), def_file.clone()));
+                    }
                 }
             }
         }
@@ -1004,6 +1072,9 @@ impl CompileSession {
         if std::env::var("MARIA_DEBUG_MICD").is_ok() {
             eprintln!("[MICD-DBG] gather loop = {:?}", t_gather.elapsed());
         }
+        // MICD adalah cache per-project: file aktif sesi ini (untuk prune
+        // file lintas-project yang menempel di root yang sama).
+        let active: Vec<PathBuf> = items.iter().map(|(p, _, _, _, _, _, _, _)| p.clone()).collect();
         let t_apply = std::time::Instant::now();
         for (path, content_hash, size, deps, status, combined, design_bytes, include_hashes) in items {
             db.record_file(path.clone(), content_hash, deps, status, flags, size, include_hashes);
@@ -1034,6 +1105,20 @@ impl CompileSession {
             for (file, deps) in &file_deps {
                 db.set_file_deps(file.clone(), deps.clone());
             }
+            // Kritik 2: dependency level simbol.
+            for (name, file) in symbol_defs {
+                db.set_symbol_def(name, file);
+            }
+            for (file, name) in symbol_uses {
+                db.add_symbol_use(file, name);
+            }
+        }
+
+        // MICD adalah cache per-project: buang file yang bukan bagian dari
+        // sources sesi ini (akumulasi run lain di root yang sama = sampah).
+        let pruned = db.prune_stale(&active);
+        if std::env::var("MARIA_DEBUG_MICD").is_ok() {
+            eprintln!("[MICD-DBG] prune_stale removed {} file(s)", pruned);
         }
         if std::env::var("MARIA_DEBUG_MICD").is_ok() {
             eprintln!("[MICD-DBG] apply loop = {:?}", t_apply.elapsed());
@@ -1053,6 +1138,31 @@ impl CompileSession {
                 stats.snapshot_id = id;
             }
         }
+
+        // Kritik 14 db.md: rekam profil build ke stats.mdb (save kedua ringan,
+        // hanya menulis stats.mdb).
+        let t_stats = std::time::Instant::now();
+        let mut prof = db.stats_db.next_profile();
+        prof.total_ms = self.timing.total_ms;
+        prof.preprocess_ms = self.timing.preprocess_ms;
+        prof.lex_ms = self.timing.lex_ms;
+        prof.parse_ms = self.timing.parse_ms;
+        prof.elaborate_ms = self.timing.elab_ms;
+        prof.save_ms = t_save.elapsed().as_millis() as u64;
+        prof.files = db.files.len();
+        prof.changed_files = built_changed;
+        prof.dirty_nodes = built_changed;
+        prof.restored_designs = self.micd_restored;
+        prof.cache_hits = self.micd_restored;
+        prof.cache_misses = db.files.len().saturating_sub(self.micd_restored);
+        prof.peak_mem_kb = micd::peak_rss_kb();
+        prof.snapshot_id = stats.snapshot_id;
+        db.set_stats(prof);
+        let _ = db.save().map_err(|e| e.to_string())?;
+        if std::env::var("MARIA_DEBUG_MICD").is_ok() {
+            eprintln!("[MICD-DBG] stats save = {:?}", t_stats.elapsed());
+        }
+
         self.micd_restored = 0;
         Ok(Some(stats))
     }

@@ -137,7 +137,7 @@ pub fn eval_expr(
                 Err(format!("'{}' not found", name.as_str()))
             }
         }
-        Expr::ScopedIdent { package, item } => {
+        Expr::ScopedIdent { package, item, .. } => {
             let qname = Symbol::intern(&format!("{}::{}", package.as_str(), item.as_str()));
             if let Some(&v) = ctx.scalars.get(&qname) {
                 Ok(CVal::Scalar(v))
@@ -262,6 +262,7 @@ pub fn eval_expr(
             Ok(CVal::Array(vec![inner; c as usize]))
         }
         Expr::Cast { expr, .. } => eval_expr(expr, ctx, cur_pkg),
+        Expr::CastWidth { expr, .. } => eval_expr(expr, ctx, cur_pkg),
         Expr::FuncCall { name, args } => eval_func(name.as_str(), args, ctx, cur_pkg),
         Expr::MemberAccess { .. } => Err("member access in const expr".to_string()),
         _ => Err("unsupported const expr".to_string()),
@@ -294,7 +295,7 @@ fn eval_func(
             // termasuk nested struct/typedef dan range eksplisit.
             let type_name: Option<(Option<&str>, &str)> = match arg {
                 Expr::Ident { name, .. } => Some((None, name.as_str())),
-                Expr::ScopedIdent { package, item } => Some((Some(package.as_str()), item.as_str())),
+                Expr::ScopedIdent { package, item, .. } => Some((Some(package.as_str()), item.as_str())),
                 _ => None,
             };
             if let Some((pkg_opt, type_name)) = type_name {

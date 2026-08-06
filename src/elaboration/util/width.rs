@@ -197,6 +197,14 @@ pub fn compute_expr_width(
             }
             compute_expr_width(obj, signal_map, signals, param_vals, package_symbols)
         }
+        // Cast dengan width dari ekspresi: `size'(expr)` (mis. `$clog2(N)'(x)`)
+        // — lebar cast = lebar ekspresi width-nya.
+        Expr::CastWidth { width, .. } => {
+            if let Ok(v) = const_eval_with_params(width, param_vals) {
+                return Ok(v.unsigned_abs().max(1) as usize);
+            }
+            compute_expr_width(width, signal_map, signals, param_vals, package_symbols)
+        }
         Expr::Cast { dtype, .. } => match crate::elaboration::util::parse_type_spec_str(dtype.as_str()) {
             Some(dt) => match dt {
                 DataType::UserDefined(name) => {
@@ -231,7 +239,7 @@ pub fn compute_expr_width(
         Expr::MethodCall { .. } | Expr::StreamingConcat { .. } | Expr::Dist { .. } => {
             Err("width not computable for this expression type".to_string())
         }
-        Expr::ScopedIdent { package, item } => {
+        Expr::ScopedIdent { package, item, .. } => {
             // Enum member / konstanta package yang di-flatten ke param_vals
             // sebagai qualified `pkg::item` (build_pkg_param_ctx). Contoh nyata
             // OpenTitan: `prim_mubi_pkg::MuBi4False` sebagai argumen port.
@@ -365,6 +373,7 @@ pub fn eval_width_aware_param(
             }
         }
         Expr::Cast { expr: inner, .. } => eval_width_aware_param(inner, signal_map, signals, effective_params, package_symbols),
+        Expr::CastWidth { width, .. } => eval_width_aware_param(width, signal_map, signals, effective_params, package_symbols),
         _ => None,
     }
 }

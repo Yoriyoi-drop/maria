@@ -72,9 +72,20 @@ pub enum Expr {
         dtype: Symbol,
         expr: Box<Expr>,
     },
+    /// Cast dengan width dari ekspresi: `size'(expr)` — mis. `$clog2(N)'(x)`
+    /// (casting_type `constant_primary` per LRM 1800). Parser postfix membuat
+    /// variant ini saat menemukan `Quote` setelah ekspresi umum (bukan nama
+    /// tipe / literal). Elaborator mengevaluasi width via const_eval.
+    CastWidth {
+        width: Box<Expr>,
+        expr: Box<Expr>,
+    },
     ScopedIdent {
         package: Symbol,
         item: Symbol,
+        /// Posisi source (`pkg::item`) untuk diagnostic col/line.
+        line: usize,
+        col: usize,
     },
     Dist {
         expr: Box<Expr>,

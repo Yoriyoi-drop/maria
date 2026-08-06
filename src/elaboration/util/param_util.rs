@@ -122,5 +122,53 @@ pub fn resolve_param_values_with_ctx(
         };
         vals.insert(param.name, val);
     }
+
+    // ── Localparam ARRAY: flatten keys `name[i]` / `name[r][c]` ──
+    // Agar ekspresi konstanta `RhoOffset[x][y]`, `RC[rnd]`,
+    // `SeedInfoPageSel[idx]` bisa di-fold selama generate expansion
+    // (design-level pass), keys array di-flatten ke nilai skalar DI SINI —
+    // sebelum expand_all_generates memakai param_vals ini. Dulu flatten
+    // hanya dilakukan di elaborate_module (setelah generate expansion),
+    // sehingga const_eval gagal dan generate-if/for meleset.
+    let mut array_srcs: Vec<(Symbol, Vec<Expr>)> = Vec::new();
+    for param in collect_body_params(module) {
+        if let Some(Expr::Concat(elems)) = &param.default {
+            if elems.len() > 1 {
+                array_srcs.push((param.name, elems.clone()));
+            }
+        }
+    }
+    for param in &module.params {
+        if let Some(Expr::Concat(elems)) = &param.default {
+            if elems.len() > 1 && !array_srcs.iter().any(|(n, _)| *n == param.name) {
+                array_srcs.push((param.name, elems.clone()));
+            }
+        }
+    }
+    for (name, elems) in array_srcs {
+        let is_2d = elems.iter().all(|e| matches!(e, Expr::Concat(_)));
+        let mut flat_elems: Vec<Expr> = Vec::new();
+        if is_2d {
+            for e in &elems {
+                if let Expr::Concat(row) = e {
+                    flat_elems.extend(row.iter().cloned());
+                }
+            }
+        } else {
+            flat_elems.extend(elems.iter().cloned());
+        }
+        for (fi, e) in flat_elems.iter().enumerate() {
+            if let Ok(v) = const_eval_with_params(e, &vals) {
+                let key = if is_2d {
+                    let cols = flat_elems.len() / elems.len();
+                    format!("{}[{}][{}]", name.as_str(), fi / cols, fi % cols)
+                } else {
+                    format!("{}[{}]", name.as_str(), fi)
+                };
+                vals.insert(Symbol::intern(&key), v);
+            }
+        }
+    }
+
     Ok(vals)
 }

@@ -76,6 +76,9 @@ pub struct MetadataManifest {
     pub compiler_version: String,
     /// Waktu pembuatan database.
     pub created_ns: u64,
+    /// Versi skema database (Kritik 3 db.md). Berubah → seluruh database
+    /// lama dianggap tidak kompatibel dan dibangun ulang dari kosong.
+    pub schema_version: u64,
 }
 
 // ─── Tests ───

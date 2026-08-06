@@ -970,16 +970,105 @@ impl Elaborator {
                 expr,
                 items,
                 default,
-            } => self.elaborate_stmt(
-                &Stmt::Case {
-                    expr: expr.clone(),
-                    items: items.clone(),
-                    default: default.clone(),
-                },
-                signal_map,
-                known_modules,
-                signals,
-            ),
+            } => {
+                // `case (x) inside`: label bisa berupa nilai tunggal (equality)
+                // atau rentang `[lo:hi]` (di-parse sebagai RangeSelect ber-base 0).
+                // Jalankan dulu const-fold dengan pola yang sama seperti Case;
+                // jika gagal, buat IrStmt::Case dengan CaseType::Inside.
+                if let Ok(case_val) = const_eval_with_params(expr, &self.param_vals) {
+                    let mut matched_body: Option<&Stmt> = None;
+                    for item in items {
+                        for label in &item.labels {
+                            if let Some((lo, hi)) = inside_range_bounds(label) {
+                                // Label rentang: cocok jika lo <= case_val <= hi.
+                                if let (Ok(lo_v), Ok(hi_v)) = (
+                                    const_eval_with_params(lo, &self.param_vals),
+                                    const_eval_with_params(hi, &self.param_vals),
+                                ) {
+                                    let (l, h) = (lo_v.min(hi_v), lo_v.max(hi_v));
+                                    if case_val >= l && case_val <= h {
+                                        matched_body = Some(&item.stmt);
+                                        break;
+                                    }
+                                }
+                                continue;
+                            }
+                            let label_val = const_eval_with_params(label, &self.param_vals);
+                            if let Ok(lv) = label_val {
+                                if lv == case_val {
+                                    matched_body = Some(&item.stmt);
+                                    break;
+                                }
+                            } else if let Expr::Value(v) = label {
+                                let lv = value_to_i64(v);
+                                if lv == case_val {
+                                    matched_body = Some(&item.stmt);
+                                    break;
+                                }
+                            }
+                        }
+                        if matched_body.is_some() {
+                            break;
+                        }
+                    }
+                    match matched_body {
+                        Some(body) => self.elaborate_stmt(body, signal_map, known_modules, signals),
+                        None => {
+                            if let Some(def) = default {
+                                self.elaborate_stmt(def, signal_map, known_modules, signals)
+                            } else {
+                                Ok(IrStmt::Block { stmts: vec![] })
+                            }
+                        }
+                    }
+                } else {
+                    let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                    let mut ir_items = Vec::new();
+                    for item in items {
+                        let mut labels = Vec::new();
+                        for label in &item.labels {
+                            if let Some((lo, hi)) = inside_range_bounds(label) {
+                                // Rentang `[lo:hi]` → IrExpr::InsideRange agar runtime
+                                // mencocokkan dengan perbandingan rentang.
+                                labels.push(IrExpr::InsideRange {
+                                    expr: Box::new(ir_expr.clone()),
+                                    lo: Box::new(self.elaborate_expr(lo, signal_map, signals)?),
+                                    hi: Box::new(self.elaborate_expr(hi, signal_map, signals)?),
+                                });
+                            } else {
+                                labels.push(self.elaborate_expr(label, signal_map, signals)?);
+                            }
+                        }
+                        let body = match &*item.stmt {
+                            Stmt::Block { stmts } => self.elaborate_stmt_block(
+                                stmts,
+                                signal_map,
+                                known_modules,
+                                signals,
+                            )?,
+                            other => self.elaborate_stmt_block(
+                                std::slice::from_ref(other),
+                                signal_map,
+                                known_modules,
+                                signals,
+                            )?,
+                        };
+                        ir_items.push(IrCaseItem { labels, body });
+                    }
+                    let ir_default = match default {
+                        Some(d) => {
+                            vec![self.elaborate_stmt(d, signal_map, known_modules, signals)?]
+                        }
+                        None => vec![],
+                    };
+                    Ok(IrStmt::Case {
+                        case_type: CaseType::Inside,
+                        expr: ir_expr,
+                        items: ir_items,
+                        default: ir_default,
+                    })
+                }
+            }
             Stmt::UniqueIf {
                 cond,
                 true_branch,
@@ -1432,7 +1521,9 @@ impl Elaborator {
                 // Nested member access lvalue (`hw2reg.val.d = x`): kumpulkan
                 // chain field (dari luar ke dalam), resolve base signal, lalu
                 // akumulasi offset berjenjang via struct_fields + typedef_field_map.
-                if let Some((base_name, chain)) = Self::collect_member_chain(obj, *field) {
+                if let Some((base_name, chain)) =
+                    Self::collect_member_chain(obj, *field, &self.param_vals)
+                {
                     if let Some(&base_sid) = signal_map.get(base_name.as_str()) {
                         let base_info = &signals[base_sid];
                         if !base_info.struct_fields.is_empty() {
@@ -1569,8 +1660,14 @@ impl Elaborator {
     /// Kumpulkan chain member access `a.b.c` → (nama signal base, urutan step
     /// dari luar ke dalam). Contoh: `hw2reg.val.d` → ("hw2reg", [val, d]);
     /// `reg2hw.key_share0[0].qe` → ("reg2hw", [key_share0, Index(0), qe]).
-    /// Index konstanta (genvar sudah di-substitute saat generate expansion).
-    fn collect_member_chain(obj: &Expr, leaf_field: Symbol) -> Option<(String, Vec<ChainStep>)> {
+    /// Index konstanta (genvar sudah di-substitute saat generate expansion),
+    /// dievaluasi via `const_eval_with_params` agar ekspresi seperti `31-i`
+    /// (sudah menjadi `31-0`, `31-1`, …) ikut ter-fold.
+    fn collect_member_chain(
+        obj: &Expr,
+        leaf_field: Symbol,
+        param_vals: &std::collections::HashMap<Symbol, i64>,
+    ) -> Option<(String, Vec<ChainStep>)> {
         let mut chain = vec![ChainStep::Field(leaf_field)];
         let mut cur = obj;
         loop {
@@ -1583,7 +1680,7 @@ impl Elaborator {
                     cur = inner;
                 }
                 Expr::BitSelect { expr: inner, index } => {
-                    if let Ok(idx) = const_eval_simple(index) {
+                    if let Ok(idx) = const_eval_with_params(index, param_vals) {
                         chain.push(ChainStep::Index(idx));
                         cur = inner;
                     } else {
@@ -1606,4 +1703,40 @@ impl Elaborator {
 enum ChainStep {
     Field(Symbol),
     Index(i64),
+}
+
+/// Deteksi label rentang `[lo:hi]` pada case-inside. Parser merepresentasikan
+/// rentang ini sebagai `RangeSelect` dengan base `Value::Decimal(0)` (pola
+/// sentinel). Mengembalikan `(lo, hi)` jika cocok.
+fn inside_range_bounds(label: &Expr) -> Option<(&Expr, &Expr)> {
+    if let Expr::RangeSelect { expr, msb, lsb } = label {
+        if matches!(&**expr, Expr::Value(Value::Decimal(0))) {
+            return Some((msb, lsb));
+        }
+    }
+    None
+}
+
+/// Konversi literal `Expr::Value` menjadi i64 (pola yang sama seperti const-fold
+/// case biasa). Non-numerik mengembalikan 0.
+fn value_to_i64(v: &Value) -> i64 {
+    match v {
+        Value::Decimal(d) => *d,
+        Value::Hex { bits, .. } => i64::from_str_radix(
+            bits.trim_start_matches("0x").trim_start_matches("0X"),
+            16,
+        )
+        .unwrap_or(0),
+        Value::Binary { bits, .. } => i64::from_str_radix(
+            bits.trim_start_matches("0b").trim_start_matches("0B"),
+            2,
+        )
+        .unwrap_or(0),
+        Value::Octal { bits, .. } => i64::from_str_radix(
+            bits.trim_start_matches("0o").trim_start_matches("0O"),
+            8,
+        )
+        .unwrap_or(0),
+        Value::Real(_) => 0,
+    }
 }

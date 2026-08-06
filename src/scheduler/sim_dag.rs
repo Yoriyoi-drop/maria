@@ -281,6 +281,15 @@ fn expr_signal_reads(expr: &IrExpr, access: &mut SignalAccess) {
                 expr_signal_reads(item, access);
             }
         }
+        IrExpr::InsideRange {
+            expr: inner,
+            lo,
+            hi,
+        } => {
+            expr_signal_reads(inner, access);
+            expr_signal_reads(lo, access);
+            expr_signal_reads(hi, access);
+        }
         IrExpr::Dist { expr: inner, .. } => {
             expr_signal_reads(inner, access);
         }

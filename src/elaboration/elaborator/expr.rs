@@ -65,18 +65,36 @@ impl Elaborator {
                 if let Some(&val) = self.param_vals.get(name) {
                     return Ok(IrExpr::Const(LogicVec::from_u64(val as u64, 64)));
                 }
+                // Enum member plain dari package (di-build oleh build_pkg_param_ctx
+                // dengan nilai sequential). Case label seperti `DmaXfer1BperTxn:`
+                // atau `MuBi4True:` di-resolve ke konstanta, bukan E2001.
+                if let Some(&val) = self.pkg_param_ctx.get(name) {
+                    return Ok(IrExpr::Const(LogicVec::from_u64(val as u64, 64)));
+                }
                 let sig_id = signal_map
                     .get(name)
                     .ok_or_else(|| self.elab_diag_at(DiagCode::UndefinedSignal, format!("signal '{}' not found", name), *line, *col))?;
                 Ok(IrExpr::Signal(*sig_id, 0))
             }
-            Expr::ScopedIdent { package, item } => {
+            Expr::ScopedIdent {
+                package,
+                item,
+                line,
+                col,
+            } => {
                 // Enum member atau konstanta lain yang sudah di-flatten ke
                 // param_vals sebagai qualified name `pkg::member` oleh
                 // build_pkg_param_ctx (enum member TIDAK terdaftar sebagai
                 // PackageItem, jadi tidak ada di package_symbols).
                 let qualified = Symbol::intern(&format!("{}::{}", package.as_str(), item.as_str()));
                 if let Some(&val) = self.param_vals.get(&qualified) {
+                    return Ok(IrExpr::Const(LogicVec::from_u64(val as u64, 64)));
+                }
+                // Context package global (build_pkg_param_ctx) — qualified
+                // `pkg::member` untuk enum member & konstanta package. Contoh
+                // nyata OpenTitan DV: `dv_utils_pkg::Device` (member enum
+                // `if_mode_e`) dipakai di `push_pull_if`.
+                if let Some(&val) = self.pkg_param_ctx.get(&qualified) {
                     return Ok(IrExpr::Const(LogicVec::from_u64(val as u64, 64)));
                 }
                 if let Some(pkg_items) = self.package_symbols.get(package) {
@@ -91,10 +109,10 @@ impl Elaborator {
                                         )));
                                     }
                                 }
-                                return Err(self.elab_diag(DiagCode::ParamMismatch, format!(
+                                return Err(self.elab_diag_at(DiagCode::ParamMismatch, format!(
                                     "package param '{}.{}' has no default",
                                     package, item
-                                )));
+                                ), *line, *col));
                             }
                             PackageItem::Typedef(td) => {
                                 // `pkg::TypeName` dipakai sebagai ekspresi (mis. cast atau
@@ -109,18 +127,18 @@ impl Elaborator {
                                 return Ok(IrExpr::Const(LogicVec::from_u64(w as u64, 32)));
                             }
                             _ => {
-                                return Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
+                                return Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!(
                                     "'{}' is not a constant in package '{}'",
                                     item, package
-                                )))
+                                ), *line, *col))
                             }
                         }
                     }
                 }
-                Err(self.elab_diag(DiagCode::ModuleNotFound, format!(
+                Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!(
                     "'{}' not found in package '{}'",
                     item, package
-                )))
+                ), *line, *col))
             }
             Expr::RangeSelect {
                 expr: inner,
@@ -701,6 +719,30 @@ impl Elaborator {
                 let inner_ir = self.elaborate_expr(inner, signal_map, signals)?;
                 let mut list_ir = Vec::with_capacity(range_list.len());
                 for item in range_list {
+                    // Range inside `{[a:b]}` — parser menyisipkan RangeSelect
+                    // dengan base literal 0 sebagai penanda rentang. Untuk
+                    // operan runtime, emit IrExpr::InsideRange agar engine
+                    // memeriksa `lo <= val <= hi` (bukan bit-slice).
+                    if let Expr::RangeSelect {
+                        expr: base,
+                        msb,
+                        lsb,
+                    } = item
+                    {
+                        if matches!(base.as_ref(), Expr::Value(Value::Decimal(0))) {
+                            // `inside {[a:b]}`: a adalah batas BAWAH, b batas atas
+                            // (sintaks range inside, bukan bit-slice). Parser
+                            // menyimpan msb=a, lsb=b.
+                            let lo = self.elaborate_expr(msb, signal_map, signals)?;
+                            let hi = self.elaborate_expr(lsb, signal_map, signals)?;
+                            list_ir.push(IrExpr::InsideRange {
+                                expr: Box::new(inner_ir.clone()),
+                                lo: Box::new(lo),
+                                hi: Box::new(hi),
+                            });
+                            continue;
+                        }
+                    }
                     list_ir.push(self.elaborate_expr(item, signal_map, signals)?);
                 }
                 Ok(IrExpr::Inside {
@@ -810,6 +852,24 @@ impl Elaborator {
                     // agar runtime tidak resize ke 1 bit (data loss). Mis.
                     // `MuBi4Width'(x)` dari `import prim_mubi_pkg::*`.
                     None => self.resolve_cast_name_width(dtype.as_str()).unwrap_or(1),
+                };
+                Ok(IrExpr::Cast {
+                    width: cast_width,
+                    expr: Box::new(inner_ir),
+                })
+            }
+            // Cast dengan width dari ekspresi: `size'(expr)` (mis. `$clog2(N)'(x)`).
+            Expr::CastWidth { width, expr: inner } => {
+                let inner_ir = self.elaborate_expr(inner, signal_map, signals)?;
+                let cast_width = match const_eval_with_params(width, &self.param_vals) {
+                    Ok(w) => (w.max(1)) as usize,
+                    Err(_) => {
+                        // Width tidak konstanta-folding — fallback 1-bit agar runtime
+                        // tidak crash; elaborasi width ekspresi tetap dilakukan agar
+                        // referensi signal/param valid.
+                        let _ = self.elaborate_expr(width, signal_map, signals);
+                        1
+                    }
                 };
                 Ok(IrExpr::Cast {
                     width: cast_width,
@@ -1074,7 +1134,7 @@ impl Elaborator {
     /// Mengembalikan `elem_width * num_elements` bila ter-resolve, selain itu None.
     fn try_array_param_bits(&self, arg: &Expr) -> Option<usize> {
         let candidates: Vec<(Symbol, Symbol)> = match arg {
-            Expr::ScopedIdent { package, item } => vec![(*package, *item)],
+            Expr::ScopedIdent { package, item, .. } => vec![(*package, *item)],
             Expr::Ident { name, .. } => {
                 let mut out = Vec::new();
                 for (package, import_item) in self.collect_import_sets() {
@@ -1334,17 +1394,24 @@ impl Elaborator {
                     replacement.clone(),
                 )),
             },
-            Expr::ScopedIdent { package, item } => {
+            Expr::ScopedIdent {
+                package,
+                item,
+                line,
+                col,
+            } => {
                 if package == target {
                     match &replacement {
                         Expr::Ident { name, .. } => Expr::ScopedIdent {
                             package: *name,
                             item,
+                            line,
+                            col,
                         },
-                        _ => Expr::ScopedIdent { package, item },
+                        _ => Expr::ScopedIdent { package, item, line, col },
                     }
                 } else {
-                    Expr::ScopedIdent { package, item }
+                    Expr::ScopedIdent { package, item, line, col }
                 }
             }
             Expr::Cast { dtype, expr: inner } => Expr::Cast {
@@ -1354,6 +1421,14 @@ impl Elaborator {
                     replacement.clone(),
                 )),
                 dtype,
+            },
+            Expr::CastWidth { width, expr: inner } => Expr::CastWidth {
+                width: Box::new(Self::substitute_ident_in_expr(
+                    *width,
+                    target,
+                    replacement.clone(),
+                )),
+                expr: Box::new(Self::substitute_ident_in_expr(*inner, target, replacement)),
             },
             Expr::MemberAccess { obj, field } => Expr::MemberAccess {
                 obj: Box::new(Self::substitute_ident_in_expr(

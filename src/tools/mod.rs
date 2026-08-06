@@ -214,10 +214,11 @@ pub fn expr_to_string(e: &crate::ast::expr::Expr) -> String {
             let a: Vec<String> = args.iter().map(expr_to_string).collect();
             format!("{}.{}({})", expr_to_string(obj), method.as_str(), a.join(", "))
         }
-        Expr::ScopedIdent { package, item } => {
+        Expr::ScopedIdent { package, item, .. } => {
             format!("{}::{}", package.as_str(), item.as_str())
         }
         Expr::Cast { dtype, expr } => format!("{}({})", dtype.as_str(), expr_to_string(expr)),
+        Expr::CastWidth { width, expr } => format!("{}'({})", expr_to_string(width), expr_to_string(expr)),
         Expr::Null => "null".to_string(),
         Expr::Inside { expr, range_list } => {
             let r: Vec<String> = range_list.iter().map(expr_to_string).collect();

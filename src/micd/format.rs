@@ -19,6 +19,11 @@
 //! Header: magic `MDB1`, version, flags, checksum (xxh3 atas payload),
 //! object_count, header_crc (xxh3 atas field header [0..28]).
 //!
+//! Kompresi (Kritik 15 db.md): seluruh blob dalam satu file `.mdb` dapat
+//! dikompresi LZ4 (`frame`) sekaligus. Flag LZ4 disimpan di field header.
+//! Checksum dihitung atas PAYLOAD TERSIMPAN (yang terkompresi), sehingga
+//! pembaca memverifikasi integritas byte mentah — bukan hasil decompress.
+//!
 //! Penulisan atomik (temp + rename) agar pembaca paralel (IDE/LSP/compiler)
 //! selalu melihat file yang utuh.
 
@@ -26,6 +31,8 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
 
+use lz4_flex::frame::FrameDecoder;
+use lz4_flex::frame::FrameEncoder;
 use memmap2::Mmap;
 
 use crate::cache::checksum::compute_checksum;
@@ -35,10 +42,35 @@ pub const MAGIC: [u8; 4] = *b"MDB1";
 /// Versi format saat ini.
 pub const VERSION: u32 = 1;
 
+/// Flag header: blob terkompresi LZ4 (frame).
+pub const FLAG_LZ4: u32 = 0x0000_0001;
+
 /// Ukuran fixed header (byte).
 pub const HEADER_SIZE: usize = 64;
 /// Ukuran satu entry tabel objek (byte).
 pub const ENTRY_SIZE: usize = 24;
+
+/// Mode kompresi satu store `.mdb` (Kritik 15 db.md).
+///
+/// Per store (bukan per objek): AST/graph besar dikompresi, blob kecil
+/// (metadata) tidak — mengurangi overhead tanpa mengorbankan kecepatan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Compression {
+    /// Tanpa kompresi (metadata, blob kecil).
+    #[default]
+    None,
+    /// LZ4 frame — AST, graph, preprocessed source (kompresi cepat).
+    Lz4,
+}
+
+impl Compression {
+    fn flag(self) -> u32 {
+        match self {
+            Compression::None => 0,
+            Compression::Lz4 => FLAG_LZ4,
+        }
+    }
+}
 
 /// Kode kind objek (metadata penyimpanan).
 pub const KIND_STRING: u8 = 1;
@@ -52,6 +84,7 @@ pub const KIND_TYPE: u8 = 8;
 pub const KIND_PREPROC: u8 = 9;
 pub const KIND_MANIFEST: u8 = 10;
 pub const KIND_SNAPSHOT: u8 = 11;
+pub const KIND_STATS: u8 = 12;
 
 /// Key singleton untuk manifest (daftar semua key/path yang tersimpan).
 pub const KEY_MANIFEST: u64 = 0x0000_0000_0000_0001;
@@ -124,11 +157,21 @@ pub struct MdbWriter {
     objects: Vec<ObjectEntry>,
     blobs: Vec<Vec<u8>>,
     keys: std::collections::HashSet<u64>,
+    /// Mode kompresi seluruh blob store ini (Kritik 15 db.md).
+    compression: Compression,
 }
 
 impl MdbWriter {
     pub fn new() -> Self {
         MdbWriter::default()
+    }
+
+    /// Writer dengan mode kompresi tertentu (default: [`Compression::None`]).
+    pub fn with_compression(compression: Compression) -> Self {
+        MdbWriter {
+            compression,
+            ..MdbWriter::default()
+        }
     }
 
     /// Tulis objek `data` dengan `key` dan `kind`.
@@ -177,27 +220,41 @@ impl MdbWriter {
         h
     }
 
-    /// Serialisasi ke bytes (header + object table + payload).
+    /// Serialisasi ke bytes (header + object table + payload). Bila mode
+    /// kompresi aktif, setiap blob dikompresi LZ4 sebelum masuk payload, dan
+    /// checksum dihitung atas byte TERSIMPAN (terkompresi).
     pub fn serialize(&self) -> Vec<u8> {
+        let mut stored: Vec<Vec<u8>> = Vec::with_capacity(self.blobs.len());
+        for blob in &self.blobs {
+            match self.compression {
+                Compression::None => stored.push(blob.clone()),
+                Compression::Lz4 => {
+                    let mut enc = FrameEncoder::new(Vec::new());
+                    let _ = enc.write_all(blob);
+                    stored.push(enc.finish().unwrap_or_default());
+                }
+            }
+        }
+
         let mut payload = Vec::new();
         let mut entries = Vec::with_capacity(self.objects.len());
-        for (o, blob) in self.objects.iter().zip(self.blobs.iter()) {
+        for (o, blob) in self.objects.iter().zip(stored.iter()) {
             let off = payload.len() as u32;
             payload.extend_from_slice(blob);
             entries.push(ObjectEntry {
                 key: o.key,
                 offset: off,
-                len: o.len,
+                len: blob.len() as u32,
                 kind: o.kind,
             });
         }
 
         let mut out = Vec::with_capacity(HEADER_SIZE + entries.len() * ENTRY_SIZE + payload.len());
-        let checksum = Self::checksum_of(&entries, &self.blobs);
+        let checksum = Self::checksum_of(&entries, &stored);
         let mut header = [0u8; HEADER_SIZE];
         header[0..4].copy_from_slice(&MAGIC);
         header[4..8].copy_from_slice(&VERSION.to_le_bytes());
-        header[8..12].copy_from_slice(&0u32.to_le_bytes()); // flags: tidak terkompresi
+        header[8..12].copy_from_slice(&self.compression.flag().to_le_bytes());
         header[12..20].copy_from_slice(&checksum.to_le_bytes());
         header[20..24].copy_from_slice(&(entries.len() as u32).to_le_bytes());
         let header_crc = compute_checksum(&header[0..28]);
@@ -213,24 +270,43 @@ impl MdbWriter {
     /// Tulis ke path secara atomik (temp + rename).
     pub fn write_to(&self, path: &Path) -> std::io::Result<()> {
         let data = self.serialize();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let tmp = path.with_extension("mdb.tmp");
-        {
-            let mut f = std::fs::File::create(&tmp)?;
-            f.write_all(&data)?;
-            f.sync_all()?;
-        }
-        std::fs::rename(&tmp, path)?;
-        Ok(())
+        write_tmp(path, &data)?;
+        commit_tmp(path)
     }
+}
+
+/// Path file temp untuk `path` (dipakai transaksi batch — Kritik 4 db.md).
+pub fn tmp_path(path: &Path) -> std::path::PathBuf {
+    path.with_extension("mdb.tmp")
+}
+
+/// Tulis data ke `path` + `.tmp` lalu sync. Belum di-commit (tidak menyentuh
+/// file final). Gagal di tengah → file final tidak terpengaruh.
+pub fn write_tmp(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = tmp_path(path);
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(data)?;
+        f.sync_all()?;
+    }
+    Ok(())
+}
+
+/// Commit transaksi: rename `path.tmp` → `path` (atomik).
+pub fn commit_tmp(path: &Path) -> std::io::Result<()> {
+    std::fs::rename(tmp_path(path), path)?;
+    Ok(())
 }
 
 /// Reader untuk satu file `.mdb`. File di-mmap; objek diakses random access.
 pub struct MdbReader {
     mmap: Mmap,
     index: HashMap<u64, (u32, u32, u8)>,
+    /// Payload terkompresi LZ4 (flag dari header).
+    compressed: bool,
 }
 
 impl std::fmt::Debug for MdbReader {
@@ -263,6 +339,8 @@ impl MdbReader {
         if version != VERSION {
             return Err(MdbError::BadVersion(version));
         }
+        let flags = u32::from_le_bytes(mmap[8..12].try_into().unwrap());
+        let compressed = flags & FLAG_LZ4 != 0;
         let header_crc = u64::from_le_bytes(mmap[28..36].try_into().unwrap());
         let actual_crc = compute_checksum(&mmap[0..28]);
         if header_crc != actual_crc {
@@ -305,7 +383,7 @@ impl MdbReader {
         Ok(MdbReader {
             mmap,
             index,
-            // payload_start disimpan untuk slice
+            compressed,
         })
     }
 
@@ -313,15 +391,29 @@ impl MdbReader {
         HEADER_SIZE + self.index.len() * ENTRY_SIZE
     }
 
-    /// Ambil objek mentah (copy dari mmap). `None` jika key tak ada.
+    /// Ambil objek mentah (copy dari mmap, di-decompress bila perlu).
+    /// `None` jika key tak ada.
     pub fn get(&self, key: u64) -> Option<Vec<u8>> {
         let (o, l, _) = self.index.get(&key)?;
         let start = self.payload_start() + *o as usize;
-        Some(self.mmap[start..start + *l as usize].to_vec())
+        let raw = &self.mmap[start..start + *l as usize];
+        if self.compressed {
+            let mut dec = FrameDecoder::new(std::io::Cursor::new(raw));
+            let mut buf = Vec::new();
+            std::io::Read::read_to_end(&mut dec, &mut buf).ok()?;
+            Some(buf)
+        } else {
+            Some(raw.to_vec())
+        }
     }
 
     /// Ambil slice objek langsung dari mmap (tanpa copy).
+    /// Hanya valid untuk store TANPA kompresi (store terkompresi → `None`,
+    /// karena hasil decompress tidak tinggal di region mmap).
     pub fn get_slice(&self, key: u64) -> Option<&[u8]> {
+        if self.compressed {
+            return None;
+        }
         let (o, l, _) = self.index.get(&key)?;
         let start = self.payload_start() + *o as usize;
         Some(&self.mmap[start..start + *l as usize])
@@ -453,6 +545,38 @@ mod tests {
         let r = MdbReader::open(&path).unwrap();
         assert_eq!(r.len(), 1000);
         assert_eq!(r.get(500).unwrap(), b"obj-400");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ── Kritik 15 db.md: Compression (LZ4) ──
+
+    #[test]
+    fn test_lz4_compression_roundtrip() {
+        let path = test_path("lz4");
+        // Data berulang → sangat compressible.
+        let big: Vec<u8> = format!("module x;\n{}\nendmodule", "  logic [7:0] a = 8'hAA;\n".repeat(500))
+            .into_bytes();
+        let mut w = MdbWriter::with_compression(Compression::Lz4);
+        w.put(1, KIND_AST, big.clone());
+        let data = w.serialize();
+        assert!(data.len() < big.len(), "LZ4 harus mengecilkan blob ({})", data.len());
+        w.write_to(&path).unwrap();
+
+        let r = MdbReader::open(&path).unwrap();
+        assert!(r.compressed, "flag LZ4 terbaca");
+        assert_eq!(r.get(1).unwrap(), big, "decompress = data asli");
+        assert!(r.get_slice(1).is_none(), "get_slice tidak valid utk store terkompresi");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_compression_modes_write_to_disk() {
+        let path = test_path("modes");
+        let mut w = MdbWriter::with_compression(Compression::Lz4);
+        w.put(1, KIND_AST, vec![1, 2, 3, 4, 5]);
+        w.write_to(&path).unwrap();
+        let r = MdbReader::open(&path).unwrap();
+        assert_eq!(r.get(1).unwrap(), vec![1, 2, 3, 4, 5]);
         let _ = std::fs::remove_file(&path);
     }
 }

@@ -135,6 +135,11 @@ pub fn extract_signal_deps_inner(expr: &IrExpr, deps: &mut Vec<SignalId>) {
                 extract_signal_deps_inner(item, deps);
             }
         }
+        IrExpr::InsideRange { expr, lo, hi } => {
+            extract_signal_deps_inner(expr, deps);
+            extract_signal_deps_inner(lo, deps);
+            extract_signal_deps_inner(hi, deps);
+        }
         IrExpr::Cast { expr, .. } => {
             extract_signal_deps_inner(expr, deps);
         }

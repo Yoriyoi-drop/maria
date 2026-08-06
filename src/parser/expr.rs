@@ -148,7 +148,24 @@ impl Parser {
                     let mut range_list = Vec::new();
                     if self.peek() != &Token::RBrace {
                         loop {
-                            range_list.push(self.parse_expr(0)?);
+                            // Range inside `{[a:b], c}` — `[a:b]` adalah range
+                            // (bukan bit-select). Representasikan sebagai
+                            // RangeSelect dengan base 0; const_eval Inside
+                            // memperlakukan RangeSelect sebagai rentang.
+                            if self.peek() == &Token::LBrack {
+                                self.advance();
+                                let msb = self.parse_expr(0)?;
+                                self.expect(Token::Colon)?;
+                                let lsb = self.parse_expr(0)?;
+                                self.expect(Token::RBrack)?;
+                                range_list.push(Expr::RangeSelect {
+                                    expr: Box::new(Expr::Value(Value::Decimal(0))),
+                                    msb: Box::new(msb),
+                                    lsb: Box::new(lsb),
+                                });
+                            } else {
+                                range_list.push(self.parse_expr(0)?);
+                            }
                             if self.peek() == &Token::Comma { self.advance(); } else { break; }
                         }
                     }
@@ -259,6 +276,26 @@ impl Parser {
                     }
                     continue;
                 }
+                // Cast dengan width dari ekspresi: `size'(expr)` per LRM 1800
+                // (casting_type dapat berupa `constant_primary`). Contoh OpenTitan:
+                // `data_q[$clog2(dm::DataCount)'(autoexecdata_idx)]` — di sini
+                // `$clog2(...)` adalah ekspresi (bukan nama tipe). Parse_primary
+                // sudah menangani Ident'/Number'/(type)' ; postfix ini menangkap
+                // sisa bentuk (FuncCall', scoped', dsb).
+                Token::Quote => {
+                    if self.peek_ahead(1) != &Token::LParen {
+                        break;
+                    }
+                    self.advance();
+                    self.advance();
+                    let expr = self.parse_expr(0)?;
+                    self.expect(Token::RParen)?;
+                    lhs = Expr::CastWidth {
+                        width: Box::new(lhs),
+                        expr: Box::new(expr),
+                    };
+                    continue;
+                }
                 _ => None,
             };
 
@@ -339,6 +376,8 @@ impl Parser {
                 // pkg::item resolution
                 if self.peek() == &Token::Scope {
                     self.advance();
+                    let sc_line = self.peek_line();
+                    let sc_col = self.peek_col();
                     let item = self.expect_ident()?;
                     if self.peek() == &Token::LParen {
                         self.advance();
@@ -352,7 +391,27 @@ impl Parser {
                         self.expect(Token::RParen)?;
                         return Ok(Expr::FuncCall { name: Symbol::intern(&format!("{}::{}", name, item)), args });
                     }
-                    return Ok(Expr::ScopedIdent { package: name, item });
+                    // Type cast scoped: `pkg::type'(expr)` — pola umum di OpenTitan
+                    // (`top_pkg::TL_DBW'('b0001)`, `lc_ctrl_pkg::lc_tx_t'(x)`).
+                    // Sebelumnya `'(` yang tersisa di-parse sebagai statement sampah
+                    // sehingga seluruh always block gagal dan `if` berikutnya disangka
+                    // generate item (banjir RT9003/E2001).
+                    if self.peek() == &Token::Quote {
+                        self.advance();
+                        self.expect(Token::LParen)?;
+                        let expr = self.parse_expr(0)?;
+                        self.expect(Token::RParen)?;
+                        return Ok(Expr::Cast {
+                            dtype: Symbol::intern(&format!("{}::{}", name, item)),
+                            expr: Box::new(expr),
+                        });
+                    }
+                    return Ok(Expr::ScopedIdent {
+                        package: name,
+                        item,
+                        line: sc_line,
+                        col: sc_col,
+                    });
                 }
                 // Class#(Type)::method resolution
                 if self.peek() == &Token::Hash {
@@ -374,6 +433,8 @@ impl Parser {
                     };
                     if self.peek() == &Token::Scope {
                         self.advance();
+                        let sc_line = self.peek_line();
+                        let sc_col = self.peek_col();
                         let item = self.expect_ident()?;
                         if self.peek() == &Token::LParen {
                             if self.peek() == &Token::Quote && self.peek_ahead(1) == &Token::LParen {
@@ -393,7 +454,12 @@ impl Parser {
                             self.expect(Token::RParen)?;
                             return Ok(Expr::FuncCall { name: Symbol::intern(&format!("{}::{}", class_prefix, item)), args });
                         }
-                        return Ok(Expr::ScopedIdent { package: class_prefix, item });
+                        return Ok(Expr::ScopedIdent {
+                            package: class_prefix,
+                            item,
+                            line: sc_line,
+                            col: sc_col,
+                        });
                     }
                     return Ok(Expr::Ident { name: class_prefix, line: 0, col: 0 });
                 }

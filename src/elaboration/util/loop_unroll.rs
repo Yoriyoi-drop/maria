@@ -598,9 +598,15 @@ pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> E
             dtype: *dtype,
             expr: Box::new(substitute_loop_var_in_expr(inner, var_name, value)),
         },
-        Expr::ScopedIdent { package, item } => Expr::ScopedIdent {
+        Expr::CastWidth { width, expr: inner } => Expr::CastWidth {
+            width: Box::new(substitute_loop_var_in_expr(width, var_name, value)),
+            expr: Box::new(substitute_loop_var_in_expr(inner, var_name, value)),
+        },
+        Expr::ScopedIdent { package, item, .. } => Expr::ScopedIdent {
             package: *package,
             item: *item,
+            line: 0,
+            col: 0,
         },
     }
 }

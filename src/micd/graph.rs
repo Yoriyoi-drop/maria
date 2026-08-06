@@ -18,6 +18,14 @@ pub struct FileGraph {
     deps: HashMap<PathBuf, Vec<PathBuf>>,
     /// Reverse index (dibangun saat load/save).
     dependents: HashMap<PathBuf, Vec<PathBuf>>,
+    /// Simbol yang digunakan tiap file (Kritik 2 db.md). Lebih halus dari
+    /// dependency file-level: bila file definisi simbol berubah, hanya file
+    /// yang benar-benar memakai simbol itu yang perlu rebuild.
+    symbol_uses: HashMap<PathBuf, Vec<String>>,
+    /// File definisi per simbol.
+    symbol_defs: HashMap<String, PathBuf>,
+    /// Reverse: simbol → file yang menggunakannya.
+    symbol_users: HashMap<String, Vec<PathBuf>>,
     /// Reverse index perlu dibangun ulang (set_deps tidak rebuild per-call).
     #[serde(skip)]
     dirty_reverse: bool,
@@ -60,7 +68,81 @@ impl FileGraph {
             }
         }
         self.dependents = rev;
+        // Reverse symbol index (Kritik 2).
+        let mut users: HashMap<String, Vec<PathBuf>> = HashMap::new();
+        for (file, symbols) in self.symbol_uses.iter() {
+            for s in symbols {
+                let list = users.entry(s.clone()).or_default();
+                if !list.contains(file) {
+                    list.push(file.clone());
+                }
+            }
+        }
+        self.symbol_users = users;
         self.dirty_reverse = false;
+    }
+
+    /// Catat bahwa `file` memakai simbol bernama `symbol` (Kritik 2).
+    pub fn add_symbol_use(&mut self, file: PathBuf, symbol: String) {
+        let list = self.symbol_uses.entry(file).or_default();
+        if !list.contains(&symbol) {
+            list.push(symbol);
+            self.dirty_reverse = true;
+        }
+    }
+
+    /// Set file definisi sebuah simbol (Kritik 2).
+    pub fn set_symbol_def(&mut self, symbol: String, file: PathBuf) {
+        self.symbol_defs.insert(symbol, file);
+        self.dirty_reverse = true;
+    }
+
+    /// Hapus sebuah file dari graph (file tidak lagi aktif dalam project).
+    /// Menghapus edge-nya + penggunaan simbolnya. Reverse index dibangun
+    /// ulang lazy.
+    pub fn remove_file(&mut self, file: &Path) {
+        self.deps.remove(file);
+        self.symbol_uses.remove(file);
+        let removed = self
+            .dependents
+            .iter_mut()
+            .filter(|(_, v)| v.iter().any(|f| f == file))
+            .map(|(_, v)| v.retain(|f| f != file))
+            .count();
+        let _ = removed;
+        self.symbol_defs.retain(|_, f| f != file);
+        self.symbol_users
+            .iter_mut()
+            .for_each(|(_, v)| v.retain(|f| f != file));
+        self.dirty_reverse = true;
+    }
+
+    /// File yang menggunakan `symbols` langsung + seluruh dependentnya
+    /// (transitive via file graph). Inilah hasil dependency resolution yang
+    /// lebih halus: perubahan pada definisi simbol tidak menyapu semua file
+    /// yang hanya men-import package.
+    pub fn affected_by_symbols(&mut self, symbols: &[&str]) -> Vec<PathBuf> {
+        self.ensure_reverse();
+        let mut changed = Vec::new();
+        for s in symbols {
+            if let Some(users) = self.symbol_users.get(*s) {
+                changed.extend(users.iter().cloned());
+            }
+        }
+        self.affected(&changed)
+    }
+
+    /// Simbol yang digunakan sebuah file.
+    pub fn symbols_used_by(&self, file: &Path) -> Vec<String> {
+        self.symbol_uses
+            .get(file)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// File tempat simbol didefinisikan.
+    pub fn def_of(&self, symbol: &str) -> Option<&PathBuf> {
+        self.symbol_defs.get(symbol)
     }
 
     /// Pastikan reverse index segar (lazy rebuild).
@@ -166,5 +248,52 @@ mod tests {
         // affected (setelah deserialize, lazy rebuild otomatis)
         let a = g2.affected(&[PathBuf::from("a.sv")]);
         assert!(a.contains(&PathBuf::from("b.sv")));
+    }
+
+    // ── Kritik 2 db.md: dependency level simbol ──
+
+    #[test]
+    fn test_symbol_level_depends_only_users() {
+        let mut g = FileGraph::new();
+        // uart dan dma dua-duanya import pkg_a, tapi hanya uart pakai crc.
+        g.set_symbol_def("pkg_a".into(), PathBuf::from("pkg_a.sv"));
+        g.set_symbol_def("crc".into(), PathBuf::from("pkg_a.sv"));
+        g.add_symbol_use(PathBuf::from("uart.sv"), "crc".into());
+        g.add_symbol_use(PathBuf::from("uart.sv"), "pkg_a".into());
+        g.add_symbol_use(PathBuf::from("dma.sv"), "pkg_a".into());
+        g.rebuild();
+
+        // crc berubah → hanya uart terdampak, dma tidak.
+        let affected = g.affected_by_symbols(&["crc"]);
+        assert!(affected.contains(&PathBuf::from("uart.sv")));
+        assert!(!affected.contains(&PathBuf::from("dma.sv")));
+        assert_eq!(g.def_of("crc"), Some(&PathBuf::from("pkg_a.sv")));
+    }
+
+    #[test]
+    fn test_symbol_level_transitive_via_file_graph() {
+        let mut g = FileGraph::new();
+        // top → cpu → uart; uart pakai crc dari pkg_a.
+        g.set_symbol_def("crc".into(), PathBuf::from("pkg_a.sv"));
+        g.add_symbol_use(PathBuf::from("uart.sv"), "crc".into());
+        g.set_deps(PathBuf::from("cpu.sv"), vec![PathBuf::from("uart.sv")]);
+        g.set_deps(PathBuf::from("top.sv"), vec![PathBuf::from("cpu.sv")]);
+        g.rebuild();
+
+        let affected = g.affected_by_symbols(&["crc"]);
+        assert!(affected.contains(&PathBuf::from("uart.sv")));
+        assert!(affected.contains(&PathBuf::from("cpu.sv")), "dependent cpu ikut");
+        assert!(affected.contains(&PathBuf::from("top.sv")), "dependent top ikut");
+    }
+
+    #[test]
+    fn test_symbol_use_dedup_and_lazy_rebuild() {
+        let mut g = FileGraph::new();
+        let uart = PathBuf::from("uart.sv");
+        g.add_symbol_use(uart.clone(), "crc".into());
+        g.add_symbol_use(uart.clone(), "crc".into()); // dup diabaikan
+        assert_eq!(g.symbols_used_by(&uart), vec!["crc".to_string()]);
+        let affected = g.affected_by_symbols(&["crc"]); // lazy rebuild
+        assert!(affected.contains(&uart));
     }
 }

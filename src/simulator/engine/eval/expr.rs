@@ -1423,9 +1423,32 @@ impl SimulationEngine {
                     ))
                 }
             }
+            IrExpr::InsideRange { expr, lo, hi } => {
+                let val = self.evaluate_expr(expr)?;
+                let lo_v = self.evaluate_expr(lo)?;
+                let hi_v = self.evaluate_expr(hi)?;
+                let v = val.to_u64();
+                if v >= lo_v.to_u64() && v <= hi_v.to_u64() {
+                    Ok(LogicVec::from_u64(1, 1))
+                } else {
+                    Ok(LogicVec::from_u64(0, 1))
+                }
+            }
             IrExpr::Inside { expr, list } => {
                 let val = self.evaluate_expr(expr)?;
                 for item in list {
+                    // Range inside `{[a:b]}` — periksa lo <= val <= hi.
+                    if let IrExpr::InsideRange { lo, hi, .. } = item {
+                        let lo_v = self.evaluate_expr(lo)?;
+                        let hi_v = self.evaluate_expr(hi)?;
+                        let v = val.to_u64();
+                        let lo_u = lo_v.to_u64();
+                        let hi_u = hi_v.to_u64();
+                        if v >= lo_u && v <= hi_u {
+                            return Ok(LogicVec::from_u64(1, 1));
+                        }
+                        continue;
+                    }
                     let item_val = self.evaluate_expr(item)?;
                     let eq = val.case_eq(&item_val);
                     if eq == LogicVec::from_u64(1, 1) {

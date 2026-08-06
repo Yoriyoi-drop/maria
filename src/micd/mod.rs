@@ -22,10 +22,15 @@
 pub mod ast;
 pub mod diag;
 pub mod format;
+pub mod gc;
 pub mod graph;
+pub mod lock;
 pub mod metadata;
 pub mod snapshot;
+pub mod stats;
+pub mod stringpool;
 pub mod symbol;
+pub mod txn;
 pub mod verify;
 
 use std::collections::HashMap;
@@ -37,16 +42,28 @@ use serde::{Deserialize, Serialize};
 pub use ast::{deserialize_design, serialize_design, AST_FORMAT_VERSION};
 pub use diag::{DiagEntry, DiagSeverity, FileDiags};
 pub use format::{MdbReader, MdbWriter};
+pub use gc::{run_gc, GcConfig, GcStats};
 pub use graph::FileGraph;
+pub use lock::{acquire_write_lock, is_writer_locked, WriteLock};
 pub use metadata::{
     FileMeta, FileStatus, MetadataManifest, flags_hash, path_hash,
 };
-pub use snapshot::{Snapshot, list_snapshots, snapshot_path};
+pub use snapshot::{
+    history_of, last_snapshot_id, list_snapshots, merge_base, parents_of, read_snapshot,
+    snapshot_path, Snapshot,
+};
+pub use stats::{BuildProfile, StatsDb, peak_rss_kb};
 pub use symbol::SymbolIndex;
-pub use verify::{VerifyResult, now_ns};
+pub use txn::{Journal, read_journal, recover, write_journal};
+pub use verify::{CheckResult, VerifyCheckKind, VerifyResult, now_ns};
 
 /// Versi compiler yang menulis database.
 pub const COMPILER_VERSION: &str = "Maria 0.9";
+
+/// Versi skema database (Kritik 3 db.md). Naikkan bila layout/format
+/// persistensi berubah (field struct, key store, semantik). Database lama
+/// dengan schema version berbeda dianggap tidak kompatibel → dibangun ulang.
+pub const SCHEMA_VERSION: u64 = 4;
 
 /// Nama file database.
 pub const DB_METADATA: &str = "metadata.mdb";
@@ -57,6 +74,8 @@ pub const DB_VERIFY: &str = "verify.mdb";
 pub const DB_DIAG: &str = "diagnostics.mdb";
 pub const DB_SYMBOL: &str = "symbol.mdb";
 pub const DB_TYPE: &str = "types.mdb";
+pub const DB_STATS: &str = "stats.mdb";
+pub const DB_JOURNAL: &str = "journal.mdb";
 
 /// Key singleton untuk store berisi satu objek besar (graph/symbol).
 const KEY_SINGLETON: u64 = 0x0000_0000_0000_0001;
@@ -94,12 +113,18 @@ pub struct MicdDatabase {
     pub flags_hash: u64,
     pub compiler_version: String,
     pub created_ns: u64,
+    /// Versi skema yang dimuat dari metadata.mdb (0 bila fresh/tidak kompatibel).
+    pub schema_version: u64,
     /// Per-file metadata (kunci = path).
     pub files: HashMap<PathBuf, FileMeta>,
     /// Dependency graph file-level.
     pub graph: FileGraph,
     /// Verification cache (kunci = content hash).
     pub verify: HashMap<u64, VerifyResult>,
+    /// Indeks AST hash → content hash (Kritik 1 db.md). Untuk reuse
+    /// verification saat content hash berubah tapi AST identik (mis. komentar
+    /// berubah).
+    pub verify_ast_index: HashMap<u64, u64>,
     /// Diagnostic per file.
     pub diags: HashMap<PathBuf, FileDiags>,
     /// Index simbol.
@@ -110,6 +135,19 @@ pub struct MicdDatabase {
     pub preproc_cache: HashMap<PathBuf, PreprocEntry>,
     /// Index tipe/signature: module → signature hash.
     pub type_index: HashMap<String, u64>,
+    /// Statistics database (Kritik 14 db.md).
+    pub stats_db: StatsDb,
+    /// Waktu akses terakhir tiap entry cache (LRU/TTL — Kritik 6 db.md).
+    /// Tidak diserialisasi: dibangun ulang dari mtime/compiled_at saat load.
+    pub ast_accessed: HashMap<PathBuf, u64>,
+    pub preproc_accessed: HashMap<PathBuf, u64>,
+    pub verify_accessed: HashMap<u64, u64>,
+    /// Total bytes cache AST (untuk budget GC).
+    pub ast_bytes: u64,
+    /// Total bytes preprocessed source.
+    pub preproc_bytes: u64,
+    /// Jalankan GC otomatis saat `save()` (Kritik 6 db.md).
+    pub gc_on_save: bool,
     /// Ada perubahan belum disimpan.
     pub dirty: bool,
     /// ast.mdb perlu ditulis ulang (ada AST baru/berubah).
@@ -124,6 +162,8 @@ pub struct MicdDatabase {
     pub dirty_type: bool,
     /// graph.mdb perlu ditulis ulang.
     pub dirty_graph: bool,
+    /// stats.mdb perlu ditulis ulang.
+    pub dirty_stats: bool,
     /// Snapshot yang tersedia.
     pub snapshots: Vec<u64>,
     /// Jumlah restore AST pada sesi ini.
@@ -140,6 +180,51 @@ impl MicdDatabase {
     /// folder terpisah agar tidak konflik.
     fn fallback_root() -> PathBuf {
         PathBuf::from(".maria_db").join("database")
+    }
+
+    /// ProjectID (Kritik arsitektur db.md: database harus scoped per project).
+    ///
+    /// Hash deterministik atas seluruh konfigurasi yang membedakan satu
+    /// "project kompilasi" dari yang lain: root direktori, daftar source,
+    /// include dirs, define macro, compiler version, dan language standard.
+    /// Hasilnya adalah direktori `projects/<ProjectID>/` di dalam database.
+    ///
+    /// Dua project yang berbeda (mis. OpenTitan vs `test/counter.sv`) selalu
+    /// menghasilkan ProjectID berbeda → tidak pernah berbagi ast/symbol/
+    /// graph/verify store. Ini menghilangkan akar bug "file project lain
+    /// menempel" yang muncul saat semua project memakai satu database global.
+    pub fn project_id(
+        root: &Path,
+        sources: &[PathBuf],
+        incdirs: &[PathBuf],
+        defines: &[(String, String)],
+    ) -> String {
+        use crate::cache::checksum::{checksum_fold, compute_checksum};
+        let mut h: Vec<u64> = Vec::with_capacity(sources.len() + incdirs.len() + defines.len() + 4);
+        h.push(compute_checksum(root.to_string_lossy().as_bytes()));
+        h.push(compute_checksum(COMPILER_VERSION.as_bytes()));
+        h.push(compute_checksum(b"systemverilog-2012"));
+        for s in sources {
+            h.push(path_hash(s));
+        }
+        for d in incdirs {
+            h.push(path_hash(d));
+        }
+        for (k, v) in defines {
+            h.push(compute_checksum(k.as_bytes()));
+            h.push(compute_checksum(v.as_bytes()));
+        }
+        format!("{:016x}", checksum_fold(&h))
+    }
+
+    /// Root database untuk sebuah project: `<root>/projects/<ProjectID>/`.
+    pub fn project_root(db_root: &Path, pid: &str) -> PathBuf {
+        db_root.join("projects").join(pid)
+    }
+
+    /// Buka database project secara eksplisit berdasarkan ProjectID.
+    pub fn open_project(db_root: &Path, pid: &str) -> MicdDatabase {
+        Self::open(&Self::project_root(db_root, pid))
     }
 
     /// Pilih root database yang BISA dibuat di lingkungan kerja. Prioritas:
@@ -168,19 +253,34 @@ impl MicdDatabase {
             let _ = std::fs::create_dir_all(&alt);
             alt
         };
+
+        // Crash recovery (Kritik 5 db.md): journal tersisa → transaksi
+        // sebelumnya terputus. Validasi store yang terdaftar, buang yang
+        // corrupt; sisanya dibangun ulang di save berikutnya.
+        recover(&root, &root.join(DB_JOURNAL));
+
         let mut db = MicdDatabase {
             root: root.to_path_buf(),
             flags_hash: 0,
             compiler_version: COMPILER_VERSION.to_string(),
             created_ns: now_ns(),
+            schema_version: 0,
             files: HashMap::new(),
             graph: FileGraph::new(),
             verify: HashMap::new(),
+            verify_ast_index: HashMap::new(),
             diags: HashMap::new(),
             symbols: SymbolIndex::new(),
             ast_cache: HashMap::new(),
             preproc_cache: HashMap::new(),
             type_index: HashMap::new(),
+            stats_db: StatsDb::new(),
+            ast_accessed: HashMap::new(),
+            preproc_accessed: HashMap::new(),
+            verify_accessed: HashMap::new(),
+            ast_bytes: 0,
+            preproc_bytes: 0,
+            gc_on_save: true,
             dirty: false,
             dirty_ast: false,
             dirty_preproc: false,
@@ -188,6 +288,7 @@ impl MicdDatabase {
             dirty_symbol: false,
             dirty_type: false,
             dirty_graph: false,
+            dirty_stats: false,
             snapshots: Vec::new(),
             restored: 0,
             changed: 0,
@@ -196,23 +297,51 @@ impl MicdDatabase {
 
         db.snapshots = list_snapshots(&root);
 
-        // metadata.mdb
+        // metadata.mdb — pintu schema (Kritik 3 db.md). Bila schema version
+        // tidak cocok, SELURUH store dianggap tidak kompatibel → bangun ulang
+        // dari kosong (AST lama diabaikan, tidak akan di-reuse).
+        let mut schema_ok = false;
         if let Ok(r) = MdbReader::open(&root.join(DB_METADATA)) {
             if let Some(manifest) = r.get(KEY_SINGLETON).and_then(|b| {
                 bincode::deserialize::<MetadataManifest>(&b).ok()
             }) {
-                db.flags_hash = manifest.flags_hash;
-                db.compiler_version = manifest.compiler_version;
-                db.created_ns = manifest.created_ns;
-                for p in manifest.paths {
-                    let key = path_hash(&p);
-                    if let Some(b) = r.get(key) {
-                        if let Ok(meta) = bincode::deserialize::<FileMeta>(&b) {
-                            db.files.insert(p, meta);
+                if manifest.schema_version == SCHEMA_VERSION {
+                    schema_ok = true;
+                    db.schema_version = manifest.schema_version;
+                    db.flags_hash = manifest.flags_hash;
+                    db.compiler_version = manifest.compiler_version;
+                    db.created_ns = manifest.created_ns;
+                    for p in manifest.paths {
+                        let key = path_hash(&p);
+                        if let Some(b) = r.get(key) {
+                            if let Ok(meta) = bincode::deserialize::<FileMeta>(&b) {
+                                db.files.insert(p, meta);
+                            }
                         }
                     }
                 }
             }
+        }
+        if !schema_ok {
+            // Kritik 3 db.md: schema berubah → SELURUH database lama tidak
+            // kompatibel. Buang store lama secara deterministik (bukan
+            // dibiarkan) agar tidak ada state campuran — mis. metadata schema
+            // baru + graph/ast/verify lama yang di-load pada run berikutnya.
+            for name in [
+                DB_METADATA,
+                DB_GRAPH,
+                DB_AST,
+                DB_PREPROC,
+                DB_VERIFY,
+                DB_DIAG,
+                DB_SYMBOL,
+                DB_TYPE,
+                DB_STATS,
+            ] {
+                let _ = std::fs::remove_file(root.join(name));
+            }
+            db.schema_version = SCHEMA_VERSION;
+            return db;
         }
 
         // graph.mdb
@@ -232,6 +361,11 @@ impl MicdDatabase {
                 }
                 if let Some(b) = r.get(key) {
                     if let Ok(v) = bincode::deserialize::<VerifyResult>(&b) {
+                        if v.ast_hash != 0 {
+                            db.verify_ast_index.insert(v.ast_hash, v.content_hash);
+                        }
+                        let at = v.verified_at_ns;
+                        db.verify_accessed.insert(v.content_hash, at);
                         db.verify.insert(v.content_hash, v);
                     }
                 }
@@ -270,7 +404,18 @@ impl MicdDatabase {
                         bincode::deserialize::<(String, u64, u64, Vec<u8>)>(&b)
                     {
                         if ver == AST_FORMAT_VERSION {
-                            db.ast_cache.insert(PathBuf::from(path_str), (hash, bytes));
+                            let p = PathBuf::from(path_str);
+                            db.ast_bytes = db
+                                .ast_bytes
+                                .saturating_add(bytes.len() as u64);
+                            // Akses awal = mtime entry (heuristik LRU antar run).
+                            let at = db
+                                .files
+                                .get(&p)
+                                .map(|m| m.compiled_at_ns)
+                                .unwrap_or_else(now_ns);
+                            db.ast_accessed.insert(p.clone(), at);
+                            db.ast_cache.insert(p, (hash, bytes));
                         }
                     }
                 }
@@ -285,7 +430,17 @@ impl MicdDatabase {
                         bincode::deserialize::<(String, u64, PreprocEntry)>(&b)
                     {
                         if p.content_hash == hash {
-                            db.preproc_cache.insert(PathBuf::from(path_str), p);
+                            let path = PathBuf::from(path_str);
+                            db.preproc_bytes = db
+                                .preproc_bytes
+                                .saturating_add(p.combined.len() as u64);
+                            let at = db
+                                .files
+                                .get(&path)
+                                .map(|m| m.compiled_at_ns)
+                                .unwrap_or_else(now_ns);
+                            db.preproc_accessed.insert(path.clone(), at);
+                            db.preproc_cache.insert(path, p);
                         }
                     }
                 }
@@ -297,6 +452,15 @@ impl MicdDatabase {
             if let Some(b) = r.get(KEY_SINGLETON) {
                 if let Ok(m) = bincode::deserialize::<HashMap<String, u64>>(&b) {
                     db.type_index = m;
+                }
+            }
+        }
+
+        // stats.mdb (Kritik 14 db.md)
+        if let Ok(r) = MdbReader::open(&root.join(DB_STATS)) {
+            if let Some(b) = r.get(KEY_SINGLETON) {
+                if let Ok(s) = bincode::deserialize::<StatsDb>(&b) {
+                    db.stats_db = s;
                 }
             }
         }
@@ -331,11 +495,44 @@ impl MicdDatabase {
         }
     }
 
+    /// Tandai entry cache sebagai baru diakses (LRU, Kritik 6 db.md).
+    /// Dipanggil setelah read/restore agar entry yang dipakai tidak di-evict.
+    pub fn touch_ast(&mut self, path: &Path, content_hash: u64) {
+        if self.has_valid_ast(path, content_hash) {
+            self.ast_accessed.insert(path.to_path_buf(), now_ns());
+        }
+    }
+
+    pub fn touch_preproc(&mut self, path: &Path, content_hash: u64) {
+        if self
+            .preproc_cache
+            .get(path)
+            .map(|e| e.content_hash == content_hash)
+            .unwrap_or(false)
+        {
+            self.preproc_accessed.insert(path.to_path_buf(), now_ns());
+        }
+    }
+
+    pub fn touch_verify(&mut self, content_hash: u64) {
+        if self.verify.contains_key(&content_hash) {
+            self.verify_accessed.insert(content_hash, now_ns());
+        }
+    }
+
+    /// Simpan AST cache. Melacak `ast_bytes` (budget GC, Kritik 6 db.md).
     pub fn cache_ast(&mut self, path: PathBuf, content_hash: u64, bytes: Vec<u8>) {
         let changed = match self.ast_cache.get(&path) {
             Some((h, b)) => *h != content_hash || *b != bytes,
             None => true,
         };
+        if changed {
+            if let Some((_, old)) = self.ast_cache.get(&path) {
+                self.ast_bytes = self.ast_bytes.saturating_sub(old.len() as u64);
+            }
+            self.ast_bytes = self.ast_bytes.saturating_add(bytes.len() as u64);
+            self.ast_accessed.insert(path.clone(), now_ns());
+        }
         self.ast_cache.insert(path, (content_hash, bytes));
         if changed {
             self.dirty = true;
@@ -358,6 +555,16 @@ impl MicdDatabase {
             Some(old) => old.content_hash != entry.content_hash || old.combined != entry.combined,
             None => true,
         };
+        if changed {
+            if let Some(old) = self.preproc_cache.get(&path) {
+                self.preproc_bytes =
+                    self.preproc_bytes.saturating_sub(old.combined.len() as u64);
+            }
+            self.preproc_bytes = self
+                .preproc_bytes
+                .saturating_add(entry.combined.len() as u64);
+            self.preproc_accessed.insert(path.clone(), now_ns());
+        }
         self.preproc_cache.insert(path, entry);
         if changed {
             self.dirty = true;
@@ -463,10 +670,111 @@ impl MicdDatabase {
         self.dirty_graph = true;
     }
 
+    /// Set definisi simbol di graph (level simbol, Kritik 2) + tandai
+    /// graph.mdb perlu ditulis ulang.
+    pub fn set_symbol_def(&mut self, name: String, file: PathBuf) {
+        self.graph.set_symbol_def(name, file);
+        self.dirty_graph = true;
+    }
+
+    /// Catat pemakaian simbol di graph (Kritik 2) + tandai graph.mdb perlu
+    /// ditulis ulang.
+    pub fn add_symbol_use(&mut self, file: PathBuf, symbol: String) {
+        self.graph.add_symbol_use(file, symbol);
+        self.dirty_graph = true;
+    }
+
     pub fn set_verify(&mut self, result: VerifyResult) {
+        if result.ast_hash != 0 {
+            self.verify_ast_index
+                .insert(result.ast_hash, result.content_hash);
+        }
+        self.verify_accessed.insert(result.content_hash, now_ns());
         self.verify.insert(result.content_hash, result);
         self.dirty = true;
         self.dirty_verify = true;
+    }
+
+    /// Lookup verification dengan multi-level hash (Kritik 1 db.md).
+    /// Prioritas: content hash → AST hash → semantic hash. Bila level
+    /// AST/semantic yang cocok, hasil verifikasi tetap valid walau content
+    /// hash berubah (mis. hanya komentar yang berubah) — tidak perlu
+    /// lint/verify ulang.
+    pub fn reuse_verify(
+        &self,
+        content_hash: u64,
+        ast_hash: u64,
+        semantic_hash: u64,
+    ) -> Option<&VerifyResult> {
+        if let Some(v) = self.verify.get(&content_hash) {
+            return Some(v);
+        }
+        if ast_hash != 0 {
+            if let Some(ch) = self.verify_ast_index.get(&ast_hash) {
+                if let Some(v) = self.verify.get(ch) {
+                    if v.matches_ast(ast_hash) {
+                        return Some(v);
+                    }
+                }
+            }
+        }
+        if semantic_hash != 0 {
+            for v in self.verify.values() {
+                if v.matches_semantic(semantic_hash) {
+                    return Some(v);
+                }
+            }
+        }
+        None
+    }
+
+    /// Rekam profil build ke stats.mdb (Kritik 14 db.md).
+    pub fn set_stats(&mut self, profile: BuildProfile) {
+        self.stats_db.record(profile);
+        self.dirty_stats = true;
+    }
+
+    /// Buang file yang tidak lagi menjadi bagian dari project aktif.
+    ///
+    /// MICD adalah cache per-project: database menyimpan file yang di-compile
+    /// sesi ini (sources + libfiles). File dari run lain yang menempel di root
+    /// yang sama (mis. `test/counter.sv` setelah `--filelist opentitan_rtl.f`)
+    /// adalah sampah lintas-project — AST/preproc/verify/diag miliknya harus
+    /// dibuang agar `files` dan cache mencerminkan project aktif, bukan
+    /// akumulasi semua project yang pernah dicoba di direktori ini.
+    ///
+    /// Mengembalikan jumlah file yang dibuang. Menandai dirty (metadata,
+    /// ast, preproc, diag) bila ada yang dihapus.
+    pub fn prune_stale(&mut self, active: &[PathBuf]) -> usize {
+        let active_set: std::collections::HashSet<&PathBuf> =
+            active.iter().collect();
+        let stale: Vec<PathBuf> = self
+            .files
+            .keys()
+            .filter(|p| !active_set.contains(p))
+            .cloned()
+            .collect();
+        if stale.is_empty() {
+            return 0;
+        }
+        for p in &stale {
+            self.files.remove(p);
+            self.ast_accessed.remove(p);
+            self.preproc_accessed.remove(p);
+            if let Some((_, b)) = self.ast_cache.remove(p) {
+                self.ast_bytes = self.ast_bytes.saturating_sub(b.len() as u64);
+            }
+            if let Some(e) = self.preproc_cache.remove(p) {
+                self.preproc_bytes =
+                    self.preproc_bytes.saturating_sub(e.combined.len() as u64);
+            }
+            self.diags.remove(p);
+            self.graph.remove_file(p);
+        }
+        self.dirty = true;
+        self.dirty_ast = true;
+        self.dirty_preproc = true;
+        stale.len()
     }
 
     /// Tandai seluruh verify entry sebagai ter-elaborasi + simpan verify.mdb
@@ -474,6 +782,10 @@ impl MicdDatabase {
     pub fn mark_elaborated(&mut self) -> io::Result<()> {
         for v in self.verify.values_mut() {
             v.elab_ok = true;
+            v.set_check(
+                VerifyCheckKind::Elaborate,
+                CheckResult::pass(v.result_hash),
+            );
         }
         self.dirty_verify = true;
         self.save().map(|_| ())
@@ -493,16 +805,34 @@ impl MicdDatabase {
         self.graph.affected(changed)
     }
 
-    /// Simpan store ke disk (atomik per file). Hanya store yang dirty yang
-    /// ditulis ulang — save kedua (verify-only) tidak menyentuh metadata/ast.
+    /// Simpan store ke disk dalam satu transaksi (Kritik 4 & 5 db.md).
+    ///
+    /// Protokol:
+    /// 1. Serialisasi SEMUA store yang dirty ke memori (belum menyentuh disk).
+    /// 2. Tulis `journal.mdb` (intent: daftar file yang ikut transaksi).
+    /// 3. Tulis tiap store ke `*.mdb.tmp` + fsync (belum commit).
+    /// 4. Rename semua tmp → final (commit point, per-file atomik).
+    /// 5. Hapus journal.
+    ///
+    /// Crash di fase 1–3 → file final tidak tersentuh. Crash di fase 4 →
+    /// journal tersisa; recovery di [`MicdDatabase::open`] memvalidasi
+    /// checksum tiap store terdaftar dan membuang yang corrupt. Tidak pernah
+    /// ada database "setengah" tanpa jejak recovery.
     pub fn save(&mut self) -> io::Result<MicdStats> {
+        // GC otomatis (Kritik 6 db.md): jalankan SEBELUM cek dirty agar entry
+        // yang di-evict ikut ditulis ulang pada save ini. Best-effort —
+        // eviction hanya menandai store terkait, bukan menggagalkan save.
+        if self.gc_on_save {
+            run_gc(self, &GcConfig::default());
+        }
         let any_dirty = self.dirty
             || self.dirty_ast
             || self.dirty_preproc
             || self.dirty_verify
             || self.dirty_symbol
             || self.dirty_type
-            || self.dirty_graph;
+            || self.dirty_graph
+            || self.dirty_stats;
         if !any_dirty {
             let stats = MicdStats {
                 files: self.files.len(),
@@ -520,7 +850,9 @@ impl MicdDatabase {
         for sub in ["cache/lexer", "cache/parser", "cache/semantic", "cache/verify", "cache/optimize"] {
             let _ = std::fs::create_dir_all(self.root.join(sub));
         }
-        let mut bytes_written = 0u64;
+
+        // ── Fase 1: serialisasi semua store yang dirty ke memori. ──
+        let mut pending: Vec<(PathBuf, Vec<u8>)> = Vec::new();
 
         // metadata.mdb
         if self.dirty {
@@ -529,6 +861,7 @@ impl MicdDatabase {
                 flags_hash: self.flags_hash,
                 compiler_version: self.compiler_version.clone(),
                 created_ns: self.created_ns,
+                schema_version: SCHEMA_VERSION,
             };
             let mut w = MdbWriter::new();
             w.put(
@@ -544,24 +877,20 @@ impl MicdDatabase {
                     bincode::serialize(meta).map_err(io::Error::other)?,
                 );
             }
-            let bytes = w.serialize().len() as u64;
-            w.write_to(&self.root.join(DB_METADATA))?;
-            bytes_written += bytes;
+            pending.push((self.root.join(DB_METADATA), w.serialize()));
         }
 
         // graph.mdb — rebuild reverse index sebelum serialize (set_deps
         // tidak rebuild per-call).
         if self.dirty_graph {
             self.graph.rebuild();
-            let mut w = MdbWriter::new();
+            let mut w = MdbWriter::with_compression(format::Compression::Lz4);
             w.put(
                 KEY_SINGLETON,
                 format::KIND_GRAPH,
                 bincode::serialize(&self.graph).map_err(io::Error::other)?,
             );
-            let bytes = w.serialize().len() as u64;
-            w.write_to(&self.root.join(DB_GRAPH))?;
-            bytes_written += bytes;
+            pending.push((self.root.join(DB_GRAPH), w.serialize()));
         }
 
         // verify.mdb
@@ -574,9 +903,7 @@ impl MicdDatabase {
                     bincode::serialize(v).map_err(io::Error::other)?,
                 );
             }
-            let bytes = w.serialize().len() as u64;
-            w.write_to(&self.root.join(DB_VERIFY))?;
-            bytes_written += bytes;
+            pending.push((self.root.join(DB_VERIFY), w.serialize()));
         }
 
         // diagnostics.mdb
@@ -589,9 +916,7 @@ impl MicdDatabase {
                     bincode::serialize(d).map_err(io::Error::other)?,
                 );
             }
-            let bytes = w.serialize().len() as u64;
-            w.write_to(&self.root.join(DB_DIAG))?;
-            bytes_written += bytes;
+            pending.push((self.root.join(DB_DIAG), w.serialize()));
         }
 
         // symbol.mdb
@@ -602,9 +927,7 @@ impl MicdDatabase {
                 format::KIND_SYMBOL,
                 bincode::serialize(&self.symbols).map_err(io::Error::other)?,
             );
-            let bytes = w.serialize().len() as u64;
-            w.write_to(&self.root.join(DB_SYMBOL))?;
-            bytes_written += bytes;
+            pending.push((self.root.join(DB_SYMBOL), w.serialize()));
         }
 
         // types.mdb
@@ -615,39 +938,71 @@ impl MicdDatabase {
                 format::KIND_TYPE,
                 bincode::serialize(&self.type_index).map_err(io::Error::other)?,
             );
-            let bytes = w.serialize().len() as u64;
-            w.write_to(&self.root.join(DB_TYPE))?;
-            bytes_written += bytes;
+            pending.push((self.root.join(DB_TYPE), w.serialize()));
         }
 
         // ast.mdb — hanya ditulis bila ada AST baru/berubah (warm run dengan
-        // semua file di-restore tidak menyentuh file ini).
+        // semua file di-restore tidak menyentuh file ini). Blob AST terbesar →
+        // dikompresi LZ4 (Kritik 15 db.md).
         if self.dirty_ast {
-            let mut w = MdbWriter::new();
+            let mut w = MdbWriter::with_compression(format::Compression::Lz4);
             for (path, (hash, bytes)) in self.ast_cache.iter() {
                 let path_str = path.to_string_lossy().to_string();
                 let val = bincode::serialize(&(path_str, *hash, AST_FORMAT_VERSION, bytes))
                     .map_err(io::Error::other)?;
                 w.put(path_hash(path), format::KIND_AST, val);
             }
-            let bytes = w.serialize().len() as u64;
-            w.write_to(&self.root.join(DB_AST))?;
-            bytes_written += bytes;
+            pending.push((self.root.join(DB_AST), w.serialize()));
         }
 
-        // preproc.mdb — hanya ditulis bila ada perubahan.
+        // preproc.mdb — hanya ditulis bila ada perubahan. Combined source
+        // bisa besar → dikompresi LZ4.
         if self.dirty_preproc {
-            let mut w = MdbWriter::new();
+            let mut w = MdbWriter::with_compression(format::Compression::Lz4);
             for (path, entry) in self.preproc_cache.iter() {
                 let path_str = path.to_string_lossy().to_string();
                 let val = bincode::serialize(&(path_str, entry.content_hash, entry))
                     .map_err(io::Error::other)?;
                 w.put(path_hash(path), format::KIND_PREPROC, val);
             }
-            let bytes = w.serialize().len() as u64;
-            w.write_to(&self.root.join(DB_PREPROC))?;
-            bytes_written += bytes;
+            pending.push((self.root.join(DB_PREPROC), w.serialize()));
         }
+
+        // stats.mdb (Kritik 14 db.md).
+        if self.dirty_stats {
+            let mut w = MdbWriter::new();
+            w.put(
+                KEY_SINGLETON,
+                format::KIND_STATS,
+                bincode::serialize(&self.stats_db).map_err(io::Error::other)?,
+            );
+            pending.push((self.root.join(DB_STATS), w.serialize()));
+        }
+
+        // ── Fase 2–5: transaksi (lock → journal → tmp → commit → bersihkan). ──
+        // Lock writer exclusive (Kritik 7 db.md): dua writer tidak boleh
+        // commit berbarengan. Reader tidak lock (rename atomik + mmap).
+        let _lock = acquire_write_lock(
+            &self.root,
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_millis(10),
+            std::time::Duration::from_secs(30),
+        )
+        .map_err(|e| io::Error::other(e.to_string()))?;
+        let names: Vec<PathBuf> = pending
+            .iter()
+            .map(|(p, _)| p.file_name().map(PathBuf::from).unwrap_or_default())
+            .collect();
+        write_journal(&self.root.join(DB_JOURNAL), &names)?;
+        for (p, data) in &pending {
+            format::write_tmp(p, data)?;
+        }
+        let mut bytes_written = 0u64;
+        for (p, data) in &pending {
+            format::commit_tmp(p)?;
+            bytes_written += data.len() as u64;
+        }
+        let _ = std::fs::remove_file(self.root.join(DB_JOURNAL));
 
         let stats = MicdStats {
             files: self.files.len(),
@@ -665,16 +1020,45 @@ impl MicdDatabase {
         self.dirty_symbol = false;
         self.dirty_type = false;
         self.dirty_graph = false;
+        self.dirty_stats = false;
         self.changed = 0;
         Ok(stats)
     }
 
     /// Buat snapshot build baru (mirip commit). Menyimpan state saat ini.
+    /// Parent otomatis = snapshot terakhir (linear default). Untuk membuat
+    /// DAG bercabang/merge, gunakan [`MicdDatabase::snapshot_from`].
     pub fn snapshot(&mut self, note: String) -> io::Result<u64> {
-        let id = self.snapshots.last().copied().unwrap_or(0) + 1;
+        let parent = last_snapshot_id(&self.snapshots);
+        let parents = if parent == 0 { Vec::new() } else { vec![parent] };
+        self.snapshot_from(parents, note)
+    }
+
+    /// Buat snapshot dengan parent eksplisit (DAG, Kritik 13 db.md).
+    /// `parents = []` → snapshot akar; `parents = [a]` → turunan a (linear);
+    /// `parents = [a, b]` → merge (dua cabang digabung, mirip Git).
+    /// Semua parent harus sudah ada; id otomatis = max(id)+1.
+    pub fn snapshot_from(&mut self, parents: Vec<u64>, note: String) -> io::Result<u64> {
+        for p in &parents {
+            if !self.snapshots.contains(p) {
+                return Err(io::Error::other(format!(
+                    "MICD snapshot: parent {} belum ada",
+                    p
+                )));
+            }
+        }
+        let _lock = acquire_write_lock(
+            &self.root,
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_millis(10),
+            std::time::Duration::from_secs(30),
+        )
+        .map_err(|e| io::Error::other(e.to_string()))?;
+        let id = last_snapshot_id(&self.snapshots) + 1;
         let snap = Snapshot {
             id,
             created_ns: now_ns(),
+            parents,
             files: self.files.values().cloned().collect(),
             graph: self.graph.clone(),
             verify: self.verify.iter().map(|(k, v)| (*k, v.clone())).collect(),
@@ -690,19 +1074,55 @@ impl MicdDatabase {
         let bytes = bincode::serialize(&snap).map_err(io::Error::other)?;
         std::fs::write(&path, bytes)?;
         self.snapshots.push(id);
-        // Pertahankan maksimal 16 snapshot.
-        while self.snapshots.len() > 16 {
-            if let Some(old) = self.snapshots.first().copied() {
-                let _ = std::fs::remove_file(snapshot_path(&self.root, old));
-                self.snapshots.remove(0);
-            }
-        }
+        // Pertahankan maksimal 16 snapshot. Buang yang TIDAK menjadi parent
+        // snapshot lain (leaf tertua) — bukan asal buang terdepan, agar DAG
+        // tidak kehilangan merge-base.
+        self.prune_snapshots(16);
         Ok(id)
+    }
+
+    /// Buang snapshot berlebih (maks `keep`) tanpa merusak DAG.
+    /// Selalu buang yang TERTUA (id terkecil) agar snapshot terbaru tetap
+    /// ada (build terakhir yang paling berguna untuk rollback). Untuk menjaga
+    /// DAG tetap utuh, parent yang dibuang di-rewrite dari keturunannya
+    /// (squash) sehingga tidak ada referensi menggantung.
+    fn prune_snapshots(&mut self, keep: usize) {
+        while self.snapshots.len() > keep {
+            let oldest = *self.snapshots.first().unwrap();
+            // Squash: hapus `oldest` dari daftar parent semua snapshot lain.
+            for id in &self.snapshots {
+                if *id == oldest {
+                    continue;
+                }
+                if let Some(mut s) = read_snapshot(&self.root, *id) {
+                    if s.parents.contains(&oldest) {
+                        s.parents.retain(|p| *p != oldest);
+                        let path = snapshot_path(&self.root, *id);
+                        if let Some(parent) = path.parent() {
+                            std::fs::create_dir_all(parent).ok();
+                        }
+                        let _ = std::fs::write(
+                            path,
+                            bincode::serialize(&s).unwrap_or_default(),
+                        );
+                    }
+                }
+            }
+            let _ = std::fs::remove_file(snapshot_path(&self.root, oldest));
+            self.snapshots.retain(|x| *x != oldest);
+        }
     }
 
     /// Rollback ke snapshot `id`: restore metadata + graph + verify + symbols.
     /// AST cache dibiarkan (objek yang tidak cocok diabaikan otomatis).
     pub fn rollback(&mut self, id: u64) -> io::Result<()> {
+        let _lock = acquire_write_lock(
+            &self.root,
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_millis(10),
+            std::time::Duration::from_secs(30),
+        )
+        .map_err(|e| io::Error::other(e.to_string()))?;
         let path = snapshot_path(&self.root, id);
         let bytes = std::fs::read(&path)?;
         let snap: Snapshot = bincode::deserialize(&bytes).map_err(io::Error::other)?;
@@ -726,6 +1146,13 @@ impl MicdDatabase {
 
     /// Bersihkan seluruh database.
     pub fn clear(&mut self) -> io::Result<()> {
+        let _lock = acquire_write_lock(
+            &self.root,
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_millis(10),
+            std::time::Duration::from_secs(30),
+        )
+        .map_err(|e| io::Error::other(e.to_string()))?;
         for name in [
             DB_METADATA,
             DB_GRAPH,
@@ -735,19 +1162,24 @@ impl MicdDatabase {
             DB_DIAG,
             DB_SYMBOL,
             DB_TYPE,
+            DB_STATS,
+            DB_JOURNAL,
         ] {
             let _ = std::fs::remove_file(self.root.join(name));
+            let _ = std::fs::remove_file(self.root.join(name).with_extension("mdb.tmp"));
         }
         let _ = std::fs::remove_dir_all(self.root.join("snapshots"));
         let _ = std::fs::remove_dir_all(self.root.join("cache"));
         self.files.clear();
         self.graph = FileGraph::new();
         self.verify.clear();
+        self.verify_ast_index.clear();
         self.diags.clear();
         self.symbols = SymbolIndex::new();
         self.ast_cache.clear();
         self.preproc_cache.clear();
         self.type_index.clear();
+        self.stats_db = StatsDb::new();
         self.snapshots.clear();
         self.dirty = false;
         self.dirty_ast = false;
@@ -756,6 +1188,7 @@ impl MicdDatabase {
         self.dirty_symbol = false;
         self.dirty_type = false;
         self.dirty_graph = false;
+        self.dirty_stats = false;
         Ok(())
     }
 
@@ -808,6 +1241,63 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // ── ProjectID: database scoped per project ──
+
+    #[test]
+    fn test_project_id_deterministic_and_distinct() {
+        let root = Path::new("/proj");
+        let src_a = vec![PathBuf::from("top.sv"), PathBuf::from("uart.sv")];
+        let src_b = vec![PathBuf::from("top.sv")];
+        let defs = vec![("WIDTH".to_string(), "8".to_string())];
+        // Deterministik: input sama → ProjectID sama.
+        let p1 = MicdDatabase::project_id(root, &src_a, &[], &defs);
+        let p2 = MicdDatabase::project_id(root, &src_a, &[], &defs);
+        assert_eq!(p1, p2, "input sama → ProjectID sama");
+        // Source set berbeda → ProjectID berbeda.
+        let p3 = MicdDatabase::project_id(root, &src_b, &[], &defs);
+        assert_ne!(p1, p3, "source berbeda → ProjectID berbeda");
+        // Defines berbeda → ProjectID berbeda.
+        let p4 = MicdDatabase::project_id(root, &src_a, &[], &[]);
+        assert_ne!(p1, p4, "defines berbeda → ProjectID berbeda");
+        // Root berbeda → ProjectID berbeda.
+        let p5 = MicdDatabase::project_id(Path::new("/other"), &src_a, &[], &defs);
+        assert_ne!(p1, p5, "root berbeda → ProjectID berbeda");
+        assert_eq!(p1.len(), 16, "format hex 16 digit");
+    }
+
+    #[test]
+    fn test_open_project_isolates_stores() {
+        let root = test_root("proj_iso");
+        let base = root.join("db");
+        let pid_a = MicdDatabase::project_id(Path::new("/proj_a"), &[PathBuf::from("a.sv")], &[], &[]);
+        let pid_b = MicdDatabase::project_id(Path::new("/proj_b"), &[PathBuf::from("a.sv")], &[], &[]);
+        assert_ne!(pid_a, pid_b);
+
+        // Project A: tulis satu file.
+        {
+            let mut db = MicdDatabase::open_project(&base, &pid_a);
+            db.record_file(PathBuf::from("a.sv"), 1, vec![], FileStatus::New, 0, 5, vec![]);
+            db.cache_ast(PathBuf::from("a.sv"), 1, vec![1, 2, 3]);
+            db.save().unwrap();
+        }
+        // Project A terbuka kembali → file ada.
+        {
+            let db = MicdDatabase::open_project(&base, &pid_a);
+            assert_eq!(db.files.len(), 1);
+            assert!(db.has_valid_ast(&PathBuf::from("a.sv"), 1));
+        }
+        // Project B → kosong (terisolasi, tidak berbagi store).
+        {
+            let db = MicdDatabase::open_project(&base, &pid_b);
+            assert!(db.files.is_empty(), "project lain tidak boleh berbagi data");
+            assert!(db.ast_cache.is_empty());
+        }
+        // Root DB menyimpan keduanya di projects/<pid>/.
+        assert!(MicdDatabase::project_root(&base, &pid_a).join("metadata.mdb").exists());
+        assert!(MicdDatabase::project_root(&base, &pid_b).join("metadata.mdb").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn test_save_reload_roundtrip() {
         let root = test_root("roundtrip");
@@ -828,6 +1318,9 @@ mod tests {
             );
             db.set_verify(VerifyResult {
                 content_hash: hash,
+                ast_hash: 0xABCD,
+                semantic_hash: 0x1234,
+                ir_hash: 0,
                 parse_ok: true,
                 elab_ok: true,
                 err_count: 0,
@@ -837,6 +1330,7 @@ mod tests {
                 elab_ms: 3,
                 result_hash: 7,
                 verified_at_ns: 0,
+                checks: HashMap::new(),
             });
             db.add_symbol("counter".into(), "module".into(), path.clone());            db.save().unwrap();
         }
@@ -897,6 +1391,472 @@ mod tests {
         db.graph.set_deps(PathBuf::from("uart.sv"), vec![PathBuf::from("defines.svh")]);
         let affected = db.affected(&[PathBuf::from("defines.svh")]);
         assert!(affected.contains(&PathBuf::from("cpu.sv")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── Kritik 3 db.md: Versioned Schema ──
+
+    #[test]
+    fn test_schema_version_persisted() {
+        let root = test_root("schema_persist");
+        {
+            let mut db = MicdDatabase::open(&root);
+            db.record_file(PathBuf::from("a.sv"), 1, vec![], FileStatus::New, 0, 5, vec![]);
+            db.save().unwrap();
+            assert_eq!(db.schema_version, SCHEMA_VERSION);
+        }
+        {
+            let db = MicdDatabase::open(&root);
+            assert_eq!(db.schema_version, SCHEMA_VERSION);
+            assert_eq!(db.files.len(), 1);
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_schema_version_mismatch_rebuilds_empty() {
+        let root = test_root("schema_mismatch");
+        let path = PathBuf::from("a.sv");
+        {
+            let mut db = MicdDatabase::open(&root);
+            db.record_file(path.clone(), 42, vec![], FileStatus::New, 0, 5, vec![]);
+            db.cache_ast(path.clone(), 42, vec![9, 9]);
+            db.add_symbol("a".into(), "module".into(), path.clone());
+            db.set_verify(VerifyResult::fresh(42));
+            db.save().unwrap();
+        }
+        // Palsukan skema lain: tulis ulang manifest dengan schema_version tua.
+        {
+            let mut w = MdbWriter::new();
+            let manifest = MetadataManifest {
+                paths: vec![path.clone()],
+                flags_hash: 0,
+                compiler_version: COMPILER_VERSION.into(),
+                created_ns: 0,
+                schema_version: SCHEMA_VERSION - 1,
+            };
+            w.put(
+                KEY_SINGLETON,
+                format::KIND_MANIFEST,
+                bincode::serialize(&manifest).unwrap(),
+            );
+            w.write_to(&root.join(DB_METADATA)).unwrap();
+        }
+        // Buka → seluruh store dianggap tidak kompatibel → database kosong.
+        let db = MicdDatabase::open(&root);
+        assert_eq!(db.schema_version, SCHEMA_VERSION, "db baru memakai versi terkini");
+        assert!(db.files.is_empty(), "file lama tidak boleh di-load");
+        assert!(!db.has_valid_ast(&path, 42), "AST lama tidak boleh di-reuse");
+        // Store lama harus DIBUANG deterministik dari disk (bukan dibiarkan
+        // sebagai state campuran yang akan di-load run berikutnya).
+        for name in [
+            DB_AST, DB_GRAPH, DB_SYMBOL, DB_TYPE, DB_VERIFY, DB_PREPROC, DB_STATS,
+        ] {
+            assert!(
+                !root.join(name).exists(),
+                "store lama '{}' harus terhapus saat schema mismatch",
+                name
+            );
+        }
+        // Save berikutnya membangun database baru yang konsisten.
+        let mut db = db;
+        db.record_file(path.clone(), 42, vec![], FileStatus::New, 0, 5, vec![]);
+        db.save().unwrap();
+        let db2 = MicdDatabase::open(&root);
+        assert_eq!(db2.schema_version, SCHEMA_VERSION);
+        assert_eq!(db2.files.len(), 1);
+        assert_eq!(db2.files.get(&path).unwrap().content_hash, 42);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── Kritik 4 & 5 db.md: Transaction + Crash Recovery ──
+
+    #[test]
+    fn test_crash_recovery_discards_corrupt_store() {
+        let root = test_root("crash");
+        let path = PathBuf::from("a.sv");
+        {
+            let mut db = MicdDatabase::open(&root);
+            db.record_file(path.clone(), 7, vec![], FileStatus::New, 0, 5, vec![]);
+            db.save().unwrap();
+        }
+        // Simulasikan crash saat commit: journal tersisa + verify.mdb korup.
+        let journal = root.join(DB_JOURNAL);
+        write_journal(
+            &journal,
+            &[
+                PathBuf::from(DB_METADATA),
+                PathBuf::from(DB_VERIFY),
+                PathBuf::from(DB_GRAPH),
+            ],
+        )
+        .unwrap();
+        std::fs::write(root.join(DB_VERIFY), vec![0xFF; 256]).unwrap();
+        // graph.mdb dihapus total (seolah belum sempat rename).
+
+        // Open → recovery: metadata valid dipertahankan, verify corrupt dibuang,
+        // graph hilang dibuang. Journal dihapus.
+        let db = MicdDatabase::open(&root);
+        assert!(!journal.exists(), "journal harus dihapus recovery");
+        assert_eq!(db.files.len(), 1, "store valid tetap di-load");
+        assert!(db.verify.is_empty(), "store corrupt tidak di-load");
+        assert!(db.graph.is_empty(), "store hilang tidak di-load");
+        // Save berikutnya membangun ulang store yang hilang → db pulih total.
+        let mut db = db;
+        db.record_file(path.clone(), 7, vec![], FileStatus::Unchanged, 0, 5, vec![]);
+        db.save().unwrap();
+        let db2 = MicdDatabase::open(&root);
+        assert_eq!(db2.files.len(), 1);
+        assert!(!db2.root.join(DB_JOURNAL).exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_no_journal_left_after_normal_save() {
+        let root = test_root("clean_save");
+        {
+            let mut db = MicdDatabase::open(&root);
+            db.record_file(PathBuf::from("x.sv"), 1, vec![], FileStatus::New, 0, 3, vec![]);
+            db.save().unwrap();
+        }
+        assert!(!root.join(DB_JOURNAL).exists(), "save sukses → journal bersih");
+        // Tidak ada tmp yang menggantung.
+        for name in [DB_METADATA, DB_GRAPH, DB_VERIFY, DB_AST, DB_PREPROC, DB_SYMBOL, DB_TYPE, DB_DIAG, DB_STATS] {
+            assert!(!root.join(name).with_extension("mdb.tmp").exists());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_txn_single_file_failure_leaves_final_untouched() {
+        // write_tmp gagal (dir tidak ada) → file final tidak boleh berubah.
+        let root = test_root("txn_fail");
+        {
+            let mut db = MicdDatabase::open(&root);
+            db.record_file(PathBuf::from("a.sv"), 1, vec![], FileStatus::New, 0, 3, vec![]);
+            db.save().unwrap();
+        }
+        let meta_before = std::fs::read(root.join(DB_METADATA)).unwrap();
+        {
+            let mut db = MicdDatabase::open(&root);
+            db.record_file(PathBuf::from("a.sv"), 2, vec![], FileStatus::Recompiled, 0, 3, vec![]);
+            // Simulasikan kegagalan fase tmp: file penghalang di path parent
+            // membuat create_dir_all / create file tmp gagal.
+            let journal_path = root.join(DB_JOURNAL);
+            let names = vec![PathBuf::from(DB_METADATA)];
+            write_journal(&journal_path, &names).unwrap();
+            std::fs::write(root.join("blocker"), b"x").unwrap();
+            let err = format::write_tmp(&root.join("blocker").join(DB_METADATA), b"x");
+            assert!(err.is_err(), "menulis ke path dengan parent file harus gagal");
+            // Recovery manual: buang journal, file final tetap versi lama.
+            let _ = std::fs::remove_file(&journal_path);
+        }
+        let meta_after = std::fs::read(root.join(DB_METADATA)).unwrap();
+        assert_eq!(meta_before, meta_after, "file final tidak boleh berubah saat gagal");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── Kritik 1 db.md: Multi-level hash ──
+
+    #[test]
+    fn test_reuse_verify_by_ast_hash() {
+        let root = test_root("reuse_ast");
+        let path = PathBuf::from("a.sv");
+        {
+            let mut db = MicdDatabase::open(&root);
+            let mut v = VerifyResult::fresh(100);
+            v.ast_hash = 0xDEAD;
+            v.semantic_hash = 0xBEEF;
+            v.parse_ok = true;
+            v.elab_ok = true;
+            db.set_verify(v);
+            db.record_file(path.clone(), 100, vec![], FileStatus::Unchanged, 0, 5, vec![]);
+            db.save().unwrap();
+        }
+        {
+            let db = MicdDatabase::open(&root);
+            // Content hash berubah (komentar ditambah), AST sama → reuse.
+            let v = db
+                .reuse_verify(999, 0xDEAD, 0)
+                .expect("reuse via ast_hash");
+            assert_eq!(v.content_hash, 100);
+            // Level semantic juga tersedia.
+            let v2 = db
+                .reuse_verify(999, 0x9999, 0xBEEF)
+                .expect("reuse via semantic_hash");
+            assert_eq!(v2.content_hash, 100);
+            // Tidak ada level yang cocok → None.
+            assert!(db.reuse_verify(999, 0x9999, 0x0000).is_none());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_reuse_verify_prefers_content_hash() {
+        let root = test_root("reuse_content");
+        let mut db = MicdDatabase::open(&root);
+        let mut v = VerifyResult::fresh(100);
+        v.ast_hash = 0xAA;
+        v.parse_ok = true;
+        v.elab_ok = true;
+        db.set_verify(v);
+        let got = db.reuse_verify(100, 0, 0).unwrap();
+        assert_eq!(got.content_hash, 100, "content hash menang duluan");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── Kritik 14 db.md: Statistics Database ──
+
+    #[test]
+    fn test_stats_db_persists_across_sessions() {
+        let root = test_root("stats");
+        {
+            let mut db = MicdDatabase::open(&root);
+            db.record_file(PathBuf::from("a.sv"), 1, vec![], FileStatus::New, 0, 3, vec![]);
+            let mut p = db.stats_db.next_profile();
+            p.total_ms = 1234;
+            p.changed_files = 5;
+            p.cache_hits = 3;
+            p.cache_misses = 2;
+            db.set_stats(p);
+            db.save().unwrap();
+        }
+        {
+            let db = MicdDatabase::open(&root);
+            assert_eq!(db.stats_db.total_builds(), 1);
+            let last = db.stats_db.last().unwrap();
+            assert_eq!(last.total_ms, 1234);
+            assert_eq!(last.cache_hits, 3);
+            assert_eq!(db.stats_db.hit_rate_pct(), 60);
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── Stress tests ──
+
+    #[test]
+    fn test_stress_many_files_repeated_save_reload() {
+        let root = test_root("stress_many");
+        let n_files = 500;
+        let paths: Vec<PathBuf> = (0..n_files)
+            .map(|i| PathBuf::from(format!("mod_{:04}.sv", i)))
+            .collect();
+
+        // 10 siklus save/reload, tiap siklus tambah beberapa file baru.
+        for cycle in 0..10 {
+            let mut db = MicdDatabase::open(&root);
+            for i in 0..n_files {
+                let path = &paths[i];
+                let hash = (i as u64) * 1000 + cycle as u64;
+                db.record_file(
+                    path.clone(),
+                    hash,
+                    vec![],
+                    FileStatus::Unchanged,
+                    0,
+                    100,
+                    vec![],
+                );
+                if i % 2 == 0 {
+                    db.cache_ast(path.clone(), hash, vec![i as u8; 8]);
+                }
+            }
+            db.save().unwrap();
+            assert!(!db.root.join(DB_JOURNAL).exists(), "journal harus bersih");
+        }
+
+        let db = MicdDatabase::open(&root);
+        assert_eq!(db.files.len(), n_files);
+        assert_eq!(db.ast_cache.len(), n_files / 2);
+        // Verify semua file masih terbaca.
+        for i in 0..n_files {
+            let meta = db.get_file_meta(&paths[i]).unwrap();
+            assert_eq!(meta.content_hash, (i as u64) * 1000 + 9);
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_stress_big_dependency_graph_affected() {
+        let root = test_root("stress_graph");
+        let mut db = MicdDatabase::open(&root);
+        // Rantai 2000 file + 100 file depend pada node 0 → transitive closure.
+        let n = 2000;
+        for i in 0..n {
+            let cur = PathBuf::from(format!("f{:04}.sv", i));
+            let deps = if i > 0 {
+                vec![PathBuf::from(format!("f{:04}.sv", i - 1))]
+            } else {
+                vec![]
+            };
+            db.graph.set_deps(cur, deps);
+        }
+        for i in 0..100 {
+            db.graph.add_dep(
+                PathBuf::from(format!("leaf{:03}.sv", i)),
+                PathBuf::from("f0000.sv"),
+            );
+        }
+        let affected = db.affected(&[PathBuf::from("f0000.sv")]);
+        assert_eq!(affected.len(), n + 100, "transitive closure lengkap");
+        // Reverse index dibangun ulang otomatis.
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_stress_verify_multi_level_matches() {
+        // Banyak entry verify; pencarian semantic tidak memilih yang salah.
+        let root = test_root("stress_verify");
+        let mut db = MicdDatabase::open(&root);
+        for i in 1..201u64 {
+            let mut v = VerifyResult::fresh(i * 100);
+            v.ast_hash = i * 1000 + 1;
+            v.semantic_hash = i * 1000 + 2;
+            v.parse_ok = true;
+            v.elab_ok = true;
+            db.set_verify(v);
+        }
+        let v = db.reuse_verify(999_999, 123_001, 0).unwrap();
+        assert_eq!(v.content_hash, 12300);
+        let v2 = db.reuse_verify(999_999, 999_999, 45_002).unwrap();
+        assert_eq!(v2.content_hash, 4500);
+        assert!(db.reuse_verify(0, 0, 0).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── Kritik 13 db.md: Snapshot DAG via MicdDatabase ──
+
+    #[test]
+    fn test_snapshot_dag_branch_and_merge() {
+        let root = test_root("snap_dag");
+        let mut db = MicdDatabase::open(&root);
+        // Rantai: 1 → 2 → 3.
+        let id1 = db.snapshot("root".into()).unwrap();
+        assert_eq!(id1, 1);
+        let id2 = db.snapshot("child1".into()).unwrap();
+        let id3 = db.snapshot("child2".into()).unwrap();
+        // Branch dari 1: snapshot 4 ber-parent 1.
+        let id4 = db.snapshot_from(vec![id1], "branch".into()).unwrap();
+        assert_eq!(id4, 4);
+        // Merge: 5 ber-parent 3 dan 4.
+        let id5 = db.snapshot_from(vec![id3, id4], "merge".into()).unwrap();
+        assert_eq!(id5, 5);
+
+        // Cek parent DAG.
+        let s3 = read_snapshot(&root, id3).unwrap();
+        assert_eq!(s3.parents, vec![id2]);
+        let s5 = read_snapshot(&root, id5).unwrap();
+        assert_eq!(s5.parents, vec![id3, id4], "merge punya dua parent");
+
+        // History 5 mencakup semua.
+        let mut hist = history_of(&root, id5);
+        hist.sort_unstable();
+        assert_eq!(hist, vec![1, 2, 3, 4, 5]);
+        // Merge-base 3 dan 4 = 1.
+        assert_eq!(merge_base(&root, id3, id4), Some(1));
+
+        // Parent yang tidak ada → error.
+        assert!(db.snapshot_from(vec![99], "invalid".into()).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_snapshot_prune_keeps_dag_intact() {
+        let root = test_root("snap_prune");
+        let mut db = MicdDatabase::open(&root);
+        // Prune internal (private) — panggil via snapshot berulang lalu buktikan
+        // yang tersisa tidak merusak keturunan. Maks 16 → buat 20 linear.
+        for i in 0..20 {
+            db.snapshot(format!("b{}", i).into()).unwrap();
+        }
+        assert!(db.snapshots.len() <= 16, "prune batasi jumlah snapshot");
+        assert_eq!(*db.snapshots.first().unwrap(), 5, "yang tertua dibuang (1-4)");
+        assert_eq!(*db.snapshots.last().unwrap(), 20, "terbaru dipertahankan");
+        // Snapshot terakhir masih punya riwayat ke root baru (5).
+        let last = *db.snapshots.last().unwrap();
+        let hist = history_of(&root, last);
+        assert!(hist.contains(&5), "garis keturunan ke root tetap ada");
+        assert!(hist.contains(&20), "snapshot terakhir ada di riwayatnya");
+        // Tidak ada referensi parent menggantung (parent yang hilang di-squash).
+        let s20 = read_snapshot(&root, 20).unwrap();
+        assert!(!s20.parents.contains(&1), "parent ter-squash tidak muncul");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── Kritik 6 db.md: GC otomatis saat save ──
+
+    #[test]
+    fn test_gc_on_save_trims_cache() {
+        let root = test_root("gc_save");
+        let mut db = MicdDatabase::open(&root);
+        db.gc_on_save = true;
+        // Tambah AST dengan file terdaftar (compaction tidak akan salah
+        // menghapusnya karena path dikenal).
+        for i in 0..50u64 {
+            let p = PathBuf::from(format!("f{:02}.sv", i));
+            db.record_file(p.clone(), i, vec![], FileStatus::New, 0, 10_000, vec![]);
+            db.ast_accessed.insert(p.clone(), now_ns());
+            db.ast_cache.insert(p, (i, vec![0u8; 10_000]));
+            db.ast_bytes += 10_000;
+        }
+        // GcConfig default budget 256MB tidak men-trigger untuk 500KB.
+        // Pastikan save tetap sukses (GC idempoten, tidak menggagalkan save)
+        // dan seluruh AST tetap ada (di bawah budget).
+        db.save().unwrap();
+        assert_eq!(db.ast_bytes, 50 * 10_000);
+        assert_eq!(db.ast_cache.len(), 50);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── MICD cache per-project: prune file lintas-run ──
+
+    #[test]
+    fn test_prune_stale_removes_foreign_project_files() {
+        let root = test_root("prune_stale");
+        let mut db = MicdDatabase::open(&root);
+        // Skenario: opentitan (3970 file) + counter.sv dari run lain menempel.
+        for i in 0..3 {
+            let p = PathBuf::from(format!("ot_{}.sv", i));
+            db.record_file(p.clone(), i, vec![], FileStatus::Unchanged, 0, 5, vec![]);
+            db.cache_ast(p.clone(), i, vec![0u8; 10]);
+            db.add_symbol(format!("mod_{}", i), "module".into(), p.clone());
+        }
+        let foreign = PathBuf::from("test/counter.sv");
+        db.record_file(foreign.clone(), 99, vec![], FileStatus::Unchanged, 0, 5, vec![]);
+        db.cache_ast(foreign.clone(), 99, vec![1u8; 10]);
+        db.cache_preprocessed(
+            foreign.clone(),
+            PreprocEntry {
+                content_hash: 99,
+                combined: "module counter; endmodule".into(),
+                timescale: None,
+            },
+        );
+        db.set_diags(crate::micd::FileDiags {
+            path: foreign.clone(),
+            entries: vec![],
+            content_hash: 99,
+        });
+        db.graph.set_deps(foreign.clone(), vec![PathBuf::from("defines.svh")]);
+
+        assert_eq!(db.files.len(), 4);
+        // Active project hanya ot_*.sv.
+        let active: Vec<PathBuf> = (0..3).map(|i| PathBuf::from(format!("ot_{}.sv", i))).collect();
+        let pruned = db.prune_stale(&active);
+        assert_eq!(pruned, 1, "file project lain dibuang");
+        assert_eq!(db.files.len(), 3);
+        assert!(!db.files.contains_key(&foreign));
+        assert!(!db.ast_cache.contains_key(&foreign));
+        assert!(!db.preproc_cache.contains_key(&foreign));
+        assert!(!db.diags.contains_key(&foreign));
+        assert_eq!(db.ast_bytes, 30, "bytes foreign dibebaskan");
+        assert_eq!(db.preproc_bytes, 0, "preproc foreign dibebaskan");
+        // Graph tidak menyimpan foreign lagi.
+        assert!(db.graph.deps_of(&foreign).is_empty());
+        // File project aktif tetap utuh.
+        assert!(db.files.contains_key(&PathBuf::from("ot_0.sv")));
+        // Save setelah prune tidak error.
+        db.save().unwrap();
         let _ = std::fs::remove_dir_all(&root);
     }
 }

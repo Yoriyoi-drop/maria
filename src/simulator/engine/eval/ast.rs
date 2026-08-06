@@ -616,7 +616,17 @@ impl SimulationEngine {
                 };
                 Ok(val.resize(cast_width))
             }
-            Expr::ScopedIdent { package, item } => {
+            Expr::CastWidth { width, expr: inner } => {
+                let val = self.evaluate_ast_expr(inner)?;
+                let w = self.evaluate_ast_expr(width)?.to_u64().max(1) as usize;
+                Ok(val.resize(w))
+            }
+            Expr::ScopedIdent {
+                package,
+                item,
+                line,
+                col,
+            } => {
                 let qname = Symbol::intern(&format!("{}::{}", package.as_str(), item.as_str()));
                 if let Some(&val) = self.design.pkg_scoped_consts.get(&qname) {
                     return Ok(LogicVec::from_u64(val as u64, 32));
@@ -624,8 +634,8 @@ impl SimulationEngine {
                 self.diag_warn_at(
                     DiagCode::DpiError,
                     format!("scoped identifier '{}.{}' not resolved at runtime; using null default", package, item),
-                    0,
-                    0,
+                    *line,
+                    *col,
                 );
                 Ok(LogicVec::from_u64(0, 32))
             }

@@ -204,6 +204,11 @@ pub fn collect_read_signals_expr(expr: &IrExpr, out: &mut Vec<SignalId>) {
                 collect_read_signals_expr(item, out);
             }
         }
+        IrExpr::InsideRange { expr, lo, hi } => {
+            collect_read_signals_expr(expr, out);
+            collect_read_signals_expr(lo, out);
+            collect_read_signals_expr(hi, out);
+        }
         IrExpr::Cast { expr, .. } => {
             collect_read_signals_expr(expr, out);
         }

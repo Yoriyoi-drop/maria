@@ -232,11 +232,23 @@ pub fn evaluate_stmt_block_parallel(
                 for case_item in items {
                     let mut item_matched = false;
                     for pat in &case_item.labels {
-                        let pat_val = evaluate_expr_simple(pat, signals)?;
-                        let eq = match case_type {
-                            CaseType::CaseX => case_val.casex_eq(&pat_val),
-                            CaseType::CaseZ => case_val.casez_eq(&pat_val),
-                            CaseType::Normal => case_val.eq(&pat_val),
+                        let eq = match (case_type, pat) {
+                            (CaseType::Inside, IrExpr::InsideRange { lo, hi, .. }) => {
+                                let lo_v = evaluate_expr_simple(lo, signals)?.to_u64();
+                                let hi_v = evaluate_expr_simple(hi, signals)?.to_u64();
+                                let v = case_val.to_u64();
+                                v >= lo_v.min(hi_v) && v <= lo_v.max(hi_v)
+                            }
+                            _ => {
+                                let pat_val = evaluate_expr_simple(pat, signals)?;
+                                match case_type {
+                                    CaseType::CaseX => case_val.casex_eq(&pat_val),
+                                    CaseType::CaseZ => case_val.casez_eq(&pat_val),
+                                    CaseType::Normal | CaseType::Inside => {
+                                        case_val.eq(&pat_val)
+                                    }
+                                }
+                            }
                         };
                         if eq {
                             evaluate_stmt_block_parallel(&case_item.body, signals, writes)?;
