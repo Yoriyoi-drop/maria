@@ -425,17 +425,17 @@ impl Elaborator {
                             } else if let Expr::Value(v) = label {
                                 let lv = match v {
                                     Value::Decimal(d) => *d,
-                                    Value::Hex { bits, .. } => i64::from_str_radix(
+                                    Value::Hex { bits, .. } => crate::ast::const_eval::parse_literal(
                                         bits.trim_start_matches("0x").trim_start_matches("0X"),
                                         16,
                                     )
                                     .unwrap_or(0),
-                                    Value::Binary { bits, .. } => i64::from_str_radix(
+                                    Value::Binary { bits, .. } => crate::ast::const_eval::parse_literal(
                                         bits.trim_start_matches("0b").trim_start_matches("0B"),
                                         2,
                                     )
                                     .unwrap_or(0),
-                                    Value::Octal { bits, .. } => i64::from_str_radix(
+                                    Value::Octal { bits, .. } => crate::ast::const_eval::parse_literal(
                                         bits.trim_start_matches("0o").trim_start_matches("0O"),
                                         8,
                                     )
@@ -1722,17 +1722,17 @@ fn inside_range_bounds(label: &Expr) -> Option<(&Expr, &Expr)> {
 fn value_to_i64(v: &Value) -> i64 {
     match v {
         Value::Decimal(d) => *d,
-        Value::Hex { bits, .. } => i64::from_str_radix(
+        Value::Hex { bits, .. } => crate::ast::const_eval::parse_literal(
             bits.trim_start_matches("0x").trim_start_matches("0X"),
             16,
         )
         .unwrap_or(0),
-        Value::Binary { bits, .. } => i64::from_str_radix(
+        Value::Binary { bits, .. } => crate::ast::const_eval::parse_literal(
             bits.trim_start_matches("0b").trim_start_matches("0B"),
             2,
         )
         .unwrap_or(0),
-        Value::Octal { bits, .. } => i64::from_str_radix(
+        Value::Octal { bits, .. } => crate::ast::const_eval::parse_literal(
             bits.trim_start_matches("0o").trim_start_matches("0O"),
             8,
         )

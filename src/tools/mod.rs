@@ -175,7 +175,7 @@ pub fn expr_to_string(e: &crate::ast::expr::Expr) -> String {
             crate::ir::LogicVal::Z => "z",
         }),
         Expr::Ident { name, .. } => name.as_str().to_string(),
-        Expr::FuncCall { name, args } => {
+        Expr::FuncCall { name, args, .. } => {
             let a: Vec<String> = args.iter().map(expr_to_string).collect();
             format!("{}({})", name.as_str(), a.join(", "))
         }

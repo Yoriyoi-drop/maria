@@ -103,7 +103,7 @@ impl SimulationEngine {
                     self.evaluate_ast_expr(false_expr)
                 }
             }
-            Expr::FuncCall { name, args } if name == "new" => {
+            Expr::FuncCall { name, args, .. } if name == "new" => {
                 let _arg_vals: Vec<LogicVec> = args
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
@@ -111,7 +111,7 @@ impl SimulationEngine {
                 let obj_id = self.state.alloc_object(Symbol::intern(""));
                 Ok(LogicVec::from_u64(obj_id as u64, 64))
             }
-            Expr::FuncCall { name, args } if name.ends_with("::new") => {
+            Expr::FuncCall { name, args, .. } if name.ends_with("::new") => {
                 let raw_name = name.strip_suffix("::new").unwrap().to_string();
                 let is_builtin = matches!(
                     raw_name.as_str(),
@@ -191,7 +191,7 @@ impl SimulationEngine {
                 }
                 Ok(LogicVec::from_u64(obj_id as u64, 64))
             }
-            Expr::FuncCall { name, args } if name == "uvm_config_db::set" => {
+            Expr::FuncCall { name, args, .. } if name == "uvm_config_db::set" => {
                 let arg_vals: Vec<LogicVec> = args
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
@@ -215,7 +215,7 @@ impl SimulationEngine {
                     .insert((inst_name, field_name), value);
                 Ok(LogicVec::from_u64(1, 1))
             }
-            Expr::FuncCall { name, args } if name == "uvm_config_db::get" => {
+            Expr::FuncCall { name, args, .. } if name == "uvm_config_db::get" => {
                 let arg_vals: Vec<LogicVec> = args
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
@@ -253,7 +253,7 @@ impl SimulationEngine {
                     Ok(LogicVec::from_u64(0, 1))
                 }
             }
-            Expr::FuncCall { name, args } if name == "uvm_resource_db::set" => {
+            Expr::FuncCall { name, args, .. } if name == "uvm_resource_db::set" => {
                 let arg_vals: Vec<LogicVec> = args
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
@@ -276,7 +276,7 @@ impl SimulationEngine {
                 self.uvm_resource_db_data.insert((scope, rname), value);
                 Ok(LogicVec::from_u64(1, 1))
             }
-            Expr::FuncCall { name, args } if name == "uvm_resource_db::get" => {
+            Expr::FuncCall { name, args, .. } if name == "uvm_resource_db::get" => {
                 let arg_vals: Vec<LogicVec> = args
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
@@ -314,7 +314,7 @@ impl SimulationEngine {
                     Ok(LogicVec::from_u64(0, 1))
                 }
             }
-            Expr::FuncCall { name, args } if name == "uvm_factory::set_type_override_by_type" => {
+            Expr::FuncCall { name, args, .. } if name == "uvm_factory::set_type_override_by_type" => {
                 let arg_vals: Vec<LogicVec> = args
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
@@ -332,7 +332,7 @@ impl SimulationEngine {
                 self.factory_type_overrides.insert(orig, override_type);
                 Ok(LogicVec::from_u64(1, 1))
             }
-            Expr::FuncCall { name, args } => {
+            Expr::FuncCall { name, args, .. } => {
                 let arg_vals: Vec<LogicVec> = args
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))

@@ -41,3 +41,41 @@ endmodule";
         }
     }
 }
+
+#[cfg(test)]
+mod debug_syscall_lex {
+    use crate::frontend::FastLexer;
+    use crate::parser::lexer::{Lexer, Token};
+
+    #[test]
+    fn syscall_token_legacy() {
+        let input = "module m; initial if ($time) begin end endmodule";
+        let mut lexer = Lexer::new(input);
+        let mut out = Vec::new();
+        loop {
+            let (tok, line, col) = lexer.next_token();
+            if tok == Token::Eof { break; }
+            out.push(format!("{}:{} {:?}", line, col, tok));
+        }
+        eprintln!("LEGACY TOKENS: {}", out.join(" | "));
+        // Sanity: must contain Dollar
+        let has_dollar = out.iter().any(|t| t.contains("Dollar"));
+        assert!(has_dollar, "legacy lexer should produce Dollar: {}", out.join(" | "));
+    }
+
+    #[test]
+    fn syscall_token_fast() {
+        let input = "module m; initial if ($time) begin end endmodule";
+        let mut lexer = FastLexer::new(input, "");
+        let mut out = Vec::new();
+        loop {
+            let (tok, line, col) = lexer.next_token();
+            if tok == Token::Eof { break; }
+            out.push(format!("{}:{} {:?}", line, col, tok));
+        }
+        eprintln!("FAST TOKENS: {}", out.join(" | "));
+        // Sanity: must contain Dollar too
+        let has_dollar = out.iter().any(|t| t.contains("Dollar"));
+        assert!(has_dollar, "fast lexer should produce Dollar: {}", out.join(" | "));
+    }
+}

@@ -161,7 +161,7 @@ pub(crate) fn stmt_has_func_call(func_name: &Symbol, stmts: &[Stmt]) -> bool {
 /// Check if an expression contains a call to a specific function.
 pub(crate) fn expr_has_func_call(func_name: &Symbol, expr: &Expr) -> bool {
     match expr {
-        Expr::FuncCall { name, args } => {
+        Expr::FuncCall { name, args, .. } => {
             if name == func_name {
                 return true;
             }
@@ -766,12 +766,14 @@ pub(crate) fn rename_in_expr(expr: Expr, rename_map: &HashMap<Symbol, Symbol>) -
             base: Box::new(rename_in_expr(*base, rename_map)),
             width: Box::new(rename_in_expr(*width, rename_map)),
         },
-        Expr::FuncCall { name, args } => Expr::FuncCall {
+        Expr::FuncCall { name, args, line, col } => Expr::FuncCall {
             name: rename_map.get(&name).cloned().unwrap_or(name),
             args: args
                 .into_iter()
                 .map(|a| rename_in_expr(a, rename_map))
                 .collect(),
+            line,
+            col,
         },
         Expr::Inside {
             expr: inner,

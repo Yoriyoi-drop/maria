@@ -40,6 +40,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     // ── Output (auto-scroll ke bawah, stderr merah) ──
     egui::ScrollArea::vertical()
         .id_salt("term_scroll")
+        .auto_shrink([false, false])
         .max_height(height - 30.0)
         .stick_to_bottom(true)
         .show(ui, |ui| {

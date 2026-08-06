@@ -454,7 +454,7 @@ fn scan_expr_reads(e: &Expr, reads: &mut HashSet<Symbol>, writes: &mut HashSet<S
             reads.insert(*name);
         }
         Expr::Value(_) | Expr::Null | Expr::String(_) | Expr::FillLit(_) => {}
-        Expr::FuncCall { name, args } => {
+        Expr::FuncCall { name, args, .. } => {
             reads.insert(*name);
             for a in args {
                 scan_expr_reads(a, reads, writes);

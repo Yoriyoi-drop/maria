@@ -513,12 +513,14 @@ pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> E
                 .map(|e| substitute_loop_var_in_expr(e, var_name, value))
                 .collect(),
         ),
-        Expr::FuncCall { name, args } => Expr::FuncCall {
+        Expr::FuncCall { name, args, line, col } => Expr::FuncCall {
             name: *name,
             args: args
                 .iter()
                 .map(|a| substitute_loop_var_in_expr(a, var_name, value))
                 .collect(),
+            line: *line,
+            col: *col,
         },
         Expr::Replicate { count, expr: inner } => Expr::Replicate {
             count: Box::new(substitute_loop_var_in_expr(count, var_name, value)),

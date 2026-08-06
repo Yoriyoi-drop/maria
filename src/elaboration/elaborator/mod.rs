@@ -98,6 +98,12 @@ pub struct Elaborator {
     pub func_source_pkg: HashMap<Symbol, HashMap<Symbol, Symbol>>,    pub source_lines: Vec<String>,
     pub source_file: String,
     pub current_module: Option<Symbol>,
+    /// Top-level tidak bisa di-resolve secara unik (multiple candidate tops,
+    /// circular hierarchy, atau root module tidak ada) dan fallback recovery
+    /// terpaksa dipakai. Dipakai main.rs untuk menonaktifkan simulasi/VCD:
+    /// mode analisis berhasil (diagnostik dilaporkan), tapi desain tidak
+    /// boleh disimulasikan dari modul tebakan.
+    pub recovered: bool,
     // ── Incremental elaboration cache ──
     /// Global cache: signature → cached IrModule (session-wide)
     pub module_cache: HashMap<u64, IrModule>,
@@ -235,6 +241,7 @@ impl Elaborator {
             source_lines,
             source_file,
             current_module: None,
+            recovered: false,
 
             module_cache: HashMap::new(),
             cache_hits: 0,
@@ -739,6 +746,7 @@ let top_name = match top_module {
                             )
                         ));
                     }
+                    self.recovered = true;
                 }
                 sym
             }
@@ -754,6 +762,7 @@ let top_name = match top_module {
                                  • missing root module (no modules found in design)".to_string()
                             ));
                         }
+                        self.recovered = true;
                         self.design.modules.first().map(|m| m.name).unwrap_or(Symbol::EMPTY)
                     } else {
                         if mode == ElaborateMode::StrictSimulation {
@@ -765,6 +774,7 @@ let top_name = match top_module {
                                  • circular hierarchy (all modules are instantiated by others)".to_string()
                             ));
                         }
+                        self.recovered = true;
                         self.design.modules.first().map(|m| m.name).unwrap_or(Symbol::EMPTY)
                     }
                 } else if candidate_tops.len() > 1 {
@@ -778,6 +788,7 @@ let top_name = match top_module {
                         }
                         return Err(self.elab_diag(DiagCode::MultipleCandidateTops, reason));
                     }
+                    self.recovered = true;
                     candidate_tops[0]
                 } else {
                     candidate_tops[0]
@@ -802,6 +813,7 @@ let mut top = match self.modules.remove(&top_name) {
                 }
 
                 // Fallback only for AnalysisRecovery (Rule 2)
+                self.recovered = true;
                 let total_modules = self.design.modules.len();
                 let success_modules = self.modules.len();
                 
@@ -1587,9 +1599,48 @@ let mut top = match self.modules.remove(&top_name) {
         crate::diagnostics::resolve_source_location(&self.source_lines, &self.source_file, line)
     }
 
+    /// Cari posisi (baris, kolom) kemunculan pertama sebuah nama di merged
+    /// source. Dipakai sebagai FALLBACK saat error/warning elaboration tidak
+    /// membawa lokasi (line=0,col=0): nama diekstrak dari pesan `'X'` lalu
+    /// baris pertama yang memuat X dijadikan posisi snippet. Baris directive
+    /// `` `line `` dilewati (bukan konten user). Mengembalikan (0,0) bila nama
+    /// tidak bisa diekstrak / tidak ditemukan — diagnostic tetap tanpa snippet.
+    fn find_name_in_source(&self, message: &str) -> (usize, usize) {
+        let name = match message.find('\'') {
+            Some(s) => {
+                let rest = &message[s + 1..];
+                match rest.find('\'') {
+                    Some(e) => &rest[..e],
+                    None => return (0, 0),
+                }
+            }
+            None => return (0, 0),
+        };
+        if name.is_empty() || name.len() > 128 {
+            return (0, 0);
+        }
+        for (i, line) in self.source_lines.iter().enumerate() {
+            if line.trim_start().starts_with('`') {
+                continue;
+            }
+            if let Some(col) = line.find(name) {
+                return (i + 1, col + 1);
+            }
+        }
+        (0, 0)
+    }
+
     /// Buat error diagnostic dengan posisi source.
     fn elab_diag_at(&self, code: DiagCode, message: impl Into<String>, line: usize, col: usize) -> SimError {
         let msg: String = message.into();
+        let (line, col) = if line > 0 && col > 0 {
+            (line, col)
+        } else {
+            // Fallback global: cari nama dari pesan di source (mis.
+            // `'UVM_HDL_MAX_WIDTH' not found in parameter context` dari
+            // resolve_param_values yang tidak membawa lokasi).
+            self.find_name_in_source(&msg)
+        };
         let mut diag = Diagnostic::new(DiagLevel::Error, code, msg)
             .with_code_context();
         if line > 0 && line <= self.source_lines.len() {
@@ -1614,6 +1665,14 @@ let mut top = match self.modules.remove(&top_name) {
     /// Emit warning dengan posisi source.
     fn elab_warn_at(&self, code: DiagCode, message: impl Into<String>, line: usize, col: usize) {
         let msg: String = message.into();
+        let (line, col) = if line > 0 && col > 0 {
+            (line, col)
+        } else {
+            // Fallback global (lihat elab_diag_at): `unknown type 'X' is not
+            // defined in this scope` (resolve_type_width) dipanggil tanpa
+            // lokasi — posisi diambil dari baris pemakaian nama type.
+            self.find_name_in_source(&msg)
+        };
         let mut diag = Diagnostic::new(DiagLevel::Warning, code, msg)
             .with_code_context();
         if line > 0 && line <= self.source_lines.len() {
@@ -2670,7 +2729,7 @@ impl Elaborator {
                 if var.is_dynamic || var.is_queue {
                     let dtype_width = self.resolve_dtype_width(&decl.dtype, &type_param_widths)?;
                     let elem_width = dtype_width
-                        .max(self.var_resolved_width_aware(var, &effective_params, &signal_map, &signals)?)
+                        .max(self.var_resolved_width_aware(var, &effective_params, &signal_map, &signals).map_err(|e| self.elab_diag(DiagCode::ParamMismatch, e))?)
                         .max(decl.kind.default_width());
                     let sid = next_id;
                     next_id += 1;
@@ -2708,7 +2767,7 @@ impl Elaborator {
                 }
                 let dtype_width = self.resolve_dtype_width(&decl.dtype, &type_param_widths)?;
                 let elem_width = dtype_width
-                    .max(self.var_resolved_width_aware(var, &effective_params, &signal_map, &signals)?)
+                    .max(self.var_resolved_width_aware(var, &effective_params, &signal_map, &signals).map_err(|e| self.elab_diag(DiagCode::ParamMismatch, e))?)
                     .max(decl.kind.default_width());
                 let (kind, net_type) = match decl.kind {
                     DeclKind::Wire => (SignalKind::Wire, NetType::Wire),

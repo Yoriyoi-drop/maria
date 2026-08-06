@@ -29,9 +29,12 @@ pub struct PkgCtx<'a> {
 }
 
 fn parse_base(s: &str, radix: u32) -> Result<CVal, String> {
+    // Nilai ≥ 2^63 (konstanta kriptografi 64-bit OpenTitan) tidak muat di
+    // i64 — parse sebagai u64 lalu wrap bit-preserving (lihat
+    // const_eval::parse_literal).
     let cleaned = s.replace(['x', 'z'], "0").replace('_', "");
-    i64::from_str_radix(&cleaned, radix)
-        .map(CVal::Scalar)
+    u64::from_str_radix(&cleaned, radix)
+        .map(|v| CVal::Scalar(v as i64))
         .map_err(|_| format!("bad {} literal", radix))
 }
 
@@ -263,7 +266,7 @@ pub fn eval_expr(
         }
         Expr::Cast { expr, .. } => eval_expr(expr, ctx, cur_pkg),
         Expr::CastWidth { expr, .. } => eval_expr(expr, ctx, cur_pkg),
-        Expr::FuncCall { name, args } => eval_func(name.as_str(), args, ctx, cur_pkg),
+        Expr::FuncCall { name, args, .. } => eval_func(name.as_str(), args, ctx, cur_pkg),
         Expr::MemberAccess { .. } => Err("member access in const expr".to_string()),
         _ => Err("unsupported const expr".to_string()),
     }

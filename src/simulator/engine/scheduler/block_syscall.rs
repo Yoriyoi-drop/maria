@@ -31,13 +31,7 @@ impl SimulationEngine {
             return Ok(true);
         }
         if name == "display" || name == "write" {
-            let msg = format_display(
-                &self.state,
-                &self.design.top.signals,
-                &self.design.hier_signal_map,
-                &self.assoc_data,
-                ir_args,
-            );
+            let msg = self.format_display(ir_args);
             if name == "display" {
                 println!("{}", msg);
             } else {
@@ -293,14 +287,8 @@ impl SimulationEngine {
                 .first()
                 .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
             if let Some(h) = handle {
+                let msg = self.format_display(&ir_args[1..]);
                 if let Some(f) = self.file_handles.get_mut(&h) {
-                    let msg = format_display(
-                        &self.state,
-                        &self.design.top.signals,
-                        &self.design.hier_signal_map,
-                        &self.assoc_data,
-                        &ir_args[1..],
-                    );
                     let _ = write!(f, "{}", msg);
                 }
             }
@@ -309,14 +297,8 @@ impl SimulationEngine {
                 .first()
                 .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
             if let Some(h) = handle {
+                let msg = self.format_display(&ir_args[1..]);
                 if let Some(f) = self.file_handles.get_mut(&h) {
-                    let msg = format_display(
-                        &self.state,
-                        &self.design.top.signals,
-                        &self.design.hier_signal_map,
-                        &self.assoc_data,
-                        &ir_args[1..],
-                    );
                     let _ = write!(f, "{}", msg);
                 }
             }
@@ -630,13 +612,7 @@ impl SimulationEngine {
         } else if name == "swrite" || name == "sformat" {
             if let Some(IrExpr::Signal(out_id, _)) = ir_args.first() {
                 let format_args = &ir_args[1..];
-                let mut msg = format_display(
-                    &self.state,
-                    &self.design.top.signals,
-                    &self.design.hier_signal_map,
-                    &self.assoc_data,
-                    format_args,
-                );
+                let mut msg = self.format_display(format_args);
                 if name == "swrite" {
                     msg.push('\n');
                 }
@@ -921,13 +897,7 @@ impl SimulationEngine {
             return Ok(());
         }
         if name == "display" || name == "write" {
-            let msg = format_display(
-                &self.state,
-                &self.design.top.signals,
-                &self.design.hier_signal_map,
-                &self.assoc_data,
-                ir_args,
-            );
+            let msg = self.format_display(ir_args);
             if name == "display" {
                 println!("{}", msg);
             } else {
@@ -1125,14 +1095,8 @@ impl SimulationEngine {
                 .first()
                 .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
             if let Some(h) = handle {
+                let msg = self.format_display(&ir_args[1..]);
                 if let Some(f) = self.file_handles.get_mut(&h) {
-                    let msg = format_display(
-                        &self.state,
-                        &self.design.top.signals,
-                        &self.design.hier_signal_map,
-                        &self.assoc_data,
-                        &ir_args[1..],
-                    );
                     let _ = write!(f, "{}", msg);
                 }
             }
@@ -1141,14 +1105,8 @@ impl SimulationEngine {
                 .first()
                 .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
             if let Some(h) = handle {
+                let msg = self.format_display(&ir_args[1..]);
                 if let Some(f) = self.file_handles.get_mut(&h) {
-                    let msg = format_display(
-                        &self.state,
-                        &self.design.top.signals,
-                        &self.design.hier_signal_map,
-                        &self.assoc_data,
-                        &ir_args[1..],
-                    );
                     let _ = write!(f, "{}", msg);
                 }
             }
@@ -1446,7 +1404,7 @@ impl SimulationEngine {
         } else if name == "swrite" || name == "sformat" {
             if let Some(IrExpr::Signal(out_id, _)) = ir_args.first() {
                 let format_args = &ir_args[1..];
-                let mut msg = format_display(&self.state, &self.design.top.signals, &self.design.hier_signal_map, &self.assoc_data, format_args);
+                let mut msg = self.format_display(format_args);
                 if name == "swrite" {
                     msg.push('\n');
                 }

@@ -21,21 +21,24 @@ fn base_func_name(name: &str) -> &str {
     name.rsplit_once("::").map(|(_, f)| f).unwrap_or(name)
 }
 
+/// Parse literal berbasis angka (`bits` = digit tanpa prefix) menjadi i64
+/// dengan bit-pattern dipertahankan. Nilai ≥ 2^63 (mis. `64'hC0AC29B7C97C50DD`
+/// yang dipakai konstanta kriptografi OpenTitan) tidak muat di i64 — parse
+/// sebagai u64 lalu wrap. Operasi bit (BitSelect/RangeSelect/`& mask`) pada
+/// nilai negatif tetap menghasilkan bit asli karena `>>`/`&` bekerja pada
+/// representasi two's complement.
+pub fn parse_literal(bits: &str, radix: u32) -> Result<i64, String> {
+    u64::from_str_radix(&bits.replace(['x', 'z'], "0"), radix)
+        .map(|v| v as i64)
+        .map_err(|_| "bad literal".to_string())
+}
+
 pub fn const_eval_simple(expr: &Expr) -> Result<i64, String> {
     match expr {
         Expr::Value(Value::Decimal(n)) => Ok(*n),
-        Expr::Value(Value::Binary { bits, .. }) => {
-            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 2)
-                .map_err(|_| "bad binary".to_string())
-        }
-        Expr::Value(Value::Hex { bits, .. }) => {
-            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 16)
-                .map_err(|_| "bad hex".to_string())
-        }
-        Expr::Value(Value::Octal { bits, .. }) => {
-            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 8)
-                .map_err(|_| "bad octal".to_string())
-        }
+        Expr::Value(Value::Binary { bits, .. }) => parse_literal(bits, 2),
+        Expr::Value(Value::Hex { bits, .. }) => parse_literal(bits, 16),
+        Expr::Value(Value::Octal { bits, .. }) => parse_literal(bits, 8),
         Expr::Ident { name: ref s, .. } if s == "1" => Ok(1),
         Expr::MethodCall { .. } => Err("method calls are not simple constants".to_string()),
         Expr::MemberAccess { .. } => Err("member access is not a simple constant".to_string()),
@@ -49,18 +52,9 @@ pub fn const_eval_with_params(
 ) -> Result<i64, String> {
     match expr {
         Expr::Value(Value::Decimal(n)) => Ok(*n),
-        Expr::Value(Value::Binary { bits, .. }) => {
-            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 2)
-                .map_err(|_| "bad binary".to_string())
-        }
-        Expr::Value(Value::Hex { bits, .. }) => {
-            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 16)
-                .map_err(|_| "bad hex".to_string())
-        }
-        Expr::Value(Value::Octal { bits, .. }) => {
-            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 8)
-                .map_err(|_| "bad octal".to_string())
-        }
+        Expr::Value(Value::Binary { bits, .. }) => parse_literal(bits, 2),
+        Expr::Value(Value::Hex { bits, .. }) => parse_literal(bits, 16),
+        Expr::Value(Value::Octal { bits, .. }) => parse_literal(bits, 8),
         Expr::String(s) => Ok(string_to_i64(s)),
         Expr::Ident { name, .. } => {
             if let Some(&val) = param_vals.get(name.as_str()) {
@@ -493,7 +487,7 @@ pub fn const_eval_with_params(
                 Ok((src >> lsb) & mask)
             }
         }
-        Expr::FuncCall { name, args } if name == "$clog2" => {
+        Expr::FuncCall { name, args, .. } if name == "$clog2" => {
             if let Some(arg) = args.first() {
                 let v = const_eval_with_params(arg, param_vals)?;
                 if v <= 1 {
@@ -512,7 +506,7 @@ pub fn const_eval_with_params(
             }
         }
         // OpenTitan prim_util_pkg::vbits(value) = (value == 1) ? 1 : $clog2(value)
-        Expr::FuncCall { name, args } if base_func_name(name.as_str()) == "vbits" => {
+        Expr::FuncCall { name, args, .. } if base_func_name(name.as_str()) == "vbits" => {
             let v = const_eval_with_params(args.first().ok_or("vbits needs 1 arg")?, param_vals)?;
             Ok(if v == 1 { 1 } else {
                 let n = v as u64;
@@ -521,7 +515,7 @@ pub fn const_eval_with_params(
             })
         }
         // OpenTitan prim_util_pkg::ceil_div(a, b) = ceiling division
-        Expr::FuncCall { name, args } if base_func_name(name.as_str()) == "ceil_div" => {
+        Expr::FuncCall { name, args, .. } if base_func_name(name.as_str()) == "ceil_div" => {
             let a = const_eval_with_params(args.first().ok_or("ceil_div needs 2 args")?, param_vals)?;
             let b = const_eval_with_params(args.get(1).ok_or("ceil_div needs 2 args")?, param_vals)?;
             if b == 0 {
@@ -529,7 +523,7 @@ pub fn const_eval_with_params(
             }
             Ok(if a % b != 0 { a / b + 1 } else { a / b })
         }
-        Expr::FuncCall { name, args } if name == "$bits" || name == "$size" => {
+        Expr::FuncCall { name, args, .. } if name == "$bits" || name == "$size" => {
             if let Some(arg) = args.first() {
                 const_eval_with_params(arg, param_vals)
             } else {

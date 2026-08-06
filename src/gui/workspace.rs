@@ -25,6 +25,11 @@ pub struct WorkspaceState {
     pub bottom_tab: BottomTab,
     pub show_sidebar: bool,
     pub show_bottom: bool,
+    /// Tinggi Bottom Panel (px) — ukuran panel bawah dipulihkan saat workspace
+    /// di-restore. `#[serde(default)]` agar workspace lama (tanpa field ini)
+    /// tetap bisa di-restore.
+    #[serde(default)]
+    pub bottom_height: f32,
     pub show_outline: bool,
     pub wave_zoom: f32,
     /// Signal yang disembunyikan di waveform.
@@ -81,6 +86,7 @@ pub fn save_workspace(state: &GuiState) {
         bottom_tab: state.bottom_tab,
         show_sidebar: state.show_sidebar,
         show_bottom: state.show_bottom,
+        bottom_height: state.bottom_height,
         show_outline: state.show_outline,
         wave_zoom: state.wave_zoom,
         wave_hidden: state.wave_hidden.iter().cloned().collect(),
@@ -194,6 +200,11 @@ fn apply(state: &mut GuiState, root: PathBuf, ws: WorkspaceState) {
     state.bottom_tab = ws.bottom_tab;
     state.show_sidebar = ws.show_sidebar;
     state.show_bottom = ws.show_bottom;
+    // Tinggi panel bawah di-restore; clamp minimal agar tab bar tidak hilang
+    // (clamp maksimal dilakukan per-frame di app.rs terhadap tinggi window).
+    state.bottom_height = ws
+        .bottom_height
+        .max(crate::gui::splitter::BOTTOM_MIN_HEIGHT);
     state.show_outline = ws.show_outline;
     state.wave_zoom = ws.wave_zoom.max(0.5);
     state.wave_hidden = ws.wave_hidden.into_iter().collect();
@@ -244,6 +255,7 @@ mod tests {
             bottom_tab: BottomTab::Waveform,
             show_sidebar: false,
             show_bottom: true,
+            bottom_height: 320.0,
             show_outline: false,
             wave_zoom: 8.0,
             wave_hidden: vec!["clk".into()],
@@ -257,6 +269,7 @@ mod tests {
         assert_eq!(back.sidebar_tab, SidebarTab::Architecture);
         assert_eq!(back.bottom_tab, BottomTab::Waveform);
         assert_eq!(back.show_sidebar, false);
+        assert_eq!(back.bottom_height, 320.0);
         assert_eq!(back.wave_zoom, 8.0);
         assert_eq!(back.max_time, 5000);
         assert_eq!(back.bookmarks, vec!["core/cache.sv".to_string()]);

@@ -55,7 +55,7 @@ pub fn compute_expr_width(
             Value::Real(_) => Ok(64),
         },
         Expr::FillLit(_) => Ok(1),
-        Expr::FuncCall { name, args } if name == "$bits" || name == "$size" => {
+        Expr::FuncCall { name, args, .. } if name == "$bits" || name == "$size" => {
             if let Some(arg) = args.first() {
                 compute_expr_width(arg, signal_map, signals, param_vals, package_symbols)
             } else {
@@ -292,24 +292,24 @@ pub fn eval_width_aware_param(
     match expr {
         Expr::Value(Value::Decimal(n)) => Some(*n),
         Expr::Value(Value::Binary { bits, .. }) => {
-            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 2).ok()
+            crate::ast::const_eval::parse_literal(bits, 2).ok()
         }
         Expr::Value(Value::Hex { bits, .. }) => {
-            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 16).ok()
+            crate::ast::const_eval::parse_literal(bits, 16).ok()
         }
         Expr::Value(Value::Octal { bits, .. }) => {
-            i64::from_str_radix(&bits.replace(['x', 'z'], "0"), 8).ok()
+            crate::ast::const_eval::parse_literal(bits, 8).ok()
         }
         Expr::String(s) => Some(crate::ast::const_eval::string_to_i64(s)),
         Expr::Ident { name, .. } => effective_params.get(name).copied(),
         Expr::Paren(inner) => eval_width_aware_param(inner, signal_map, signals, effective_params, package_symbols),
-        Expr::FuncCall { name, args } if name == "$bits" || name == "$size" => {
+        Expr::FuncCall { name, args, .. } if name == "$bits" || name == "$size" => {
             let arg = args.first()?;
             compute_expr_width(arg, signal_map, signals, effective_params, package_symbols)
                 .ok()
                 .map(|w| w as i64)
         }
-        Expr::FuncCall { name, args } if name == "$clog2" => {
+        Expr::FuncCall { name, args, .. } if name == "$clog2" => {
             let arg = args.first()?;
             let v = eval_width_aware_param(arg, signal_map, signals, effective_params, package_symbols)?;
             Some(clog2_value(v))

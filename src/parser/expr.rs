@@ -97,6 +97,39 @@ impl Parser {
         }
     }
 
+    /// Parse daftar argumen panggilan fungsi `f(a, b, ...)`, mendukung named
+    /// argument `.name(expr)` (LRM 1800 §10.6.1) — pola umum OpenTitan DV:
+    /// `str_remove_sections(.s(text), .start_delim("/*"), .end_delim("*/"))`.
+    /// Nama argumen dibuang; urutan posisi dipertahankan (OpenTitan menulis
+    /// named arg sesuai urutan deklarasi). Tanpa dukungan ini, `read_vmem` di
+    /// `dv_utils_pkg.sv` gagal parse (`expected expression, found Dot`) →
+    /// seluruh package hilang → E3001 'Host'/'Device' tidak ter-resolve.
+    fn parse_call_args(&mut self) -> Result<Vec<Expr>, SimError> {
+        let mut args = Vec::new();
+        if self.peek() == &Token::RParen || self.peek() == &Token::Eof {
+            return Ok(args);
+        }
+        loop {
+            if self.peek() == &Token::Dot {
+                // Named arg: `.name(expr)` — skip nama, ambil ekspresinya.
+                self.advance();
+                self.expect_ident()?;
+                self.expect(Token::LParen)?;
+                let e = self.parse_expr(0)?;
+                self.expect(Token::RParen)?;
+                args.push(e);
+            } else {
+                args.push(self.parse_expr(0)?);
+            }
+            if self.peek() == &Token::Comma {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        Ok(args)
+    }
+
     pub(crate) fn parse_expr(&mut self, min_prec: usize) -> Result<Expr, SimError> {
         let mut lhs = self.parse_primary_expr()?;
 
@@ -262,13 +295,7 @@ impl Parser {
                     let member = self.expect_ident()?;
                     if self.peek() == &Token::LParen {
                         self.advance();
-                        let mut args = Vec::new();
-                        if self.peek() != &Token::RParen {
-                            loop {
-                                args.push(self.parse_expr(0)?);
-                                if self.peek() == &Token::Comma { self.advance(); } else { break; }
-                            }
-                        }
+                        let args = self.parse_call_args()?;
                         self.expect(Token::RParen)?;
                         lhs = Expr::MethodCall { obj: Box::new(lhs), method: member, args, with_clause: None };
                     } else {
@@ -323,6 +350,17 @@ impl Parser {
     fn parse_primary_expr_impl(&mut self) -> Result<Expr, SimError> {
         let tok = self.peek().clone();
         match tok {
+            // `$` sebagai end-marker dalam slice queue `[1:$]` (LRM 1800 §7.12.4)
+            // — contoh `tokens[1:$]` di `dv_utils_pkg::read_vmem`. Di sini `$`
+            // berarti "sampai elemen terakhir" (bukan system function). Dikenali
+            // dari token setelahnya (`]`, `,`, `)` atau `:` dalam range). Tanpa ini
+            // `[1:$]` error "expected system function name" → package gagal parse.
+            Token::Dollar
+                if matches!(self.peek_ahead(1), Token::RBrack | Token::Comma | Token::RParen | Token::Colon) =>
+            {
+                self.advance();
+                Ok(Expr::Ident { name: Symbol::intern("$"), line: 0, col: 0 })
+            }
             Token::Dollar => {
                 self.advance();
                 let name_tok = self.peek().clone();
@@ -355,16 +393,12 @@ impl Parser {
                     }
                 };
                 if self.peek() == &Token::LParen {
+                    let fl = self.peek_line();
+                    let fc = self.peek_col();
                     self.advance();
-                    let mut args = Vec::new();
-                    if self.peek() != &Token::RParen {
-                        loop {
-                            args.push(self.parse_expr(0)?);
-                            if self.peek() == &Token::Comma { self.advance(); } else { break; }
-                        }
-                    }
+                    let args = self.parse_call_args()?;
                     self.expect(Token::RParen)?;
-                    Ok(Expr::FuncCall { name: full_name, args })
+                    Ok(Expr::FuncCall { name: full_name, args, line: fl, col: fc })
                 } else {
                     Ok(Expr::Ident { name: full_name, line: 0, col: 0 })
                 }
@@ -380,16 +414,12 @@ impl Parser {
                     let sc_col = self.peek_col();
                     let item = self.expect_ident()?;
                     if self.peek() == &Token::LParen {
+                        let fl = self.peek_line();
+                        let fc = self.peek_col();
                         self.advance();
-                        let mut args = Vec::new();
-                        if self.peek() != &Token::RParen {
-                            loop {
-                                args.push(self.parse_expr(0)?);
-                                if self.peek() == &Token::Comma { self.advance(); } else { break; }
-                            }
-                        }
+                        let args = self.parse_call_args()?;
                         self.expect(Token::RParen)?;
-                        return Ok(Expr::FuncCall { name: Symbol::intern(&format!("{}::{}", name, item)), args });
+                        return Ok(Expr::FuncCall { name: Symbol::intern(&format!("{}::{}", name, item)), args, line: fl, col: fc });
                     }
                     // Type cast scoped: `pkg::type'(expr)` — pola umum di OpenTitan
                     // (`top_pkg::TL_DBW'('b0001)`, `lc_ctrl_pkg::lc_tx_t'(x)`).
@@ -443,16 +473,12 @@ impl Parser {
                                 self.expect(Token::RParen)?;
                                 return Ok(Expr::Cast { dtype: Symbol::intern(&format!("{}::{}", class_prefix, item)), expr: Box::new(expr) });
                             }
+                            let fl = self.peek_line();
+                            let fc = self.peek_col();
                             self.advance();
-                            let mut args = Vec::new();
-                            if self.peek() != &Token::RParen {
-                                loop {
-                                    args.push(self.parse_expr(0)?);
-                                    if self.peek() == &Token::Comma { self.advance(); } else { break; }
-                                }
-                            }
+                            let args = self.parse_call_args()?;
                             self.expect(Token::RParen)?;
-                            return Ok(Expr::FuncCall { name: Symbol::intern(&format!("{}::{}", class_prefix, item)), args });
+                            return Ok(Expr::FuncCall { name: Symbol::intern(&format!("{}::{}", class_prefix, item)), args, line: fl, col: fc });
                         }
                         return Ok(Expr::ScopedIdent {
                             package: class_prefix,
@@ -472,16 +498,12 @@ impl Parser {
                     return Ok(Expr::Cast { dtype: name, expr: Box::new(expr) });
                 }
                 if self.peek() == &Token::LParen {
+                    let fl = self.peek_line();
+                    let fc = self.peek_col();
                     self.advance();
-                    let mut args = Vec::new();
-                    if self.peek() != &Token::RParen {
-                        loop {
-                            args.push(self.parse_expr(0)?);
-                            if self.peek() == &Token::Comma { self.advance(); } else { break; }
-                        }
-                    }
+                    let args = self.parse_call_args()?;
                     self.expect(Token::RParen)?;
-                    Ok(Expr::FuncCall { name, args })
+                    Ok(Expr::FuncCall { name, args, line: fl, col: fc })
                 } else {
                     Ok(Expr::Ident { name, line, col })
                 }
@@ -504,7 +526,42 @@ impl Parser {
                         _ => Expr::Value(Value::Decimal(value.as_str().parse::<i64>().unwrap_or(0))),
                     }
                 } else {
-                    if let Ok(n) = value.as_str().parse::<i64>() { Expr::Value(Value::Decimal(n)) }
+                    if let Ok(n) = value.as_str().parse::<i64>() {
+                        // Literal waktu (time literal): `1ns`, `5us`, `10ms`, `1s`,
+                        // `100ps`, `1fs`, `1step` (LRM 1800 §6.17). FastLexer memecah
+                        // `1ns` menjadi `Number` + `Ident('ns')`; tanpa penanganan ini
+                        // `#(interval_ns * 1ns)` gagal parse (expected RParen, found
+                        // 'ns') — seperti di `dv_utils_pkg::poll_for_stop` — sehingga
+                        // SELURUH package hilang dari design (E3001 'Host'/'Device'
+                        // tidak ter-resolve). Skala ke tick basis 1ns (Maria default;
+                        // design.timescale selalu None → basis 1ns). Unit < 1 tick
+                        // (ps/fs/step) dibulatkan naik ke 1 agar `#1ps` tidak menjadi
+                        // delay 0 (loop tak berujung).
+                        let scaled = match self.peek() {
+                            Token::Ident(u) if u == "s" => {
+                                self.advance();
+                                Some(n.saturating_mul(1_000_000_000))
+                            }
+                            Token::Ident(u) if u == "ms" => {
+                                self.advance();
+                                Some(n.saturating_mul(1_000_000))
+                            }
+                            Token::Ident(u) if u == "us" => {
+                                self.advance();
+                                Some(n.saturating_mul(1_000))
+                            }
+                            Token::Ident(u) if u == "ns" => {
+                                self.advance();
+                                Some(n)
+                            }
+                            Token::Ident(u) if u == "ps" || u == "fs" || u == "step" => {
+                                self.advance();
+                                Some(n.max(1))
+                            }
+                            _ => None,
+                        };
+                        Expr::Value(Value::Decimal(scaled.unwrap_or(n)))
+                    }
                     else { Expr::Ident { name: value, line: 0, col: 0 } }
                 };
                 Ok(val)
@@ -514,22 +571,20 @@ impl Parser {
             Token::New => {
                 self.advance();
                 if self.peek() == &Token::LBrack {
+                    let fl = self.peek_line();
+                    let fc = self.peek_col();
                     self.advance();
                     let size = self.parse_expr(0)?;
                     self.expect(Token::RBrack)?;
                     let _init = if self.peek() == &Token::LParen { self.advance(); let val = self.parse_expr(0)?; self.expect(Token::RParen)?; Some(Box::new(val)) } else { None };
-                    Ok(Expr::FuncCall { name: Symbol::intern("new"), args: vec![size] })
+                    Ok(Expr::FuncCall { name: Symbol::intern("new"), args: vec![size], line: fl, col: fc })
                 } else {
+                    let fl = self.peek_line();
+                    let fc = self.peek_col();
                     self.expect(Token::LParen)?;
-                    let mut args = Vec::new();
-                    if self.peek() != &Token::RParen {
-                        loop {
-                            args.push(self.parse_expr(0)?);
-                            if self.peek() == &Token::Comma { self.advance(); } else { break; }
-                        }
-                    }
+                    let args = self.parse_call_args()?;
                     self.expect(Token::RParen)?;
-                    Ok(Expr::FuncCall { name: Symbol::intern("new"), args })
+                    Ok(Expr::FuncCall { name: Symbol::intern("new"), args, line: fl, col: fc })
                 }
             }
             Token::This => { self.advance(); Ok(Expr::Ident { name: Symbol::intern("this"), line: 0, col: 0 }) }

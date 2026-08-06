@@ -7,9 +7,24 @@ use super::coverage;
 use super::pipeline;
 use super::terminal;
 use super::waveform;
+use super::super::splitter;
 use super::super::state::{BottomTab, DiagLevel, GuiState};
 
 pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
+    // ── Splitter handle di border atas panel — drag untuk resize ──
+    // Kursor berubah jadi ns-resize saat hover; tinggi di-clamp ke
+    // [min tab bar, 80% tinggi window] (lihat `splitter::bottom_bounds`).
+    let bounds = splitter::bottom_bounds(ui);
+    let new_height = splitter::show_resizer(
+        ui,
+        egui::Id::new("bottom_panel_resizer"),
+        state.bottom_height,
+        bounds,
+    );
+    if new_height != state.bottom_height {
+        state.bottom_height = new_height;
+    }
+
     // ── Tab selector ──
     ui.horizontal(|ui| {
         let mut clicked: Option<BottomTab> = None;
@@ -46,6 +61,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     });
     ui.separator();
 
+    // Konten wajib mengisi seluruh tinggi panel. Tanpa ini egui menciutkan
+    // frame panel ke tinggi konten (ScrollArea auto-shrink), sehingga panel
+    // kehilangan ukuran yang di-set dan resize handle jadi tidak berfungsi —
+    // drag tidak bisa membesarkan panel secara bebas.
+    ui.set_min_height(ui.available_height());
+
     // Waveform punya ScrollArea sendiri (horizontal+vertikal) — jangan dibungkus
     // ScrollArea vertikal di sini (scroll bersarang).
     if state.bottom_tab == BottomTab::Waveform {
@@ -56,6 +77,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
     let height = ui.available_height().max(80.0);
     egui::ScrollArea::vertical()
         .id_salt("bottom_scroll")
+        .auto_shrink([false, false])
         .max_height(height)
         .show(ui, |ui| match state.bottom_tab {
             BottomTab::Problems => problems_tab(ui, state),

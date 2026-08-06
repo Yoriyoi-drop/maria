@@ -132,12 +132,14 @@ pub fn substitute_expr_types(e: Expr, param_name: &str, replacement: &DataType) 
             true_expr: Box::new(substitute_expr_types(*true_expr, param_name, replacement)),
             false_expr: Box::new(substitute_expr_types(*false_expr, param_name, replacement)),
         },
-        Expr::FuncCall { name, args } => Expr::FuncCall {
+        Expr::FuncCall { name, args, line, col } => Expr::FuncCall {
             name,
             args: args
                 .into_iter()
                 .map(|a| substitute_expr_types(a, param_name, replacement))
                 .collect(),
+            line,
+            col,
         },
         other => other,
     }

@@ -1292,9 +1292,16 @@ mod tests {
             assert!(db.files.is_empty(), "project lain tidak boleh berbagi data");
             assert!(db.ast_cache.is_empty());
         }
-        // Root DB menyimpan keduanya di projects/<pid>/.
+        // Root DB menyimpan data di projects/<pid>/ — path project A dan B
+        // TERPISAH (tidak berbagi direktori). metadata.mdb A ada (baru saja
+        // di-save); project B belum pernah di-save sehingga file-nya belum
+        // dibuat — yang penting adalah isolasi path (bukan keberadaan file).
         assert!(MicdDatabase::project_root(&base, &pid_a).join("metadata.mdb").exists());
-        assert!(MicdDatabase::project_root(&base, &pid_b).join("metadata.mdb").exists());
+        assert_ne!(
+            MicdDatabase::project_root(&base, &pid_a),
+            MicdDatabase::project_root(&base, &pid_b),
+            "project A dan B harus punya store terpisah"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

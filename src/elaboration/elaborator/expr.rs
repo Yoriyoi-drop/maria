@@ -417,7 +417,7 @@ impl Elaborator {
                 }
             }
             Expr::Paren(inner) => self.elaborate_expr(inner, signal_map, signals),
-            Expr::FuncCall { name, args } if name.starts_with("$") => match name.as_str() {
+            Expr::FuncCall { name, args, .. } if name.starts_with("$") => match name.as_str() {
                 "$signed" => {
                     if args.len() != 1 {
                         return Err(self.elab_diag(DiagCode::ParamMismatch, "$signed requires exactly one argument"));
@@ -597,7 +597,7 @@ impl Elaborator {
                     })
                 }
             },
-            Expr::FuncCall { name, args } if name == "new" => {
+            Expr::FuncCall { name, args, .. } if name == "new" => {
                 let ir_args: Result<Vec<IrExpr>, SimError> = args
                     .iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
@@ -876,7 +876,7 @@ impl Elaborator {
                     expr: Box::new(inner_ir),
                 })
             }
-            Expr::FuncCall { name, args } if name.starts_with("process::") => {
+            Expr::FuncCall { name, args, .. } if name.starts_with("process::") => {
                 let ir_args: Result<Vec<IrExpr>, SimError> = args
                     .iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
@@ -886,7 +886,7 @@ impl Elaborator {
                     args: ir_args?,
                 })
             }
-            Expr::FuncCall { name, args }
+            Expr::FuncCall { name, args, .. }
                 if name.ends_with("::new")
                     && (self
                         .design
@@ -939,7 +939,7 @@ impl Elaborator {
                     args: ir_args?,
                 })
             }
-            Expr::FuncCall { name, args } if name == "uvm_factory::set_type_override_by_type" => {
+            Expr::FuncCall { name, args, .. } if name == "uvm_factory::set_type_override_by_type" => {
                 let ir_args: Result<Vec<IrExpr>, SimError> = args
                     .iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
@@ -949,7 +949,7 @@ impl Elaborator {
                     args: ir_args?,
                 })
             }
-            Expr::FuncCall { name, args }
+            Expr::FuncCall { name, args, .. }
                 if name == "uvm_config_db::set"
                     || name == "uvm_config_db::get"
                     || name == "uvm_resource_db::set"
@@ -964,10 +964,12 @@ impl Elaborator {
                     name: *name,
                     args: ir_args?,
                 })
-            }                    Expr::FuncCall { name, args } if name != "new" && name.contains("::") => {
-                        self.elaborate_package_func_call(name.as_str(), args, signal_map, signals)
+            }                    Expr::FuncCall { name, args, line, col } if name != "new" && name.contains("::") => {
+                        let fl = if *line > 0 { *line } else { expr_location(expr).0 };
+                        let fc = if *col > 0 { *col } else { expr_location(expr).1 };
+                        self.elaborate_package_func_call(name.as_str(), args, signal_map, signals, fl, fc)
             }
-            Expr::FuncCall { name, args } if name != "new" => {
+            Expr::FuncCall { name, args, .. } if name != "new" => {
                 if std::env::var("DBG_PKG").is_ok() && name.as_str() == "aes_circ_byte_shift" {
                     let func_exists = self.design.modules.iter().any(|m| {
                         m.items
@@ -1026,8 +1028,9 @@ impl Elaborator {
                         });
                     }
                     // Plain-name package function via import (pkg::* / pkg::item)
+                    let (fl, fc) = expr_location(expr);
                     if let Some(ir) =
-                        self.elaborate_imported_package_func_call(name.as_str(), args, signal_map, signals)?
+                        self.elaborate_imported_package_func_call(name.as_str(), args, signal_map, signals, fl, fc)?
                     {
                         return Ok(ir);
                     }
@@ -1046,11 +1049,13 @@ impl Elaborator {
         args: &[Expr],
         signal_map: &HashMap<Symbol, SignalId>,
         signals: &[SignalInfo],
+        line: usize,
+        col: usize,
     ) -> Result<IrExpr, SimError> {
         let (pkg_name, func_name) = name
             .split_once("::")
-            .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound, format!("invalid function name '{}'", name)))?;
-        self.elaborate_package_func(pkg_name, func_name, args, signal_map, signals)
+            .ok_or_else(|| self.elab_diag_at(DiagCode::ModuleNotFound, format!("invalid function name '{}'", name), line, col))?;
+        self.elaborate_package_func(pkg_name, func_name, args, signal_map, signals, line, col)
     }
 
     /// Kumpulkan set import aktif: import $unit (`design.unit_imports`) + import
@@ -1078,6 +1083,8 @@ impl Elaborator {
         args: &[Expr],
         signal_map: &HashMap<Symbol, SignalId>,
         signals: &[SignalInfo],
+        line: usize,
+        col: usize,
     ) -> Result<Option<IrExpr>, SimError> {
         let import_sets = self.collect_import_sets();
         for (package, import_item) in import_sets {
@@ -1091,7 +1098,7 @@ impl Elaborator {
                     && matches!(pkg_items.get(name), Some(PackageItem::Function(_)))
             };
             if matched {
-                let ir = self.elaborate_package_func(package.as_str(), name, args, signal_map, signals)?;
+                let ir = self.elaborate_package_func(package.as_str(), name, args, signal_map, signals, line, col)?;
                 return Ok(Some(ir));
             }
         }
@@ -1101,7 +1108,7 @@ impl Elaborator {
         if let Some(inline_pkg) = self.inline_func_pkg.get() {
             if let Some(pkg_items) = self.package_symbols.get(&inline_pkg) {
                 if matches!(pkg_items.get(name), Some(PackageItem::Function(_))) {
-                    let ir = self.elaborate_package_func(inline_pkg.as_str(), name, args, signal_map, signals)?;
+                    let ir = self.elaborate_package_func(inline_pkg.as_str(), name, args, signal_map, signals, line, col)?;
                     return Ok(Some(ir));
                 }
             }
@@ -1119,7 +1126,7 @@ impl Elaborator {
                     seen.push(pkg);
                     if let Some(pkg_items) = self.package_symbols.get(&pkg) {
                         if matches!(pkg_items.get(name), Some(PackageItem::Function(_))) {
-                            let ir = self.elaborate_package_func(pkg.as_str(), name, args, signal_map, signals)?;
+                            let ir = self.elaborate_package_func(pkg.as_str(), name, args, signal_map, signals, line, col)?;
                             return Ok(Some(ir));
                         }
                     }
@@ -1191,6 +1198,8 @@ impl Elaborator {
         args: &[Expr],
         signal_map: &HashMap<Symbol, SignalId>,
         signals: &[SignalInfo],
+        line: usize,
+        col: usize,
     ) -> Result<IrExpr, SimError> {
         let func = self
             .package_symbols
@@ -1204,10 +1213,10 @@ impl Elaborator {
                 }
             })
             .ok_or_else(|| {
-                self.elab_diag(DiagCode::ModuleNotFound, format!(
+                self.elab_diag_at(DiagCode::ModuleNotFound, format!(
                     "function '{}' not found in package '{}'",
                     func_name, pkg_name
-                ))
+                ), line, col)
             })?;
 
         // Find return expression
@@ -1222,7 +1231,7 @@ impl Elaborator {
                 }
             })
             .ok_or_else(|| {
-                self.elab_diag(DiagCode::ModuleNotFound, format!("function '{}::{}' has no return expression", pkg_name, func_name))
+                self.elab_diag_at(DiagCode::ModuleNotFound, format!("function '{}::{}' has no return expression", pkg_name, func_name), line, col)
             })?;
 
         // Function body hanya boleh inline bila berisi TEPAT satu statement
@@ -1459,12 +1468,14 @@ impl Elaborator {
                     replacement.clone(),
                 )),
             },
-            Expr::FuncCall { name: n, args: a } => Expr::FuncCall {
+            Expr::FuncCall { name: n, args: a, line, col } => Expr::FuncCall {
                 name: n,
                 args: a
                     .into_iter()
                     .map(|e| Self::substitute_ident_in_expr(e, target, replacement.clone()))
                     .collect(),
+                line,
+                col,
             },
             Expr::MethodCall {
                 obj,

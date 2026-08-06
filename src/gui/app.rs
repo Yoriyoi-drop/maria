@@ -18,6 +18,7 @@ use super::backend::{scan_tree, spawn_compile, spawn_sim};
 use super::panels::{
     bottom, command_palette, editor, genwizard, outline, sidebar, statusbar, toolbar,
 };
+use super::splitter;
 use super::state::{DiagEntry, DiagLevel, GuiEvent, GuiState, STAGE_SIMULATOR};
 use super::workspace::{restore_workspace, save_workspace};
 
@@ -345,6 +346,10 @@ fn setup_theme(ctx: &egui::Context) {
     ctx.all_styles_mut(|style| {
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
         style.spacing.button_padding = egui::vec2(8.0, 4.0);
+        // Area grab separator panel yang bisa di-resize (sidebar/outline/bottom)
+        // diperlebar. Radius default 3px terlalu tipis untuk di-drag bebas —
+        // terutama tepi atas Bottom Panel yang berdekatan langsung dengan editor.
+        style.interaction.resize_grab_radius_side = 8.0;
     });
 }
 
@@ -380,10 +385,19 @@ impl eframe::App for MariaApp {
             });
 
         // ── Bottom panel ──
+        // Ukuran dipegang `GuiState::bottom_height`, diubah via splitter handle
+        // (`splitter::show_resizer` di dalam panel). `resizable(false)` + 
+        // `exact_size` — resize sepenuhnya dikelola handle custom (constraint
+        // min/max, kursor ns-resize, real-time drag).
         if self.state.show_bottom {
+            // Clamp tiap frame: window bisa di-resize sehingga max berubah;
+            // pastikan panel tidak melebihi 80% tinggi layar & tidak di bawah
+            // tinggi tab bar.
+            let (min_h, max_h) = splitter::bottom_bounds(ui);
+            let h = self.state.bottom_height.clamp(min_h, max_h);
             egui::Panel::bottom(egui::Id::new("bottom_panel"))
-                .resizable(true)
-                .default_size(220.0)
+                .exact_size(h)
+                .resizable(false)
                 .show(ui, |ui| {
                     bottom::show(ui, &mut self.state);
                 });

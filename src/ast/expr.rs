@@ -12,6 +12,9 @@ pub enum Expr {
     FuncCall {
         name: Symbol,
         args: Vec<Expr>,
+        /// Posisi source pemanggilan (`func(...)`) untuk diagnostic col/line.
+        line: usize,
+        col: usize,
     },
     RangeSelect {
         expr: Box<Expr>,

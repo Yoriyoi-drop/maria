@@ -577,13 +577,7 @@ impl SimulationEngine {
                     _ => IrExpr::Const(self.evaluate_ast_expr(a).unwrap_or(LogicVec::new(32))),
                 })
                 .collect();
-            let msg = format_display(
-                &self.state,
-                &self.design.top.signals,
-                &self.design.hier_signal_map,
-                &self.assoc_data,
-                &ir_args,
-            );
+            let msg = self.format_display(&ir_args);
             if name == "display" {
                 println!("{}", msg);
             } else {

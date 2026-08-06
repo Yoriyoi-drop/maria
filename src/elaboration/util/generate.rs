@@ -69,8 +69,8 @@ pub(crate) fn expr_location(expr: &Expr) -> (usize, usize) {
     match expr {
         Expr::Ident { line, col, .. } => (*line, *col),
         Expr::Value(_) | Expr::FillLit(_) | Expr::String(_) | Expr::Null => (0, 0),
-        Expr::FuncCall { args, .. }
-        | Expr::MethodCall { args, .. } => {
+        Expr::FuncCall { line, col, .. } => (*line, *col),
+        Expr::MethodCall { args, .. } => {
             args.first().map(expr_location).unwrap_or((0, 0))
         }
         Expr::UnaryOp { expr: inner, .. }
@@ -131,8 +131,13 @@ pub fn expand_all_generates(
                     module.items.splice(i..=i, expanded);
                 }
                 Err(e) => {
+                    // Generate block yang gagal diekspansi (mis. limit generate-for
+                    // merujuk param yang tidak bisa di-eval konstan) → lewati blok
+                    // dan lanjutkan. Klasifikasikan Warning: modul tetap di-elaborasi
+                    // tanpa blok ini, menghindari skip modul berantai. Info baris
+                    // global (combined source) dipertahankan di teks pesan.
                     diag_sink.push(Diagnostic::new(
-                        DiagLevel::Error,
+                        DiagLevel::Warning,
                         DiagCode::NotImplemented,
                         format!(
                             "generate block expansion skipped in '{}': {} (at line {}:{})",
@@ -197,19 +202,17 @@ pub fn expand_generate_block(
                         result.extend(expand_item_list(branch, param_vals, diag_sink, source_lines, source_file)?);
                     }
                     Err(e) => {
-                        // `member access not allowed in constant expression` adalah kasus
-                        // normal di interface/module OpenTitan (mis. `if (SomeStruct.field)`
-                        // di generate if). Turunkan ke Warning dan ambil true branch agar
-                        // elaborasi tetap berlanjut tanpa merusak modul.
-                        let level = if e.contains("member access") || e.contains("method calls") {
-                            DiagLevel::Warning
-                        } else {
-                            DiagLevel::Error
-                        };
+                        // Kondisi generate-if yang tidak bisa di-evaluasi konstan
+                        // (mis. localparam struct yang belum didukung const-eval,
+                        // member access, method call) → ambil true branch sebagai
+                        // fallback deterministik. Karena elaborasi LANJUT dengan
+                        // true branch, klasifikasikan sebagai Warning (bukan
+                        // Error) agar modul tidak di-skip dan memicu error E3001
+                        // berantai di seluruh hirarki instance.
                         let mut diag = Diagnostic::new(
-                            level,
+                            DiagLevel::Warning,
                             DiagCode::NotImplemented,
-                            format!("non-constant condition in generate if ({}), taking true branch", e),
+                            format!("non-constant condition in generate if ({}), taking true branch", e.msg ,e.line,e.col),
                         );
                         // Posisi kondisi generate di-render sebagai snippet
                         // file:line:col (sebelumnya hanya ditulis di teks pesan).
@@ -685,12 +688,14 @@ fn scope_rename_expr(expr: &Expr, map: &HashMap<Symbol, Symbol>) -> Expr {
                 .map(|e| scope_rename_expr(e, map))
                 .collect(),
         ),
-        Expr::FuncCall { name, args } => Expr::FuncCall {
+        Expr::FuncCall { name, args, line, col } => Expr::FuncCall {
             name: *name,
             args: args
                 .iter()
                 .map(|a| scope_rename_expr(a, map))
                 .collect(),
+            line: *line,
+            col: *col,
         },
         Expr::Replicate { count, expr: inner } => Expr::Replicate {
             count: Box::new(scope_rename_expr(count, map)),
@@ -771,11 +776,11 @@ fn scope_rename_expr(expr: &Expr, map: &HashMap<Symbol, Symbol>) -> Expr {
             width: Box::new(scope_rename_expr(width, map)),
             expr: Box::new(scope_rename_expr(inner, map)),
         },
-        Expr::ScopedIdent { package, item, .. } => Expr::ScopedIdent {
+        Expr::ScopedIdent { package, item, line, col } => Expr::ScopedIdent {
             package: *package,
             item: *item,
-            line: 0,
-            col: 0,
+            line: *line,
+            col: *col,
         },
     }
 }

@@ -52,9 +52,17 @@ impl<'a> FastLexer<'a> {
         let start_col = self.col;
         let c = self.input[self.pos];
 
-        // Identifier or keyword (starts with alpha, _, \, or $)
-        if c.is_ascii_alphabetic() || c == b'_' || c == b'\\' || c == b'$' {
+        // Identifier or keyword (starts with alpha, _, or \ — NOT $).
+        // `$` dipisah menjadi Token::Dollar agar `$time`, `$display`, dst
+        // di-lex sebagai Dollar + Ident (konsisten dengan lexer legacy).
+        // Menggabungkan `$` ke dalam ident membuat `if ($time)` gagal parse
+        // karena `$time)` terbaca sebagai satu ident.
+        if c.is_ascii_alphabetic() || c == b'_' || c == b'\\' {
             return (self.read_ident_or_keyword(), start_line, start_col);
+        }
+        if c == b'$' {
+            self.skip_byte();
+            return (Token::Dollar, start_line, start_col);
         }
 
         // Number literal
@@ -275,10 +283,13 @@ impl<'a> FastLexer<'a> {
             return Token::Ident(Symbol::intern(ident));
         }
 
-        // Normal identifier or keyword
+        // Normal identifier or keyword — `$` TIDAK valid di dalam ident
+        // (kecuali escaped identifier yang ditangani di atas). Membiarkan `$`
+        // masuk ke ident membuat syscall seperti `$time`/`$display` tergabung
+        // dengan sisa ekspresi (mis. `$time)` jadi satu token).
         while self.pos < self.input.len() {
             let c = self.input[self.pos];
-            if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' {
+            if c.is_ascii_alphanumeric() || c == b'_' {
                 self.skip_byte();
             } else {
                 break;

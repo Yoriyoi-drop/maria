@@ -11,6 +11,57 @@ use crate::intern::Symbol;
 use crate::parser::lexer::*;
 
 impl Parser {
+    /// Skip dimensi unpacked array setelah nama port/deklarasi:
+    /// `arr[]`, `arr[$]` (queue), `arr[N]`, `arr[msb:lsb]`, `arr[2][3]`.
+    /// Dimensi unpacked tidak mempengaruhi parse port — hanya dikonsumsi agar
+    /// `]` kosong / `$` tidak gagal di `parse_expr` (pola `ref bit [7:0] arr[]`
+    /// dan `const ref int int_q[$]` umum di OpenTitan DV).
+    pub(crate) fn skip_unpacked_dims(&mut self) -> Result<(), SimError> {
+        while self.peek() == &Token::LBrack {
+            self.advance(); // '['
+            if self.peek() == &Token::Dollar && self.peek_ahead(1) == &Token::RBrack {
+                self.advance(); // '$' — queue `[$]`
+            } else if self.peek() != &Token::RBrack {
+                self.parse_expr(0)?;
+                if self.peek() == &Token::Colon {
+                    self.advance();
+                    self.parse_expr(0)?;
+                }
+            }
+            self.expect(Token::RBrack)?;
+        }
+        Ok(())
+    }
+
+    /// Parse range packed `[msb:lsb]` ATAU lewati dimensi unpacked (`[N]`,
+    /// `[]`) setelah nama port. Mengembalikan `Some(range)` hanya untuk
+    /// `[expr:expr]`. Saat `parse_range` gagal (mis. `[8]` single-ekspresi),
+    /// posisi di-restore lalu bracket dikonsumsi sebagai dimensi unpacked.
+    pub(crate) fn parse_port_dims(&mut self) -> Result<Option<ExprRange>, SimError> {
+        if self.peek() != &Token::LBrack {
+            return Ok(None);
+        }
+        let saved = self.pos.get();
+        if let Ok(Some(er)) = self.parse_range() {
+            return Ok(Some(er));
+        }
+        self.pos.set(saved);
+        while self.peek() == &Token::LBrack {
+            self.advance();
+            if self.peek() == &Token::Dollar && self.peek_ahead(1) == &Token::RBrack {
+                self.advance(); // '$' — queue `[$]`
+            } else if self.peek() != &Token::RBrack {
+                let _ = self.parse_expr(0);
+                if self.peek() == &Token::Colon {
+                    self.advance();
+                    let _ = self.parse_expr(0);
+                }
+            }
+            self.expect(Token::RBrack)?;
+        }
+        Ok(None)
+    }
+
     pub(crate) fn parse_always(&mut self) -> Result<AlwaysBlock, SimError> {
         let kind = match self.peek() {
             Token::Always => {
@@ -318,8 +369,19 @@ impl Parser {
                 } else if let Token::Ident(name) = self.peek() {
                     if self.type_param_names.contains(name) {
                         self.advance();
-                    } else if matches!(self.peek_ahead(1), Token::Ident(_) | Token::LBrack) {
-                        // User-defined type name followed by port name or range
+                    } else if matches!(self.peek_ahead(1), Token::Ident(_)) {
+                        // User-defined type name diikuti nama port (`mubi4_t a`).
+                        self.advance();
+                    } else if self.peek_ahead(1) == &Token::LBrack
+                        && (self.peek_ahead(2) == &Token::RBrack
+                            || self.peek_ahead(2) == &Token::Dollar)
+                    {
+                        // `name []` / `name [$]` — nama port dgn dimensi unpacked
+                        // kosong/queue (BUKAN tipe). Jangan advance: inner loop
+                        // akan memakannya sebagai nama port lalu `skip_unpacked_dims`
+                        // memakan `[]` / `[$]`.
+                    } else if matches!(self.peek_ahead(1), Token::LBrack) {
+                        // Tipe user-defined dgn packed range (`foo_t [7:0] name`).
                         self.advance();
                     }
                 } else {
@@ -333,18 +395,16 @@ impl Parser {
                 // width mismatch saat inlining function package.
                 let mut expr_range = None;
                 let mut range = None;
-                if self.peek() == &Token::LBrack {
-                    if let Some(er) = self.parse_range()? {
-                        if let (Ok(m), Ok(l)) =
-                            (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
-                        {
-                            range = Some(Range {
-                                msb: m as usize,
-                                lsb: l as usize,
-                            });
-                        } else {
-                            expr_range = Some(er);
-                        }
+                if let Some(er) = self.parse_port_dims()? {
+                    if let (Ok(m), Ok(l)) =
+                        (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
+                    {
+                        range = Some(Range {
+                            msb: m as usize,
+                            lsb: l as usize,
+                        });
+                    } else {
+                        expr_range = Some(er);
                     }
                 } else if is_int {
                     range = Some(Range { msb: 31, lsb: 0 });
@@ -362,6 +422,7 @@ impl Parser {
                     }
                     let pn = *pname;
                     self.advance();
+                    self.skip_unpacked_dims()?;
                     ports.push(FunctionPort {
                         name: pn,
                         range: range.clone(),
@@ -380,7 +441,10 @@ impl Parser {
         if self.peek() == &Token::Semi {
             self.advance();
         }
-        // Parse ports and declarations until 'begin' or statement
+        // Parse ports and declarations until 'begin' or statement.
+        // `stmts` diisi dari blok `begin...end` (bila ada) dan/atau statement
+        // sisa body function — begin...end TIDAK harus jadi statement terakhir.
+        let mut stmts: Vec<Stmt> = Vec::new();
         loop {
             match self.peek() {
                 Token::Input | Token::Output | Token::Inout | Token::Ref => {
@@ -403,7 +467,7 @@ impl Parser {
                         }
                     };
                     let port_range = if self.peek() == &Token::LBrack {
-                        let er = self.parse_range()?;
+                        let er = self.parse_port_dims()?; // `[msb:lsb]` atau skip unpacked
                         er.as_ref().and_then(|er| {
                             if let (Ok(m), Ok(l)) =
                                 (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
@@ -422,6 +486,7 @@ impl Parser {
                     while let Token::Ident(pname) = self.peek() {
                         let pn = *pname;
                         self.advance();
+                        self.skip_unpacked_dims()?;
                         ports.push(FunctionPort {
                             name: pn,
                             range: port_range.clone(),
@@ -440,7 +505,9 @@ impl Parser {
                     let decl = self.parse_decl()?;
                     decls.push(decl);
                 }
-                Token::Bit | Token::Byte | Token::Shortint | Token::Longint | Token::Time => {
+                Token::Bit | Token::Byte | Token::Shortint | Token::Longint | Token::Time
+                | Token::String | Token::Real | Token::RealTime | Token::WReal
+                | Token::Mailbox | Token::Semaphore => {
                     let decl = self.parse_decl()?;
                     decls.push(decl);
                 }
@@ -465,24 +532,12 @@ impl Parser {
                     }
                 }
                 Token::Begin => {
-                    let stmts = self.parse_stmt_block()?;
-                    self.expect(Token::EndFunction)?;
-                    if self.peek() == &Token::Colon {
-                        self.advance();
-                        if matches!(self.peek(), Token::Ident(_)) {
-                            self.advance();
-                        }
-                    }
-                    return Ok(FunctionDecl {
-                        name,
-                        range,
-                        return_type,
-                        ports,
-                        decls,
-                        stmts,
-                        virtual_flag,
-                        is_static,
-                    });
+                    // `begin...end` TIDAK harus statement terakhir: statement
+                    // lain (return, assignment, foreach, dst.) boleh mengikuti
+                    // sebelum `endfunction`. Simpan blok sebagai `stmts` awal
+                    // lalu break ke loop statement kedua di bawah.
+                    stmts = self.parse_stmt_block()?;
+                    break;
                 }
                 Token::EndFunction => {
                     self.advance(); // consume 'endfunction'
@@ -506,8 +561,8 @@ impl Parser {
                 _ => break,
             }
         }
-        // No begin/end block - parse statements until endfunction
-        let mut stmts = Vec::new();
+        // Parse statements until endfunction — sisa body setelah `begin...end`
+        // (atau body penuh bila tidak ada blok begin).
         loop {
             if matches!(self.peek(), Token::EndFunction | Token::End | Token::EndClass | Token::EndInterface | Token::EndPackage | Token::Eof) {
                 break;
@@ -576,6 +631,13 @@ impl Parser {
         if self.peek() == &Token::LParen {
             self.advance();
             while self.peek() != &Token::RParen && self.peek() != &Token::Eof {
+                // Comma setelah default value (mis. `task f(uint a = 10, int b)`) 
+                // tidak dikonsumsi oleh inner ident loop — consume di sini agar 
+                // loop tidak berputar tanpa progres.
+                if self.peek() == &Token::Comma {
+                    self.advance();
+                    continue;
+                }
                 let is_int = matches!(self.peek(), Token::Int | Token::Integer);
                 if matches!(
                     self.peek(),
@@ -608,18 +670,14 @@ impl Parser {
                     self.advance();
                     continue;
                 }
-                let range: Option<Range> = if self.peek() == &Token::LBrack {
-                    if let Ok(Some(er)) = self.parse_range() {
-                        if let (Ok(m), Ok(l)) =
-                            (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
-                        {
-                            Some(Range {
-                                msb: m as usize,
-                                lsb: l as usize,
-                            })
-                        } else {
-                            None
-                        }
+                let range: Option<Range> = if let Ok(Some(er)) = self.parse_port_dims() {
+                    if let (Ok(m), Ok(l)) =
+                        (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
+                    {
+                        Some(Range {
+                            msb: m as usize,
+                            lsb: l as usize,
+                        })
                     } else {
                         None
                     }
@@ -650,7 +708,10 @@ impl Parser {
             self.advance();
         }
 
-        // Parse non-ANSI port declarations and body
+        // Parse non-ANSI port declarations and body.
+        // `stmts` diisi dari blok `begin...end` (bila ada) dan/atau statement
+        // sisa body task — begin...end TIDAK harus jadi statement terakhir.
+        let mut stmts: Vec<Stmt> = Vec::new();
         loop {
             match self.peek() {
                 Token::Input | Token::Output | Token::Inout | Token::Ref => {
@@ -673,7 +734,7 @@ impl Parser {
                         }
                     };
                     let port_range = if self.peek() == &Token::LBrack {
-                        let er = self.parse_range()?;
+                        let er = self.parse_port_dims()?; // `[msb:lsb]` atau skip unpacked
                         er.as_ref().and_then(|er| {
                             if let (Ok(m), Ok(l)) =
                                 (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
@@ -692,6 +753,7 @@ impl Parser {
                     while let Token::Ident(pname) = self.peek() {
                         let pn = *pname;
                         self.advance();
+                        self.skip_unpacked_dims()?;
                         ports.push(FunctionPort {
                             name: pn,
                             range: port_range.clone(),
@@ -706,26 +768,18 @@ impl Parser {
                     }
                     self.skip_semi();
                 }
-                Token::Wire | Token::Reg | Token::Logic | Token::Int | Token::Integer => {
+                Token::Wire | Token::Reg | Token::Logic | Token::Int | Token::Integer
+                | Token::Bit | Token::Byte | Token::Shortint | Token::Longint | Token::Time
+                | Token::String | Token::Real | Token::RealTime | Token::WReal
+                | Token::Mailbox | Token::Semaphore => {
                     decls.push(self.parse_decl()?);
                 }
                 Token::Begin => {
-                    let stmts = self.parse_stmt_block()?;
-                    self.expect(Token::EndTask)?;
-                    if self.peek() == &Token::Colon {
-                        self.advance();
-                        if matches!(self.peek(), Token::Ident(_)) {
-                            self.advance();
-                        }
-                    }
-                    return Ok(TaskDecl {
-                        name,
-                        ports,
-                        decls,
-                        stmts,
-                        virtual_flag,
-                        is_static,
-                    });
+                    // `begin...end` TIDAK harus statement terakhir: statement
+                    // lain boleh mengikuti sebelum `endtask`. Simpan blok sebagai
+                    // `stmts` awal lalu break ke loop statement kedua.
+                    stmts = self.parse_stmt_block()?;
+                    break;
                 }
                 Token::EndTask => {
                     self.advance(); // consume 'endtask'
@@ -747,7 +801,6 @@ impl Parser {
                 _ => break,
             }
         }
-        let mut stmts = Vec::new();
         loop {
             if matches!(self.peek(), Token::EndTask | Token::End | Token::EndClass | Token::EndInterface | Token::EndPackage | Token::Eof) {
                 break;
@@ -804,6 +857,10 @@ impl Parser {
                 self.advance();
                 self.expect(Token::LParen)?;
                 let cond = self.parse_expr(0)?;
+                if std::env::var("DBG_GEN_IF").is_ok() {
+                    let (df, dl) = self.resolve_source_file(self.peek_line());
+                    eprintln!("DBG-GEN-IF: parse generate-if {}:{} line {}: {:?}", df, dl, self.peek_line(), crate::tools::expr_to_string(&cond));
+                }
                 self.expect(Token::RParen)?;
                 let (true_label, true_items) = self.parse_generate_block_body()?;
                 let false_items = if self.peek() == &Token::Else {

@@ -3,6 +3,7 @@ use crate::diagnostics::DiagCode;
 use crate::error::SimError;
 use crate::intern::Symbol;
 use crate::ir::*;
+use crate::simulator::engine::SimulationEngine;
 use crate::simulator::state::SimulationState;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -210,157 +211,41 @@ pub fn logicvec_to_string(lv: &LogicVec) -> String {
     s
 }
 
-pub fn eval_display_arg(
-    state: &SimulationState,
-    signals: &[SignalInfo],
-    hier_map: &HashMap<Symbol, SignalId>,
-    assoc_data: &HashMap<SignalId, HashMap<LogicVec, LogicVec>>,
-    arg: &IrExpr,
-) -> Result<LogicVec, SimError> {
-    match arg {
-        IrExpr::HierRef(name) => {
-            // Resolve hierarchical name via hier_map
-            if let Some(&hid) = hier_map.get(name) {
-                Ok(state.read_signal(hid).clone())
-            } else {
-                // Try finding direct signal match
-                if let Some((idx, _)) = signals.iter().enumerate().find(|(_, s)| s.name == *name) {
-                    Ok(state.read_signal(idx).clone())
-                } else {
-                    Ok(LogicVec::from_u64(0, 32))
-                }
-            }
-        }
-        IrExpr::Const(v) => Ok(v.clone()),
-        IrExpr::String(s) => Ok(LogicVec {
-            bits: s
-                .bytes()
-                .flat_map(|b| {
-                    (0..8).map(move |i| {
-                        if (b >> i) & 1 == 1 {
-                            LogicVal::One
-                        } else {
-                            LogicVal::Zero
-                        }
-                    })
-                })
-                .collect(),
-            width: s.len() * 8,
-        }),
-        IrExpr::Signal(id, _)
-        | IrExpr::RangeSelect(id, _, _)
-        | IrExpr::BitSelect(id, _)
-        | IrExpr::ArrayIndex { sig_id: id, .. } => {
-            match arg {
-                IrExpr::RangeSelect(id, msb, lsb) => {
-                    let val = state.read_signal(*id);
-                    let (start, end) = if msb > lsb {
-                        (*lsb, *msb)
-                    } else {
-                        (*msb, *lsb)
-                    };
-                    let bits = val.bits[start..=end.min(val.width - 1)].to_vec();
-                    Ok(LogicVec {
-                        width: bits.len(),
-                        bits,
-                    })
-                }
-                IrExpr::BitSelect(id, idx) => {
-                    let val = state.read_signal(*id);
-                    let bit = val.bits.get(*idx).copied().unwrap_or(LogicVal::X);
-                    Ok(LogicVec {
-                        width: 1,
-                        bits: vec![bit],
-                    })
-                }
-                IrExpr::ArrayIndex {
-                    sig_id,
-                    index,
-                    elem_width,
-                } => {
-                    let idx_val = eval_display_arg(state, signals, hier_map, assoc_data, index)?;
-                    let idx_u64 = idx_val.to_u64() as usize;
-                    let val = state.read_signal(*sig_id);
-                    if let Some(assoc) = assoc_data.get(sig_id) {
-                        if let Some(v) = assoc.get(&idx_val) {
-                            return Ok(v.clone());
-                        }
+impl SimulationEngine {
+    /// Format `$display`/`$monitor`/`$sformatf` arguments menjadi string.
+    ///
+    /// Argumen nilai dievaluasi via `evaluate_expr` penuh — sehingga ekspresi
+    /// kompleks (cast, binary op, concat, dll.) di argumen `$display` tidak lagi
+    /// jatuh ke fallback 0. Format string (jika arg pertama `IrExpr::String`)
+    /// diproses per spec: `%0d/%b/%h/%t/%s`, `\n`, `\t`, dll.
+    pub(crate) fn format_display(&mut self, ir_args: &[IrExpr]) -> String {
+        let (fmt_str, start_idx) = if let Some(IrExpr::String(s)) = ir_args.first() {
+            (s.as_str(), 1)
+        } else {
+            // Tanpa fmt string: tulis langsung ke satu String (no Vec per call).
+            let mut out = String::with_capacity(ir_args.len() * 8);
+            let mut first = true;
+            for arg in ir_args {
+                if let Ok(val) = self.evaluate_expr(arg) {
+                    if !first {
+                        out.push(' ');
                     }
-                    let start = idx_u64 * elem_width;
-                    let mut bits = Vec::with_capacity(*elem_width);
-                    for i in start..start + elem_width {
-                        bits.push(val.bits.get(i).copied().unwrap_or(LogicVal::X));
-                    }
-                    Ok(LogicVec {
-                        width: *elem_width,
-                        bits,
-                    })
-                }
-                _ => {
-                    let val = state.read_signal(*id);
-                    Ok(val.clone())
+                    first = false;
+                    let _ = write!(out, "{}", val);
                 }
             }
-        }
-        IrExpr::MemberAccess { obj, field } => {
-            // Class object field read: obj adalah handle → get_object → fields.
-            let obj_val = eval_display_arg(state, signals, hier_map, assoc_data, obj)?;
-            let obj_id = obj_val.to_u64() as ObjId;
-            if let Some(obj_data) = state.get_object(obj_id) {
-                Ok(obj_data
-                    .fields
-                    .get(field)
-                    .cloned()
-                    .unwrap_or_else(|| LogicVec::new(1)))
-            } else {
-                Ok(LogicVec::from_u64(0, 32))
-            }
-        }
-        IrExpr::SysFunc { name, args } if name == "sformatf" => {
-            let msg = format_display(state, signals, hier_map, assoc_data, args);
-            Ok(string_to_logicvec(&msg))
-        }
-        IrExpr::SysFunc { name, .. } if name == "$time" || name == "time" => {
-            Ok(LogicVec::from_u64(state.time, 64))
-        }
-        IrExpr::SysFunc { name, .. } if name == "$realtime" || name == "realtime" => {
-            Ok(LogicVec::from_u64((state.time as f64).to_bits(), 64))
-        }
-        _ => Ok(LogicVec::from_u64(0, 32)),
-    }
-}
+            return out;
+        };
 
-pub fn format_display(
-    state: &SimulationState,
-    signals: &[SignalInfo],
-    hier_map: &HashMap<Symbol, SignalId>,
-    assoc_data: &HashMap<SignalId, HashMap<LogicVec, LogicVec>>,
-    ir_args: &[IrExpr],
-) -> String {
-    let (fmt_str, start_idx) = if let Some(IrExpr::String(s)) = ir_args.first() {
-        // PERF-11: borrow format string (bukan clone per call).
-        (s.as_str(), 1)
-    } else {
-        // Tanpa fmt string: tulis langsung ke satu String (no Vec per call).
-        let mut out = String::with_capacity(ir_args.len() * 8);
-        let mut first = true;
-        for arg in ir_args {
-            if let Ok(val) = eval_display_arg(state, signals, hier_map, assoc_data, arg) {
-                if !first {
-                    out.push(' ');
-                }
-                first = false;
-                let _ = write!(out, "{}", val);
-            }
-        }
-        return out;
-    };
-
-    // PERF-11: evaluasi arg secara lazy (no Vec alloc per call).
-    let mut value_args = ir_args[start_idx..]
-        .iter()
-        .filter_map(|a| eval_display_arg(state, signals, hier_map, assoc_data, a).ok());
-    let mut result = String::with_capacity(fmt_str.len() + 8 * ir_args.len());
+        // Evaluasi arg secara eager ke Vec: borrow &mut self (dari evaluate_expr)
+        // harus berakhir sebelum akses self.state di bawah. `evaluate_expr` penuh
+        // menangani semua IrExpr (Cast, BinaryOp, Concat, MemberAccess, ...).
+        let value_args: Vec<LogicVec> = ir_args[start_idx..]
+            .iter()
+            .filter_map(|a| self.evaluate_expr(a).ok())
+            .collect();
+        let mut value_args = value_args.into_iter();
+        let mut result = String::with_capacity(fmt_str.len() + 8 * ir_args.len());
     let mut chars = fmt_str.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '%' {
@@ -459,23 +344,23 @@ pub fn format_display(
                     let t = value_args
                         .next()
                         .map(|v| v.to_u64() as f64)
-                        .unwrap_or(state.time as f64);
+                        .unwrap_or(self.state.time as f64);
                     // Skala relatif terhadap basis sim-time, bukan hardcode -9.
                     // saturating_sub mencegah underflow i64 (panic di debug)
                     // jika user memanggil $timeformat dengan units ekstrem.
                     let scale = 10f64.powi(
-                        state.timeformat.base_units.saturating_sub(state.timeformat.units)
+                        self.state.timeformat.base_units.saturating_sub(self.state.timeformat.units)
                             as i32,
                     );
                     let scaled = t * scale;
-                    let precision = state.timeformat.precision.clamp(0, 20) as usize;
+                    let precision = self.state.timeformat.precision.clamp(0, 20) as usize;
                     let mut s = format!("{:.*}", precision, scaled);
                     // Clamp min_field_width utk cegah alokasi " ".repeat(huge).
-                    let min_width = state.timeformat.min_field_width.min(128);
+                    let min_width = self.state.timeformat.min_field_width.min(128);
                     if s.len() < min_width {
                         s = format!("{}{}", " ".repeat(min_width - s.len()), s);
                     }
-                    s.push_str(&state.timeformat.suffix);
+                    s.push_str(&self.state.timeformat.suffix);
                     result.push_str(&s);
                 }
                 Some('s') => {
@@ -512,6 +397,7 @@ pub fn format_display(
         }
     }
     result
+    }
 }
 
 /// Jumlah digit desimal dari u64 (1 untuk 0) — hindari format! alloc di %d.

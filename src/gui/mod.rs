@@ -11,6 +11,7 @@ pub mod backend;
 pub mod panels;
 pub mod resource;
 pub mod semantic;
+pub mod splitter;
 pub mod state;
 pub mod workspace;
 

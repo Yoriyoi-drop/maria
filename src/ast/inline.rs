@@ -852,7 +852,7 @@ fn inline_funcs_in_stmt(
         }
         Stmt::StmtAssign { lhs, rhs } => {
             // Check if LHS is a function/task call (task statement like `my_task(a, b)`)
-            if let Expr::FuncCall { name, args } = &lhs {
+            if let Expr::FuncCall { name, args, .. } = &lhs {
                 if let Some(func) = funcs.get(name) {
                     let c = *counter;
                     *counter += 1;
@@ -1825,7 +1825,7 @@ fn replace_func_calls_in_expr(
     recursive_funcs: &HashSet<Symbol>,
 ) -> Expr {
     match expr {
-        Expr::FuncCall { name, args } => {
+        Expr::FuncCall { name, args, line, col } => {
             if recursive_funcs.contains(&name) {
                 // Recursive function call — keep as FuncCall for runtime evaluation
                 let new_args: Vec<Expr> = args
@@ -1845,6 +1845,8 @@ fn replace_func_calls_in_expr(
                 return Expr::FuncCall {
                     name,
                     args: new_args,
+                    line,
+                    col,
                 };
             }
             if let Some(func) = funcs.get(&name) {
@@ -2058,7 +2060,7 @@ fn replace_func_calls_in_expr(
                     Expr::Value(Value::Decimal(0))
                 }
             } else {
-                Expr::FuncCall { name, args }
+                Expr::FuncCall { name, args, line, col }
             }
         }
         Expr::BinaryOp { op, lhs, rhs } => Expr::BinaryOp {

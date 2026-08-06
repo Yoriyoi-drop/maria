@@ -674,6 +674,10 @@ pub struct GuiState {
     pub bottom_tab: BottomTab,
     pub show_sidebar: bool,
     pub show_bottom: bool,
+    /// Tinggi Bottom Panel (px) — diubah via splitter handle di border atas
+    /// panel (lihat `splitter::show_resizer`); di-clamp ke min/max tiap frame
+    /// di app.rs dan dipersistensikan ke workspace.
+    pub bottom_height: f32,
 
     // ── Wizard generator (Generate Module / Create Interface) ──
     /// Dialog wizard sedang terbuka (dibuka dari Command Palette).
@@ -748,6 +752,7 @@ impl GuiState {
             bottom_tab: BottomTab::Console,
             show_sidebar: true,
             show_bottom: true,
+            bottom_height: 220.0,
             gen_open: false,
             gen_kind: GenKind::Module,
             gen_name: String::new(),

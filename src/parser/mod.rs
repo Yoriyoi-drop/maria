@@ -1044,10 +1044,47 @@ let mut _last_pos = self.pos.get();
                     || self.peek_ahead(1) == &Token::LParen
                     || self.peek_ahead(1) == &Token::LBrack
                 {
-                    // Check if Ident + [range] is a declaration (type [msb:lsb] name) or instance
-                    if self.peek_ahead(1) == &Token::LBrack {
-                        let decl = self.parse_decl();
-                        if let Ok(decl) = decl { return Ok(Some(ModuleItem::Decl(decl))) }
+                    // Ambiguitas: `Type name;` / `Type name[N];` bisa berupa
+                    // deklarasi variabel bertipe user-defined (typedef/class dari
+                    // file lain yang belum dikenal di file ini — mis.
+                    // `t_Pmpcfg_ent pmpcfg_n_in[64];`), ATAU module instance
+                    // `Module inst(...)`. Karena `Type name;` (tanpa paren)
+                    // jauh lebih sering di kode DV/RTL (tipe custom), coba
+                    // parse_decl DULU dengan backtracking posisi. Instance
+                    // module dikenali via lookahead: `(` / `#` / `[N](` yang
+                    // mengikuti nama (port list / parameter instance).
+                    if matches!(self.peek_ahead(1), Token::Ident(_))
+                        || self.peek_ahead(1) == &Token::LBrack
+                    {
+                        // Deteksi instance: scan maju dari token setelah `name`
+                        // untuk `(`/`#` sebelum `;`/`,` pada depth bracket 0.
+                        // Contoh instance: `mod u(.clk(clk));`, `mod u[3:0](...);`,
+                        // `mod #(.P(1)) u(...);`. Contoh deklarasi (bukan
+                        // instance): `Type arr[64];`, `Type a, b;`.
+                        let mut is_instance = false;
+                        let mut depth = 0i32;
+                        let mut i = 2usize;
+                        while i < 24 {
+                            match self.peek_ahead(i) {
+                                Token::LParen | Token::Hash if depth == 0 => {
+                                    is_instance = true;
+                                    break;
+                                }
+                                Token::LBrack => depth += 1,
+                                Token::RBrack => depth = depth.saturating_sub(1),
+                                Token::Semi | Token::Comma if depth == 0 => break,
+                                Token::Eof => break,
+                                _ => {}
+                            }
+                            i += 1;
+                        }
+                        if !is_instance {
+                            let saved = self.pos.get();
+                            if let Ok(decl) = self.parse_decl() {
+                                return Ok(Some(ModuleItem::Decl(decl)));
+                            }
+                            self.pos.set(saved);
+                        }
                     }
                     let instance = self.parse_instance()?;
                     Ok(Some(ModuleItem::Instance(instance)))
@@ -1251,13 +1288,15 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                         _ => break,
                     };
                     // Skip unpacked array dimension(s) after name:
-                    // name [N] atau name [msb:lsb] (multi-dimensi diperbolehkan)
+                    // name [] / name [N] / name [msb:lsb] (multi-dimensi diperbolehkan)
                     while self.peek() == &Token::LBrack {
                         self.advance();
-                        self.parse_expr(0)?;
-                        if self.peek() == &Token::Colon {
-                            self.advance();
+                        if self.peek() != &Token::RBrack {
                             self.parse_expr(0)?;
+                            if self.peek() == &Token::Colon {
+                                self.advance();
+                                self.parse_expr(0)?;
+                            }
                         }
                         self.expect(Token::RBrack)?;
                     }

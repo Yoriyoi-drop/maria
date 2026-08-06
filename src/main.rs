@@ -834,7 +834,16 @@ fn run(cli: Cli) -> Result<(), SimError> {
     let elab_start = std::time::Instant::now();
     let source_lines: Vec<String> = combined.lines().map(|s| s.to_string()).collect();
     let mut elaborator = Elaborator::with_source(design, source_lines, first_source.to_string());
-    let mut ir_design = match elaborator.elaborate(top_name, ElaborateMode::StrictSimulation) {
+    // Mode elaborasi: dengan `--top` eksplisit → StrictSimulation (top wajib).
+    // Tanpa `--top` (run file satu-per-satu) → AnalysisRecovery: top yang tidak
+    // unik (multiple candidate / circular / missing root) TIDAK menggagalkan
+    // analisis — diagnostik dilaporkan, simulasi & VCD dinonaktifkan (Rule 4).
+    let elab_mode = if cli.top.is_some() {
+        ElaborateMode::StrictSimulation
+    } else {
+        ElaborateMode::AnalysisRecovery
+    };
+    let mut ir_design = match elaborator.elaborate(top_name, elab_mode) {
         Ok(d) => d,
         Err(e) => {
             let diags = elaborator.flush_diagnostics();
@@ -862,6 +871,13 @@ fn run(cli: Cli) -> Result<(), SimError> {
     // Flush elaboration-time diagnostics (warnings like WR0102)
     emit_diags(&elab_diags);
 
+    // Mode analisis (recovery): top-level tidak dapat ditentukan secara unik
+    // karena `--top` tidak diberikan dan design tidak punya top yang jelas
+    // (multiple candidate tops / circular / root hilang). Analisis selesai dan
+    // semua diagnostik sudah dilaporkan — simulasi & VCD TIDAK dijalankan
+    // karena design tidak boleh disimulasikan dari modul tebakan (Rule 2/4).
+    let recovered = elaborator.recovered;
+
     // ── Simulation Readiness Check (Rule 6) ──
     // Check all prerequisites before starting simulation
     let parse_ok = true; // Already passed if we got here
@@ -880,7 +896,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
         println!("✓ Parse");
         println!("✓ Semantic");
         println!("✓ Hierarchy");
-        if has_elab_errors {
+        if has_elab_errors || recovered {
             println!("✗ Top Resolution");
         } else {
             println!("✓ Top Resolution");
@@ -895,6 +911,9 @@ fn run(cli: Cli) -> Result<(), SimError> {
                 maria::diagnostics::DiagCode::ModuleNotFound,
                 format!("simulation aborted: {} elaboration error(s) — design not ready", elab_errs),
             ));
+        } else if recovered {
+            println!("Simulation: NOT READY (analysis mode)");
+            println!("Top-level design not uniquely determined — simulation & VCD disabled.");
         } else {
             println!("Simulation: READY");
         }
@@ -918,6 +937,17 @@ fn run(cli: Cli) -> Result<(), SimError> {
             maria::diagnostics::DiagCode::ModuleNotFound,
             format!("simulasi dibatalkan: {} error elaborasi — design belum 100% bersih", elab_errs),
         ));
+    }
+
+    // ── Recovery/analisis mode (tanpa `--top`): jangan simulasikan modul tebakan ──
+    // Top tidak unik → analisis selesai (diagnostik sudah dilaporkan di atas),
+    // tapi simulasi & VCD dinonaktifkan agar waveform tidak menyesatkan.
+    if recovered && !cli.force_sim {
+        if !cli.quiet {
+            println!("\nTop-level design tidak dapat ditentukan secara unik — mode analisis.");
+            println!("Simulation & VCD dinonaktifkan.\n");
+        }
+        return Ok(());
     }
 
     ir_design.timescale = ts_for_ir;
@@ -1608,6 +1638,22 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     micd_save_and_print(&mut session, cli.quiet, anim_active(&anim));
 
     if design.modules.is_empty() {
+        // Tidak fatal bila ada package/interface/class — mode analisis:
+        // tidak ada top yang bisa disimulasikan, tapi parse sudah valid.
+        // Samakan dengan perilaku `run` (analisis sukses, simulasi skip).
+        if !design.packages.is_empty()
+            || !design.interfaces.is_empty()
+            || !design.classes.is_empty()
+        {
+            if cli.print_ast {
+                println!("{:#?}", design);
+            }
+            if !cli.quiet && !anim_active(&anim) {
+                eprintln!("note: no modules found in design (packages/interfaces present, skipping simulation)");
+            }
+            micd_save_and_print(&mut session, cli.quiet, anim_active(&anim));
+            return Ok(());
+        }
         return Err(SimError::with_diag(DiagCode::ModuleNotFound, "no modules found in design"));
     }
     if cli.print_ast {
@@ -1624,7 +1670,16 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     } else {
         Elaborator::with_source(design, source_lines, source_file)
     };
-    let ir_design = match elab.elaborate(top_name, ElaborateMode::StrictSimulation) {
+    // Mode elaborasi: dengan `--top` eksplisit → StrictSimulation (top wajib).
+    // Tanpa `--top` (run file satu-per-satu) → AnalysisRecovery: top yang tidak
+    // unik (multiple candidate / circular / missing root) TIDAK menggagalkan
+    // analisis — diagnostik dilaporkan, simulasi & VCD dinonaktifkan (Rule 4).
+    let elab_mode = if cli.top.is_some() {
+        ElaborateMode::StrictSimulation
+    } else {
+        ElaborateMode::AnalysisRecovery
+    };
+    let ir_design = match elab.elaborate(top_name, elab_mode) {
         Ok(d) => d,
         Err(e) => {
             let diags = elab.flush_diagnostics();
@@ -1647,6 +1702,11 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     }
     emit_diags(&elab_diags);
 
+    // Mode analisis (recovery): top-level tidak dapat ditentukan secara unik
+    // karena `--top` tidak diberikan. Semua diagnostik sudah dilaporkan —
+    // simulasi & VCD TIDAK dijalankan (Rule 2/4).
+    let recovered = elab.recovered;
+
     // ── Simulation Readiness Check (Rule 6) ──
     let elab_errs = elab_diags.iter().filter(|d| d.is_error()).count();
     let has_elab_errors = elab_errs > 0;
@@ -1656,7 +1716,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
         println!("✓ Parse");
         println!("✓ Semantic");
         println!("✓ Hierarchy");
-        if has_elab_errors {
+        if has_elab_errors || recovered {
             println!("✗ Top Resolution");
         } else {
             println!("✓ Top Resolution");
@@ -1671,13 +1731,40 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
                 maria::diagnostics::DiagCode::ModuleNotFound,
                 format!("simulation aborted: {} elaboration error(s) — design not ready", elab_errs),
             ));
+        } else if recovered {
+            println!("Simulation: NOT READY (analysis mode)");
+            println!("Top-level design not uniquely determined — simulation & VCD disabled.");
         } else {
             println!("Simulation: READY");
         }
     }
     
     // ── Gate: jangan simulasikan bila masih ada error elaborasi / module di-skip ──
-    
+    if elab_errs > 0 && !cli.force_sim {
+        if !cli.quiet {
+            eprintln!(
+                "\n⚠  Simulasi DIBATALKAN: {} error elaborasi (termasuk module yang di-skip).",
+                elab_errs
+            );
+            eprintln!(
+                "    Perbaiki semua error terlebih dahulu — VCD TIDAK dihasilkan.\n    (Gunakan `--force-sim` hanya untuk debugging internal.)"
+            );
+        }
+        return Err(SimError::with_diag(
+            maria::diagnostics::DiagCode::ModuleNotFound,
+            format!("simulasi dibatalkan: {} error elaborasi — design belum 100% bersih", elab_errs),
+        ));
+    }
+
+    // ── Recovery/analisis mode (tanpa `--top`): jangan simulasikan modul tebakan ──
+    if recovered && !cli.force_sim {
+        if !cli.quiet {
+            println!("\nTop-level design tidak dapat ditentukan secara unik — mode analisis.");
+            println!("Simulation & VCD dinonaktifkan.\n");
+        }
+        micd_save_and_print(&mut session, cli.quiet, anim_active(&anim));
+        return Ok(());
+    }
 
     // ── MICD: tandai elaborasi sukses (verify-only save, ringan) ──
     session.micd_mark_elaborated();

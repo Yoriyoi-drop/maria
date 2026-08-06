@@ -533,14 +533,8 @@ impl SimulationEngine {
                             .first()
                             .and_then(|a| self.evaluate_expr(a).ok().map(|v| v.to_u64() as u32));
                         if let Some(h) = handle {
+                            let msg = self.format_display(&args[1..]);
                             if let Some(f) = self.file_handles.get_mut(&h) {
-                                let msg = format_display(
-                                    &self.state,
-                                    &self.design.top.signals,
-                                    &self.design.hier_signal_map,
-                                    &self.assoc_data,
-                                    &args[1..],
-                                );
                                 let _ = write!(f, "{}", msg);
                             }
                         }
@@ -839,13 +833,7 @@ impl SimulationEngine {
                         if args.is_empty() {
                             return Ok(LogicVec::new(0));
                         }
-                        let msg = format_display(
-                            &self.state,
-                            &self.design.top.signals,
-                            &self.design.hier_signal_map,
-                            &self.assoc_data,
-                            args,
-                        );
+                        let msg = self.format_display(args);
                         let mut bits = Vec::with_capacity(msg.len() * 8);
                         for c in msg.chars() {
                             let byte = c as u8;
