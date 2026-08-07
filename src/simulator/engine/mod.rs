@@ -46,7 +46,7 @@ pub struct SequenceAttempt {
 /// Batas simulasi.
 ///
 /// - `Unlimited` (default untuk CLI): simulasi berjalan sampai `$finish` /
-///   `$fatal` / assertion fatal / error internal / Ctrl+C. Paling mendekati
+///   `$fatal` / assertion fatal / error internal. Paling mendekati
 ///   simulator industri — testbench lah yang memutuskan kapan selesai.
 /// - `Finite(n)`: simulasi berhenti saat `state.time > n` (mirip `-T`).
 ///

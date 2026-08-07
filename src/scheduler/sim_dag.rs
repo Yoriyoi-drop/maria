@@ -220,6 +220,7 @@ fn lvalue_signal_writes(lvalue: &IrLValue, access: &mut SignalAccess) {
         IrLValue::ArrayIndex { sig_id, .. }
         | IrLValue::ArrayRangeSelect { sig_id, .. }
         | IrLValue::ArrayBitSelect { sig_id, .. }
+        | IrLValue::ExprPartSelect { sig_id, .. }
         | IrLValue::ObjectField { sig_id, .. } => {
             access.writes.insert(*sig_id);
         }
@@ -228,6 +229,8 @@ fn lvalue_signal_writes(lvalue: &IrLValue, access: &mut SignalAccess) {
                 lvalue_signal_writes(item, access);
             }
         }
+        // Lvalue hierarkis belum ter-resolve di fase ini.
+        IrLValue::HierRef(_) | IrLValue::HierRefIndex { .. } => {}
     }
 }
 

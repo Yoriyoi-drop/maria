@@ -482,10 +482,32 @@ pub enum IrLValue {
         elem_width: usize,
         bit: usize,
     },
+    /// Dynamic indexed part-select lvalue: `sig[base +: width]` dengan base
+    /// runtime (mis. `packed_data_d[word_sel*BusWidth +: BusWidth] = ...` di
+    /// RTL OpenTitan). width di-resolve saat elaborasi (biasanya param/konstan).
+    ExprPartSelect {
+        sig_id: SignalId,
+        base: Box<IrExpr>,
+        width: usize,
+    },
     /// Field class object: `obj.field` (obj = signal berisi handle object).
     ObjectField {
         sig_id: SignalId,
         field: Symbol,
+    },
+    /// Lvalue hierarkis yang belum ter-resolve saat elaborasi — nama signal
+    /// di flatten list (mis. signal interface instance `sif.csb` atau path
+    /// instance `u_dut.u_padring.cio_*`). Statement module di-elaborate
+    /// SEBELUM flatten_instances, jadi nama hierarkis belum ada di
+    /// signal_map/signals saat itu. Engine me-resolve nama ke flattened
+    /// signal list saat write (mekanisme sama dengan `IrExpr::HierRef`).
+    HierRef(Symbol),
+    /// Seleksi bit/index pada lvalue hierarkis: `sif.sd_out[i]`. Index
+    /// dievaluasi runtime; lebar elemen (bit vs word array) di-resolve engine
+    /// dari SignalInfo flattened signal.
+    HierRefIndex {
+        name: Symbol,
+        index: Box<IrExpr>,
     },
     Concat(Vec<IrLValue>),
 }

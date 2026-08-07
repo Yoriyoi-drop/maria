@@ -35,6 +35,8 @@ parking_lot = "0.12"
 itertools = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Config file TOML (configs/*.toml — compiler/simulasi/coverage/debug)
+toml = "0.8"
 
 # ── Opsional: JIT Compilation (cranelift) ──
 cranelift = { version = "0.110", optional = true }

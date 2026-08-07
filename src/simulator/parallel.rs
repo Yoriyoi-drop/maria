@@ -407,6 +407,8 @@ fn get_lvalue_width_simple(lvalue: &IrLValue, signals: &[LogicVec]) -> usize {
             (hi - lo + 1) * elem_width
         }
         IrLValue::ArrayBitSelect { elem_width, .. } => *elem_width,
+        IrLValue::ExprPartSelect { width, .. } => *width,
+        IrLValue::HierRef(_) | IrLValue::HierRefIndex { .. } => 1,
         IrLValue::ObjectField { .. } => 64,
         IrLValue::Concat(items) => items
             .iter()
@@ -480,6 +482,27 @@ fn write_lvalue_simple(
                 .unwrap_or_else(|| LogicVec::new(1));
             let start = idx_u64 * elem_width;
             for i in 0..*elem_width {
+                if start + i < existing.width {
+                    existing.bits[start + i] = val.bits.get(i).copied().unwrap_or(LogicVal::X);
+                }
+            }
+            if *sig_id < signals.len() {
+                signals[*sig_id] = existing.clone();
+            }
+            writes.push((*sig_id, existing));
+        }
+        IrLValue::ExprPartSelect {
+            sig_id,
+            base,
+            width,
+        } => {
+            let idx_val = evaluate_expr_simple(base, signals)?;
+            let start = idx_val.to_u64() as usize;
+            let mut existing = signals
+                .get(*sig_id)
+                .cloned()
+                .unwrap_or_else(|| LogicVec::new(1));
+            for i in 0..*width {
                 if start + i < existing.width {
                     existing.bits[start + i] = val.bits.get(i).copied().unwrap_or(LogicVal::X);
                 }

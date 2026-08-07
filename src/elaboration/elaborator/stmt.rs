@@ -17,7 +17,9 @@ fn lvalue_signal_id(lv: &IrLValue) -> Option<SignalId> {
         IrLValue::ArrayIndex { sig_id, .. } => Some(*sig_id),
         IrLValue::ArrayRangeSelect { sig_id, .. } => Some(*sig_id),
         IrLValue::ArrayBitSelect { sig_id, .. } => Some(*sig_id),
+        IrLValue::ExprPartSelect { sig_id, .. } => Some(*sig_id),
         IrLValue::ObjectField { sig_id, .. } => Some(*sig_id),
+        IrLValue::HierRef(_) | IrLValue::HierRefIndex { .. } => None,
         IrLValue::Concat(items) => items.first().and_then(lvalue_signal_id),
     }
 }
@@ -1405,6 +1407,16 @@ impl Elaborator {
                             ))
                         }
                     }
+                    // Bit select di atas lvalue hierarkis (`sif.sd_out[i]`):
+                    // nama belum ter-resolve di elaborator — simpan index,
+                    // engine menghitung offset saat write dari SignalInfo.
+                    IrLValue::HierRef(name) | IrLValue::HierRefIndex { name, .. } => {
+                        let index_expr = self.elaborate_expr(bs_index, signal_map, signals)?;
+                        Ok(IrLValue::HierRefIndex {
+                            name,
+                            index: Box::new(index_expr),
+                        })
+                    }
                     // Bit select di atas bit select (`sig[a][b]` — packed
                     // multidimensi setelah unroll, mis. `result[0][0][0]`).
                     // Akumulasi offset bit.
@@ -1438,65 +1450,136 @@ impl Elaborator {
                 let inner_lv = self.elaborate_lvalue(inner, signal_map, signals)?;
                 let base_r = const_eval_params(base, &self.param_vals);
                 let width_r = const_eval_params(width, &self.param_vals);
-                let (base_c, width_c) = match (base_r, width_r) {
-                    (Ok(b), Ok(w)) => (b as usize, w as usize),
-                    _ => return Err(self.elab_diag_at(
-                        DiagCode::NotImplemented,
-                        "dynamic part-select not supported",
-                        expr_location(expr).0,
-                        expr_location(expr).1,
-                    )),
-                };
-                match inner_lv {
-                    IrLValue::Signal(sid, _) => {
-                        if width_c > 0 {
-                            Ok(IrLValue::RangeSelect(sid, base_c + width_c - 1, base_c))
-                        } else {
-                            Ok(IrLValue::RangeSelect(sid, base_c, base_c))
+                match (base_r, width_r) {
+                    (Ok(b), Ok(w)) => {
+                        let (base_c, width_c) = (b as usize, w as usize);
+                        match inner_lv {
+                            IrLValue::Signal(sid, _) => {
+                                if width_c > 0 {
+                                    Ok(IrLValue::RangeSelect(sid, base_c + width_c - 1, base_c))
+                                } else {
+                                    Ok(IrLValue::RangeSelect(sid, base_c, base_c))
+                                }
+                            }
+                            IrLValue::RangeSelect(sid, outer_msb, outer_lsb) => {
+                                let outer_base = if outer_msb > outer_lsb {
+                                    outer_lsb
+                                } else {
+                                    outer_msb
+                                };
+                                let new_base = outer_base + base_c;
+                                if width_c > 0 {
+                                    Ok(IrLValue::RangeSelect(sid, new_base + width_c - 1, new_base))
+                                } else {
+                                    Ok(IrLValue::RangeSelect(sid, new_base, new_base))
+                                }
+                            }
+                            IrLValue::ArrayIndex {
+                                sig_id,
+                                index,
+                                elem_width,
+                            } => {
+                                if width_c > 0 {
+                                    Ok(IrLValue::ArrayRangeSelect {
+                                        sig_id,
+                                        index,
+                                        elem_width,
+                                        msb: base_c + width_c - 1,
+                                        lsb: base_c,
+                                    })
+                                } else {
+                                    Ok(IrLValue::ArrayRangeSelect {
+                                        sig_id,
+                                        index,
+                                        elem_width,
+                                        msb: base_c,
+                                        lsb: base_c,
+                                    })
+                                }
+                            }
+                            _ => Err(self.elab_diag_at(
+                                DiagCode::NotImplemented,
+                                "nested part-select in lvalue not supported",
+                                expr_location(expr).0,
+                                expr_location(expr).1,
+                            )),
                         }
                     }
-                    IrLValue::RangeSelect(sid, outer_msb, outer_lsb) => {
-                        let outer_base = if outer_msb > outer_lsb {
-                            outer_lsb
-                        } else {
-                            outer_msb
+                    _ => {
+                        // Base ATAU width tidak konstanta → part-select dinamis
+                        // `sig[base +: width]` dengan base runtime. Simpan base
+                        // sebagai ekspresi (dievaluasi saat write) dan width yang
+                        // di-resolve best-effort (param/konstan biasanya).
+                        let base_ir = self.elaborate_expr(base, signal_map, signals)?;
+                        let width_c: usize = match const_eval_params(width, &self.param_vals) {
+                            Ok(w) => (w.max(1)) as usize,
+                            Err(_) => {
+                                let _ = self.elaborate_expr(width, signal_map, signals);
+                                compute_expr_width(
+                                    width,
+                                    signal_map,
+                                    signals,
+                                    &self.param_vals,
+                                    &self.package_symbols,
+                                )
+                                .unwrap_or(1)
+                                .max(1)
+                            }
                         };
-                        let new_base = outer_base + base_c;
-                        if width_c > 0 {
-                            Ok(IrLValue::RangeSelect(sid, new_base + width_c - 1, new_base))
-                        } else {
-                            Ok(IrLValue::RangeSelect(sid, new_base, new_base))
-                        }
-                    }
-                    IrLValue::ArrayIndex {
-                        sig_id,
-                        index,
-                        elem_width,
-                    } => {
-                        if width_c > 0 {
-                            Ok(IrLValue::ArrayRangeSelect {
+                        match inner_lv {
+                            IrLValue::Signal(sid, _) => Ok(IrLValue::ExprPartSelect {
+                                sig_id: sid,
+                                base: Box::new(base_ir),
+                                width: width_c,
+                            }),
+                            IrLValue::RangeSelect(sid, outer_msb, outer_lsb) => {
+                                let offset = outer_msb.min(outer_lsb);
+                                let base_adj = IrExpr::BinaryOp(
+                                    BinaryIrOp::Add,
+                                    Box::new(base_ir),
+                                    Box::new(IrExpr::Const(LogicVec::from_u64(
+                                        offset as u64,
+                                        32,
+                                    ))),
+                                );
+                                Ok(IrLValue::ExprPartSelect {
+                                    sig_id: sid,
+                                    base: Box::new(base_adj),
+                                    width: width_c,
+                                })
+                            }
+                            IrLValue::ArrayIndex {
                                 sig_id,
                                 index,
                                 elem_width,
-                                msb: base_c + width_c - 1,
-                                lsb: base_c,
-                            })
-                        } else {
-                            Ok(IrLValue::ArrayRangeSelect {
-                                sig_id,
-                                index,
-                                elem_width,
-                                msb: base_c,
-                                lsb: base_c,
-                            })
+                            } => {
+                                let idx_expr = IrExpr::BinaryOp(
+                                    BinaryIrOp::Mul,
+                                    index,
+                                    Box::new(IrExpr::Const(LogicVec::from_u64(
+                                        elem_width as u64,
+                                        32,
+                                    ))),
+                                );
+                                let base_adj = IrExpr::BinaryOp(
+                                    BinaryIrOp::Add,
+                                    Box::new(base_ir),
+                                    Box::new(idx_expr),
+                                );
+                                Ok(IrLValue::ExprPartSelect {
+                                    sig_id,
+                                    base: Box::new(base_adj),
+                                    width: width_c,
+                                })
+                            }
+                            _ => Err(self.elab_diag_at(
+                                DiagCode::NotImplemented,
+                                "nested dynamic part-select in lvalue not supported",
+                                expr_location(expr).0,
+                                expr_location(expr).1,
+                            )),
                         }
                     }
-                    _ => Err(self.elab_diag_at(
-                        DiagCode::NotImplemented,
-                        "nested part-select in lvalue not supported",
-                        expr_location(expr).0,
-                        expr_location(expr).1,
-                    )),
                 }
             }
             Expr::Concat(exprs) => {
@@ -1515,6 +1598,12 @@ impl Elaborator {
             Expr::MemberAccess { obj, field } => {
                 // Try struct/union field write
                 let hier_name = Self::build_hier_name(obj, field.as_str());
+                if std::env::var("MARIA_DBG_HIER").is_ok() && !hier_name.is_empty() {
+                    let in_sigmap = signal_map.contains_key(hier_name.as_str());
+                    let in_signals = signals.iter().any(|s| s.name.as_str() == hier_name);
+                    eprintln!("[DBG-HIER] lvalue hier_name='{}' sigmap={} signals={} obj={:?}",
+                        hier_name, in_sigmap, in_signals, obj);
+                }
                 if let Some(&sig_id) = signal_map.get(hier_name.as_str()) {
                     return Ok(IrLValue::Signal(sig_id, 0));
                 }
@@ -1640,20 +1729,50 @@ impl Elaborator {
                         }
                         Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!("member access on signal '{:?}' that has no struct fields (cannot use as lvalue)", obj), expr_location(expr).0, expr_location(expr).1))
                     }
-                    _ => Err(self.elab_diag_at(
-                        DiagCode::NotImplemented,
-                        "member access cannot be used as lvalues",
-                        expr_location(expr).0,
-                        expr_location(expr).1,
-                    )),
+                    // obj TIDAK ter-resolve sebagai signal: instance interface
+                    // (`sif.csb`) atau path instance (`u_dut.u_padring.cio_*`).
+                    // Statement module di-elaborate SEBELUM flatten_instances,
+                    // jadi nama hierarkis belum ada di signal_map/signals saat
+                    // itu. Simpan sebagai HierRef — engine resolve ke flattened
+                    // signal list saat write (mekanisme sama dengan
+                    // IrExpr::HierRef untuk read).
+                    _ => {
+                        let hier_name = Self::build_hier_name(obj, field.as_str());
+                        if !hier_name.is_empty() {
+                            let base_is_signal =
+                                Self::collect_member_chain(obj, *field, &self.param_vals)
+                                    .map(|(base, _)| signal_map.contains_key(base.as_str()))
+                                    .unwrap_or(false);
+                            if !base_is_signal {
+                                return Ok(IrLValue::HierRef(Symbol::intern(&hier_name)));
+                            }
+                        }
+                        let (l, c) = expr_location(expr);
+                        Err(self.elab_diag_at(
+                            DiagCode::NotImplemented,
+                            "member access cannot be used as lvalues",
+                            l,
+                            c,
+                        ))
+                    }
                 }
             }
-            _ => Err(self.elab_diag_at(
-                DiagCode::InvalidSyntax,
-                format!("invalid lvalue expression: {:?}", expr),
-                expr_location(expr).0,
-                expr_location(expr).1,
-            )),
+            _ => {
+                if std::env::var("MARIA_DBG_LVALUE").is_ok() {
+                    eprintln!(
+                        "[DBG-LVALUE] invalid lvalue expr at {}:{}: {:?}",
+                        expr_location(expr).0,
+                        expr_location(expr).1,
+                        expr
+                    );
+                }
+                Err(self.elab_diag_at(
+                    DiagCode::InvalidSyntax,
+                    format!("invalid lvalue expression: {:?}", expr),
+                    expr_location(expr).0,
+                    expr_location(expr).1,
+                ))
+            },
         }
     }
 

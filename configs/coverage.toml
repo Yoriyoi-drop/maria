@@ -1,0 +1,54 @@
+# ==================================================
+# Maria Coverage Configuration (mcov — gate CI)
+# ==================================================
+# Mode coverage: simulasi + ukur branch/line/expression coverage,
+# tulis coverage.json + coverage.html, exit error bila di bawah
+# ambang batas (gate untuk CI).
+# Pakai: maria --config configs/coverage.toml -f proyek.f
+
+[compiler]
+edition = "2012"
+target = "native"
+jobs = 8
+incremental = true
+opt_level = 3
+lto = "thin"
+max_parse_steps = 10000000
+cache = true
+fail_fast = false
+
+[elaborate]
+mode = "StrictSimulation"
+expand_all_generates = true
+unroll_const_loops = true
+
+[simulation]
+# max_time = 1000000  # uncomment untuk batas keras (default: unlimited)
+force_sim = false
+watchdog_idle_seconds = 10
+progress_every_ticks = 1000000
+max_delta_per_step = 10000000
+
+[coverage]
+# Aktifkan instrumentasi coverage (branch + line + expression)
+enable = true
+# Ambang branch coverage (%) — exit error bila di bawah
+branch_threshold = 80.0
+# Ambang line coverage (%)
+line_threshold = 85.0
+# Tulis laporan.
+# NOTE: `json`/`vcd`/`fst` belum di-wire di jalur run() utama (hanya `html`
+# dan `ucis` yang aktif lewat mapping config→CLI). Gunakan subcommand
+# `maria cov ... --json` untuk output coverage.json bila diperlukan.
+html = true
+# Format UCIS export (opsional)
+ucis = false
+# Prefix output (default: <top>)
+output_prefix = "coverage"
+
+[waveform]
+# NOTE: `vcd` belum di-wire di jalur run() utama — VCD selalu ditulis.
+# Bila ingin tanpa VCD, gunakan --compile-only atau subcommand mcov.
+vcd = false
+fst = false
+stream = false

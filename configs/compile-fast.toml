@@ -1,0 +1,34 @@
+# ==================================================
+# Maria Compile-Fast Configuration (OpenTitan — build besar)
+# ==================================================
+# Mode kompilasi tercepat untuk proyek besar (OpenTitan 3970 file).
+# Prioritas: throughput, bukan diagnostik lengkap.
+# Pakai: maria --config configs/compile-fast.toml -f opentitan_rtl.f
+
+[compiler]
+edition = "2012"
+target = "native"
+# Semua core — parse paralel per file
+jobs = 0
+# MICD aktif penuh: hanya file berubah yang di-parse ulang
+incremental = true
+# Optimisasi ringan (tidak menyentuh struktur, murni cepat)
+opt_level = 1
+lto = "off"
+max_parse_steps = 20000000
+cache = true
+fail_fast = false
+
+[parse]
+max_recursion_depth = 4096
+lenient = true
+
+[elaborate]
+mode = "AnalysisRecovery"
+expand_all_generates = true
+unroll_const_loops = true
+
+# Lewati verifikasi mahal saat compile cepat
+[verify]
+check_width = false
+check_port = false

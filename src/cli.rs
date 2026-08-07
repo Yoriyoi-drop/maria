@@ -413,6 +413,11 @@ pub struct Cli {
     #[arg(short = 'f', long = "filelist")]
     pub filelist: Option<String>,
 
+    /// Load configuration from TOML file (configs/*.toml).
+    /// Default: configs/compiler.toml bila ada.
+    #[arg(long = "config")]
+    pub config: Option<String>,
+
     /// Pass plusarg (NAME=VALUE)
     #[arg(long = "plusarg", num_args = 1)]
     pub plusargs: Vec<String>,
@@ -694,4 +699,9 @@ pub struct Cli {
     /// within this window and reports a WR0302 warning.
     #[arg(long = "glitch-window", default_value = "0")]
     pub glitch_window: u64,
+
+    /// (Internal) Mode elaborasi dari config TOML (`[elaborate] mode`).
+    /// Tidak di-parse dari CLI — diisi oleh `apply_config_to_cli` di main.rs.
+    #[arg(skip)]
+    pub config_elab_mode: Option<String>,
 }

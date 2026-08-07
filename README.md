@@ -29,7 +29,7 @@ tb_counter.sv
 ```
 
 ```shell
-cargo run -- --start .maria
+cargo run -- -f .maria
 ```
 
 ## CLI flags
@@ -47,7 +47,7 @@ cargo run -- --start .maria
 -f <FILE>      file list (like -f in VCS)
 --coverage     print coverage report
 --coverage-ucis [PATH]  export UCIS XML
---start <FILE> project file (.maria)
+-f <FILE>        file list / project file (`.f` / `.maria`)
 ```
 
 ## Fitur utama

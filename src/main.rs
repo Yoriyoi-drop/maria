@@ -38,6 +38,136 @@ fn emit_diags(diags: &[maria::diagnostics::diagnostic::Diagnostic]) {
     }
 }
 
+/// Terapkan config TOML (`configs/*.toml`) ke CLI — HANYA bila CLI belum
+/// menyetelnya (CLI menang). Field yang tidak punya padanan CLI (opt_level,
+/// lto, max_parse_steps, lint check, dsb.) dibiarkan sebagai dokumentasi.
+/// jobs diterapkan langsung ke rayon pool di main() (bukan lewat cli).
+fn apply_config_to_cli(cli: &mut Cli, cfg: &maria::config::MariaConfig) {
+    // compiler.cache=false / incremental=false → lewati MICD (setara --recompile).
+    if cfg.compiler.cache == Some(false) || cfg.compiler.incremental == Some(false) {
+        cli.recompile = true;
+    }
+    // elaborate.mode → pilihan ElaborateMode (StrictSimulation / AnalysisRecovery).
+    if let Some(m) = &cfg.elaborate.mode {
+        cli.config_elab_mode = Some(m.clone());
+    }
+    // simulation.max_time → -T bila CLI tidak set.
+    if cli.max_time.is_none() {
+        cli.max_time = cfg.simulation.max_time;
+    }
+    // simulation.force_sim → --force-sim bila CLI tidak set.
+    if !cli.force_sim {
+        cli.force_sim = cfg.simulation.force_sim.unwrap_or(false);
+    }
+    // waveform.stream → --waveform-stream.
+    if !cli.waveform_stream {
+        cli.waveform_stream = cfg.waveform.stream.unwrap_or(false);
+    }
+    // coverage → --coverage-threshold / --coverage-html / --coverage-ucis.
+    if cli.coverage_threshold.is_none() {
+        cli.coverage_threshold = cfg.coverage.branch_threshold;
+    }
+    if cli.coverage_html.is_none() && cfg.coverage.html == Some(true) {
+        // Prefix kosong → string kosong → run() mensubstitusi nama top
+        // (konsisten dengan --coverage-ucis yang memakai top.name bila kosong).
+        let prefix = cfg.coverage.output_prefix.clone().unwrap_or_default();
+        cli.coverage_html = Some(if prefix.is_empty() {
+            String::new()
+        } else {
+            format!("{}.coverage.html", prefix)
+        });
+    }
+    if cli.coverage_ucis.is_none() && cfg.coverage.ucis == Some(true) {
+        let prefix = cfg.coverage.output_prefix.clone().unwrap_or_default();
+        cli.coverage_ucis = Some(if prefix.is_empty() {
+            String::new()
+        } else {
+            format!("{}.ucis.xml", prefix)
+        });
+    }
+    // debug → --deep-debug / --snap-interval / breakpoint & watchpoint.
+    if !cli.deep_debug && cfg.debug.deep == Some(true) {
+        cli.deep_debug = true;
+    }
+    if cli.snap_interval == 1000 {
+        if let Some(v) = cfg.debug.snapshot_interval {
+            cli.snap_interval = v;
+        }
+    }
+    if cli.break_cycle.is_empty() {
+        if let Some(v) = cfg.debug.break_cycle {
+            cli.break_cycle.push(v);
+        }
+    }
+    if cli.watch.is_empty() {
+        if let Some(v) = &cfg.debug.watch {
+            cli.watch.extend(v.iter().cloned());
+        }
+    }
+    if !cli.print_tree && cfg.debug.print_tree == Some(true) {
+        cli.print_tree = true;
+    }
+    if cli.timeline.is_empty() {
+        if let Some(v) = &cfg.debug.timeline {
+            cli.timeline.extend(v.iter().cloned());
+        }
+    }
+    if cli.timeline_len == 20 {
+        if let Some(v) = cfg.debug.timeline_len {
+            cli.timeline_len = v;
+        }
+    }
+}
+
+/// Evaluasi ambang branch coverage (CI gate). Dipanggil SETELAH simulasi
+/// selesai, terlepas dari `--coverage-ucdb` — agar config `coverage.branch_threshold`
+/// benar-benar berlaku (sebelumnya hanya dicek saat menyimpan UCDB, sehingga
+/// gate CI dari config tidak pernah aktif).
+fn check_coverage_threshold(
+    engine: &maria::simulator::SimulationEngine,
+    threshold: f64,
+    quiet: bool,
+) -> Result<(), SimError> {
+    let stats = engine.coverage_stats();
+    let branch_pct = stats.get("branch_percent").copied().unwrap_or(0.0);
+    if branch_pct < threshold {
+        let msg = format!(
+            "COVERAGE FAILED: branch coverage {:.1}% < threshold {:.1}%",
+            branch_pct, threshold
+        );
+        eprintln!("warning: {}", msg);
+        return Err(SimError::with_diag(DiagCode::SimulationError, msg));
+    } else if !quiet {
+        println!("Coverage threshold: {:.1}% >= {:.1}% ✅", branch_pct, threshold);
+    }
+    Ok(())
+}
+
+/// Pilih ElaborateMode: config `[elaborate] mode` menang, lalu `--top` eksplisit
+/// (StrictSimulation), lalu AnalysisRecovery (tanpa top — analisis saja).
+/// Nilai config yang tidak dikenal memicu warning lalu fallback ke logika CLI.
+fn pick_elab_mode(cli: &Cli) -> ElaborateMode {
+    match cli.config_elab_mode.as_deref() {
+        Some(m) if m.eq_ignore_ascii_case("analysisrecovery") => ElaborateMode::AnalysisRecovery,
+        Some(m) if m.eq_ignore_ascii_case("strictsimulation") => ElaborateMode::StrictSimulation,
+        Some(m) => {
+            eprintln!("warning: elaborate.mode '{}' tidak dikenal (pakai StrictSimulation / AnalysisRecovery) — memakai mode default", m);
+            if cli.top.is_some() {
+                ElaborateMode::StrictSimulation
+            } else {
+                ElaborateMode::AnalysisRecovery
+            }
+        }
+        None => {
+            if cli.top.is_some() {
+                ElaborateMode::StrictSimulation
+            } else {
+                ElaborateMode::AnalysisRecovery
+            }
+        }
+    }
+}
+
 /// Bersihkan database MICD (`.maria/database`). Menghapus isi
 /// `<root>/.maria/database` (atau `MARIA_MICD_DIR` bila di-set).
 fn run_clean() -> ! {
@@ -184,14 +314,30 @@ fn run_formal(ir_design: &maria::ir::IrDesign, bound: u64, quiet: bool) -> Resul
 }
 
 fn main() {
+    let mut cli = Cli::parse();
+
+    // ── Config file TOML (configs/*.toml) ──
+    // `--config <path>` eksplisit; tanpa itu, auto-load `configs/compiler.toml`
+    // bila ada. Field config diterapkan HANYA bila CLI tidak menyetelnya
+    // (CLI menang). Jobs di-terapkan ke rayon pool di bawah.
+    let cfg = match maria::config::MariaConfig::load_auto(cli.config.as_deref()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("warning: {}", e);
+            maria::config::MariaConfig::default()
+        }
+    };
+    apply_config_to_cli(&mut cli, &cfg);
+
     // Configure rayon thread pool with larger stack for deep recursion in parser
     // Some SV files have deeply nested blocks that need more than the default 2MB stack
-    rayon::ThreadPoolBuilder::new()
-        .stack_size(16 * 1024 * 1024) // 16MB stack
-        .build_global()
-        .ok();
-
-    let cli = Cli::parse();
+    let mut pool = rayon::ThreadPoolBuilder::new().stack_size(16 * 1024 * 1024); // 16MB stack
+    if let Some(jobs) = cfg.compiler.jobs {
+        if jobs > 0 {
+            pool = pool.num_threads(jobs);
+        }
+    }
+    pool.build_global().ok();
 
     // ── Subcommand: bersihkan database MICD (seperti `cargo clean`) ──
     if let Some(cmd) = &cli.cmd {
@@ -238,10 +384,71 @@ fn main() {
         return;
     }
 
-    let result = run(cli.clone());
+    // ── Bangun GlobalEnv (enterprise context architecture, doc/env.md) ──
+    // ConfigContext memakai config yang sudah di-load (tanpa baca ulang);
+    // CLI override diterapkan ke config (CLI menang atas file/env).
+    let mut cfgctx = maria::env::ConfigContext::from_loaded(cfg, cli.config.as_deref());
+    let mut cli_overrides = maria::env::EnvCliOptions::default();
+    cli_overrides.max_time = cli.max_time;
+    cli_overrides.force_sim = Some(cli.force_sim);
+    cli_overrides.recompile = cli.recompile;
+    cli_overrides.elab_mode = cli.config_elab_mode.clone();
+    cli_overrides.coverage_threshold = cli.coverage_threshold;
+    cli_overrides.deep_debug = Some(cli.deep_debug);
+    cli_overrides.snap_interval = Some(cli.snap_interval);
+    cli_overrides.apply(&mut cfgctx);
+
+    // Workspace di-seed dari CLI (sumber eksplisit) — menghindari scan
+    // direktori penuh yang lambat di env startup.
+    let mut cli_sources: Vec<std::path::PathBuf> =
+        cli.files.iter().map(std::path::PathBuf::from).collect();
+    if let Some(ref fpath) = cli.filelist {
+        match read_project_file(fpath) {
+            Ok(flist) => cli_sources.extend(flist.into_iter().map(std::path::PathBuf::from)),
+            Err(e) => eprintln!("warning: filelist '{}': {}", fpath, e),
+        }
+    }
+    let mut ws = maria::env::WorkspaceContext::open_in(
+        &std::env::current_dir().unwrap_or_default(),
+    );
+    ws.set_explicit_sources(cli_sources);
+    for d in &cli.incdirs {
+        ws.add_incdir(d);
+    }
+    for def in &cli.defines {
+        if let Some((k, v)) = def.split_once('=') {
+            ws.add_define(k, v);
+        } else {
+            ws.add_define(def, "");
+        }
+    }
+    for d in &cli.libdirs {
+        ws.add_libdir(d);
+    }
+    for f in &cli.libfiles {
+        ws.add_libfile(f);
+    }
+
+    let mut env = match maria::env::for_cli(cfgctx, ws) {
+        Ok(env) => env,
+        Err(e) => {
+            eprintln!("warning: startup env: {} — memakai env minimal", e);
+            maria::env::GlobalEnv::minimal()
+        }
+    };
+
+    let result = run(cli.clone(), &mut env);
     if cli.gdiag {
         eprintln!("{}", maria::diagnostics::diag_global().coverage_report());
     }
+
+    // ── Lifecycle shutdown + ringkasan telemetry ──
+    if !cli.quiet {
+        eprintln!("[env] {}", env.telemetry().summary());
+        eprintln!("[env] uptime={:?}", env.uptime());
+    }
+    maria::env::shutdown(&mut env);
+
     if let Err(e) = result {
         // Use TerminalEmitter for pretty diagnostic output
         let mut emitter = maria::diagnostics::TerminalEmitter::new();
@@ -251,7 +458,9 @@ fn main() {
     }
 }
 
-fn run(cli: Cli) -> Result<(), SimError> {
+fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
+    env.telemetry().metrics.inc_build();
+    env.telemetry().trace("run", "pipeline legacy dimulai");
     let mut sources: Vec<String> = cli.files.clone();
 
     // Read file list from -f
@@ -266,6 +475,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
             "no input files: berikan file .sv atau gunakan `--filelist <file>` (bantuan: `maria --help`)",
         ));
     }
+    env.telemetry().metrics.add_files(sources.len() as u64);
 
     // Create shared preprocessor with CLI config
     let mut base_pp = Preprocessor::new();
@@ -284,7 +494,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
     // Auto-use fast pipeline when filelist is specified (legacy can't handle large file sets)
     // Also skip expensive auto-incdir scanning for the fast path
     if cli.fast || cli.filelist.is_some() {
-        return run_fast(cli, None);
+        return run_fast(cli, None, env);
     }
 
     // ── Animasi pipeline (terminal EDA) ──
@@ -838,11 +1048,7 @@ fn run(cli: Cli) -> Result<(), SimError> {
     // Tanpa `--top` (run file satu-per-satu) → AnalysisRecovery: top yang tidak
     // unik (multiple candidate / circular / missing root) TIDAK menggagalkan
     // analisis — diagnostik dilaporkan, simulasi & VCD dinonaktifkan (Rule 4).
-    let elab_mode = if cli.top.is_some() {
-        ElaborateMode::StrictSimulation
-    } else {
-        ElaborateMode::AnalysisRecovery
-    };
+    let elab_mode = pick_elab_mode(&cli);
     let mut ir_design = match elaborator.elaborate(top_name, elab_mode) {
         Ok(d) => d,
         Err(e) => {
@@ -1427,25 +1633,25 @@ fn run(cli: Cli) -> Result<(), SimError> {
             println!("Coverage database saved to '{}'", covdb_path);
         }
 
-        // Coverage threshold check
-        if let Some(threshold) = cli.coverage_threshold {
-            let stats = debugger.engine.coverage_stats();
-            let branch_pct = stats.get("branch_percent").copied().unwrap_or(0.0);
-            if branch_pct < threshold {
-                let msg = format!("COVERAGE FAILED: branch coverage {:.1}% < threshold {:.1}%", branch_pct, threshold);
-                eprintln!("warning: {}", msg);
-                return Err(SimError::with_diag(DiagCode::SimulationError, msg));
-            } else if !cli.quiet {
-                println!("Coverage threshold: {:.1}% >= {:.1}% ✅", branch_pct, threshold);
-            }
-        }
+    }
+
+    // Coverage threshold check (CI gate) — berlaku walau tanpa --coverage-ucdb,
+    // sehingga config coverage.branch_threshold benar-benar dievaluasi.
+    if let Some(threshold) = cli.coverage_threshold {
+        check_coverage_threshold(&debugger.engine, threshold, cli.quiet)?;
     }
 
     // Export HTML coverage report
     if let Some(ref html_path) = cli.coverage_html {
+        // String kosong → nama top (konsisten dengan UCIS).
+        let path = if html_path.is_empty() {
+            format!("{}.coverage.html", debugger.engine.design.top.name)
+        } else {
+            html_path.clone()
+        };
         let mut covdb = maria::simulator::coverage_db::CoverageDatabase::new();
         covdb.merge_from_engine(&debugger.engine);
-        if let Err(e) = covdb.export_html(html_path) {
+        if let Err(e) = covdb.export_html(&path) {
             eprintln!("warning: HTML coverage report failed: {}", e);
         } else if !cli.quiet {
             println!("HTML coverage report written to '{}'", html_path);
@@ -1507,7 +1713,8 @@ fn run(cli: Cli) -> Result<(), SimError> {
 }
 
 /// Run compilation + simulation using the new parallel pipeline (CompileSession + FastLexer).
-fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimError> {
+fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
+    env.telemetry().trace("run_fast", "pipeline paralel dimulai");
     let mut sources: Vec<PathBuf> = cli.files.iter().map(PathBuf::from).collect();
     if let Some(ref fpath) = cli.filelist {
         let flist = read_project_file(fpath)?;
@@ -1674,11 +1881,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
     // Tanpa `--top` (run file satu-per-satu) → AnalysisRecovery: top yang tidak
     // unik (multiple candidate / circular / missing root) TIDAK menggagalkan
     // analisis — diagnostik dilaporkan, simulasi & VCD dinonaktifkan (Rule 4).
-    let elab_mode = if cli.top.is_some() {
-        ElaborateMode::StrictSimulation
-    } else {
-        ElaborateMode::AnalysisRecovery
-    };
+    let elab_mode = pick_elab_mode(&cli);
     let ir_design = match elab.elaborate(top_name, elab_mode) {
         Ok(d) => d,
         Err(e) => {
@@ -2176,25 +2379,25 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>) -> Result<(), SimErr
             println!("Coverage database saved to '{}'", covdb_path);
         }
 
-        // Coverage threshold check
-        if let Some(threshold) = cli.coverage_threshold {
-            let stats = debugger.engine.coverage_stats();
-            let branch_pct = stats.get("branch_percent").copied().unwrap_or(0.0);
-            if branch_pct < threshold {
-                let msg = format!("COVERAGE FAILED: branch coverage {:.1}% < threshold {:.1}%", branch_pct, threshold);
-                eprintln!("warning: {}", msg);
-                return Err(SimError::with_diag(DiagCode::SimulationError, msg));
-            } else if !cli.quiet {
-                println!("Coverage threshold: {:.1}% >= {:.1}% ✅", branch_pct, threshold);
-            }
-        }
+    }
+
+    // Coverage threshold check (CI gate) — berlaku walau tanpa --coverage-ucdb,
+    // sehingga config coverage.branch_threshold benar-benar dievaluasi.
+    if let Some(threshold) = cli.coverage_threshold {
+        check_coverage_threshold(&debugger.engine, threshold, cli.quiet)?;
     }
 
     // Export HTML coverage report
     if let Some(ref html_path) = cli.coverage_html {
+        // String kosong → nama top (konsisten dengan UCIS).
+        let path = if html_path.is_empty() {
+            format!("{}.coverage.html", debugger.engine.design.top.name)
+        } else {
+            html_path.clone()
+        };
         let mut covdb = maria::simulator::coverage_db::CoverageDatabase::new();
         covdb.merge_from_engine(&debugger.engine);
-        if let Err(e) = covdb.export_html(html_path) {
+        if let Err(e) = covdb.export_html(&path) {
             eprintln!("warning: HTML coverage report failed: {}", e);
         } else if !cli.quiet {
             println!("HTML coverage report written to '{}'", html_path);

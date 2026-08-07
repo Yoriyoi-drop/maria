@@ -1,0 +1,47 @@
+# ==================================================
+# Maria Benchmark Configuration (mbench — throughput)
+# ==================================================
+# Mode benchmark: ukur compile speed, throughput simulasi,
+# peak RSS, dan cache hit. Output terukur + repeatable.
+# Pakai: maria --config configs/benchmark.toml -f proyek.f
+
+[compiler]
+edition = "2012"
+target = "native"
+jobs = 0
+# Benchmark harus full-rebuild deterministik (non-incremental)
+incremental = false
+opt_level = 3
+lto = "thin"
+max_parse_steps = 20000000
+cache = false
+fail_fast = true
+
+[elaborate]
+mode = "StrictSimulation"
+expand_all_generates = true
+unroll_const_loops = true
+
+[benchmark]
+# Repeat N kali untuk rata-rata yang stabil
+repeats = 3
+# Ukur per-fase (lexer/parser/elab/sim) terpisah
+per_phase = true
+# Laporkan throughput (ticks/s) dan peak RSS (VmHWM)
+report_throughput = true
+report_memory = true
+# Set seed deterministik agar hasil reproduktif
+fixed_seed = 42
+
+[simulation]
+max_time = 10000
+force_sim = false
+watchdog_idle_seconds = 10
+progress_every_ticks = 100000
+max_delta_per_step = 10000000
+
+[waveform]
+# NOTE: `vcd` belum di-wire di jalur run() utama — VCD selalu ditulis.
+vcd = false
+fst = false
+stream = false

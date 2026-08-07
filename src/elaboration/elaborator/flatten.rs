@@ -698,6 +698,22 @@ impl Elaborator {
                 elem_width: *elem_width,
                 bit: *bit,
             },
+            // Lvalue hierarkis: nama tidak ter-map (tidak ada SignalId);
+            // index ekspresi tetap diterjemahkan.
+            IrLValue::HierRef(name) => IrLValue::HierRef(*name),
+            IrLValue::HierRefIndex { name, index } => IrLValue::HierRefIndex {
+                name: *name,
+                index: Box::new(self.translate_expr(index, map_sig)),
+            },
+            IrLValue::ExprPartSelect {
+                sig_id,
+                base,
+                width,
+            } => IrLValue::ExprPartSelect {
+                sig_id: map_sig(*sig_id),
+                base: Box::new(self.translate_expr(base, map_sig)),
+                width: *width,
+            },
             IrLValue::ObjectField { sig_id, field } => IrLValue::ObjectField {
                 sig_id: map_sig(*sig_id),
                 field: *field,

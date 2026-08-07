@@ -431,6 +431,7 @@ fn lvalue_collect_writes(lvalue: &IrLValue, writes: &mut HashSet<SignalId>) {
         | IrLValue::ArrayIndex { sig_id, .. }
         | IrLValue::ArrayRangeSelect { sig_id, .. }
         | IrLValue::ArrayBitSelect { sig_id, .. }
+        | IrLValue::ExprPartSelect { sig_id, .. }
         | IrLValue::ObjectField { sig_id, .. } => {
             writes.insert(*sig_id);
         }
@@ -439,6 +440,8 @@ fn lvalue_collect_writes(lvalue: &IrLValue, writes: &mut HashSet<SignalId>) {
                 lvalue_collect_writes(item, writes);
             }
         }
+        // Lvalue hierarkis belum ter-resolve di fase ini.
+        IrLValue::HierRef(_) | IrLValue::HierRefIndex { .. } => {}
     }
 }
 

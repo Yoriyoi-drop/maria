@@ -176,8 +176,8 @@ pub struct MicdDatabase {
 
 impl MicdDatabase {
     /// Lokasi alternatif saat root default tidak bisa dipakai: `.maria` adalah
-    /// FILE (project file untuk `--start`), bukan folder → MICD harus memakai
-    /// folder terpisah agar tidak konflik.
+    /// FILE (project file untuk `--filelist`/`-f`), bukan folder → MICD harus
+    /// memakai folder terpisah agar tidak konflik.
     fn fallback_root() -> PathBuf {
         PathBuf::from(".maria_db").join("database")
     }
@@ -230,7 +230,7 @@ impl MicdDatabase {
     /// Pilih root database yang BISA dibuat di lingkungan kerja. Prioritas:
     /// 1. env `MARIA_MICD_DIR` (override manual, selalu dipakai).
     /// 2. `.maria/database` bila `.maria` kosong/berupa folder.
-    /// 3. `.maria_db/database` bila `.maria` adalah FILE (project `--start`).
+    /// 3. `.maria_db/database` bila `.maria` adalah FILE (project `-f`).
     pub fn default_root() -> PathBuf {
         if let Ok(p) = std::env::var("MARIA_MICD_DIR") {
             return PathBuf::from(p);
@@ -243,7 +243,7 @@ impl MicdDatabase {
     }
 
     /// Coba buat root; bila gagal (mis. parent berupa file, seperti `.maria`
-    /// project file untuk `--start`), fallback otomatis ke folder terpisah
+    /// project file untuk `-f`), fallback otomatis ke folder terpisah
     /// agar database tetap tersimpan — bukan hanya "save warning".
     pub fn open(root: &Path) -> MicdDatabase {
         let root = if std::fs::create_dir_all(root).is_ok() {

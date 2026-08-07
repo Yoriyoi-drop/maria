@@ -486,7 +486,11 @@ impl SimulationEngine {
             IrLValue::ArrayIndex { sig_id, .. } => Some(*sig_id),
             IrLValue::ArrayRangeSelect { sig_id, .. } => Some(*sig_id),
             IrLValue::ArrayBitSelect { sig_id, .. } => Some(*sig_id),
+            IrLValue::ExprPartSelect { sig_id, .. } => Some(*sig_id),
             IrLValue::ObjectField { sig_id, .. } => Some(*sig_id),
+            IrLValue::HierRef(name) | IrLValue::HierRefIndex { name, .. } => {
+                self.find_signal(name.as_str())
+            }
             IrLValue::Concat(_) => None,
         }
     }

@@ -20,6 +20,12 @@ pub mod intern;
 // ── Pipeline Animator (terminal EDA waveform) ──
 pub mod animasi;
 
+// ── Config file TOML (configs/*.toml) ──
+pub mod config;
+
+// ── Enterprise Context Architecture (doc/env.md) — GlobalEnv + Context ──
+pub mod env;
+
 // ── Legacy Modules ──
 pub mod ast;
 pub mod debugger;

@@ -162,7 +162,9 @@ fn collect_loop_var_names_stmt(stmt: &Stmt, out: &mut Vec<Symbol>) {
         Stmt::Case { items, default, .. }
         | Stmt::CaseX { items, default, .. }
         | Stmt::CaseZ { items, default, .. }
-        | Stmt::StmtCase { items, default, .. } => {
+        | Stmt::StmtCase { items, default, .. }
+        | Stmt::UniqueCase { items, default, .. }
+        | Stmt::PriorityCase { items, default, .. } => {
             for item in items {
                 collect_loop_var_names_stmt(&item.stmt, out);
             }
@@ -342,6 +344,52 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
                 .as_ref()
                 .map(|d| Box::new(substitute_loop_var_in_stmt(d, var_name, value))),
         },
+        // unique/priority case juga harus di-substitute genvar-nya — tanpa ini
+        // genvar di body (mis. `mod_no_intg_d[i_word*32+:32]` dalam
+        // `unique case` OpenTitan otbn) tidak pernah diganti → error E2001
+        // "signal 'i_word' not found" saat elaborasi.
+        Stmt::UniqueCase {
+            expr,
+            items,
+            default,
+        } => Stmt::UniqueCase {
+            expr: substitute_loop_var_in_expr(expr, var_name, value),
+            items: items
+                .iter()
+                .map(|item| crate::ast::stmt::CaseItem {
+                    labels: item
+                        .labels
+                        .iter()
+                        .map(|l| substitute_loop_var_in_expr(l, var_name, value))
+                        .collect(),
+                    stmt: Box::new(substitute_loop_var_in_stmt(&item.stmt, var_name, value)),
+                })
+                .collect(),
+            default: default
+                .as_ref()
+                .map(|d| Box::new(substitute_loop_var_in_stmt(d, var_name, value))),
+        },
+        Stmt::PriorityCase {
+            expr,
+            items,
+            default,
+        } => Stmt::PriorityCase {
+            expr: substitute_loop_var_in_expr(expr, var_name, value),
+            items: items
+                .iter()
+                .map(|item| crate::ast::stmt::CaseItem {
+                    labels: item
+                        .labels
+                        .iter()
+                        .map(|l| substitute_loop_var_in_expr(l, var_name, value))
+                        .collect(),
+                    stmt: Box::new(substitute_loop_var_in_stmt(&item.stmt, var_name, value)),
+                })
+                .collect(),
+            default: default
+                .as_ref()
+                .map(|d| Box::new(substitute_loop_var_in_stmt(d, var_name, value))),
+        },
         Stmt::StmtCase {
             expr,
             items,
@@ -375,17 +423,36 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
             cond,
             step,
             stmts,
-        } => Stmt::LoopFor {
-            init: init
-                .as_ref()
-                .map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
-            cond: cond
-                .as_ref()
-                .map(|c| substitute_loop_var_in_expr(c, var_name, value)),
-            step: step
-                .as_ref()
-                .map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
-            stmts: substitute_loop_var_in_stmts(stmts, var_name, value),
+        } => {
+            // Shadowing guard: jika loop ini MENDEFINISIKAN loop var dengan
+            // nama yang sama dengan `var_name` (mis. genvar `i` di generate-for
+            // dan `for (int i = 0; ...)` di dalam body function yang sudah
+            // di-inline ke generate body), maka referensi `i` di dalam loop
+            // menunjuk ke loop var lokal, BUKAN genvar. Mensubstitusi akan
+            // merusak init/step (`i = 0` jadi `0 = 0`) dan menghasilkan lvalue
+            // konstanta. Loop var ini men-shadow genvar → jangan substitusi.
+            let declares_shadow = init.as_deref().is_some_and(|s| match s {
+                Stmt::BlockingAssign {
+                    lhs: Expr::Ident { name, .. },
+                    ..
+                } => name.as_str() == var_name,
+                _ => false,
+            });
+            if declares_shadow {
+                return stmt.clone();
+            }
+            Stmt::LoopFor {
+                init: init
+                    .as_ref()
+                    .map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
+                cond: cond
+                    .as_ref()
+                    .map(|c| substitute_loop_var_in_expr(c, var_name, value)),
+                step: step
+                    .as_ref()
+                    .map(|s| Box::new(substitute_loop_var_in_stmt(s, var_name, value))),
+                stmts: substitute_loop_var_in_stmts(stmts, var_name, value),
+            }
         },
         Stmt::Repeat { count, stmts } => Stmt::Repeat {
             count: substitute_loop_var_in_expr(count, var_name, value),

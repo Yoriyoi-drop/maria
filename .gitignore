@@ -20,3 +20,9 @@
 /XiangShan/
 /.tools/
 /openc910/
+*.f
+*.lock
+
+# Artifact laporan coverage (mcov/msim) — dihasilkan saat testing
+/covtest.coverage.html
+/covtest.ucis.xml

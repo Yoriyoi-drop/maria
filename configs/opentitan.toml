@@ -1,0 +1,46 @@
+# ==================================================
+# Maria OpenTitan Configuration (Earlgrey — 3970 files)
+# ==================================================
+# Konfigurasi khusus project OpenTitan Earlgrey:
+#   - filelist: opentitan_rtl.f (RTL + TB + DPI, 3970 file)
+#   - jobs tinggi untuk parallel parse
+#   - MICD penuh (incremental compile lintas run)
+#   - StrictSimulation: wajib top ter-resolve, tanpa skip module
+# Pakai: maria --config configs/opentitan.toml -f opentitan_rtl.f --top top_earlgrey
+
+[compiler]
+edition = "2012"
+target = "native"
+# Auto: gunakan semua core (rayon). Set angka bila perlu limit.
+jobs = 0
+# MICD penuh — hanya file berubah yang di-parse ulang
+incremental = true
+# Optimisasi penuh (const-fold + DCE + peephole)
+opt_level = 3
+lto = "thin"
+# OpenTitan jutaan token — batas parser luas
+max_parse_steps = 20000000
+cache = true
+fail_fast = false
+
+[parse]
+max_recursion_depth = 4096
+lenient = true
+
+[elaborate]
+# Simulasi wajib lengkap: tidak boleh ada module skip
+mode = "StrictSimulation"
+expand_all_generates = true
+unroll_const_loops = true
+
+[simulation]
+# max_time = 1000000  # uncomment untuk batas keras (default: unlimited)
+force_sim = false
+watchdog_idle_seconds = 15
+progress_every_ticks = 1000000
+max_delta_per_step = 10000000
+
+[waveform]
+vcd = true
+fst = false
+stream = false

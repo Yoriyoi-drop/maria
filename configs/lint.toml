@@ -1,0 +1,36 @@
+# ==================================================
+# Maria Lint Configuration (mlint — semua check)
+# ==================================================
+# Mode static lint lengkap: semua check diaktifkan.
+# Cocok untuk gate sebelum simulasi / code review.
+# Pakai: maria --config configs/lint.toml -f proyek.f
+# Atau:  maria lint $(cat configs/lint.toml)
+
+[compiler]
+edition = "2012"
+target = "native"
+jobs = 4
+# Lint tidak perlu cache AST — selalu parse segar
+incremental = false
+opt_level = 0
+lto = "off"
+max_parse_steps = 10000000
+cache = false
+fail_fast = false
+
+[elaborate]
+mode = "AnalysisRecovery"
+expand_all_generates = true
+unroll_const_loops = true
+
+[lint]
+check_unused = true
+check_width = true
+check_latch = true
+check_combo_loop = true
+check_fsm = true
+check_case_priority = true
+check_partselect_range = true
+check_undefined_signal = true
+# Keluar kode 0 meski ada warning (false = warning tetap sukses)
+warnings_are_errors = false

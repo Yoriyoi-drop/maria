@@ -1,0 +1,41 @@
+# ==================================================
+# Maria Simulation Configuration (Unlimited — industri)
+# ==================================================
+# Mode simulasi standar: berjalan sampai $finish / $fatal / Ctrl+C.
+# Tidak ada batas waktu arbitrer — testbench yang menentukan kapan selesai.
+# Pakai: maria --config configs/simulation.toml -f proyek.f
+
+[compiler]
+edition = "2012"
+target = "native"
+jobs = 8
+incremental = true
+opt_level = 3
+lto = "thin"
+max_parse_steps = 10000000
+cache = true
+fail_fast = false
+
+[elaborate]
+# Simulasi wajib elaborasi lengkap: top harus ter-resolve, tanpa skip module
+mode = "StrictSimulation"
+expand_all_generates = true
+unroll_const_loops = true
+
+[simulation]
+# Default: unlimited — jalankan sampai $finish/$fatal.
+# Bila ingin batas keras (setara -T), set: max_time = 1000000
+# max_time = 1000000
+# Bila true, force simulasi meski ada error/skip module (berbahaya)
+force_sim = false
+# Watchdog: peringatan bila tidak ada event selama N detik
+watchdog_idle_seconds = 10
+# Laporkan progres tiap N tick
+progress_every_ticks = 1000000
+# Batas delta-cycle per timestep (anti infinite loop schedulable)
+max_delta_per_step = 10000000
+
+[waveform]
+vcd = true
+fst = false
+stream = false

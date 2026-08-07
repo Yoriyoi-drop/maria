@@ -323,6 +323,40 @@ impl SimulationEngine {
                 self.state.write_signal(*sig_id, existing.clone());
                 self.record_signal_change(*sig_id, &old_val, &existing);
             }
+            // Dynamic indexed part-select lvalue: `sig[base +: width]` dengan
+            // base runtime (mis. `packed_data_d[word_sel*BusWidth +: BusWidth]`).
+            // Base dievaluasi saat write; lebar sudah di-resolve saat elaborasi.
+            IrLValue::ExprPartSelect {
+                sig_id,
+                base,
+                width,
+            } => {
+                sanitize_for_2state(&self.design.top.signals, *sig_id, &mut val);
+                let base_val = self.evaluate_expr(base)?;
+                let start = base_val.to_u64() as usize;
+                let w = *width;
+                let mut existing = self.state.read_signal(*sig_id).clone();
+                // Bounds check: peringatan + clamp agar tidak panic.
+                if start + w > existing.bits.len() {
+                    let sig_name = self.design.top.signals.get(*sig_id)
+                        .map(|s| s.name.as_str())
+                        .unwrap_or("<unknown>");
+                    self.emit_warning(
+                        crate::diagnostics::DiagCode::MemoryOutOfBounds,
+                        format!("ExprPartSelect out of bounds: signal '{}' [{} +: {}] exceeds width {}",
+                            sig_name, start, w, existing.bits.len()),
+                    );
+                }
+                for (i, b) in val.bits.iter().enumerate() {
+                    let abs = start + i;
+                    if i < w && abs < existing.bits.len() {
+                        existing.bits[abs] = *b;
+                    }
+                }
+                let old_val = self.state.read_signal(*sig_id).clone();
+                self.state.write_signal(*sig_id, existing.clone());
+                self.record_signal_change(*sig_id, &old_val, &existing);
+            }
             IrLValue::Concat(parts) => {
                 let mut offset = 0;
                 for part in parts {
@@ -347,6 +381,59 @@ impl SimulationEngine {
                 if let Some(obj) = self.state.get_object_mut(obj_id) {
                     obj.fields.insert(*field, val);
                 }
+            }
+            // Lvalue hierarkis (nama di flattened signal list — mis. signal
+            // interface instance `sif.csb`). Resolve nama → SignalId lalu
+            // dispatch ulang ke write penuh (const check, race, resize, dll).
+            IrLValue::HierRef(name) => {
+                let Some(sig_id) = self.find_signal(name.as_str()) else {
+                    return Err(self.diag_error(
+                        crate::diagnostics::DiagCode::UndefinedSignal,
+                        format!("hierarchical signal '{}' not found for write", name),
+                    ));
+                };
+                self.write_lvalue(&IrLValue::Signal(sig_id, 0), val)?;
+            }
+            // Seleksi bit/index pada lvalue hierarkis: `sif.sd_out[i]`.
+            // Lebar elemen ditentukan runtime dari SignalInfo: array unpacked
+            // (array_depth > 0) → offset = index * elem_width, tulis sebesar
+            // elem_width; sinyal flat → offset = index (1 bit).
+            IrLValue::HierRefIndex { name, index } => {
+                let Some(sig_id) = self.find_signal(name.as_str()) else {
+                    return Err(self.diag_error(
+                        crate::diagnostics::DiagCode::UndefinedSignal,
+                        format!("hierarchical signal '{}' not found for write", name),
+                    ));
+                };
+                let idx_val = self.evaluate_expr(index)?;
+                let idx = idx_val.to_u64() as usize;
+                let sig = &self.design.top.signals[sig_id];
+                // `[i]` pada `logic [3:0] x` (array_depth==1) adalah BIT select;
+                // baru word select bila unpacked array (array_depth > 1) —
+                // konsisten dengan elaborate_lvalue BitSelect untuk signal biasa.
+                let (elem_width, word_sel) = if sig.array_depth > 1 {
+                    (sig.elem_width.max(1), idx)
+                } else {
+                    (1usize, idx)
+                };
+                if std::env::var("MARIA_DBG_HIERWR").is_ok() {
+                    eprintln!("[DBG-HIERWR] '{}' idx={} array_depth={} elem_w={} sig_w={} val={}",
+                        name.as_str(), idx, sig.array_depth, sig.elem_width, sig.width, val.to_u64());
+                }
+                let lsb = word_sel.saturating_mul(elem_width);
+                let write_w = val.width.min(elem_width);
+                // Tulis bit [lsb .. lsb+write_w) dari signal.
+                let mut existing = self.state.read_signal(sig_id).clone();
+                sanitize_for_2state(&self.design.top.signals, sig_id, &mut val);
+                for (i, b) in val.bits.iter().take(write_w).enumerate() {
+                    let pos = lsb + i;
+                    if pos < existing.bits.len() {
+                        existing.bits[pos] = *b;
+                    }
+                }
+                let old_val = self.state.read_signal(sig_id).clone();
+                self.state.write_signal(sig_id, existing.clone());
+                self.record_signal_change(sig_id, &old_val, &existing);
             }
         }
         Ok(())
@@ -373,7 +460,18 @@ impl SimulationEngine {
                 }
             }
             IrLValue::ArrayBitSelect { .. } => 1,
+            IrLValue::ExprPartSelect { width, .. } => *width,
             IrLValue::ObjectField { .. } => 64,
+            IrLValue::HierRef(name) => self
+                .find_signal(name.as_str())
+                .and_then(|id| self.design.top.signals.get(id))
+                .map(|s| s.width)
+                .unwrap_or(1),
+            IrLValue::HierRefIndex { name, .. } => self
+                .find_signal(name.as_str())
+                .and_then(|id| self.design.top.signals.get(id))
+                .map(|s| if s.array_depth > 1 { s.elem_width.max(1) } else { 1 })
+                .unwrap_or(1),
             IrLValue::Concat(parts) => parts.iter().map(|p| self.get_lvalue_width(p)).sum(),
         }
     }

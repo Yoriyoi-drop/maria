@@ -264,6 +264,7 @@ fn lvalue_collect_signal_ids(lvalue: &IrLValue, ids: &mut HashSet<SignalId>) {
         | IrLValue::ArrayIndex { sig_id, .. }
         | IrLValue::ArrayRangeSelect { sig_id, .. }
         | IrLValue::ArrayBitSelect { sig_id, .. }
+        | IrLValue::ExprPartSelect { sig_id, .. }
         | IrLValue::ObjectField { sig_id, .. } => {
             ids.insert(*sig_id);
         }
@@ -272,6 +273,8 @@ fn lvalue_collect_signal_ids(lvalue: &IrLValue, ids: &mut HashSet<SignalId>) {
                 lvalue_collect_signal_ids(item, ids);
             }
         }
+        // Lvalue hierarkis belum ter-resolve di fase ini (nama di flatten list).
+        IrLValue::HierRef(_) | IrLValue::HierRefIndex { .. } => {}
     }
 }
 

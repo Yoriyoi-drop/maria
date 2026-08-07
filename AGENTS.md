@@ -67,6 +67,20 @@ Catatan formatter (`mfmt`): token-based, 1 file = 1 tanggung jawab, tidak pakai 
 9. **`src/debugger/mod.rs`** — `Debugger` struct wrapping `SimulationEngine`. Step, breakpoint, watchpoint, timeline, hierarchy tree, reverse debug, memory inspect. 21 unit tests inline.
 10. **`uvm_macros.svh`** — UVM macro definitions (info/warning/error/fatal, factory utils).
 
+## Enterprise Context Architecture (`src/env/`)
+
+Desain 5 doc/env.md: `GlobalEnv` root object menampung 12 context (masing-masing `Arc`), bukan satu Env raksasa. Dependency satu arah: `Config → Workspace → Runtime → Compiler → Cache/Database/Diagnostics/Telemetry → Verification → Simulation`.
+
+- `src/env/global/` — `GlobalEnv` (aggregator + accessor), `startup.rs` (lifecycle `startup()`/`startup_with()`/`for_cli()`), `shutdown.rs`, `build.rs`/`version.rs`.
+- `src/env/config/` — `ConfigContext` (wrap `MariaConfig`), `loader.rs` (TOML/JSON), `validator.rs`, `cli.rs` (`EnvCliOptions` — CLI menang), `environment.rs` (`MARIA_*`).
+- `src/env/workspace/` — `WorkspaceContext` (`open`/`open_in`), `set_explicit_sources()` untuk seed dari CLI (menghindari scan direktori lambat), `filelist.rs`, `project.rs`, `include.rs`, `search.rs`.
+- `src/env/runtime/` — `RuntimeContext` (CPU/memori/threadpool/scheduler), `init(&config)` memakai `config.max_threads()`.
+- `src/env/compiler/` — `CompilerContext` (wrap `CompileSession`), helper `preprocess`/`lex`/`parse`/`elaborate`/`merge_all`/`OptimizeLevel`.
+- `src/env/database/` — `DatabaseContext` (wrap `MicdDatabase`: symbol/graph/metadata/diag accessor).
+- `src/env/{cache,diagnostics,telemetry,plugins,security,verification,simulation}/` — context lain sesuai doc.
+
+Integrasi CLI: `main.rs` bangun env via `maria::env::for_cli(cfgctx, ws)` (workspace di-seed dari CLI sources), threading ke `run()`/`run_fast()` untuk telemetry/metrics, `maria::env::shutdown(&mut env)` di akhir. Pipeline compile/sim tidak diubah — env hanya shell orchestrator.
+
 ## Key conventions & gotchas
 
 ### Operator precedence (parser)
@@ -101,7 +115,7 @@ User-defined `randomize()` methods override the built-in. `rand_fields` and `con
 `IrClassDef` (cloned into `execute_randomize` to avoid borrow conflicts).
 
 `.maria` project file
-File proyek mendaftar file `.sv` (satu per baris, `#` untuk komentar). Dibaca via `--start` flag. Path relatif terhadap direktori `.maria`.
+File proyek mendaftar file `.sv` (satu per baris, `#` untuk komentar). Dibaca via `--filelist`/`-f` flag (sama dengan filelist `.f`). Path relatif terhadap direktori `.maria`.
 
 ## Files
 - `src/simulator/engine.rs:6622` — largest file. Event loop, all statement handlers, loop unrolling, `$display`/`$fopen`/`$urandom`, fork/join tracking, `execute_randomize`, debug hook.
@@ -115,7 +129,7 @@ File proyek mendaftar file `.sv` (satu per baris, `#` untuk komentar). Dibaca vi
 ## Run
 ```shell
 cargo run -- test/counter.sv              # single file
-cargo run -- --start .maria               # project file
+cargo run -- -f .maria                    # project file
 cargo run -- test/tb_counter.sv -T 200    # max time
 cargo run -- file.sv --ast                # print AST
 cargo run -- file.sv --tokens             # print tokens

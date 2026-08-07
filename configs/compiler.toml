@@ -1,0 +1,51 @@
+# ==================================================
+# Maria Compiler Configuration (Default — Dev)
+# ==================================================
+# Pengaturan compiler utama Maria RTL Simulator.
+# Dipakai oleh pipeline: preprocessor → lexer → parser →
+# AST → elaborator → IR → simulation engine → VCD/FST.
+
+[compiler]
+# Standard bahasa yang dipakai (SystemVerilog 2012 = baseline Maria)
+edition = "2012"
+# Target kompilasi: native (interpreted), jit, atau mir
+target = "native"
+# Jumlah thread untuk parallel parse/elab (rayon).
+# 0 = auto (jumlah core). OpenTitan 3970 file → 8–16 thread.
+jobs = 8
+# Incremental compilation via MICD (restore AST file yang tidak berubah).
+# Saat false, setiap run di-parse ulang penuh (setara --recompile).
+incremental = true
+# Level optimisasi IR: 0 = none, 1 = const-fold, 2 = +DCE, 3 = +peephole
+opt_level = 2
+# Link-time optimization (memicu optimisasi antar-proses)
+lto = "thin"
+# Safety counter maksimum langkah parser (anti infinite loop).
+# Naikkan untuk desain raksasa (OpenTitan jutaan token).
+max_parse_steps = 10000000
+# Cache MICD aktif (bila false, cache tidak ditulis/dibaca)
+cache = true
+# Berhenti di error pertama vs kumpulkan semua error (false)
+fail_fast = false
+
+[parse]
+# Depth maksimum rekursi parser sebelum abort
+max_recursion_depth = 2048
+# Izinkan construct yang belum didukung di-skip (warning) vs error
+lenient = true
+
+[elaborate]
+# Mode elaborasi: StrictSimulation atau AnalysisRecovery.
+# KOSONGKAN di config default ini — biarkan logika CLI yang memutuskan:
+#   dengan `--top`     → StrictSimulation (top wajib)
+#   tanpa `--top`      → AnalysisRecovery (analisis saja, tanpa simulasi)
+# Hanya file config khusus (simulation.toml / opentitan.toml) yang mengunci
+# mode tertentu. CATATAN: bila mode di-set di config, ia MENANG atas kehadiran
+# `--top` (mis. `mode = "AnalysisRecovery"` tetap analisis walau ada --top).
+# Untuk workflow yang mengandalkan --top → StrictSimulation, biarkan mode
+# kosong (seperti di sini).
+# mode = "StrictSimulation"
+# Ekspansi generate-for/if di semua module (biaya tinggi, hasil lengkap)
+expand_all_generates = true
+# Unroll procedural for loop dengan bound konstan
+unroll_const_loops = true

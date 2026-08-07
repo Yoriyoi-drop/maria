@@ -1831,7 +1831,7 @@ impl SimulationEngine {
             } else if !stall_warned && last_active_wall.elapsed() >= stall_wall_limit {
                 eprintln!(
                     "[maria] Warning: simulation appears stalled — no event processed \
-                     for {:.0}s (time={}, delta={}). Press Ctrl+C to terminate.",
+                     for {:.0}s (time={}, delta={}).",
                     last_active_wall.elapsed().as_secs_f64(),
                     self.state.time,
                     self.current_delta

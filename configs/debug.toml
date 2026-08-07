@@ -1,0 +1,50 @@
+# ==================================================
+# Maria Debug Configuration (deep-debug + reverse)
+# ==================================================
+# Mode debugging: breakpoint/watchpoint aktif, snapshot untuk
+# reverse debug, timeline, dan hierarchy tree.
+# Pakai: maria --config configs/debug.toml -f proyek.f
+
+[compiler]
+edition = "2012"
+target = "native"
+jobs = 4
+# Debug tidak butuh incremental (sering rebuild kecil)
+incremental = false
+opt_level = 0
+lto = "off"
+max_parse_steps = 10000000
+cache = false
+fail_fast = true
+
+[elaborate]
+mode = "StrictSimulation"
+expand_all_generates = true
+unroll_const_loops = true
+
+[debug]
+# deep-debug = snapshot untuk reverse debugging
+deep = true
+# Interval snapshot (cycle) untuk reverse debug
+snapshot_interval = 1000
+# Breakpoint: cycle (0 = mati)
+break_cycle = 0
+# Watchpoint: nama signal yang dipantau
+watch = []
+# Cetak hierarchy tree saat elaborasi
+print_tree = true
+# Simpan timeline per signal (bila non-empty)
+timeline = []
+timeline_len = 20
+
+[simulation]
+# max_time = 1000000  # uncomment untuk batas keras (default: unlimited)
+force_sim = false
+watchdog_idle_seconds = 10
+progress_every_ticks = 1000000
+max_delta_per_step = 10000000
+
+[waveform]
+vcd = true
+fst = false
+stream = false

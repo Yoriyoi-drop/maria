@@ -101,6 +101,33 @@ pub fn compute_expr_width(
                     Err(format!("cannot determine width of function '{}'", name))
                 }
             } else {
+                // Fungsi plain-name (dipanggil via `import pkg::*`), mis.
+                // `mubi4_or_hi(...)`, `lc_tx_test_true_strict(...)` — cari di
+                // SEMUA package agar return width ter-resolve. Sebelumnya
+                // langsung error → module di-skip ("width computation failed
+                // for port ... cannot determine width of function").
+                let func_sym = Symbol::intern(name.as_str());
+                for pkg in package_symbols.values() {
+                    if let Some(PackageItem::Function(f)) = pkg.get(&func_sym) {
+                        let ret_width = if let Some(r) = &f.range {
+                            if let (Ok(msb), Ok(lsb)) = (
+                                const_eval_with_params(&r.msb, param_vals),
+                                const_eval_with_params(&r.lsb, param_vals),
+                            ) {
+                                (msb.abs_diff(lsb).saturating_add(1)) as usize
+                            } else {
+                                1
+                            }
+                        } else if let Some(rt) = &f.return_type {
+                            resolve_dtype_width(rt, package_symbols)
+                        } else {
+                            1
+                        };
+                        if ret_width > 0 {
+                            return Ok(ret_width);
+                        }
+                    }
+                }
                 Err(format!("cannot determine width of function '{}'", name))
             }
         }

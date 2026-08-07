@@ -212,7 +212,7 @@ pub fn expand_generate_block(
                         let mut diag = Diagnostic::new(
                             DiagLevel::Warning,
                             DiagCode::NotImplemented,
-                            format!("non-constant condition in generate if ({}), taking true branch", e.msg ,e.line,e.col),
+                            format!("non-constant condition in generate if ({}), taking true branch", e),
                         );
                         // Posisi kondisi generate di-render sebagai snippet
                         // file:line:col (sebelumnya hanya ditulis di teks pesan).

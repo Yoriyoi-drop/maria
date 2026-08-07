@@ -834,7 +834,7 @@ Top new features:
 **Update 19 Jul 2026 — Preprocessor Fix + OpenTitan Compilation**
 - Preprocessor: `ifdef`/`ifndef` unterminated → auto-closed at EOF (prevents cond_stack corruption across files)
 - Preprocessor: warning includes file name hint for unterminated blocks
-- OpenTitan (3970 files) compile dengan `--start .maria -D SYNTHESIS` — **0 Error** (hanya 2 preprocessor warnings)
+- OpenTitan (3970 files) compile dengan `-f .maria -D SYNTHESIS` — **0 Error** (hanya 2 preprocessor warnings)
 
 **Update 20 Jul 2026 — Compiler Warnings Cleanup + I/O System Tasks + Const-folding**
 - Fix 4 unreachable pattern warnings di engine.rs, elaboration/util.rs, parser/parser.rs
