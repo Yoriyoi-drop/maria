@@ -16,7 +16,6 @@
 
 # MICD — incremental compilation database (build artifact)
 /.maria/database/
-/.maria/database/*.mdb
 /XiangShan/
 /.tools/
 /openc910/

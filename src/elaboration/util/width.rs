@@ -55,6 +55,29 @@ pub fn compute_expr_width(
             Value::Real(_) => Ok(64),
         },
         Expr::FillLit(_) => Ok(1),
+        // Struct assignment pattern — lebar dijumlahkan dari member (pola
+        // posisional bernilai utuh) atau 1 (perilaku lama: pola bernama jadi
+        // FillLit 0). Caller biasanya memakai lebar TARGET, jadi fallback 1
+        // aman.
+        Expr::StructLit { members } => {
+            let mut w = 0usize;
+            let mut all_pos = true;
+            for m in members {
+                match m {
+                    crate::ast::expr::StructLitMember::Positional(e) => {
+                        if let Ok(mw) = compute_expr_width(e, signal_map, signals, param_vals, package_symbols) {
+                            w += mw;
+                        }
+                    }
+                    crate::ast::expr::StructLitMember::Named(_, e)
+                    | crate::ast::expr::StructLitMember::Default(e) => {
+                        all_pos = false;
+                        let _ = e;
+                    }
+                }
+            }
+            if all_pos && w > 0 { Ok(w) } else { Ok(1) }
+        }
         Expr::FuncCall { name, args, .. } if name == "$bits" || name == "$size" => {
             if let Some(arg) = args.first() {
                 compute_expr_width(arg, signal_map, signals, param_vals, package_symbols)
@@ -295,6 +318,15 @@ pub fn compute_expr_width(
                         }
                     }
                 }
+                // Package typedef: `pkg::TypeName` di `$bits(pkg::TypeName)`
+                // (mis. `$bits(prim_mubi_pkg::mubi4_t)`). Resolve lebar dari
+                // typedef (enum base / struct fields / user-defined).
+                if let Some(PackageItem::Typedef(td)) = pkg_items.get(item) {
+                    let w = resolve_dtype_width(&td.dtype, package_symbols);
+                    if w > 0 {
+                        return Ok(w);
+                    }
+                }
             }
             Err(format!(
                 "cannot determine width of '{}.{}' at compile time",
@@ -340,6 +372,82 @@ pub fn eval_width_aware_param(
             let arg = args.first()?;
             let v = eval_width_aware_param(arg, signal_map, signals, effective_params, package_symbols)?;
             Some(clog2_value(v))
+        }
+        // $high/$left(sig) = lebar signal - 1; $low/$right(sig) = 0 (untuk
+        // range [W-1:0] standar). Dipakai di part-select dinamis yang ternyata
+        // konstanta, mis. `be_idx[$high(be_idx):1]` di dm_sba.
+        Expr::FuncCall { name, args, .. } if name == "$high" || name == "$left" => {
+            let arg = args.first()?;
+            let w = compute_expr_width(arg, signal_map, signals, effective_params, package_symbols).ok()?;
+            Some((w as i64) - 1)
+        }
+        Expr::FuncCall { name, .. } if name == "$low" || name == "$right" => Some(0),
+        // Fungsi package umum di localparam/generate (konsisten dengan
+        // const_eval.rs): vbits, ceil_div, get_synd_width, is_width_valid,
+        // bucket_ht_data_width, num_bucket_ht_inst.
+        Expr::FuncCall { name, args, .. } if pkg_func_base(name.as_str()) == "vbits" => {
+            let v = eval_width_aware_param(args.first()?, signal_map, signals, effective_params, package_symbols)?;
+            Some(if v == 1 { 1 } else { clog2_value(v) })
+        }
+        Expr::FuncCall { name, args, .. } if pkg_func_base(name.as_str()) == "ceil_div" => {
+            let a = eval_width_aware_param(args.first()?, signal_map, signals, effective_params, package_symbols)?;
+            let b = eval_width_aware_param(args.get(1)?, signal_map, signals, effective_params, package_symbols)?;
+            if b == 0 {
+                None
+            } else {
+                Some(if a % b != 0 { a / b + 1 } else { a / b })
+            }
+        }
+        // prim_secded_pkg::get_synd_width(sd_type, width) — tabel konstanta
+        // ECC (SecdedHsiao=0, SecdedHamming=1, SecdedInvHsiao=2,
+        // SecdedInvHamming=3). Dipakai localparam `EccWidth` di otp_macro.
+        Expr::FuncCall { name, args, .. } if pkg_func_base(name.as_str()) == "get_synd_width" => {
+            let sd = eval_width_aware_param(args.first()?, signal_map, signals, effective_params, package_symbols)?;
+            let w = eval_width_aware_param(args.get(1)?, signal_map, signals, effective_params, package_symbols)?;
+            Some(match (sd, w) {
+                (0, 16) | (2, 16) => 6,
+                (0, 22) | (2, 22) => 6,
+                (0, 32) | (2, 32) => 7,
+                (0, 57) | (2, 57) => 7,
+                (0, 64) | (2, 64) => 8,
+                (1, 16) | (3, 16) => 6,
+                (1, 32) | (3, 32) => 7,
+                (1, 64) | (3, 64) => 8,
+                (1, 68) | (3, 68) => 8,
+                _ => 0,
+            })
+        }
+        Expr::FuncCall { name, args, .. } if pkg_func_base(name.as_str()) == "is_width_valid" => {
+            let sd = eval_width_aware_param(args.first()?, signal_map, signals, effective_params, package_symbols)?;
+            let w = eval_width_aware_param(args.get(1)?, signal_map, signals, effective_params, package_symbols)?;
+            Some(match (sd, w) {
+                (0, 16) | (0, 22) | (0, 32) | (0, 57) | (0, 64)
+                | (2, 16) | (2, 22) | (2, 32) | (2, 57) | (2, 64)
+                | (1, 16) | (1, 32) | (1, 64) | (1, 68)
+                | (3, 16) | (3, 32) | (3, 64) | (3, 68) => 1,
+                _ => 0,
+            })
+        }
+        Expr::FuncCall { name, args, .. } if pkg_func_base(name.as_str()) == "bucket_ht_data_width" => {
+            let w = eval_width_aware_param(args.first()?, signal_map, signals, effective_params, package_symbols)?;
+            Some(if w >= 4 { 4 } else { w })
+        }
+        Expr::FuncCall { name, args, .. } if pkg_func_base(name.as_str()) == "num_bucket_ht_inst" => {
+            let w = eval_width_aware_param(args.first()?, signal_map, signals, effective_params, package_symbols)?;
+            let b = if w >= 4 { 4 } else { w };
+            if b == 0 {
+                None
+            } else {
+                Some(if w % b != 0 { w / b + 1 } else { w / b })
+            }
+        }
+        // OpenTitan otbn_pkg::SecAddRandWidth(w) = 2 * ($clog2(w) * w + 1) —
+        // lebar randomness untuk otbn_sec_add / otbn_mask_accelerator
+        // (localparam `RandWidth = SecAddRandWidth(Width)`).
+        Expr::FuncCall { name, args, .. } if pkg_func_base(name.as_str()) == "SecAddRandWidth" => {
+            let w = eval_width_aware_param(args.first()?, signal_map, signals, effective_params, package_symbols)?;
+            let clog = if w <= 1 { 1 } else { 63 - (w as u64).leading_zeros() as i64 };
+            Some(2 * (clog * w + 1))
         }
         Expr::UnaryOp {
             op: UnaryOp::Minus,
@@ -400,9 +508,73 @@ pub fn eval_width_aware_param(
             }
         }
         Expr::Cast { expr: inner, .. } => eval_width_aware_param(inner, signal_map, signals, effective_params, package_symbols),
-        Expr::CastWidth { width, .. } => eval_width_aware_param(width, signal_map, signals, effective_params, package_symbols),
+        // CastWidth `W'(expr)` — NILAI cast adalah nilai expr (truncate ke W bit
+        // jarang mengubah nilai konstanta kecil). Konsisten dengan const_eval.rs
+        // yang mengembalikan inner; sebelumnya salah mengembalikan LEBAR W.
+        Expr::CastWidth { expr: inner, .. } => eval_width_aware_param(inner, signal_map, signals, effective_params, package_symbols),
+        // Replikasi `{N{expr}}` — nilai = pola diulang N kali. Untuk pola
+        // 1-bit (0/1) hasilnya mask of N ones / 0 (pola umum `{W{1'b1}}`
+        // untuk mask FullRegMask). Untuk pola lebih lebar: ulangi bit pattern
+        // N kali dengan lebar pola = lebar ekspresi.
+        Expr::Replicate { count, expr } => {
+            let n = eval_width_aware_param(count, signal_map, signals, effective_params, package_symbols)?;
+            let v = eval_width_aware_param(expr, signal_map, signals, effective_params, package_symbols)?;
+            let w = compute_expr_width(expr, signal_map, signals, effective_params, package_symbols)
+                .unwrap_or(1)
+                .max(1);
+            let n = n.max(0).min(63) as u32;
+            if v == 0 {
+                Some(0)
+            } else if v == 1 && w == 1 {
+                Some((1u64.wrapping_shl(n)).wrapping_sub(1) as i64)
+            } else if n == 0 {
+                Some(0)
+            } else {
+                // Ulangi bit-pattern v (lebar w) sebanyak n kali.
+                let w = w.min(63) as u32;
+                let pattern = (v as u64) & ((1u64 << w).wrapping_sub(1));
+                let mut acc: u64 = 0;
+                let mut total_w: u32 = 0;
+                for _ in 0..n {
+                    acc = (acc << w) | pattern;
+                    total_w = total_w.saturating_add(w);
+                    if total_w >= 63 {
+                        break;
+                    }
+                }
+                Some(acc as i64)
+            }
+        }
+        // Concat `{a, b, c}` — elemen MSB→LSB; nilai = gabungan bit tiap
+        // elemen dengan lebar elemen (width-aware; fallback 32 untuk ident).
+        // Contoh `{4'h0, DataCount}` → DataCount << 0 (nilai tetap benar
+        // selama elemen MSB bernilai 0 atau lebar elemen benar).
+        Expr::Concat(elems) => {
+            let mut acc: u64 = 0;
+            let mut shift: u32 = 0;
+            for elem in elems.iter().rev() {
+                let v = eval_width_aware_param(elem, signal_map, signals, effective_params, package_symbols)?;
+                let w = compute_expr_width(elem, signal_map, signals, effective_params, package_symbols)
+                    .unwrap_or(32)
+                    .max(1)
+                    .min(63) as u32;
+                let masked = (v as u64) & ((1u64 << w).wrapping_sub(1));
+                acc |= masked.wrapping_shl(shift.min(63));
+                shift = shift.saturating_add(w);
+                if shift >= 63 {
+                    break;
+                }
+            }
+            Some(acc as i64)
+        }
         _ => None,
     }
+}
+
+/// Ambil nama fungsi tanpa prefix package (`prim_util_pkg::vbits` → `vbits`).
+/// Konsisten dengan `base_func_name` di const_eval.rs (private di sana).
+fn pkg_func_base(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
 }
 
 fn clog2_value(v: i64) -> i64 {
@@ -440,14 +612,35 @@ fn resolve_pkg_param_width(
 
 /// Cari typedef package dengan nama polos (hasil `import pkg::*`) dan kembalikan
 /// lebarnya. Dipakai untuk `$bits(typedef_name)` di constant/width context.
+/// Prioritas: package asli dulu, lalu pseudo-package `__local_typedefs::<mod>`
+/// (typedef lokal module yang didaftarkan elaborator per-module) sebagai
+/// fallback — sehingga `$bits(typedef_lokal_module)` (mis. struct lokal di
+/// ibex_cs_registers / ibex_dummy_instr) ikut ter-resolve.
 fn resolve_typedef_ident_width(
     name: &Symbol,
     package_symbols: &HashMap<Symbol, HashMap<Symbol, PackageItem>>,
 ) -> Option<usize> {
-    for items in package_symbols.values() {
+    let find = |items: &HashMap<Symbol, PackageItem>| -> Option<usize> {
         if let Some(PackageItem::Typedef(td)) = items.get(name) {
             let w = resolve_dtype_width(&td.dtype, package_symbols);
             if w > 0 {
+                return Some(w);
+            }
+        }
+        None
+    };
+    // Pass 1: package asli (nama tanpa awalan __local_typedefs::).
+    for (pkg, items) in package_symbols {
+        if !pkg.as_str().starts_with("__local_typedefs::") {
+            if let Some(w) = find(items) {
+                return Some(w);
+            }
+        }
+    }
+    // Pass 2: typedef lokal module (fallback).
+    for (pkg, items) in package_symbols {
+        if pkg.as_str().starts_with("__local_typedefs::") {
+            if let Some(w) = find(items) {
                 return Some(w);
             }
         }

@@ -546,6 +546,17 @@ fn scan_expr_reads(e: &Expr, reads: &mut HashSet<Symbol>, writes: &mut HashSet<S
                 }
             }
         }
+        Expr::StructLit { members } => {
+            for m in members {
+                match m {
+                    crate::ast::expr::StructLitMember::Named(_, e)
+                    | crate::ast::expr::StructLitMember::Positional(e)
+                    | crate::ast::expr::StructLitMember::Default(e) => {
+                        scan_expr_reads(e, reads, writes);
+                    }
+                }
+            }
+        }
     }
 }
 

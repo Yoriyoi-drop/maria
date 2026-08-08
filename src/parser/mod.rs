@@ -259,7 +259,17 @@ impl Parser {
         if self.tokens.is_empty() {
             return &Token::Eof;
         }
-        let idx = (self.pos.get() + n).min(self.tokens.len() - 1);
+        // PENTING: jangan me-clamp ke token terakhir. Stream token TIDAK
+        // diakhiri `Token::Eof` (Phase 5 lexing membuangnya), sehingga clamp
+        // mengembalikan token terakhir (mis. `Semi`) selamanya → loop
+        // `peek_bracket_has_range_colon`/`peek_is_packed_dim` yang menunggu
+        // `Token::Eof => return false` tidak pernah berhenti (hang di parse
+        // saat kombinasi file tertentu, mis. entropy_src DV 676-688).
+        // Kembalikan `Token::Eof` begitu indeks melewati akhir stream.
+        let idx = self.pos.get() + n;
+        if idx >= self.tokens.len() {
+            return &Token::Eof;
+        }
         &self.tokens[idx].0
     }
 
@@ -835,6 +845,46 @@ let mut _last_pos = self.pos.get();
         result
     }
 
+    /// Skip seluruh construct assertion SVA di level module:
+    /// `name: assert property (…) else begin … end` (hasil macro ASSERT
+    /// prim_assert) maupun `assert (expr);`/`cover property …`. Tracking depth
+    /// begin/end agar `else begin … end` dilewati utuh; berhenti di `end`
+    /// (penutup else-begin) atau `;` di depth 0.
+    fn skip_assert_item(&mut self) {
+        let mut depth = 0i32;
+        let mut saw_begin = false;
+        loop {
+            match self.peek() {
+                Token::Eof => break,
+                Token::Begin => {
+                    saw_begin = true;
+                    depth += 1;
+                    self.advance();
+                }
+                Token::End => {
+                    self.advance();
+                    if saw_begin {
+                        depth -= 1;
+                        if depth <= 0 {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                Token::Semi => {
+                    self.advance();
+                    if depth <= 0 {
+                        break;
+                    }
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+    }
+
     fn parse_module_item_body(&mut self) -> Result<Option<ModuleItem>, SimError> {
         match self.peek() {
             Token::Always | Token::AlwaysComb | Token::AlwaysFF | Token::AlwaysLatch => {
@@ -944,7 +994,30 @@ let mut _last_pos = self.pos.get();
                 let decl = self.parse_decl()?;
                 Ok(Some(ModuleItem::Decl(decl)))
             }
+            Token::Assert | Token::Assume | Token::Cover => {
+                // Concurrent assertion SVA `assert property (...) else begin ... end`
+                // (hasil macro `ASSERT` prim_assert) — di-skip penuh; assertion
+                // tidak di-elaborasi Maria. Tanpa ini, `[* N]`/`##`/`disable iff`
+                // di body assertion membuat parse error dan skip_until_semi_or_end
+                // melewati `endmodule` (modul hilang dari design).
+                self.skip_assert_item();
+                Ok(None)
+            }
             Token::Ident(name) => {
+                // Bentuk berlabel: `SigintCheck0_A: assert property (...) else ...`
+                // (dihasilkan macro `ASSERT`). Deteksi label + kata kunci assertion
+                // sebelum instance/decl logic diproses.
+                if matches!(self.peek_ahead(1), Token::Colon)
+                    && matches!(
+                        self.peek_ahead(2),
+                        Token::Assert | Token::Assume | Token::Cover | Token::Property
+                    )
+                {
+                    self.advance(); // label
+                    self.advance(); // ':'
+                    self.skip_assert_item();
+                    return Ok(None);
+                }
                 if std::env::var("MARIA_DEBUG_PARSE").is_ok()
                     && name.as_str() == "my_class"
                 {
@@ -1142,6 +1215,41 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                 self.skip_until_semi_or_end()?;
                 Ok(None)
             }
+            }
+            Token::Property => {
+                // Deklarasi SVA `property name(...); ... endproperty` — di-skip
+                // penuh (property assertion tidak di-elaborasi). Depth-aware
+                // untuk property bertingkat. `endproperty` bukan keyword
+                // lexer — di-lex sebagai Ident("endproperty").
+                self.advance(); // consume 'property'
+                let mut depth = 1usize;
+                loop {
+                    match self.peek() {
+                        Token::Property => {
+                            depth += 1;
+                            self.advance();
+                        }
+                        Token::Ident(n) if n == "endproperty" => {
+                            depth -= 1;
+                            self.advance();
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        Token::Eof => break,
+                        _ => {
+                            self.advance();
+                        }
+                    }
+                }
+                // Konsumsi optional `endproperty : name`
+                if self.peek() == &Token::Colon {
+                    self.advance();
+                    if matches!(self.peek(), Token::Ident(_)) {
+                        self.advance();
+                    }
+                }
+                Ok(None)
             }
             Token::Sequence => {
                 self.advance();

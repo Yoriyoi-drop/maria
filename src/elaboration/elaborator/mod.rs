@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use super::util::*;
 use crate::ast::types::const_eval_with_params;
+use crate::ast::const_eval_ext::{eval_cval_full, eval_param_default_full, CVal, SField, Scalars};
 use crate::ast::*;
 use crate::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, DiagSink, RuntimeContext, SourceSnippet};
 use crate::error::SimError;
@@ -53,6 +54,48 @@ const BUILTIN_UVM_CLASSES: &[&str] = &[
     "uvm_factory",
     "uvm_resource_db",
 ];
+
+/// Kumpulkan nama module yang diinstansiasi dari daftar ModuleItem,
+/// MENURUNI generate block (If/For/Case/Items). Instansiasi di dalam
+/// generate — raw AST maupun hasil partial expansion — wajib terlihat oleh
+/// reachability analysis dari top; tanpa ini module yang sah (mis. ibex_decoder
+/// di dalam ibex_id_stage) bisa salah di-flag unreachable dan di-prune.
+fn collect_instance_names(items: &[ModuleItem], out: &mut Vec<Symbol>) {
+    for item in items {
+        match item {
+            ModuleItem::Instance(inst) => out.push(inst.module_name),
+            ModuleItem::Generate(gen) => {
+                for gi in &gen.items {
+                    match gi {
+                        GenerateItem::If {
+                            true_items,
+                            false_items,
+                            ..
+                        } => {
+                            collect_instance_names(true_items, out);
+                            collect_instance_names(false_items, out);
+                        }
+                        GenerateItem::For { body_items, .. } => {
+                            collect_instance_names(body_items, out);
+                        }
+                        GenerateItem::Case { items, default, .. } => {
+                            for ci in items {
+                                collect_instance_names(&ci.body, out);
+                            }
+                            if let Some(d) = default {
+                                collect_instance_names(d, out);
+                            }
+                        }
+                        GenerateItem::Items(items) => {
+                            collect_instance_names(items, out);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElaborateMode {
@@ -464,8 +507,22 @@ _ => {}
             let mod_t0 = std::time::Instant::now();
             let ctx = self.collect_package_param_ctx(&self.design.modules[i]);
             let ctx_ms = mod_t0.elapsed().as_millis();
-            let param_vals =
-                resolve_param_values_with_ctx(&self.design.modules[i], &HashMap::new(), &ctx)?;
+            // Konteks package untuk evaluasi PENUH default param ($bits(typedef),
+            // inlining fungsi package) pada jalur resolusi localparam header.
+            let empty_structs: HashMap<Symbol, Vec<SField>> = HashMap::new();
+            let pkg_full = PkgFullCtx {
+                scalars: &self.pkg_const_scalars,
+                arrays: &self.pkg_const_arrays,
+                package_symbols: &self.package_symbols,
+                structs: &empty_structs,
+            };
+            let param_vals = resolve_param_values_with_ctx(
+                &self.design.modules[i],
+                &HashMap::new(),
+                &ctx,
+                Some(&pkg_full),
+            )
+            .map_err(|e| self.elab_diag_at(DiagCode::SimulationError, e, 0, 0))?;
             let resolve_ms = mod_t0.elapsed().as_millis();
             let module_name = self.design.modules[i].name;
             self.current_module = Some(module_name);
@@ -487,7 +544,12 @@ _ => {}
         }
         // Dead module detection: find unreachable modules via reachability from top
         let top_sym = top_module.map(Symbol::intern);
-        {
+        // Set reachable dihitung sekali dan dipakai (a) warning unreachable,
+        // (b) pruning elaborasi module/interface yang TIDAK reachable dari top
+        // (semantik Verilator — hanya cone dari top yang dielaborasi; error di
+        // module mati seperti chip wrapper / TB / DV tidak boleh memblokir
+        // simulasi desain yang valid). Pruning hanya aktif bila `--top` diberikan.
+        let reachable: std::collections::HashSet<Symbol> = {
             use std::collections::{HashSet, VecDeque};
             let module_map: HashMap<Symbol, &Module> =
                 self.design.modules.iter().map(|m| (m.name, m)).collect();
@@ -522,14 +584,12 @@ _ => {}
             }
             while let Some(name) = queue.pop_front() {
                 if let Some(module) = module_map.get(&name) {
-                    for item in &module.items {
-                        if let ModuleItem::Instance(inst) = item {
-                            if all_names.contains(&inst.module_name)
-                                && !reachable.contains(&inst.module_name)
-                            {
-                                reachable.insert(inst.module_name);
-                                queue.push_back(inst.module_name);
-                            }
+                    let mut insts = Vec::new();
+                    collect_instance_names(&module.items, &mut insts);
+                    for mn in insts {
+                        if all_names.contains(&mn) && !reachable.contains(&mn) {
+                            reachable.insert(mn);
+                            queue.push_back(mn);
                         }
                     }
                 }
@@ -569,10 +629,11 @@ _ => {}
                     self.diag_sink.push(diag);
                 }
             }
-        }
+            reachable
+        };
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] dead-module detection done in {:?}", elab_t0.elapsed());
+            eprintln!("[DBG-ELAB] dead-module detection done in {:?} (reachable={})", elab_t0.elapsed(), reachable.len());
         }
         // ── Incremental elaboration pass ──
         // 1. Compute structural checksums for all modules
@@ -603,7 +664,14 @@ _ => {}
         if std::env::var("DBG_ELAB").is_ok() {
             eprintln!("[DBG-ELAB] checksums+topo done in {:?} (topo_len={})", elab_t0.elapsed(), topo_order.len());
         }
+        // Bila `--top` diberikan: lewati elaborasi module yang tidak reachable
+        // dari top (sudah diperingatkan sebagai unreachable di atas). Error di
+        // module mati tidak memblokir simulasi cone yang valid.
+        let prune_unreachable = top_module.is_some();
         for &mod_name in &topo_order {
+            if prune_unreachable && !reachable.contains(&mod_name) {
+                continue;
+            }
             let module = snapshot_map.get(&mod_name)
                 .ok_or_else(|| self.elab_diag(DiagCode::ModuleNotFound,
                     format!("module '{}' not found in snapshot", mod_name)))?;
@@ -675,7 +743,37 @@ _ => {}
         // flattened hierarchy. Falls back to a signal-only module if the
         // interface body references unsupported constructs.
         let interfaces_snapshot: Vec<Interface> = self.design.interfaces.clone();
+        // Interface hanya dielaborasi bila direferensikan oleh module reachable
+        // (instansiasi / tipe port / decl bertipe interface). Interface mati dari
+        // DV/TB di-skip — error-nya tidak memblokir cone RTL yang valid.
+        let referenced_ifaces: std::collections::HashSet<Symbol> = {
+            let mut s = std::collections::HashSet::new();
+            for m in &self.design.modules {
+                if prune_unreachable && !reachable.contains(&m.name) {
+                    continue;
+                }
+                let mut insts = Vec::new();
+                collect_instance_names(&m.items, &mut insts);
+                for mn in insts {
+                    s.insert(mn);
+                }
+                for port in &m.ports {
+                    if let Some(name) = &port.dtype_name {
+                        s.insert(*name);
+                    }
+                }
+                for d in &m.decls {
+                    if let DataType::UserDefined(name) = &d.dtype {
+                        s.insert(*name);
+                    }
+                }
+            }
+            s
+        };
         for iface in &interfaces_snapshot {
+            if prune_unreachable && !referenced_ifaces.contains(&iface.name) {
+                continue;
+            }
             let synthetic = Module {
                 name: iface.name,
                 ports: iface.ports.clone(),
@@ -1275,7 +1373,16 @@ let mut top = match self.modules.remove(&top_name) {
         instance_overrides: &HashMap<Symbol, i64>,
     ) -> Result<HashMap<Symbol, i64>, SimError> {
         let ctx = self.collect_package_param_ctx(module);
-        resolve_param_values_with_ctx(module, instance_overrides, &ctx)
+        // Evaluasi penuh: $bits(typedef) & inlining fungsi package untuk default
+        // param — evaluator skalar sederhana tidak punya akses package_symbols.
+        let empty_structs: HashMap<Symbol, Vec<SField>> = HashMap::new();
+        let pkg_full = PkgFullCtx {
+            scalars: &self.pkg_const_scalars,
+            arrays: &self.pkg_const_arrays,
+            package_symbols: &self.package_symbols,
+            structs: &empty_structs,
+        };
+        resolve_param_values_with_ctx(module, instance_overrides, &ctx, Some(&pkg_full))
             .map_err(|e| self.elab_diag(DiagCode::ParamMismatch, e))
     }
 
@@ -1814,6 +1921,40 @@ let mut top = match self.modules.remove(&top_name) {
         Ok((msb.abs_diff(lsb) + 1) as usize)
     }
 
+    /// Resolve lebar port dengan fallback width-aware (`$bits(pkg::Type)` dsb)
+    /// bila const-eval skalar gagal. Port `input logic [$bits(pkg::t)-1:0] x`
+    /// memerlukan lebar typedef package yang tidak bisa di-const-eval sebagai
+    /// skalar — pakai `range_width_aware` (eval_width_aware_param) sebagai
+    /// fallback agar port tetap ter-elaborasi.
+    fn port_width_aware(
+        &self,
+        port: &Port,
+        effective_params: &HashMap<Symbol, i64>,
+        signal_map: &HashMap<Symbol, SignalId>,
+        signals: &[SignalInfo],
+    ) -> Result<usize, String> {
+        match port.resolved_width(effective_params) {
+            Ok(w) => Ok(w),
+            Err(e) => {
+                let mut total: usize = 1;
+                if let Some(r) = &port.range {
+                    total = r.width();
+                } else if let Some(er) = &port.expr_range {
+                    total = self
+                        .range_width_aware(er, effective_params, signal_map, signals)
+                        .map_err(|_| e.clone())?;
+                }
+                for er in &port.extra_packed_dims {
+                    total = total.saturating_mul(
+                        self.range_width_aware(er, effective_params, signal_map, signals)
+                            .map_err(|_| e.clone())?,
+                    );
+                }
+                Ok(total)
+            }
+        }
+    }
+
     /// Lebar dtype dengan dukungan parameter type (mis. `parameter type T = int`).
     /// `T x;` di body harus pakai lebar dari `type_param_widths` (bila T adalah
     /// type param), bukan jatuh ke fallback "unknown type".
@@ -2149,6 +2290,15 @@ impl Elaborator {
                                             if let Some(expr) = &p.default {
                                                 if let Ok(val) = const_eval_with_params(expr, &effective_params) {
                                                     effective_params.insert(p.name, val);
+                                                } else {
+                                                    // Default tidak bisa const-eval ke i64 (mis.
+                                                    // 128-bit token yang overflow i64, seperti
+                                                    // `RndCnstRawUnlockTokenHashed` di
+                                                    // lc_ctrl_token_pkg) — daftarkan 0 agar
+                                                    // plain name resolve dan desain tetap
+                                                    // elaborate. Nilai rujukan (konstanta token)
+                                                    // jarang dibandingkan dalam simulasi cone.
+                                                    effective_params.insert(p.name, 0);
                                                 }
                                             }
                                         }
@@ -2221,6 +2371,15 @@ impl Elaborator {
             );
         }
         self.param_vals = effective_params.clone();
+        // Pastikan context package GLOBAL (qualified `pkg::name` + enum member
+        // plain dari SEMUA package) tersedia untuk evaluasi konstanta di body
+        // module (localparam default seperti `get_synd_width(...)` di otp_macro,
+        // cast `dm::dm_csr_e'(...)`, scoped `pkg::member`, dll). effective_params
+        // biasanya sudah membawa ctx, tapi jalur module lain / override instance
+        // bisa kehilangan qualified keys ini — merge idempoten murah (entry cek).
+        for (k, v) in &self.pkg_param_ctx {
+            self.param_vals.entry(*k).or_insert(*v);
+        }
         // Pre-pass: process $unit typedefs (top-level typedefs outside any module)
         let unit_typedefs = self.design.unit_typedefs.clone();
         for td in &unit_typedefs {
@@ -2345,6 +2504,42 @@ impl Elaborator {
             }
         }
 
+        // ── Daftarkan lebar typedef ke konteks parameter ──
+        // `$bits(typedef)` / `$size(typedef)` / scoped `pkg::typedef` dipakai
+        // dalam konstanta (Replicate count, instance range, generate-if, cast
+        // `type'(x)`). const_eval_with_params hanya melihat param_vals, jadi
+        // nama typedef harus terdaftar di sini agar tidak jatuh ke
+        // "'X' not found in parameter context" (E9001 tanpa lokasi).
+        // Nama param asli menang (entry().or_insert) — typedef hanya mengisi
+        // slot kosong. typedef_map adalah global lintas module; over-collection
+        // aman (nama typedef jarang bentrok dgn nama param lokal).
+        let typedef_width_regs: Vec<(Symbol, i64)> = self
+            .typedef_map
+            .iter()
+            .map(|(name, &w)| (*name, w as i64))
+            .collect();
+        for (name, w) in &typedef_width_regs {
+            effective_params.entry(*name).or_insert(*w);
+        }
+        // Qualified `pkg::typedef` juga didaftarkan (mis. `kmac_pkg::app_ses_config_t`
+        // di otbn_kmac_if) — const_eval ScopedIdent mencoba qualified key dulu.
+        // Kumpulkan nama dulu (borrow &self selesai) lalu insert ke effective_params.
+        let mut qual_typedef_regs: Vec<(Symbol, i64)> = Vec::new();
+        for (pkg, items) in &self.package_symbols {
+            for (name, item) in items {
+                if let PackageItem::Typedef(td) = item {
+                    let width = self.typedef_map.get(&td.name).copied().unwrap_or(1) as i64;
+                    qual_typedef_regs.push((
+                        Symbol::intern(&format!("{}::{}", pkg.as_str(), name.as_str())),
+                        width,
+                    ));
+                }
+            }
+        }
+        for (qn, w) in &qual_typedef_regs {
+            effective_params.entry(*qn).or_insert(*w);
+        }
+
         // Resolve type parameter widths from module's param declarations and overrides
         let mut type_param_widths: HashMap<Symbol, usize> = HashMap::new();
         for param in &module.params {
@@ -2432,18 +2627,31 @@ impl Elaborator {
 
         // Process ports with parameter-aware width resolution
         for port in &module.ports {
+            // Error lebar port yang gagal di-resolve (mis. `$bits(typedef)` di
+            // range) di-lampiri nama port + lokasi fallback agar selalu punya
+            // col & line (find_name_in_source mencari nama port di source).
+            let port_name = port.name;
+            let pwa = |port: &Port, ep: &HashMap<Symbol, i64>, sm: &HashMap<Symbol, SignalId>, sg: &[SignalInfo]| {
+                self.port_width_aware(port, ep, sm, sg).map_err(|e| {
+                    self.elab_diag_at(
+                        DiagCode::SimulationError,
+                        format!("width of port '{}' cannot be resolved: {}", port_name.as_str(), e),
+                        0, 0,
+                    )
+                })
+            };
             let width = if let Some(tn) = &port.dtype_name {
                 if let Some(tw) = type_param_widths.get(tn) {
                     if port.expr_range.is_some() || port.range.is_some() {
-                        port.resolved_width(&effective_params)?
+                        pwa(port, &effective_params, &signal_map, &signals)?
                     } else {
                         *tw
                     }
                 } else {
-                    port.resolved_width(&effective_params)?
+                    pwa(port, &effective_params, &signal_map, &signals)?
                 }
             } else {
-                port.resolved_width(&effective_params)?
+                pwa(port, &effective_params, &signal_map, &signals)?
             };
             let kind = match port.direction {
                 PortDirection::Input => SignalKind::Input,
@@ -2544,6 +2752,28 @@ impl Elaborator {
         // deklarasi yang dihasilkan branch generate (mis. `logic wptr_err;`
         // saat Secure=1) ikut terdaftar sebagai sinyal. Tanpa ini, sinyal
         // seperti itu hilang → error "signal not found" (E2001).
+        // Typedef lokal module harus terlihat oleh resolusi lebar `$bits(t)` /
+        // cast `t'(...)` di param & width context (mis. struct `lfsr_data_t` /
+        // `cpu_ctrl_sts_part_t` lokal di ibex). Daftarkan sebagai pseudo-package
+        // `__local_typedefs::<module>` di package_symbols; dibersihkan tiap
+        // module agar typedef module lain tidak bocor. resolve_typedef_ident_width
+        // memberi prioritas package asli, jadi ini hanya fallback.
+        self.package_symbols
+            .retain(|k, _| !k.as_str().starts_with("__local_typedefs::"));
+        {
+            let mut mod_typedefs: HashMap<Symbol, PackageItem> = HashMap::new();
+            for item in &module.items {
+                if let ModuleItem::Typedef(td) = item {
+                    mod_typedefs
+                        .entry(td.name)
+                        .or_insert_with(|| PackageItem::Typedef(td.clone()));
+                }
+            }
+            if !mod_typedefs.is_empty() {
+                let pseudo = Symbol::intern(&format!("__local_typedefs::{}", module.name.as_str()));
+                self.package_symbols.insert(pseudo, mod_typedefs);
+            }
+        }
         // Collect body-level params (localparam, parameter) into effective_params.
         // Parser menaruh localparam body (`localparam int W = ...`) di
         // `module.params` (mirip header params), jadi iterasi keduanya.
@@ -2560,19 +2790,86 @@ impl Elaborator {
                 }
             }
         }
-        for (pname, expr) in body_param_defaults {
-            if !effective_params.contains_key(&pname) {
+        // Evaluasi body localparam dengan evaluator PENUH (member access
+        // struct, `$bits(typedef)`, fungsi package) + fixed-point agar chain
+        // `Info.size → PayloadByte → PayloadPtrW` (pola spi_device /
+        // prim_generic_flash_bank OpenTitan) ter-resolve. Struct localparam
+        // disimpan terpisah (`struct_vals`) dan diteruskan ke evaluator agar
+        // `name.field` bisa di-const-eval. `merged` = konstanta package
+        // (qualified) + effective_params (plain, module menang).
+        let mut struct_vals: HashMap<Symbol, Vec<SField>> = HashMap::new();
+        let mut merged: Scalars = self.pkg_const_scalars.clone();
+        for (&k, &v) in &effective_params {
+            merged.insert(k, v);
+        }
+        loop {
+            let mut changed = false;
+            for (pname, expr) in &body_param_defaults {
+                if effective_params.contains_key(pname) || struct_vals.contains_key(pname) {
+                    continue;
+                }
+                // 1) Skalar via evaluator penuh ($bits(typedef), fungsi package,
+                //    member access struct package).
+                if let Some(val) = eval_param_default_full(
+                    expr,
+                    &merged,
+                    &self.pkg_const_arrays,
+                    &self.package_symbols,
+                    &struct_vals,
+                ) {
+                    effective_params.insert(*pname, val);
+                    merged.insert(*pname, val);
+                    changed = true;
+                    continue;
+                }
+                // 2) Struct via evaluator penuh — simpan untuk member access.
+                if let Some(CVal::Struct(fields)) = eval_cval_full(
+                    expr,
+                    &merged,
+                    &self.pkg_const_arrays,
+                    &self.package_symbols,
+                    &struct_vals,
+                ) {
+                    struct_vals.insert(*pname, fields);
+                    changed = true;
+                    continue;
+                }
+                // 3) Jalur cepat skalar lama (literal murni, operator dasar).
                 if let Ok(val) = const_eval_with_params(expr, &effective_params) {
-                    effective_params.insert(pname, val);
-                } else if let Some(val) = super::util::width::eval_width_aware_param(
+                    effective_params.insert(*pname, val);
+                    merged.insert(*pname, val);
+                    changed = true;
+                    continue;
+                }
+                // 4) Width-aware evaluator (fallback historis).
+                if let Some(val) = super::util::width::eval_width_aware_param(
                     expr,
                     &signal_map,
                     &signals,
                     &effective_params,
                     &self.package_symbols,
                 ) {
-                    effective_params.insert(pname, val);
+                    effective_params.insert(*pname, val);
+                    merged.insert(*pname, val);
+                    changed = true;
                 }
+            }
+            if !changed {
+                break;
+            }
+        }
+        // Daftarkan nama struct localparam/parameter (yang tersimpan di
+        // `struct_vals`) ke `effective_params` dengan nilai placeholder 0.
+        // Ini membuat referensi nama UTUH (mis. port connection
+        // `.racl_policy_sel_ranges_i (RaclPolicySelRangesEgressbuffer)`) bisa
+        // di-resolve sebagai konstanta — tanpa ini nama tersebut "signal not
+        // found" (E2001). Member access (`name.field`) tetap benar karena
+        // evaluator penuh (eval_cval_full/eval_param_default_full) memakai
+        // `struct_vals` yang sudah terisi fixed-point di atas.
+        for (sname, _fields) in &struct_vals {
+            if !effective_params.contains_key(sname) {
+                effective_params.insert(*sname, 0);
+                merged.insert(*sname, 0);
             }
         }
         self.param_vals = effective_params.clone();
@@ -2607,6 +2904,54 @@ impl Elaborator {
         };
 
         // Update param_vals after generate expansion which may add body-level params
+        self.param_vals = effective_params.clone();
+
+        // Enum member constants dari typedef di DALAM blok generate (hasil
+        // ekspansi) — mis. `typedef enum {...PmEnLastPos} rv_dm_pm_en_e;` di
+        // `else begin : gen_jtag_gating` (rv_dm.sv). Member dipakai sebagai
+        // range array (`[PmEnLastPos-1:0]`) dan index. collect_package_param_ctx
+        // hanya melihat module.items (pra-ekspansi), jadi member di dalam
+        // generate belum terdaftar → decl array gagal resolve range → sinyal
+        // "pinmux_hw_debug_en not found". Registrasi fixed-point di sini
+        // (bisa saling referensi + referensi param lain).
+        for _ in 0..64 {
+            let mut changed = false;
+            let typedefs = module
+                .items
+                .iter()
+                .chain(expanded_items.iter())
+                .filter_map(|item| {
+                    if let ModuleItem::Typedef(td) = item {
+                        if let DataType::EnumType { members, .. } = &td.dtype {
+                            Some(members.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                });
+            for members in typedefs {
+                let mut last = 0i64;
+                for (member_name, member_expr) in members {
+                    let val = match member_expr {
+                        Some(expr) => match const_eval_with_params(&expr, &effective_params) {
+                            Ok(v) => v,
+                            Err(_) => last,
+                        },
+                        None => last,
+                    };
+                    if !effective_params.contains_key(&member_name) {
+                        effective_params.insert(member_name, val);
+                        changed = true;
+                    }
+                    last = val + 1;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
         self.param_vals = effective_params.clone();
 
         // Gabungkan deklarasi module-level dengan deklarasi hasil generate.
@@ -3100,6 +3445,26 @@ impl Elaborator {
                                 self.param_vals.insert(Symbol::intern(&key), v);
                             }
                         }
+                        // Elemen struct (`'{offset: 8'd0, size: 8'd64}`):
+                        // daftarkan member keys `name[i].field` → nilai field.
+                        // Ini membuat `arr[i].field` (mis. di generate body)
+                        // ter-fold via const_eval MemberAccess.
+                        if let Expr::StructLit { members } = e {
+                            for m in members {
+                                if let StructLitMember::Named(fname, fexpr) = m {
+                                    if let Ok(fv) = const_eval_params(fexpr, &effective_params) {
+                                        let key = format!(
+                                            "{}[{}].{}",
+                                            p.name.as_str(),
+                                            fi,
+                                            fname.as_str()
+                                        );
+                                        effective_params.insert(Symbol::intern(&key), fv);
+                                        self.param_vals.insert(Symbol::intern(&key), fv);
+                                    }
+                                }
+                            }
+                        }
                     }
                     let sid = get_or_create_signal(
                         p.name,
@@ -3252,11 +3617,32 @@ impl Elaborator {
                     }
                 }
                 ModuleItem::Assign(assign) => {
-                    // Undeclared LHS identifier → implicit net (semantik SV).
-                    // Lebar net diambil dari lebar RHS.
+                    // Undeclared identifier (LHS atau RHS) → implicit net
+                    // (semantik Verilog; pola generated code OpenTitan seperti
+                    // `assign tl_reg_h2d = tl_i;` dan `assign tl_o_pre =
+                    // tl_reg_d2h;` di mana net `tl_reg_d2h` tak terdeklarasi
+                    // dulu dikoneksikan ke reg block yang di-optimalkan).
+                    // Lebar net LHS diambil dari lebar RHS; net RHS = 1-bit.
+                    let mut implicit_nets: Vec<(Symbol, usize, usize)> = Vec::new();
                     if let Expr::Ident { name, line, col } = &assign.lhs {
                         if !signal_map.contains_key(name) {
-                            let rhs_width = super::util::width::compute_expr_width(
+                            implicit_nets.push((*name, *line, *col));
+                        }
+                    }
+                    collect_implicit_net_idents(
+                        &assign.rhs,
+                        &signal_map,
+                        &self.param_vals,
+                        &self.pkg_param_ctx,
+                        &mut implicit_nets,
+                    );
+                    for (name, line, col) in implicit_nets {
+                        if signal_map.contains_key(&name) {
+                            continue;
+                        }
+                        let width = if matches!(&assign.lhs, Expr::Ident { name: ln, .. } if *ln == name)
+                        {
+                            super::util::width::compute_expr_width(
                                 &assign.rhs,
                                 &signal_map,
                                 &signals,
@@ -3264,50 +3650,52 @@ impl Elaborator {
                                 &self.package_symbols,
                             )
                             .unwrap_or(1)
-                            .max(1);
-                            let sid = next_id;
-                            next_id += 1;
-                            signal_map.insert(*name, sid);
-                            signals.push(SignalInfo {
-                                name: *name,
-                                width: rhs_width,
-                                kind: SignalKind::Wire,
-                                net_type: NetType::Wire,
-                                multi_driver: false,
-                                init_val: LogicVec::fill(LogicVal::Z, rhs_width),
-                                array_depth: 1,
-                                elem_width: rhs_width,
-                                array_dims: vec![],
-                                class_name: None,
-                                is_string: false,
-                                is_mailbox: false,
-                                is_semaphore: false,
-                                is_real: false,
-                                is_2state: false,
-                                is_dynamic: false,
-                                is_queue: false,
-                                is_associative: false,
-                                is_signed: false,
-                                is_const: false,
-                                msb: rhs_width - 1,
-                                lsb: 0,
-                                struct_fields: vec![],
-                                packed_dims: vec![],
-                                delay_rise: None,
-                                delay_fall: None,
-                                iface_type: None,
-                                iface_modport: None,
-                            });
-                            self.elab_warn_at(
-                                DiagCode::UndefinedSignal,
-                                format!(
-                                    "signal '{}' not declared; creating implicit net (width {})",
-                                    name, rhs_width
-                                ),
-                                *line,
-                                *col,
-                            );
-                        }
+                            .max(1)
+                        } else {
+                            1
+                        };
+                        let sid = next_id;
+                        next_id += 1;
+                        signal_map.insert(name, sid);
+                        signals.push(SignalInfo {
+                            name,
+                            width,
+                            kind: SignalKind::Wire,
+                            net_type: NetType::Wire,
+                            multi_driver: false,
+                            init_val: LogicVec::fill(LogicVal::Z, width),
+                            array_depth: 1,
+                            elem_width: width,
+                            array_dims: vec![],
+                            class_name: None,
+                            is_string: false,
+                            is_mailbox: false,
+                            is_semaphore: false,
+                            is_real: false,
+                            is_2state: false,
+                            is_dynamic: false,
+                            is_queue: false,
+                            is_associative: false,
+                            is_signed: false,
+                            is_const: false,
+                            msb: width - 1,
+                            lsb: 0,
+                            struct_fields: vec![],
+                            packed_dims: vec![],
+                            delay_rise: None,
+                            delay_fall: None,
+                            iface_type: None,
+                            iface_modport: None,
+                        });
+                        self.elab_warn_at(
+                            DiagCode::UndefinedSignal,
+                            format!(
+                                "signal '{}' not declared; creating implicit net (width {})",
+                                name, width
+                            ),
+                            line,
+                            col,
+                        );
                     }
                     // Convert to a combinational process
                     let lhs_result = self.elaborate_lvalue(&assign.lhs, &signal_map, &signals);
@@ -3502,8 +3890,18 @@ impl Elaborator {
                         }
 
                         if let Some(range) = &inst.range {
-                            let msb = const_eval_with_params(&range.msb, &effective_params)?;
-                            let lsb = const_eval_with_params(&range.lsb, &effective_params)?;
+                            let msb = const_eval_with_params(&range.msb, &effective_params)
+                                .map_err(|e| self.elab_diag_at(
+                                    DiagCode::SimulationError,
+                                    format!("instance range bound evaluation failed: {}", e),
+                                    inst.line, inst.col,
+                                ))?;
+                            let lsb = const_eval_with_params(&range.lsb, &effective_params)
+                                .map_err(|e| self.elab_diag_at(
+                                    DiagCode::SimulationError,
+                                    format!("instance range bound evaluation failed: {}", e),
+                                    inst.line, inst.col,
+                                ))?;
                             let (start, end) = if msb >= lsb { (lsb, msb) } else { (msb, lsb) };
                             let pm = std::sync::Arc::new(port_map);
                             let pam = std::sync::Arc::new(param_map);

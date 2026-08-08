@@ -114,13 +114,23 @@ pub fn compile_project(
     let mut session = CompileSession::new(config);
 
     // ── MICD: attach database persisten (incremental compile lintas run) ──
-    // Bila database belum ada (compile pertama), open() memberi DB kosong dan
+    // Bila database belum ada (compile pertama), open memberi DB kosong dan
     // save_micd() di bawah akan membuatnya — run berikutnya file yang hash
     // kontennya sama di-restore AST-nya (skip lexer+parser). Root database =
-    // `<project>/.maria/database` (sama dengan CLI).
+    // `<project>/.maria/database` (sama dengan CLI). Scoped per project
+    // (ProjectID dari root + sources): OpenTitan dan test/counter.sv tidak
+    // pernah berbagi database. Payload CAS di objects/<pid>/, index di
+    // state/<pid>/.
     let micd_root = project_root.map(|r| r.join(".maria").join("database"));
-    if let Some(root) = micd_root.as_deref() {
-        let db = crate::micd::MicdDatabase::open(root);
+    if let Some(micd_root) = micd_root.as_deref() {
+        let proot = project_root.expect("micd_root hanya ada bila project_root ada");
+        let pid = crate::micd::MicdDatabase::project_id(proot, paths, &[], &[]);
+        let db = crate::micd::MicdDatabase::open_project_with_context(
+            micd_root,
+            &pid,
+            proot,
+            paths,
+        );
         session.attach_micd(db);
     }
 
@@ -403,9 +413,9 @@ fn micd_verify_misses(db: &crate::micd::MicdDatabase) -> usize {
     db.files.len().saturating_sub(micd_verify_hits(db))
 }
 
-/// Helper: total ukuran database MICD di disk (bytes). Menghitung SEMUA
-/// file `.mdb` secara rekursif — termasuk `snapshots/` dan `cache/` yang
-/// juga bagian dari database (sesuai db.md), bukan hanya root directory.
+/// Helper: total ukuran database MICD di disk (bytes). Menghitung SEMUA file
+/// di database root — store `.mdb`, objek CAS `.ast`/`.preproc`, snapshot,
+/// `registry.json`, `VERSION` (sesuai layout Opsi B db.md).
 fn micd_db_bytes(root: Option<&std::path::Path>) -> u64 {
     let Some(root) = root else {
         return 0;
@@ -420,10 +430,8 @@ fn micd_db_bytes(root: Option<&std::path::Path>) -> u64 {
             // recursion bila database berisi symlink ke direktori induk.
             if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
                 walk(&p, total);
-            } else if p.extension().and_then(|e| e.to_str()) == Some("mdb") {
-                if let Ok(m) = std::fs::metadata(&p) {
-                    *total += m.len();
-                }
+            } else if let Ok(m) = std::fs::metadata(&p) {
+                *total += m.len();
             }
         }
     }

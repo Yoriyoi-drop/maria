@@ -19,6 +19,13 @@ use crate::parser::lexer::*;
 
 impl Parser {
     pub(crate) fn is_type_token(&self) -> bool {
+        // `int'(expr)` / `logic'(expr)` / `real'(expr)` adalah CAST ekspresi,
+        // bukan type parameter — jika token tipe diikuti `'` (Quote), parse
+        // sebagai ekspresi agar instance `#(.p(int'(x)))` tidak salah dikira
+        // type param (sebelumnya: "expected RParen, found '" di rv_dm dll.).
+        if matches!(self.peek_ahead(1), Token::Quote) {
+            return false;
+        }
         matches!(
             self.peek(),
             Token::Bit
@@ -655,7 +662,8 @@ impl Parser {
                 if self.peek() == &Token::LBrace {
                     self.advance();
                     let saved = self.pos.get();
-                    let mut elements = Vec::new();
+                    let mut members: Vec<StructLitMember> = Vec::new();
+                    let mut any_named = false;
                     let mut ok = true;
                     loop {
                         if self.peek() == &Token::RBrace {
@@ -666,18 +674,55 @@ impl Parser {
                             ok = false;
                             break;
                         }
-                        match self.parse_expr(0) {
-                            Ok(first) => {
-                                if self.peek() == &Token::Colon {
-                                    // Named-field assignment pattern: fall back to skip
+                        // `default: value` — keyword (bukan Ident), tangani dulu.
+                        if self.peek() == &Token::Default {
+                            self.advance();
+                            if self.peek() != &Token::Colon {
+                                ok = false;
+                                break;
+                            }
+                            self.advance();
+                            match self.parse_expr(0) {
+                                Ok(val) => {
+                                    any_named = true;
+                                    members.push(StructLitMember::Default(val));
+                                }
+                                Err(_) => {
                                     ok = false;
                                     break;
                                 }
-                                elements.push(first);
                             }
-                            Err(_) => {
-                                ok = false;
-                                break;
+                        } else {
+                            match self.parse_expr(0) {
+                                Ok(first) => {
+                                    if self.peek() == &Token::Colon {
+                                        // Named-field assignment pattern:
+                                        // `name: value` — nama harus Ident.
+                                        self.advance();
+                                        match self.parse_expr(0) {
+                                            Ok(val) => match first {
+                                                Expr::Ident { name, .. } => {
+                                                    any_named = true;
+                                                    members.push(StructLitMember::Named(name, val));
+                                                }
+                                                _ => {
+                                                    ok = false;
+                                                    break;
+                                                }
+                                            },
+                                            Err(_) => {
+                                                ok = false;
+                                                break;
+                                            }
+                                        }
+                                    } else {
+                                        members.push(StructLitMember::Positional(first));
+                                    }
+                                }
+                                Err(_) => {
+                                    ok = false;
+                                    break;
+                                }
                             }
                         }
                         if self.peek() == &Token::Comma {
@@ -690,13 +735,25 @@ impl Parser {
                             break;
                         }
                     }
-                    if ok && !elements.is_empty() {
+                    if ok {
+                        if any_named {
+                            // Pola struct bernama — pertahankan nama field agar
+                            // member access bisa di-const-eval.
+                            return Ok(Expr::StructLit { members });
+                        }
+                        // Semua posisional — perilaku lama (array literal).
+                        let mut elements = Vec::new();
+                        for m in members {
+                            if let StructLitMember::Positional(e) = m {
+                                elements.push(e);
+                            }
+                        }
                         if elements.len() == 1 {
                             return Ok(elements.into_iter().next().unwrap());
                         }
                         return Ok(Expr::Concat(elements));
                     }
-                    // Fallback: skip to matching brace (behavior lama)
+                    // Fallback: skip ke brace penutup (perilaku lama).
                     self.pos.set(saved);
                     let mut depth = 1usize;
                     while depth > 0 && self.peek() != &Token::Eof {

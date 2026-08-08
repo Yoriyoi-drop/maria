@@ -41,21 +41,30 @@ impl Parser {
         let mut items = Vec::new();
 
         // Handle import statements between module name and #( / (
+        // Bisa berisi beberapa item: `import pkg::A, pkg::B;` (OpenTitan
+        // spid_readbuffer dll.) — satu import, banyak pasangan pkg::item.
         while self.peek() == &Token::Import {
             self.advance();
-            let pkg = self.expect_ident()?;
-            self.expect(Token::Scope)?;
-            let item = if self.peek() == &Token::Star {
-                self.advance();
-                Symbol::intern("*")
-            } else {
-                self.expect_ident()?
-            };
+            loop {
+                let pkg = self.expect_ident()?;
+                self.expect(Token::Scope)?;
+                let item = if self.peek() == &Token::Star {
+                    self.advance();
+                    Symbol::intern("*")
+                } else {
+                    self.expect_ident()?
+                };
+                items.push(ModuleItem::Import {
+                    package: pkg,
+                    item: item,
+                });
+                if self.peek() == &Token::Comma {
+                    self.advance();
+                    continue;
+                }
+                break;
+            }
             self.skip_semi();
-            items.push(ModuleItem::Import {
-                package: pkg,
-                item: item,
-            });
         }
 
         if self.peek() == &Token::Hash {

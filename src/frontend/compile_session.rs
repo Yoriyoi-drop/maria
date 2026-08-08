@@ -364,8 +364,14 @@ impl CompileSession {
         for r in results {
             let (path, design, cksum) = r?;
             file_designs.push((path.clone(), design));
-            file_checksums.insert(path, cksum);
-            self.timing.processed_files += 1;
+            file_checksums.insert(path.clone(), cksum);
+            // File yang AST-nya di-restore dari MICD (parse di-skip) TIDAK
+            // dihitung sebagai processed — sebelumnya semua file masuk
+            // processed sehingga `cached=0 processed=861` selalu tampil
+            // walaupun 861 design sukses di-restore (bug pelaporan).
+            if !self.micd_restored_paths.contains(&path) {
+                self.timing.processed_files += 1;
+            }
         }
         self.timing.cached_files = files.len().saturating_sub(self.timing.processed_files);
 
@@ -779,6 +785,41 @@ impl CompileSession {
     /// Untuk tiap source yang hash kontennya cocok dengan cache, AST dan
     /// combined source di-deserialize → parse/lex di-skip pada compile.
     /// Mengembalikan jumlah AST yang berhasil di-restore.
+    /// Buka database MICD TANPA restore AST (dipakai saat `--recompile`).
+    ///
+    /// Sebelumnya `--recompile` melewati `attach_micd` sama sekali sehingga
+    /// `self.micd` tetap `None` dan `save_micd` menjadi no-op — cache hasil
+    /// full-rebuild tidak pernah ditulis ke disk, dan run normal berikutnya
+    /// selalu compile penuh ulang (restored=0). Di sini database dibuka dan
+    /// flags/include-deps disalin, tapi restore dilewati: semua file dianggap
+    /// fresh (rebuild penuh) dan save berikutnya menulis ulang seluruh store.
+    pub fn open_micd_no_restore(&mut self, mut db: MicdDatabase) {
+        let current_flags = micd::flags_hash(&self.config.defines, &self.config.incdirs);
+        db.flags_hash = current_flags;
+        db.dirty = true;
+
+        self.collect_micd_include_deps(&db);
+
+        db.restored = 0;
+        self.micd = Some(db);
+        self.micd_restored = 0;
+        self.micd_restored_paths = HashSet::new();
+    }
+
+    /// Salin include deps dari database (dipakai saat save ulang).
+    fn collect_micd_include_deps(&mut self, db: &MicdDatabase) {
+        let mut include_deps = HashMap::new();
+        for (p, meta) in db.files.iter() {
+            if !meta.include_hashes.is_empty() {
+                include_deps.insert(
+                    p.clone(),
+                    meta.include_hashes.iter().map(|(d, _)| d.clone()).collect(),
+                );
+            }
+        }
+        self.micd_include_deps = include_deps;
+    }
+
     pub fn attach_micd(&mut self, mut db: MicdDatabase) -> usize {
         let current_flags = micd::flags_hash(&self.config.defines, &self.config.incdirs);
         // Koreksi correctness: defines/incdirs berubah → preprocessed output
@@ -841,17 +882,41 @@ impl CompileSession {
             }
         }
 
-        // Include deps dari database (dipakai saat save ulang).
-        let mut include_deps = HashMap::new();
-        for (p, meta) in db.files.iter() {
-            if !meta.include_hashes.is_empty() {
-                include_deps.insert(
-                    p.clone(),
-                    meta.include_hashes.iter().map(|(d, _)| d.clone()).collect(),
-                );
+        // ── Debug MICD (guard env MARIA_DBG_MICD): ukur titik kegagalan
+        // restore agar run hangat tidak full rebuild (cached=0). ──
+        if std::env::var("MARIA_DBG_MICD").is_ok() {
+            let db_ref = &db;
+            let mut deps_ok = 0usize;
+            let mut ast_ok = 0usize;
+            let mut pre_ok = 0usize;
+            for path in &sources {
+                if let Ok(content) = std::fs::read(path) {
+                    let hash = compute_checksum(&content);
+                    if db_ref.deps_unchanged(path, hash).unwrap_or(false) {
+                        deps_ok += 1;
+                        if db_ref.get_ast(path, hash).is_some() {
+                            ast_ok += 1;
+                            if db_ref.get_preprocessed(path, hash).is_some() {
+                                pre_ok += 1;
+                            }
+                        }
+                    }
+                }
             }
+            eprintln!(
+                "[MICD-DBG] attach: files={} flags(db)={:x} flags(cur)={:x} flags_changed={} deps_ok={} ast_ok={} preproc_ok={} restored={}",
+                db.files.len(),
+                db.flags_hash,
+                current_flags,
+                flags_changed,
+                deps_ok,
+                ast_ok,
+                pre_ok,
+                restored
+            );
         }
-        self.micd_include_deps = include_deps;
+
+        self.collect_micd_include_deps(&db);
 
         db.restored = restored;
         db.dirty = false;
@@ -1713,7 +1778,11 @@ mod tests {
             assert!(design.modules.iter().any(|m| m.name == "mod_b"));
             let stats = s.save_micd().unwrap().expect("database terpasang");
             assert_eq!(stats.changed_files, 2, "cold compile: semua file berubah");
-            assert!(db_root.join("ast.mdb").exists(), "database harus tersimpan");
+            // Layout Opsi B: payload AST sebagai objek CAS di objects/default/.
+            assert!(
+                db_root.join("objects").join("default").exists(),
+                "database harus tersimpan"
+            );
         }
 
         // Sesi 2: tanpa perubahan → semua file di-restore (parse di-skip).

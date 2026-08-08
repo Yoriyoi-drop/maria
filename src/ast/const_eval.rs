@@ -42,6 +42,7 @@ pub fn const_eval_simple(expr: &Expr) -> Result<i64, String> {
         Expr::Ident { name: ref s, .. } if s == "1" => Ok(1),
         Expr::MethodCall { .. } => Err("method calls are not simple constants".to_string()),
         Expr::MemberAccess { .. } => Err("member access is not a simple constant".to_string()),
+        Expr::StructLit { .. } => Err("struct literal is not a simple constant".to_string()),
         _ => Err("not a simple constant".to_string()),
     }
 }
@@ -361,6 +362,37 @@ pub fn const_eval_with_params(
         Expr::Paren(inner) => const_eval_with_params(inner, param_vals),
         Expr::Cast { expr: inner, .. } => const_eval_with_params(inner, param_vals),
         Expr::CastWidth { expr: inner, .. } => const_eval_with_params(inner, param_vals),
+        // Replikasi `{N{expr}}` di constant context: pola 1-bit 1 → mask N
+        // ones; pola 0 → 0. Pola lain di-approximate (ulang bit-pattern).
+        Expr::Replicate { count, expr } => {
+            let n = const_eval_with_params(count, param_vals)?;
+            let v = const_eval_with_params(expr, param_vals)?;
+            let n = n.max(0).min(63) as u32;
+            if v == 0 {
+                Ok(0)
+            } else if v == 1 {
+                Ok((1u64.wrapping_shl(n)).wrapping_sub(1) as i64)
+            } else if n == 0 {
+                Ok(0)
+            } else {
+                let mut acc: u64 = 0;
+                let w = 63.min(n) as u32;
+                let pattern = (v as u64) & ((1u64 << w).wrapping_sub(1));
+                for _ in 0..n {
+                    acc = (acc << w) | pattern;
+                }
+                Ok(acc as i64)
+            }
+        }
+        // Struct literal utuh tidak bisa di-const-eval sebagai skalar tanpa
+        // layout typedef. Nilai 0 (perilaku lama — pola bernama sebelumnya
+        // di-discard jadi 0) supaya localparam struct tetap terdaftar. Member
+        // access (`P.offset`) tetap benar via key `base.field` di atas.
+        Expr::StructLit { .. } => Ok(0),
+        // Fill literal `'0`/`'1` — nilai 0 untuk konstanta (localparam struct
+        // seperti `mac_bignum_contrl_t ControlDefault = '0` di
+        // otbn_mac_bignum_fsm, `sha_word64_t ZeroWord = '0` di prim_sha2).
+        Expr::FillLit(_) => Ok(0),
         Expr::ScopedIdent { package, item, .. } => {
             let qualified = Symbol::intern(&format!("{}::{}", package, item));
             if let Some(&val) = param_vals.get(&qualified) {
@@ -522,6 +554,140 @@ pub fn const_eval_with_params(
                 return Err("division by zero in ceil_div".to_string());
             }
             Ok(if a % b != 0 { a / b + 1 } else { a / b })
+        }
+        // OpenTitan prim_secded_pkg::get_synd_width(sd_type, width) — lebar
+        // syndrome ECC per tipe & lebar data (tabel konstanta; tipe enum:
+        // SecdedHsiao=0, SecdedHamming=1, SecdedInvHsiao=2, SecdedInvHamming=3).
+        Expr::FuncCall { name, args, .. } if base_func_name(name.as_str()) == "get_synd_width" => {
+            let sd = const_eval_with_params(args.first().ok_or("get_synd_width needs 2 args")?, param_vals)?;
+            let w = const_eval_with_params(args.get(1).ok_or("get_synd_width needs 2 args")?, param_vals)?;
+            let synd = match (sd, w) {
+                (0, 16) | (2, 16) => 6,
+                (0, 22) | (2, 22) => 6,
+                (0, 32) | (2, 32) => 7,
+                (0, 57) | (2, 57) => 7,
+                (0, 64) | (2, 64) => 8,
+                (1, 16) | (3, 16) => 6,
+                (1, 32) | (3, 32) => 7,
+                (1, 64) | (3, 64) => 8,
+                (1, 68) | (3, 68) => 8,
+                _ => 0,
+            };
+            Ok(synd)
+        }
+        // OpenTitan prim_secded_pkg::is_width_valid(sd_type, width) — apakah
+        // kombinasi tipe+lebar didukung (tabel konstanta).
+        Expr::FuncCall { name, args, .. } if base_func_name(name.as_str()) == "is_width_valid" => {
+            let sd = const_eval_with_params(args.first().ok_or("is_width_valid needs 2 args")?, param_vals)?;
+            let w = const_eval_with_params(args.get(1).ok_or("is_width_valid needs 2 args")?, param_vals)?;
+            let valid = match (sd, w) {
+                (0, 16) | (0, 22) | (0, 32) | (0, 57) | (0, 64)
+                | (2, 16) | (2, 22) | (2, 32) | (2, 57) | (2, 64)
+                | (1, 16) | (1, 32) | (1, 64) | (1, 68)
+                | (3, 16) | (3, 32) | (3, 64) | (3, 68) => 1,
+                _ => 0,
+            };
+            Ok(valid)
+        }
+        // Replikasi `{N{expr}}` — pola umum `{W{1'b1}}` untuk mask / literal
+        // konstanta di localparam/param (mis. `{32 - $bits(...) - 1{1'b0}}` di
+        // ibex_cs_registers, `{BeWidth{1'b1}}` di dm_mem). Nilai = pola diulang
+        // N kali; lebar pola dari literal eksplisit atau bit-length nilai.
+        Expr::Replicate { count, expr } => {
+            let n = const_eval_with_params(count, param_vals)?;
+            let v = const_eval_with_params(expr, param_vals)?;
+            let n = n.max(0).min(63) as u32;
+            if v == 0 {
+                Ok(0)
+            } else {
+                let w: u32 = match expr.as_ref() {
+                    Expr::Value(Value::Hex { bits, width, .. }) => {
+                        width.unwrap_or(bits.len() * 4).max(1) as u32
+                    }
+                    Expr::Value(Value::Binary { bits, width, .. }) => {
+                        width.unwrap_or(bits.len()).max(1) as u32
+                    }
+                    Expr::Value(Value::Octal { bits, width, .. }) => {
+                        width.unwrap_or(bits.len() * 3).max(1) as u32
+                    }
+                    _ => (64u32 - (v as u64).leading_zeros()).max(1),
+                };
+                let w = w.min(63);
+                let pattern = (v as u64) & ((1u64 << w).wrapping_sub(1));
+                let mut acc: u64 = 0;
+                let mut total_w: u32 = 0;
+                for _ in 0..n {
+                    acc = (acc << w) | pattern;
+                    total_w = total_w.saturating_add(w);
+                    if total_w >= 63 {
+                        break;
+                    }
+                }
+                Ok(acc as i64)
+            }
+        }
+        // Concat `{a, b, c}` — elemen MSB→LSB. Lebar elemen: eksplisit untuk
+        // literal bertipe (`4'h0`), bit-length nilai untuk ident/ekspresi lain
+        // (mis. `{4'h0, dm::DataCount}` = 8'h02, bukan 2<<4).
+        Expr::Concat(elems) => {
+            // String concat ({`"hello", `" `", `"world`"}) harus dievaluasi di
+            // runtime (byte per char), bukan di-const-fold sebagai bit-pattern
+            // (i64 + bit-width merusak urutan byte). Kembalikan Err agar
+            // elaborator menurunkan concat biasa → simulator meng-eval dengan
+            // benar.
+            if elems.iter().any(|e| matches!(e, Expr::String(_))) {
+                return Err("string concat is not a constant expression".to_string());
+            }
+            let mut acc: u64 = 0;
+            let mut shift: u32 = 0;
+            for elem in elems.iter().rev() {
+                let v = const_eval_with_params(elem, param_vals)?;
+                let w: u32 = match elem {
+                    Expr::Value(Value::Hex { bits, width, .. }) => {
+                        width.unwrap_or(bits.len() * 4).max(1) as u32
+                    }
+                    Expr::Value(Value::Binary { bits, width, .. }) => {
+                        width.unwrap_or(bits.len()).max(1) as u32
+                    }
+                    Expr::Value(Value::Octal { bits, width, .. }) => {
+                        width.unwrap_or(bits.len() * 3).max(1) as u32
+                    }
+                    _ => (64u32 - (v as u64).leading_zeros()).max(1),
+                };
+                let w = w.min(63);
+                acc |= ((v as u64) & ((1u64 << w).wrapping_sub(1)))
+                    .wrapping_shl(shift.min(63));
+                shift = shift.saturating_add(w);
+                if shift >= 63 {
+                    break;
+                }
+            }
+            Ok(acc as i64)
+        }
+        // OpenTitan entropy_src_pkg::bucket_ht_data_width(w) = min(w, 4)
+        // (BucketHtDataMaxWidth = 4) — lebar data per bucket health-test.
+        Expr::FuncCall { name, args, .. } if base_func_name(name.as_str()) == "bucket_ht_data_width" => {
+            let w = const_eval_with_params(args.first().ok_or("bucket_ht_data_width needs 1 arg")?, param_vals)?;
+            Ok(if w >= 4 { 4 } else { w })
+        }
+        // OpenTitan otbn_pkg::SecAddRandWidth(w) = 2 * ($clog2(w) * w + 1) —
+        // lebar randomness untuk otbn_sec_add / otbn_mask_accelerator
+        // (localparam `RandWidth = SecAddRandWidth(Width)`).
+        Expr::FuncCall { name, args, .. } if base_func_name(name.as_str()) == "SecAddRandWidth" => {
+            let w = const_eval_with_params(args.first().ok_or("SecAddRandWidth needs 1 arg")?, param_vals)?;
+            let clog = if w <= 1 { 1 } else { 63 - (w as u64).leading_zeros() as i64 };
+            Ok(2 * (clog * w + 1))
+        }
+        // OpenTitan entropy_src_pkg::num_bucket_ht_inst(w) =
+        // ceil_div(w, bucket_ht_data_width(w)) — jumlah instance bucket
+        // (dipakai generate for di entropy_src.sv).
+        Expr::FuncCall { name, args, .. } if base_func_name(name.as_str()) == "num_bucket_ht_inst" => {
+            let w = const_eval_with_params(args.first().ok_or("num_bucket_ht_inst needs 1 arg")?, param_vals)?;
+            let b = if w >= 4 { 4 } else { w };
+            if b == 0 {
+                return Err("division by zero in num_bucket_ht_inst".to_string());
+            }
+            Ok(if w % b != 0 { w / b + 1 } else { w / b })
         }
         Expr::FuncCall { name, args, .. } if name == "$bits" || name == "$size" => {
             if let Some(arg) = args.first() {

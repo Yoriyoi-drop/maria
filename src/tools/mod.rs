@@ -244,6 +244,21 @@ pub fn expr_to_string(e: &crate::ast::expr::Expr) -> String {
                 .collect();
             format!("{} dist {{ {} }}", expr_to_string(expr), its.join(", "))
         }
+        Expr::StructLit { members } => {
+            let inner: Vec<String> = members
+                .iter()
+                .map(|m| match m {
+                    crate::ast::expr::StructLitMember::Named(n, e) => {
+                        format!("{}: {}", n.as_str(), expr_to_string(e))
+                    }
+                    crate::ast::expr::StructLitMember::Positional(e) => expr_to_string(e),
+                    crate::ast::expr::StructLitMember::Default(e) => {
+                        format!("default: {}", expr_to_string(e))
+                    }
+                })
+                .collect();
+            format!("'{{{}}}", inner.join(", "))
+        }
     }
 }
 

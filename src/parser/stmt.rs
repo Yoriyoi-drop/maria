@@ -58,6 +58,18 @@ impl Parser {
             loop {
                 if self.peek() == &Token::End || self.peek() == &Token::Eof {
                     self.advance();
+                    // Konsumsi label opsional setelah `end` (`end : label`) —
+                    // tanpa ini `end : recode_st` meninggalkan `: recode_st`
+                    // di token stream dan deklarasi module-level SETELAH blok
+                    // bernama tidak terdaftar (parser mengira region masih
+                    // dalam blok). Contoh nyata: kmac_errchk `end : recode_st`,
+                    // spi_tpm `end : hw_reg_mux`.
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
                     break;
                 }
                 stmts.push(self.parse_stmt()?);

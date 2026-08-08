@@ -111,6 +111,12 @@ pub fn show_resizer(ui: &mut egui::Ui, id: egui::Id, height: f32, bounds: (f32, 
     let _ = resp.clone().on_hover_text("Tarik untuk mengubah tinggi panel");
 
     // ── Drag → hitung tinggi baru (anchor-based, bukan delta kumulatif) ──
+    //
+    // Panel bawah berlabuh di tepi bawah window, handle ada di border atasnya.
+    // Tarik ke ATAS (pointer bergerak ke y lebih kecil) = panel membesar;
+    // tarik ke BAWAH = panel mengecil. Karena itu pakai `start_y - p.y`
+    // (jangan `p.y - start_y` — itu membalik arah, tarik ke atas malah
+    // mengecilkan panel).
     if resp.drag_started() {
         if let Some(p) = resp.interact_pointer_pos() {
             ui.ctx().data_mut(|d| {
@@ -131,7 +137,7 @@ pub fn show_resizer(ui: &mut egui::Ui, id: egui::Id, height: f32, bounds: (f32, 
             ui.ctx().data_mut(|d| d.get_temp::<DragAnchor>(id)),
             resp.interact_pointer_pos(),
         ) {
-            out = (anchor.start_height + (p.y - anchor.start_y)).clamp(min_h, max_h);
+            out = (anchor.start_height + (anchor.start_y - p.y)).clamp(min_h, max_h);
         }
     }
     if resp.drag_stopped() {

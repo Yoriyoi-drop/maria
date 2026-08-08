@@ -177,12 +177,12 @@ Struktur `src/micd/`:
 - `metadata.rs` — per-file: content hash (xxh3), mtime, size, status, flags hash, deps.
 - `graph.rs` — dependency graph file-level + reverse index → `affected(changed)` transitive closure.
 - `ast.rs` — `Design` terserialisasi per file via bincode (AST sudah `serde::Serialize/Deserialize`; `Symbol` diserialisasi sebagai string).
-- `preproc.mdb` (via `PreprocEntry` di mod.rs) — combined source per file, dipakai legacy `run()`.
+- `mod.rs` — layout Git-style (Opsi B db.md): `VERSION` + `registry.json` + `locks/` di root; payload IMMUTABLE content-addressed di `objects/<pid>/<hash>.ast|.preproc` (dedup antar file identik); index mutable di `state/<pid>/*.mdb`. Layout lama `projects/<pid>/` di-migrasi otomatis.
 - `verify.rs` — verification cache keyed by content hash (parse/elab ok, diag counts, timing).
-- `diag.rs`, `symbol.rs`, `snapshot.rs` — diagnostic per file, index simbol, snapshot build (build-NNN, rollback).
+- `diag.rs`, `symbol.rs`, `snapshot.rs` — diagnostic per file, index simbol, snapshot build (build-NNN, rollback, di `state/<pid>/snapshots/`).
 
 Integrasi:
 - `CompileSession::attach_micd(MicdDatabase)` — restore `prev_designs`/`prev_checksums`/`prev_combined_sources` untuk file yang content hash-nya cocok → `compile()` melewati lexer+parser.
-- `CompileSession::save_micd()` — simpan metadata/graph/ast/preproc/verify/symbol/types + auto-snapshot saat ada perubahan. Dipanggil `main.rs` sekali per build (bukan di `compile()` — agar statistik `changed_files` per-build akurat).
+- `CompileSession::save_micd()` — simpan metadata/graph/ast-objek/preproc-objek/verify/symbol/types + auto-snapshot saat ada perubahan. Dipanggil `main.rs` sekali per build (bukan di `compile()` — agar statistik `changed_files` per-build akurat).
 - `run_fast`: MICD penuh (restore AST). `run` (legacy): MICD preprocess cache (reuse combined source, skip preprocessor).
 - Root: `.maria/database` (override `MARIA_MICD_DIR`). `--recompile` melewati MICD (full rebuild). `--cache-clear` menghapus MICD.

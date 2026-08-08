@@ -23,43 +23,63 @@ Melainkan object database.
 Struktur Folder
 project/
 
-    .target/
+    .maria/
 
-        database/
+        database/                       # database root (override: MARIA_MICD_DIR)
 
-            metadata.mdb
+            VERSION                     # versi skema (SCHEMA_VERSION)
 
-            symbol.mdb
+            registry.json               # pid → info project (root, sources, waktu)
 
-            ast.mdb
+            locks/
 
-            types.mdb
+                <pid>.lock              # writer lock exclusive per project
 
-            graph.mdb
+            objects/                    # payload IMMUTABLE — content-addressed (CAS)
 
-            diagnostics.mdb
+                <pid>/
 
-            cache/
+                    <hex-hash>.ast      # Design terserialisasi per konten hash
 
-                lexer/
+                    <hex-hash>.preproc  # combined source per konten hash
 
-                parser/
+            state/                      # index MUTABLE per project
 
-                semantic/
+                <pid>/
 
-                verify/
+                    metadata.mdb        # per-file: hash, mtime, size, status, deps
 
-                optimize/
+                    graph.mdb           # dependency graph (CSR + reverse index)
 
-            snapshots/
+                    symbol.mdb          # index simbol
 
-                build-001
+                    types.mdb           # index tipe/signature module
 
-                build-002
+                    verify.mdb          # verification cache
+
+                    diagnostics.mdb     # diagnostic per file
+
+                    stats.mdb           # profil build (mprof/mbench)
+
+                    journal.mdb         # transaksi (crash recovery)
+
+                    snapshots/
+
+                        build-001
+
+                        build-002
 
 Semuanya binary.
 
 Tidak ada SQL.
+
+Layout mengikuti pola Git (`objects/` + `refs/`): AST & preprocessed source
+adalah payload immutable yang disimpan per konten hash (dedup otomatis, dua
+file dengan isi sama berbagi satu objek); index (metadata/graph/verify/symbol/
+types/diag) adalah state mutable yang ditulis transaksional via journal.
+Locks hidup di `locks/`, terpisah dari data. Layout lama
+`projects/<pid>/<file>.mdb` di-migrasi otomatis ke `state/` + `objects/` saat
+dibuka.
 
 File Metadata
 metadata.mdb

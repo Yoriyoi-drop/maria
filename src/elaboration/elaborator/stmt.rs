@@ -730,7 +730,14 @@ impl Elaborator {
                 })
             }
             Stmt::Delay { delay, stmt } => {
-                let d = const_eval_params(delay, &self.param_vals)? as u64;
+                let d = const_eval_params(delay, &self.param_vals).map_err(|e| {
+                    let (l, c) = crate::elaboration::util::generate::expr_location(delay);
+                    self.elab_diag_at(
+                        DiagCode::SimulationError,
+                        format!("cannot evaluate delay: {}", e),
+                        l, c,
+                    )
+                })? as u64;
                 let body = vec![self.elaborate_stmt(stmt, signal_map, known_modules, signals)?];
                 Ok(IrStmt::Delay { delay: d, body })
             }
@@ -1285,8 +1292,22 @@ impl Elaborator {
                 lsb,
             } => {
                 let inner_lv = self.elaborate_lvalue(inner, signal_map, signals)?;
-                let msb_c = const_eval_params(msb, &self.param_vals)? as usize;
-                let lsb_c = const_eval_params(lsb, &self.param_vals)? as usize;
+                let msb_c = const_eval_params(msb, &self.param_vals).map_err(|e| {
+                    let (l, c) = crate::elaboration::util::generate::expr_location(msb);
+                    self.elab_diag_at(
+                        DiagCode::SimulationError,
+                        format!("cannot evaluate lvalue range bound: {}", e),
+                        l, c,
+                    )
+                })? as usize;
+                let lsb_c = const_eval_params(lsb, &self.param_vals).map_err(|e| {
+                    let (l, c) = crate::elaboration::util::generate::expr_location(lsb);
+                    self.elab_diag_at(
+                        DiagCode::SimulationError,
+                        format!("cannot evaluate lvalue range bound: {}", e),
+                        l, c,
+                    )
+                })? as usize;
                 match inner_lv {
                     IrLValue::Signal(sid, _) => Ok(IrLValue::RangeSelect(sid, msb_c, lsb_c)),
                     IrLValue::RangeSelect(sid, outer_msb, outer_lsb) => {
@@ -1396,15 +1417,24 @@ impl Elaborator {
                                 sig_id,
                                 index,
                                 elem_width,
-                                bit: idx as usize,
+                                bit: Box::new(IrExpr::Const(LogicVec::from_u64(
+                                    idx as u64,
+                                    64,
+                                ))),
                             })
                         } else {
-                            Err(self.elab_diag_at(
-                                DiagCode::NotImplemented,
-                                "dynamic bit-select on array element not supported",
-                                expr_location(expr).0,
-                                expr_location(expr).1,
-                            ))
+                            // `arr[i][j]` dengan j runtime (packed multidimensi,
+                            // mis. `seeds_q[seed_idx][rd_idx]` di
+                            // flash_ctrl_lcmgr) — bit dievaluasi saat write di
+                            // engine (offset = i * elem_width + j).
+                            let bit_expr =
+                                self.elaborate_expr(bs_index, signal_map, signals)?;
+                            Ok(IrLValue::ArrayBitSelect {
+                                sig_id,
+                                index,
+                                elem_width,
+                                bit: Box::new(bit_expr),
+                            })
                         }
                     }
                     // Bit select di atas lvalue hierarkis (`sif.sd_out[i]`):
@@ -1430,7 +1460,10 @@ impl Elaborator {
                                 sig_id: sid,
                                 index: Box::new(index_expr),
                                 elem_width: 1,
-                                bit: inner_bit,
+                                bit: Box::new(IrExpr::Const(LogicVec::from_u64(
+                                    inner_bit as u64,
+                                    64,
+                                ))),
                             })
                         }
                     }

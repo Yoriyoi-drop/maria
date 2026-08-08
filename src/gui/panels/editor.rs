@@ -322,7 +322,18 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
     let mut gutter_buf = gutter_text;
     let gutter_w = (line_count.to_string().len() as f32) * 8.0 + 10.0;
 
+    eprintln!(
+        "DBGRECT editor::show BEFORE horizontal avail={:?} rows={} line_h={} avail_w={}",
+        ui.available_rect_before_wrap(),
+        rows,
+        line_h,
+        avail
+    );
     ui.horizontal(|ui| {
+        eprintln!(
+            "DBGRECT editor horizontal inner avail={:?}",
+            ui.available_rect_before_wrap()
+        );
         // Layouter gutter: angka baris abu-abu, non-interaktif.
         let mut gutter_layouter = |ui: &egui::Ui, buf: &dyn TextBuffer, _: f32| {
             let job = egui::text::LayoutJob::single_section(
@@ -357,6 +368,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
         let mut editor_resp: Option<egui::Response> = None;
         let mut scroll_left: f32 = 0.0;
         let vout = vscroll.show(ui, |ui| {
+                eprintln!(
+                    "DBGRECT vscroll inner avail={:?}",
+                    ui.available_rect_before_wrap()
+                );
                 ui.horizontal_top(|ui| {
                     ui.add(
                         egui::TextEdit::multiline(&mut gutter_buf)
@@ -391,7 +406,13 @@ pub fn show(ui: &mut egui::Ui, state: &mut super::super::state::GuiState) {
                                     .desired_width(avail)
                                     .layouter(&mut layouter),
                             );
-                            editor_resp = Some(r);
+                            editor_resp = Some(r.clone());
+                            eprintln!(
+                                "DBGRECT editor TextEdit resp.rect={:?} desired_rows={} content_lines={}",
+                                r.rect,
+                                rows,
+                                f.content.lines().count()
+                            );
                             if f.content != before {
                                 f.dirty = true;
                                 text_changed = true;

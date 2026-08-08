@@ -636,44 +636,52 @@ impl Preprocessor {
 /// True jika baris berisi invokasi macro (`` `name(...) ``) yang parennya belum
 /// seimbang. Dipakai untuk menggabungkan baris-baris lanjutan argumen macro.
 fn unbalanced_macro_call(line: &str) -> bool {
-    let bytes = line.as_bytes();
     let mut paren_depth = 0i64;
-    let mut in_string = false;
     let mut macro_open = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if c == b'"' && !in_string {
-            in_string = true;
-            i += 1;
-            continue;
-        }
-        if c == b'"' && in_string {
-            // handle \" escape
-            if i > 0 && bytes[i - 1] == b'\\' {
+    // Proses per baris: komentar `//` hanya menghentikan scan PADA baris itu
+    // (baris lanjutan yang di-join tetap di-scan). Sebelumnya `break` di
+    // komentar menghentikan scan seluruh string join → paren yang belum
+    // ditutup di baris 1 membuat join menelan SEMUA baris berikutnya sampai
+    // EOF (mis. `ASSERT(...)` multiline yang punya komentar di tengah argumen
+    // di prim_diff_decode.sv) — endmodule ikut hilang.
+    for l in line.split('\n') {
+        let bytes = l.as_bytes();
+        let mut in_string = false;
+        let mut i = 0;
+        while i < bytes.len() {
+            let c = bytes[i];
+            if c == b'"' && !in_string {
+                in_string = true;
                 i += 1;
                 continue;
             }
-            in_string = false;
+            if c == b'"' && in_string {
+                // handle \" escape
+                if i > 0 && bytes[i - 1] == b'\\' {
+                    i += 1;
+                    continue;
+                }
+                in_string = false;
+                i += 1;
+                continue;
+            }
+            if in_string {
+                i += 1;
+                continue;
+            }
+            // '//' comment ends scan for THIS line only
+            if c == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                break;
+            }
+            if c == b'`' {
+                macro_open = true;
+            } else if c == b'(' {
+                paren_depth += 1;
+            } else if c == b')' {
+                paren_depth -= 1;
+            }
             i += 1;
-            continue;
         }
-        if in_string {
-            i += 1;
-            continue;
-        }
-        // '//' comment ends macro detection
-        if c == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
-            break;
-        }
-        if c == b'`' {
-            macro_open = true;
-        } else if c == b'(' {
-            paren_depth += 1;
-        } else if c == b')' {
-            paren_depth -= 1;
-        }
-        i += 1;
     }
     macro_open && paren_depth > 0
 }

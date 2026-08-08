@@ -126,6 +126,25 @@ impl Elaborator {
                                 );
                                 return Ok(IrExpr::Const(LogicVec::from_u64(w as u64, 32)));
                             }
+                            // Package variable (mis. `sec_cm_pkg::sec_cm_if_proxy_q`
+                            // — queue of class handles di DV). Dipakai sebagai
+                            // receiver method (`pkg::var.push_back(...)`) atau
+                            // referensi objek. Bukan konstanta — kembalikan
+                            // handle 0 (null) + warning agar elaborasi interface
+                            // DV tidak gagal total; runtime method-call pada
+                            // objek 0 menjadi no-op.
+                            PackageItem::Decl(_) => {
+                                self.elab_warn_at(
+                                    DiagCode::ModuleNotFound,
+                                    format!(
+                                        "package variable '{}.{}' treated as null handle (0) in expression context",
+                                        package, item
+                                    ),
+                                    *line,
+                                    *col,
+                                );
+                                return Ok(IrExpr::Const(LogicVec::from_u64(0, 64)));
+                            }
                             _ => {
                                 return Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!(
                                     "'{}' is not a constant in package '{}'",
@@ -322,7 +341,14 @@ impl Elaborator {
                 if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
                     return Ok(folded);
                 }
-                let c = const_eval_params(count, &self.param_vals)? as usize;
+                let c = const_eval_params(count, &self.param_vals).map_err(|e| {
+                    let (l, c) = expr_location(count);
+                    self.elab_diag_at(
+                        DiagCode::SimulationError,
+                        format!("cannot evaluate replication count: {}", e),
+                        l, c,
+                    )
+                })? as usize;
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
                 Ok(IrExpr::Replicate(c, Box::new(inner_expr)))
             }
@@ -435,7 +461,14 @@ impl Elaborator {
                 }
                 "$clog2" => {
                     if let Some(arg) = args.first() {
-                        let val = const_eval_params(arg, &self.param_vals)?;
+                        let val = const_eval_params(arg, &self.param_vals).map_err(|e| {
+                            let (l, c) = expr_location(arg);
+                            self.elab_diag_at(
+                                DiagCode::SimulationError,
+                                format!("cannot evaluate $clog2 argument: {}", e),
+                                l, c,
+                            )
+                        })?;
                         if val <= 1 {
                             return Ok(IrExpr::Const(LogicVec::from_u64(0, 32)));
                         }
@@ -1039,7 +1072,14 @@ impl Elaborator {
                         name
                     ), expr_location(expr).0, expr_location(expr).1))
                 }
-            }              _ => Err(self.elab_diag_at(DiagCode::ModuleNotFound, "expression type not yet supported".to_string(), expr_location(expr).0, expr_location(expr).1)),
+            }
+            // Struct assignment pattern sebagai nilai utuh (inisialisasi var
+            // struct / koneksi port). Tanpa layout typedef nilai tidak bisa
+            // di-pack — evaluasi zero-fill (perilaku lama: pola bernama
+            // di-discard menjadi FillLit 0). Member access tetap di-const-eval
+            // benar lewat arm MemberAccess + key param_vals.
+            Expr::StructLit { .. } => Ok(IrExpr::FillLit(crate::ir::LogicVal::Zero)),
+            _ => Err(self.elab_diag_at(DiagCode::ModuleNotFound, "expression type not yet supported".to_string(), expr_location(expr).0, expr_location(expr).1)),
         }
     }
 
@@ -1534,6 +1574,29 @@ impl Elaborator {
                     replacement.clone(),
                 )),
                 items,
+            },
+            Expr::StructLit { members } => Expr::StructLit {
+                members: members
+                    .into_iter()
+                    .map(|m| match m {
+                        crate::ast::expr::StructLitMember::Named(n, e) => {
+                            crate::ast::expr::StructLitMember::Named(
+                                n,
+                                Self::substitute_ident_in_expr(e, target, replacement.clone()),
+                            )
+                        }
+                        crate::ast::expr::StructLitMember::Positional(e) => {
+                            crate::ast::expr::StructLitMember::Positional(
+                                Self::substitute_ident_in_expr(e, target, replacement.clone()),
+                            )
+                        }
+                        crate::ast::expr::StructLitMember::Default(e) => {
+                            crate::ast::expr::StructLitMember::Default(
+                                Self::substitute_ident_in_expr(e, target, replacement.clone()),
+                            )
+                        }
+                    })
+                    .collect(),
             },
         }
     }

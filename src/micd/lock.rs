@@ -10,7 +10,7 @@
 //!   Dua writer tidak boleh menulis berbarengan (race pada multiple-store
 //!   commit). Writer menunggu (poll) sampai lock tersedia atau timeout.
 //!
-//! Lock adalah advisory file lock: file `lock/writer.lock` dibuat atomik
+//! Lock adalah advisory file lock: `locks/<pid>.lock` dibuat atomik
 //! (`create_new` = O_EXCL). Bila sudah ada, writer lain menunggu. Lock yang
 //! basi (lebih tua dari `stale_after`) dianggap milik proses yang mati dan
 //! dibersihkan agar tidak deadlock selamanya.
@@ -23,8 +23,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// Nama file lock relatif terhadap root database.
-pub const LOCK_FILE: &str = "lock/writer.lock";
+/// Nama file lock default relatif terhadap database root.
+pub const LOCK_FILE: &str = "locks/writer.lock";
 
 /// Error saat memperoleh lock.
 #[derive(Debug)]
@@ -59,16 +59,16 @@ impl Drop for WriteLock {
     }
 }
 
-/// Peroleh lock writer exclusive. Menunggu sampai `timeout`, polling setiap
+/// Peroleh lock writer exclusive pada `path` (path lengkap file lock, mis.
+/// `locks/<pid>.lock`). Menunggu sampai `timeout`, polling setiap
 /// `poll_interval`. Lock basi (umur > `stale_after`) dianggap mati dan
 /// diambil alih.
 pub fn acquire_write_lock(
-    root: &Path,
+    path: &Path,
     timeout: Duration,
     poll_interval: Duration,
     stale_after: Duration,
 ) -> Result<WriteLock, LockError> {
-    let path = root.join(LOCK_FILE);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(LockError::Io)?;
     }
@@ -77,10 +77,12 @@ pub fn acquire_write_lock(
         match std::fs::File::options()
             .write(true)
             .create_new(true)
-            .open(&path)
+            .open(path)
         {
             Ok(_) => {
-                return Ok(WriteLock { path });
+                return Ok(WriteLock {
+                    path: path.to_path_buf(),
+                });
             }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 // Lock basi? Metadata mtime jauh di masa lalu → proses pemilik
@@ -94,7 +96,7 @@ pub fn acquire_write_lock(
                     }
                 }
                 if std::time::Instant::now() >= deadline {
-                    return Err(LockError::Timeout(path));
+                    return Err(LockError::Timeout(path.to_path_buf()));
                 }
                 std::thread::sleep(poll_interval);
             }
@@ -103,9 +105,9 @@ pub fn acquire_write_lock(
     }
 }
 
-/// Adakah lock writer sedang aktif?
-pub fn is_writer_locked(root: &Path) -> bool {
-    root.join(LOCK_FILE).exists()
+/// Adakah lock writer sedang aktif pada `path` (path lengkap file lock)?
+pub fn is_writer_locked(path: &Path) -> bool {
+    path.exists()
 }
 
 // ─── Tests ───
@@ -125,28 +127,34 @@ mod tests {
         dir
     }
 
+    fn lockfile(root: &Path) -> PathBuf {
+        root.join("locks").join("test.lock")
+    }
+
     #[test]
     fn test_acquire_and_release() {
         let root = test_root("basic");
+        let path = lockfile(&root);
         {
-            let lock = acquire_write_lock(&root, Duration::from_millis(100), Duration::from_millis(5), Duration::from_secs(1)).unwrap();
-            assert!(is_writer_locked(&root));
+            let lock = acquire_write_lock(&path, Duration::from_millis(100), Duration::from_millis(5), Duration::from_secs(1)).unwrap();
+            assert!(is_writer_locked(&path));
             drop(lock);
         }
-        assert!(!is_writer_locked(&root), "lock dilepas saat guard drop");
+        assert!(!is_writer_locked(&path), "lock dilepas saat guard drop");
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn test_exclusive_between_writers() {
         let root = test_root("excl");
-        let _lock1 = acquire_write_lock(&root, Duration::from_millis(100), Duration::from_millis(5), Duration::from_secs(1)).unwrap();
+        let path = lockfile(&root);
+        let _lock1 = acquire_write_lock(&path, Duration::from_millis(100), Duration::from_millis(5), Duration::from_secs(1)).unwrap();
         // Writer kedua tidak bisa masuk selagi yang pertama aktif.
-        let err = acquire_write_lock(&root, Duration::from_millis(50), Duration::from_millis(5), Duration::from_secs(1));
+        let err = acquire_write_lock(&path, Duration::from_millis(50), Duration::from_millis(5), Duration::from_secs(1));
         assert!(matches!(err, Err(LockError::Timeout(_))));
         // Setelah lock1 drop, writer berikutnya berhasil.
         drop(_lock1);
-        let lock2 = acquire_write_lock(&root, Duration::from_millis(100), Duration::from_millis(5), Duration::from_secs(1)).unwrap();
+        let lock2 = acquire_write_lock(&path, Duration::from_millis(100), Duration::from_millis(5), Duration::from_secs(1)).unwrap();
         drop(lock2);
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -156,11 +164,11 @@ mod tests {
         let root = test_root("stale");
         // Lockfile basi (buat langsung tanpa guard; mtime = sekarang, tapi
         // stale_after sangat pendek → dianggap mati).
-        let path = root.join(LOCK_FILE);
+        let path = lockfile(&root);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, b"stale").unwrap();
-        let lock = acquire_write_lock(&root, Duration::from_millis(200), Duration::from_millis(5), Duration::from_millis(1)).unwrap();
-        assert!(is_writer_locked(&root));
+        let lock = acquire_write_lock(&path, Duration::from_millis(200), Duration::from_millis(5), Duration::from_millis(1)).unwrap();
+        assert!(is_writer_locked(&path));
         drop(lock);
         let _ = std::fs::remove_dir_all(&root);
     }

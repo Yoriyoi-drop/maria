@@ -426,7 +426,17 @@ impl eframe::App for MariaApp {
         }
 
         // ── Editor (tengah) ──
+        eprintln!(
+            "DBGRECT before central panel avail={:?} bottom_height={} window_h={}",
+            ui.available_rect_before_wrap(),
+            self.state.bottom_height,
+            ctx.viewport_rect().height()
+        );
         egui::CentralPanel::default().show(ui, |ui| {
+            eprintln!(
+                "DBGRECT central panel inner avail={:?}",
+                ui.available_rect_before_wrap()
+            );
             editor::show(ui, &mut self.state);
         });
 

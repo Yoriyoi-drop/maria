@@ -71,6 +71,12 @@ pub enum Expr {
         slice_size: Option<Box<Expr>>,
         slices: Vec<Expr>,
     },
+    /// Struct assignment pattern `'{name: value, ...}` (juga `default:` dan
+    /// anggota posisional). Dipakai untuk nilai struct/union dalam default
+    /// parameter/localparam serta inisialisasi. Sebelumnya pola bernama
+    /// di-discard menjadi `FillLit(0)` — sekarang dipertahankan agar member
+    /// access (`PartInfo[k].offset`) bisa di-const-eval.
+    StructLit { members: Vec<StructLitMember> },
     Cast {
         dtype: Symbol,
         expr: Box<Expr>,
@@ -94,6 +100,16 @@ pub enum Expr {
         expr: Box<Expr>,
         items: Vec<DistItem>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum StructLitMember {
+    /// Anggota bernama: `name: value`.
+    Named(Symbol, Expr),
+    /// Anggota posisional: `value` (tanpa label).
+    Positional(Expr),
+    /// `default: value` — nilai untuk field yang tidak disebutkan.
+    Default(Expr),
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

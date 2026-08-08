@@ -270,6 +270,155 @@ pub fn detect_sync_reset(body: &[IrStmt]) -> Option<ResetInfo> {
 }
 
 /// Kumpulkan sensitivity list dari expression AST (untuk always_comb).
+/// Kumpulkan nama identifier polos yang TIDAK dikenal dalam ekspresi (bukan
+/// signal terdeklarasi, bukan parameter, bukan konstanta package, bukan
+/// `$`-system, bukan scoped ident). Dipakai untuk implicit net pada continuous
+/// assign — pola generated code OpenTitan (`assign tl_reg_h2d = tl_i;`,
+/// `assign tl_o_pre = tl_reg_d2h;`) di mana net tak terdeklarasi dulu
+/// dikoneksikan ke reg block yang di-optimalkan oleh reggen.
+pub fn collect_implicit_net_idents(
+    expr: &Expr,
+    signal_map: &HashMap<Symbol, SignalId>,
+    param_vals: &HashMap<Symbol, i64>,
+    pkg_ctx: &HashMap<Symbol, i64>,
+    out: &mut Vec<(Symbol, usize, usize)>,
+) {
+    match expr {
+        Expr::Ident { name, line, col } => {
+            if name == "this" || name.starts_with("$") {
+                return;
+            }
+            if signal_map.contains_key(name)
+                || param_vals.contains_key(name)
+                || pkg_ctx.contains_key(name)
+            {
+                return;
+            }
+            out.push((*name, *line, *col));
+        }
+        Expr::ScopedIdent { .. }
+        | Expr::Value(_)
+        | Expr::String(_)
+        | Expr::Null
+        | Expr::FillLit(_) => {}
+        Expr::BinaryOp { lhs, rhs, .. } => {
+            collect_implicit_net_idents(lhs, signal_map, param_vals, pkg_ctx, out);
+            collect_implicit_net_idents(rhs, signal_map, param_vals, pkg_ctx, out);
+        }
+        Expr::UnaryOp { expr: inner, .. } => {
+            collect_implicit_net_idents(inner, signal_map, param_vals, pkg_ctx, out)
+        }
+        Expr::Concat(items) => {
+            for e in items {
+                collect_implicit_net_idents(e, signal_map, param_vals, pkg_ctx, out);
+            }
+        }
+        Expr::Replicate { count, expr: inner } => {
+            collect_implicit_net_idents(count, signal_map, param_vals, pkg_ctx, out);
+            collect_implicit_net_idents(inner, signal_map, param_vals, pkg_ctx, out);
+        }
+        Expr::RangeSelect {
+            expr: inner,
+            msb,
+            lsb,
+        } => {
+            collect_implicit_net_idents(inner, signal_map, param_vals, pkg_ctx, out);
+            collect_implicit_net_idents(msb, signal_map, param_vals, pkg_ctx, out);
+            collect_implicit_net_idents(lsb, signal_map, param_vals, pkg_ctx, out);
+        }
+        Expr::BitSelect { expr: inner, index } => {
+            collect_implicit_net_idents(inner, signal_map, param_vals, pkg_ctx, out);
+            collect_implicit_net_idents(index, signal_map, param_vals, pkg_ctx, out);
+        }
+        Expr::PartSelect {
+            expr: inner,
+            base,
+            width,
+        } => {
+            collect_implicit_net_idents(inner, signal_map, param_vals, pkg_ctx, out);
+            collect_implicit_net_idents(base, signal_map, param_vals, pkg_ctx, out);
+            collect_implicit_net_idents(width, signal_map, param_vals, pkg_ctx, out);
+        }
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => {
+            collect_implicit_net_idents(cond, signal_map, param_vals, pkg_ctx, out);
+            collect_implicit_net_idents(true_expr, signal_map, param_vals, pkg_ctx, out);
+            collect_implicit_net_idents(false_expr, signal_map, param_vals, pkg_ctx, out);
+        }
+        Expr::Paren(inner) => {
+            collect_implicit_net_idents(inner, signal_map, param_vals, pkg_ctx, out)
+        }
+        Expr::Cast { expr: inner, .. } => {
+            collect_implicit_net_idents(inner, signal_map, param_vals, pkg_ctx, out)
+        }
+        Expr::CastWidth { width, expr: inner } => {
+            collect_implicit_net_idents(width, signal_map, param_vals, pkg_ctx, out);
+            collect_implicit_net_idents(inner, signal_map, param_vals, pkg_ctx, out);
+        }
+        Expr::MemberAccess { obj, .. } => {
+            collect_implicit_net_idents(obj, signal_map, param_vals, pkg_ctx, out)
+        }
+        Expr::MethodCall { obj, args, .. } => {
+            collect_implicit_net_idents(obj, signal_map, param_vals, pkg_ctx, out);
+            for a in args {
+                collect_implicit_net_idents(a, signal_map, param_vals, pkg_ctx, out);
+            }
+        }
+        Expr::FuncCall { args, .. } => {
+            for a in args {
+                collect_implicit_net_idents(a, signal_map, param_vals, pkg_ctx, out);
+            }
+        }
+        Expr::Inside {
+            expr: inner,
+            range_list,
+        } => {
+            collect_implicit_net_idents(inner, signal_map, param_vals, pkg_ctx, out);
+            for it in range_list {
+                collect_implicit_net_idents(it, signal_map, param_vals, pkg_ctx, out);
+            }
+        }
+        Expr::StreamingConcat {
+            slice_size, slices, ..
+        } => {
+            if let Some(ss) = slice_size {
+                collect_implicit_net_idents(ss, signal_map, param_vals, pkg_ctx, out);
+            }
+            for s in slices {
+                collect_implicit_net_idents(s, signal_map, param_vals, pkg_ctx, out);
+            }
+        }
+        Expr::StructLit { members } => {
+            for m in members {
+                match m {
+                    crate::ast::expr::StructLitMember::Named(_, e)
+                    | crate::ast::expr::StructLitMember::Positional(e)
+                    | crate::ast::expr::StructLitMember::Default(e) => {
+                        collect_implicit_net_idents(e, signal_map, param_vals, pkg_ctx, out)
+                    }
+                }
+            }
+        }
+        Expr::Dist { expr: inner, items } => {
+            collect_implicit_net_idents(inner, signal_map, param_vals, pkg_ctx, out);
+            for it in items {
+                match it {
+                    crate::ast::expr::DistItem::Value(e, _) => {
+                        collect_implicit_net_idents(e, signal_map, param_vals, pkg_ctx, out);
+                    }
+                    crate::ast::expr::DistItem::Range(a, b, _) => {
+                        collect_implicit_net_idents(a, signal_map, param_vals, pkg_ctx, out);
+                        collect_implicit_net_idents(b, signal_map, param_vals, pkg_ctx, out);
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn collect_sensitivity(expr: &Expr, signal_map: &HashMap<Symbol, SignalId>) -> Vec<SignalId> {
     match expr {
         Expr::Ident { name, .. } => signal_map.get(name).map(|&id| vec![id]).unwrap_or_default(),

@@ -38,6 +38,40 @@ fn emit_diags(diags: &[maria::diagnostics::diagnostic::Diagnostic]) {
     }
 }
 
+/// Bangun diagnostic E3001 "design not ready" dengan lokasi error elaborasi
+/// pertama (file:line:col) agar user langsung tahu di mana memperbaiki.
+/// Prioritas: source_snippet (punya line:col) → span (byte offset) → tanpa lokasi.
+fn elab_abort_diag(
+    elab_errs: usize,
+    diags: &[maria::diagnostics::diagnostic::Diagnostic],
+    message: impl Into<String>,
+) -> maria::diagnostics::diagnostic::Diagnostic {
+    use maria::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic};
+    let first_err = diags.iter().find(|d| d.is_error());
+    let loc = first_err.and_then(|d| {
+        d.source_snippet
+            .as_ref()
+            .map(|s| format!("{}:{}:{}", s.file, s.line, s.col))
+    });
+    let msg = match &loc {
+        Some(l) => format!("{} (first error at {})", message.into(), l),
+        None => message.into(),
+    };
+    let mut diag = Diagnostic::new(DiagLevel::Error, DiagCode::ModuleNotFound, msg)
+        .with_code_context();
+    if let Some(e) = first_err {
+        if let Some(snippet) = &e.source_snippet {
+            diag = diag.with_source_snippet(snippet.clone());
+        } else if let Some(span) = e.spans.first() {
+            diag = diag.with_span(span.clone());
+        }
+        if let Some(loc_str) = loc {
+            diag = diag.with_note(format!("first elaboration error at {}", loc_str));
+        }
+    }
+    diag
+}
+
 /// Terapkan config TOML (`configs/*.toml`) ke CLI — HANYA bila CLI belum
 /// menyetelnya (CLI menang). Field yang tidak punya padanan CLI (opt_level,
 /// lto, max_parse_steps, lint check, dsb.) dibiarkan sebagai dokumentasi.
@@ -564,9 +598,11 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     // project (ProjectID) agar tidak tercampur antar project. ──
     let micd_root = maria::micd::MicdDatabase::default_root();
     let proot = std::env::current_dir().unwrap_or_default();
+    let src_paths: Vec<std::path::PathBuf> =
+        sources.iter().map(std::path::PathBuf::from).collect();
     let pid = maria::micd::MicdDatabase::project_id(
         &proot,
-        &sources.iter().map(PathBuf::from).collect::<Vec<_>>(),
+        &src_paths,
         &cli.incdirs.iter().map(PathBuf::from).collect::<Vec<_>>(),
         &cli.defines
             .iter()
@@ -574,7 +610,12 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect::<Vec<_>>(),
     );
-    let mut micd = maria::micd::MicdDatabase::open_project(&micd_root, &pid);
+    let mut micd = maria::micd::MicdDatabase::open_project_with_context(
+        &micd_root,
+        &pid,
+        &proot,
+        &src_paths,
+    );
 
     let mut combined = String::new();
     let mut design_timescale = None;
@@ -1113,10 +1154,11 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
         if has_elab_errors {
             println!("Simulation: NOT READY");
             println!("Simulation aborted.");
-            return Err(SimError::with_diag(
-                maria::diagnostics::DiagCode::ModuleNotFound,
+            return Err(SimError::Diagnostic(elab_abort_diag(
+                elab_errs,
+                &elab_diags,
                 format!("simulation aborted: {} elaboration error(s) — design not ready", elab_errs),
-            ));
+            )));
         } else if recovered {
             println!("Simulation: NOT READY (analysis mode)");
             println!("Top-level design not uniquely determined — simulation & VCD disabled.");
@@ -1139,10 +1181,11 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
                 "    Perbaiki semua error terlebih dahulu — VCD TIDAK dihasilkan.\n    (Gunakan `--force-sim` hanya untuk debugging internal.)"
             );
         }
-        return Err(SimError::with_diag(
-            maria::diagnostics::DiagCode::ModuleNotFound,
+        return Err(SimError::Diagnostic(elab_abort_diag(
+            elab_errs,
+            &elab_diags,
             format!("simulasi dibatalkan: {} error elaborasi — design belum 100% bersih", elab_errs),
-        ));
+        )));
     }
 
     // ── Recovery/analisis mode (tanpa `--top`): jangan simulasikan modul tebakan ──
@@ -1745,10 +1788,11 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
 
     // ── MICD: persistent incremental compilation database ──
     // Otomatis (bukan flag tambahan): restore AST/combined-source file yang
-    // tidak berubah → lex/parse di-skip. Di-skip hanya saat --recompile.
-    if !cli.recompile {
-        // MICD scoped per project (ProjectID): OpenTitan dan test/counter.sv
-        // tidak pernah berbagi database → tidak ada kontaminasi lintas project.
+    // tidak berubah → lex/parse di-skip. Saat --recompile, database tetap
+    // dibuka (agar save menulis hasil full-rebuild) tapi restore di-skip.
+    // MICD scoped per project (ProjectID): OpenTitan dan test/counter.sv
+    // tidak pernah berbagi database → tidak ada kontaminasi lintas project.
+    {
         let micd_root = maria::micd::MicdDatabase::default_root();
         let proot = std::env::current_dir().unwrap_or_default();
         let pid = maria::micd::MicdDatabase::project_id(
@@ -1757,16 +1801,27 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
             &session.config.incdirs,
             &session.config.defines,
         );
-        let db = maria::micd::MicdDatabase::open_project(&micd_root, &pid);
-        let t0 = std::time::Instant::now();
-        let restored = session.attach_micd(db);
-        if restored > 0 && !cli.quiet && !anim_active(&anim) {
-            eprintln!(
-                "[MICD] restored {} cached design(s) in {:?} ({} file(s) parse di-skip)",
-                restored,
-                t0.elapsed(),
-                restored
-            );
+        let db = maria::micd::MicdDatabase::open_project_with_context(
+            &micd_root,
+            &pid,
+            &proot,
+            &session.config.sources,
+        );
+        if cli.recompile {
+            // Full rebuild: buka db tanpa restore; hasil parse tetap disimpan
+            // supaya run berikutnya (tanpa --recompile) bisa restore.
+            session.open_micd_no_restore(db);
+        } else {
+            let t0 = std::time::Instant::now();
+            let restored = session.attach_micd(db);
+            if restored > 0 && !cli.quiet && !anim_active(&anim) {
+                eprintln!(
+                    "[MICD] restored {} cached design(s) in {:?} ({} file(s) parse di-skip)",
+                    restored,
+                    t0.elapsed(),
+                    restored
+                );
+            }
         }
     }
 
@@ -1930,10 +1985,11 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
         if has_elab_errors {
             println!("Simulation: NOT READY");
             println!("Simulation aborted.");
-            return Err(SimError::with_diag(
-                maria::diagnostics::DiagCode::ModuleNotFound,
+            return Err(SimError::Diagnostic(elab_abort_diag(
+                elab_errs,
+                &elab_diags,
                 format!("simulation aborted: {} elaboration error(s) — design not ready", elab_errs),
-            ));
+            )));
         } else if recovered {
             println!("Simulation: NOT READY (analysis mode)");
             println!("Top-level design not uniquely determined — simulation & VCD disabled.");
@@ -1953,10 +2009,11 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
                 "    Perbaiki semua error terlebih dahulu — VCD TIDAK dihasilkan.\n    (Gunakan `--force-sim` hanya untuk debugging internal.)"
             );
         }
-        return Err(SimError::with_diag(
-            maria::diagnostics::DiagCode::ModuleNotFound,
+        return Err(SimError::Diagnostic(elab_abort_diag(
+            elab_errs,
+            &elab_diags,
             format!("simulasi dibatalkan: {} error elaborasi — design belum 100% bersih", elab_errs),
-        ));
+        )));
     }
 
     // ── Recovery/analisis mode (tanpa `--top`): jangan simulasikan modul tebakan ──

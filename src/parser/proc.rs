@@ -369,6 +369,15 @@ impl Parser {
                 } else if let Token::Ident(name) = self.peek() {
                     if self.type_param_names.contains(name) {
                         self.advance();
+                    } else if self.peek_ahead(1) == &Token::Scope {
+                        // Scoped type `pkg::type name` (mis.
+                        // `prim_mubi_pkg::mubi4_t val` di lc_ctrl_pkg). Konsumsi
+                        // `pkg :: type` sebagai TIPE — BUKAN nama port. Sebelumnya
+                        // `pkg` jadi port pertama & `val` bergeser → inline
+                        // substitution port tidak cocok → "signal 'val' not found".
+                        self.advance(); // pkg
+                        self.advance(); // ::
+                        self.advance(); // type
                     } else if matches!(self.peek_ahead(1), Token::Ident(_)) {
                         // User-defined type name diikuti nama port (`mubi4_t a`).
                         self.advance();
@@ -382,6 +391,9 @@ impl Parser {
                         // memakan `[]` / `[$]`.
                     } else if matches!(self.peek_ahead(1), Token::LBrack) {
                         // Tipe user-defined dgn packed range (`foo_t [7:0] name`).
+                        if std::env::var("MARIA_DEBUG_PARSE").is_ok() {
+                            eprintln!("[DBG-PORT] fn: type-dims ident '{}' adv", name.as_str());
+                        }
                         self.advance();
                     }
                 } else {
@@ -666,7 +678,19 @@ impl Parser {
                         });
                     }
                     self.advance();
-                } else if !matches!(self.peek(), Token::LBrack | Token::Ident(_) | Token::Comma) {
+                } else if let Token::Ident(_) = self.peek() {
+                    if self.peek_ahead(1) == &Token::Scope {
+                        // Scoped type `pkg::type name` — konsumsi `pkg :: type`
+                        // sebagai tipe, bukan nama port.
+                        self.advance(); // pkg
+                        self.advance(); // ::
+                        self.advance(); // type
+                    } else if matches!(self.peek_ahead(1), Token::Ident(_)) {
+                        // User-defined type `foo_t name` — skip tipe.
+                        self.advance();
+                    }
+                    // else: nama port biasa — inner loop bawah yang memproses.
+                } else if !matches!(self.peek(), Token::LBrack | Token::Comma) {
                     self.advance();
                     continue;
                 }

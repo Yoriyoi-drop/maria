@@ -696,7 +696,7 @@ impl Elaborator {
                 sig_id: map_sig(*sig_id),
                 index: Box::new(self.translate_expr(index, map_sig)),
                 elem_width: *elem_width,
-                bit: *bit,
+                bit: Box::new(self.translate_expr(bit, map_sig)),
             },
             // Lvalue hierarkis: nama tidak ter-map (tidak ada SignalId);
             // index ekspresi tetap diterjemahkan.

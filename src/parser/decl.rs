@@ -354,10 +354,11 @@ impl Parser {
                                 (None, None)
                             } else if self.peek_ahead(1) == &Token::Colon
                                 || self.peek_ahead(2) == &Token::Colon
+                                || self.peek_bracket_has_range_colon()
                             {
                                 // `[msb:lsb]` unpacked — bukan size-expr.
                                 let er = self.parse_range()?;
-                                let r = er.and_then(|er| {
+                                let r = er.as_ref().and_then(|er| {
                                     if let (Ok(m), Ok(l)) =
                                         (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
                                     {
@@ -369,7 +370,24 @@ impl Parser {
                                         None
                                     }
                                 });
-                                (r, None)
+                                // Range tak bisa di-resolve saat parse (bound
+                                // pakai enum member / parameter, mis.
+                                // `[PmEnLastPos-1:0]`): simpan ukuran
+                                // `msb-lsb+1` sebagai size-expr agar elaborator
+                                // bisa menyelesaikannya jadi `array_range`.
+                                let sz_expr = match (er.as_ref(), &r) {
+                                    (Some(er), None) => Some(Expr::BinaryOp {
+                                        op: BinaryOp::Add,
+                                        lhs: Box::new(Expr::BinaryOp {
+                                            op: BinaryOp::Sub,
+                                            lhs: Box::new(er.msb.clone()),
+                                            rhs: Box::new(er.lsb.clone()),
+                                        }),
+                                        rhs: Box::new(Expr::Value(Value::Decimal(1))),
+                                    }),
+                                    _ => None,
+                                };
+                                (r, sz_expr)
                             } else {
                                 // `[N]` / `[Width]`: unpacked array size. Resolve
                                 // literal sekarang; simpan ekspresi untuk parameter.
@@ -406,7 +424,9 @@ impl Parser {
                                 self.advance();
                                 is_queue = true;
                                 (None, None, None)
-                            } else if self.peek_ahead(1) != &Token::Colon {
+                            } else if self.peek_ahead(1) != &Token::Colon
+                                && !self.peek_bracket_has_range_colon()
+                            {
                                 // `[N]` / `[Width]`: unpacked array size.
                                 self.advance(); // [
                                 let sz = self.parse_expr(0)?;
@@ -1315,6 +1335,38 @@ impl Parser {
                 Token::RBrack => {
                     depth = depth.saturating_sub(1);
                     if depth == 0 {
+                        return false;
+                    }
+                }
+                Token::Colon if depth == 1 => return true,
+                Token::Eof => return false,
+                _ => {}
+            }
+            i += 1;
+        }
+    }
+
+    /// True jika token saat ini adalah `[` yang berisi colon `:` pada
+    /// kedalaman 1 (di luar kurung / bracket bersarang) — menandakan unpacked
+    /// RANGE `[msb:lsb]` (mis. `[Width-1:0]`, `[Last:0]`, `[3:0]`), bukan
+    /// size-expr `[N]`/`[Width]`, dynamic `[$]`, atau associative `[int]`.
+    /// Scan token maju tanpa konsumsi (teknik sama dengan `peek_is_packed_dim`).
+    ///
+    /// Dipakai untuk memutuskan range-vs-size saat bound memakai ident
+    /// (parameter / enum member) sehingga colon-nya tidak terlihat di posisi
+    /// 1/2 — mis. `p1::lc_tx_t [PmEnLastPos-1:0] pinmux_hw_debug_en;` di rv_dm.
+    pub(crate) fn peek_bracket_has_range_colon(&self) -> bool {
+        if self.peek() != &Token::LBrack {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut i = 0usize;
+        loop {
+            match self.peek_ahead(i) {
+                Token::LBrack | Token::LParen | Token::LBrace => depth += 1,
+                Token::RBrack | Token::RParen | Token::RBrace => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 && i > 0 {
                         return false;
                     }
                 }

@@ -313,6 +313,10 @@ impl SimulationEngine {
                 let mut existing = self.state.read_signal(*sig_id).clone();
                 let idx_val = self.evaluate_expr(index)?;
                 let idx = idx_val.to_u64() as usize;
+                // bit bisa dinamis (`arr[i][j]` dengan j runtime) maupun
+                // konstanta — evaluasi keduanya seragam.
+                let bit_val = self.evaluate_expr(bit)?;
+                let bit = bit_val.to_u64() as usize;
                 let abs_idx = idx * elem_width + bit;
                 if let Some(b) = val.bits.first() {
                     if abs_idx < existing.bits.len() {

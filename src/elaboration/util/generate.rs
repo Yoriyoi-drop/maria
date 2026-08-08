@@ -97,6 +97,22 @@ pub(crate) fn expr_location(expr: &Expr) -> (usize, usize) {
             expr_location(obj)
         }
         Expr::ScopedIdent { line, col, .. } => (*line, *col),
+        Expr::StructLit { members } => {
+            // Pola struct tidak punya line/col sendiri — ambil posisi member
+            // pertama yang punya lokasi (agar diagnostic struct punya snippet).
+            for m in members {
+                let e = match m {
+                    crate::ast::expr::StructLitMember::Named(_, e)
+                    | crate::ast::expr::StructLitMember::Positional(e)
+                    | crate::ast::expr::StructLitMember::Default(e) => e,
+                };
+                let (l, c) = expr_location(e);
+                if l > 0 || c > 0 {
+                    return (l, c);
+                }
+            }
+            (0, 0)
+        }
     }
 }
 
@@ -136,7 +152,7 @@ pub fn expand_all_generates(
                     // dan lanjutkan. Klasifikasikan Warning: modul tetap di-elaborasi
                     // tanpa blok ini, menghindari skip modul berantai. Info baris
                     // global (combined source) dipertahankan di teks pesan.
-                    diag_sink.push(Diagnostic::new(
+                    let mut diag = Diagnostic::new(
                         DiagLevel::Warning,
                         DiagCode::NotImplemented,
                         format!(
@@ -146,7 +162,22 @@ pub fn expand_all_generates(
                             e.line,
                             e.col
                         ),
-                    ));
+                    );
+                    // Lampirkan snippet file:line:col dari posisi generate block
+                    // (baris global → file/baris asli via resolve_source_location)
+                    // agar warning selalu punya lokasi yang bisa diklik.
+                    if e.line > 0 && e.line <= source_lines.len() {
+                        let (file, display_line) =
+                            crate::diagnostics::resolve_source_location(source_lines, source_file, e.line);
+                        let snippet = SourceSnippet::new(
+                            file,
+                            display_line,
+                            e.col,
+                            &source_lines[e.line - 1],
+                        );
+                        diag = diag.with_source_snippet(snippet);
+                    }
+                    diag_sink.push(diag);
                     i += 1;
                 }
             }
@@ -781,6 +812,22 @@ fn scope_rename_expr(expr: &Expr, map: &HashMap<Symbol, Symbol>) -> Expr {
             item: *item,
             line: *line,
             col: *col,
+        },
+        Expr::StructLit { members } => Expr::StructLit {
+            members: members
+                .iter()
+                .map(|m| match m {
+                    crate::ast::expr::StructLitMember::Named(n, e) => {
+                        crate::ast::expr::StructLitMember::Named(*n, scope_rename_expr(e, map))
+                    }
+                    crate::ast::expr::StructLitMember::Positional(e) => {
+                        crate::ast::expr::StructLitMember::Positional(scope_rename_expr(e, map))
+                    }
+                    crate::ast::expr::StructLitMember::Default(e) => {
+                        crate::ast::expr::StructLitMember::Default(scope_rename_expr(e, map))
+                    }
+                })
+                .collect(),
         },
     }
 }

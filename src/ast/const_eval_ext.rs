@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use crate::ast::const_eval::string_to_i64;
-use crate::ast::expr::{BinaryOp, Expr, UnaryOp, Value};
+use crate::ast::expr::{BinaryOp, Expr, StructLitMember, UnaryOp, Value};
 use crate::ast::stmt::Stmt;
 use crate::ast::types::{FunctionDecl, PackageItem};
 use crate::intern::Symbol;
@@ -17,6 +17,35 @@ use crate::intern::Symbol;
 pub enum CVal {
     Scalar(i64),
     Array(Vec<CVal>),
+    /// Nilai struct (assignment pattern bernama). `name=None` untuk anggota
+    /// posisional; `is_default=true` untuk `default: value` (fallback field
+    /// yang tidak disebutkan). Dipakai agar `pkg::arr[i].field` bisa di-const
+    /// eval untuk array-of-struct (mis. `otp_ctrl_part_pkg::PartInfo`).
+    Struct(Vec<SField>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SField {
+    pub name: Option<Symbol>,
+    pub val: CVal,
+    pub is_default: bool,
+}
+
+impl SField {
+    pub fn named(name: Symbol, val: CVal) -> Self {
+        SField {
+            name: Some(name),
+            val,
+            is_default: false,
+        }
+    }
+    pub fn default(val: CVal) -> Self {
+        SField {
+            name: None,
+            val,
+            is_default: true,
+        }
+    }
 }
 
 pub type Scalars = HashMap<Symbol, i64>;
@@ -26,6 +55,11 @@ pub struct PkgCtx<'a> {
     pub scalars: &'a Scalars,
     pub arrays: &'a Arrays,
     pub package_symbols: &'a HashMap<Symbol, HashMap<Symbol, PackageItem>>,
+    /// Nilai struct localparam/parameter (assignment pattern) agar
+    /// `name.field` bisa di-const-eval — mis. `localparam info_t Info = '{...};`
+    /// lalu `localparam int W = Info.size;` (pola `Info.size` di
+    /// prim_generic_flash_bank / otp_ctrl_part_buf OpenTitan).
+    pub structs: &'a HashMap<Symbol, Vec<SField>>,
 }
 
 fn parse_base(s: &str, radix: u32) -> Result<CVal, String> {
@@ -44,6 +78,11 @@ pub fn flatten(a: &[CVal]) -> Vec<i64> {
         match v {
             CVal::Scalar(s) => out.push(*s),
             CVal::Array(inner) => out.extend(flatten(inner)),
+            // Struct tanpa layout: representasi nilai utuh tidak bisa di-pack
+            // di sini (butuh lebar field dari typedef). Nilai 0 (tanpa
+            // regresi — pola bernama sebelumnya di-discard jadi 0). Member
+            // access tetap benar lewat key `name[i].field` terdaftar.
+            CVal::Struct(_) => out.push(0),
         }
     }
     out
@@ -53,6 +92,7 @@ pub fn scalar(v: CVal) -> Result<i64, String> {
     match v {
         CVal::Scalar(s) => Ok(s),
         CVal::Array(_) => Err("expected scalar constant".to_string()),
+        CVal::Struct(_) => Err("expected scalar constant (got struct)".to_string()),
     }
 }
 
@@ -134,6 +174,8 @@ pub fn eval_expr(
                 Ok(CVal::Scalar(v))
             } else if let Some(a) = ctx.arrays.get(name) {
                 Ok(CVal::Array(a.iter().map(|&x| CVal::Scalar(x)).collect()))
+            } else if let Some(s) = ctx.structs.get(name) {
+                Ok(CVal::Struct(s.clone()))
             } else if name.as_str() == "1" {
                 Ok(CVal::Scalar(1))
             } else {
@@ -197,6 +239,7 @@ pub fn eval_expr(
                         Err("array index out of range".to_string())
                     }
                 }
+                CVal::Struct(_) => Err("bit select on struct constant".to_string()),
             }
         }
         Expr::RangeSelect { expr, msb, lsb } => {
@@ -218,6 +261,7 @@ pub fn eval_expr(
                         Ok(CVal::Scalar((v >> l) & ((1i64 << width) - 1)))
                     }
                 }
+                CVal::Struct(_) => Err("range select on struct constant".to_string()),
             }
         }
         // Indexed part-select `[base +: width]` (sama dengan const_eval.rs —
@@ -247,6 +291,7 @@ pub fn eval_expr(
                         Err("part-select out of bounds".to_string())
                     }
                 }
+                CVal::Struct(_) => Err("part select on struct constant".to_string()),
             }
         }
         Expr::Concat(items) => {
@@ -267,7 +312,49 @@ pub fn eval_expr(
         Expr::Cast { expr, .. } => eval_expr(expr, ctx, cur_pkg),
         Expr::CastWidth { expr, .. } => eval_expr(expr, ctx, cur_pkg),
         Expr::FuncCall { name, args, .. } => eval_func(name.as_str(), args, ctx, cur_pkg),
-        Expr::MemberAccess { .. } => Err("member access in const expr".to_string()),
+        // Struct assignment pattern `'{name: v, default: d, ...}` — evaluasi
+        // setiap member jadi CVal::Struct agar `arr[i].field` bisa diekstrak.
+        Expr::StructLit { members } => {
+            let mut fields = Vec::new();
+            for m in members {
+                match m {
+                    StructLitMember::Named(name, e) => {
+                        fields.push(SField::named(*name, eval_expr(e, ctx, cur_pkg)?));
+                    }
+                    StructLitMember::Positional(e) => fields.push(SField {
+                        name: None,
+                        val: eval_expr(e, ctx, cur_pkg)?,
+                        is_default: false,
+                    }),
+                    StructLitMember::Default(e) => {
+                        fields.push(SField::default(eval_expr(e, ctx, cur_pkg)?));
+                    }
+                }
+            }
+            Ok(CVal::Struct(fields))
+        }
+        Expr::MemberAccess { obj, field } => match eval_expr(obj, ctx, cur_pkg)? {
+            CVal::Struct(fields) => {
+                for f in &fields {
+                    if f
+                        .name
+                        .as_ref()
+                        .map(|n| n.as_str() == field.as_str())
+                        .unwrap_or(false)
+                    {
+                        return Ok(f.val.clone());
+                    }
+                }
+                // Fallback `default: value` untuk field yang tidak disebutkan.
+                for f in &fields {
+                    if f.is_default {
+                        return Ok(f.val.clone());
+                    }
+                }
+                Err(format!("field '{}' not found in struct constant", field.as_str()))
+            }
+            _ => Err("member access on non-struct constant".to_string()),
+        },
         _ => Err("unsupported const expr".to_string()),
     }
 }
@@ -490,6 +577,7 @@ fn eval_function_body(
             CVal::Array(a) => {
                 local_arrays.insert(port.name, flatten(&a));
             }
+            CVal::Struct(_) => {}
         }
     }
     for decl in &func.decls {
@@ -499,6 +587,7 @@ fn eval_function_body(
                     scalars: &local_scalars,
                     arrays: &local_arrays,
                     package_symbols: ctx.package_symbols,
+                    structs: ctx.structs,
                 };
                 if let Ok(v) = eval_expr(init, &local_ctx, cur_pkg) {
                     match v {
@@ -508,6 +597,7 @@ fn eval_function_body(
                         CVal::Array(a) => {
                             local_arrays.insert(var.name, flatten(&a));
                         }
+                        CVal::Struct(_) => {}
                     }
                 }
             } else if var.array_range.is_some() {
@@ -544,6 +634,7 @@ fn eval_stmt(
                 scalars: &*scalars,
                 arrays: &*arrays,
                 package_symbols,
+                structs: no_structs(),
             };
             eval_expr($e, &pkg_ctx, cur_pkg)
         }};
@@ -640,6 +731,7 @@ fn eval_stmt(
                     CVal::Array(a) => {
                         arrays.insert(*name, flatten(&a));
                     }
+                    CVal::Struct(_) => {}
                 },
                 Expr::BitSelect { expr, index } => {
                     if let Expr::Ident { name, .. } = expr.as_ref() {
@@ -688,6 +780,7 @@ pub fn eval_package_constants(
                     scalars: &scalars,
                     arrays: &arrays,
                     package_symbols,
+                    structs: no_structs(),
                 };
                 match eval_expr(default, &ctx, Some(pkg_name.as_str())) {
                     Ok(CVal::Scalar(v)) => {
@@ -696,7 +789,51 @@ pub fn eval_package_constants(
                     }
                     Ok(CVal::Array(a)) => {
                         arrays.insert(qname, flatten(&a));
+                        // Struct member keys utk array-of-struct: `pkg::name[i].field`
+                        // → nilai field skalar. Ini yang membuat `PartInfo[k].offset`
+                        // bisa di-const-eval (member access di const_eval.rs cari
+                        // key `base.field` di param_vals).
+                        for (i, elem) in a.iter().enumerate() {
+                            if let CVal::Struct(fields) = elem {
+                                for f in fields {
+                                    if let Some(fname) = f.name {
+                                        if let CVal::Scalar(v) = &f.val {
+                                            scalars.insert(
+                                                Symbol::intern(&format!(
+                                                    "{}::{}[{}].{}",
+                                                    pkg_name.as_str(),
+                                                    name.as_str(),
+                                                    i,
+                                                    fname.as_str()
+                                                )),
+                                                *v,
+                                            );
+                                            changed = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         changed = true;
+                    }
+                    Ok(CVal::Struct(fields)) => {
+                        // Single struct param: `pkg::name.field` → nilai field skalar.
+                        for f in &fields {
+                            if let Some(fname) = f.name {
+                                if let CVal::Scalar(v) = &f.val {
+                                    scalars.insert(
+                                        Symbol::intern(&format!(
+                                            "{}::{}.{}",
+                                            pkg_name.as_str(),
+                                            name.as_str(),
+                                            fname.as_str()
+                                        )),
+                                        *v,
+                                    );
+                                    changed = true;
+                                }
+                            }
+                        }
                     }
                     Err(_) => {}
                 }
@@ -715,6 +852,7 @@ pub fn eval_package_constants(
                                 scalars: &scalars,
                                 arrays: &arrays,
                                 package_symbols,
+                                structs: no_structs(),
                             };
                             match eval_expr(e, &ctx, Some(pkg_name.as_str())) {
                                 Ok(CVal::Scalar(v)) => v,
@@ -769,6 +907,9 @@ pub fn flatten_imported_consts_into_ctx(
         for (qname, v) in scalars {
             if let Some(rest) = qname.as_str().strip_prefix(&prefix) {
                 ctx.entry(Symbol::intern(rest)).or_insert(*v);
+                // Pertahankan juga bentuk kualifikasi (scoped access
+                // `pkg::name[i].field` di ekspresi module).
+                ctx.entry(*qname).or_insert(*v);
             }
         }
         for (qname, elems) in arrays {
@@ -795,6 +936,18 @@ pub fn flatten_imported_consts_into_ctx(
                 ctx.entry(Symbol::intern(import_item)).or_insert(first);
             }
         }
+        // Member keys struct utk import item tunggal: `pkg::item[i].field` /
+        // `pkg::item.field` → plain `item[i].field` / `item.field`.
+        let mp = format!("{}::{}[", pkg_name, import_item);
+        let mp2 = format!("{}::{}.", pkg_name, import_item);
+        for (qname, v) in scalars {
+            let s = qname.as_str();
+            if s.starts_with(&mp) || s.starts_with(&mp2) {
+                if let Some(rest) = s.strip_prefix(&prefix) {
+                    ctx.entry(Symbol::intern(rest)).or_insert(*v);
+                }
+            }
+        }
     }
 }
 
@@ -809,10 +962,65 @@ pub fn eval_body_param_default(
         scalars,
         arrays,
         package_symbols,
+        structs: no_structs(),
     };
     match eval_expr(expr, &ctx, None) {
         Ok(CVal::Scalar(v)) => Some(v),
         Ok(CVal::Array(a)) => flatten(&a).first().copied(),
-        Err(_) => None,
+        _ => None,
     }
+}
+
+/// Evaluasi penuh sebuah ekspresi konstanta → `CVal` apa pun (skalar, array,
+/// atau struct). `structs` berisi nilai struct localparam/parameter yang sudah
+/// dievaluasi sebelumnya (fixed-point) agar `name.field` bisa di-const-eval.
+pub fn eval_cval_full(
+    expr: &Expr,
+    merged: &Scalars,
+    arrays: &Arrays,
+    package_symbols: &HashMap<Symbol, HashMap<Symbol, PackageItem>>,
+    structs: &HashMap<Symbol, Vec<SField>>,
+) -> Option<CVal> {
+    let ctx = PkgCtx {
+        scalars: merged,
+        arrays,
+        package_symbols,
+        structs,
+    };
+    eval_expr(expr, &ctx, None).ok()
+}
+
+/// Evaluasi default param dengan konteks PENUH untuk jalur resolusi
+/// localparam header/body module (dipakai `resolve_param_values_with_ctx` di
+/// param_util.rs sebagai fallback saat `const_eval_with_params` gagal).
+///
+/// `merged` = konstanta package (qualified `pkg::name`) + module ctx (plain
+/// names — module menang) yang di-maintain pemanggil agar sinkron dengan
+/// param_vals yang sedang diakumulasi (module param bisa direferensikan oleh
+/// localparam berikutnya). `package_symbols` dipakai untuk resolve
+/// `$bits(typedef)` (via `resolve_typedef_bits`) dan inlining fungsi package
+/// (mis. `otbn_pkg::SecAddRandWidth`) — dua hal yang tidak bisa dilakukan
+/// evaluator skalar sederhana `const_eval_with_params`.
+///
+/// Mengembalikan `Some(i64)` hanya untuk konstanta SKALAR (kontrak sama
+/// dengan `const_eval_with_params`); array/struct → None.
+pub fn eval_param_default_full(
+    expr: &Expr,
+    merged: &Scalars,
+    arrays: &Arrays,
+    package_symbols: &HashMap<Symbol, HashMap<Symbol, PackageItem>>,
+    structs: &HashMap<Symbol, Vec<SField>>,
+) -> Option<i64> {
+    match eval_cval_full(expr, merged, arrays, package_symbols, structs) {
+        Some(CVal::Scalar(v)) => Some(v),
+        Some(CVal::Array(a)) => flatten(&a).first().copied(),
+        _ => None,
+    }
+}
+
+/// Map struct kosong statis untuk konteks yang tidak punya struct lokal.
+fn no_structs() -> &'static HashMap<Symbol, Vec<SField>> {
+    use std::sync::OnceLock;
+    static EMPTY: OnceLock<HashMap<Symbol, Vec<SField>>> = OnceLock::new();
+    EMPTY.get_or_init(HashMap::new)
 }

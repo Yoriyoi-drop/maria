@@ -639,6 +639,10 @@ impl SimulationEngine {
                 );
                 Ok(LogicVec::from_u64(0, 32))
             }
+            // Struct assignment pattern di konteks runtime (inisialisasi var
+            // struct / class field). Nilai utuh tidak bisa di-pack tanpa layout
+            // typedef; evaluasi 0 (perilaku lama: pola bernama → FillLit 0).
+            Expr::StructLit { .. } => Ok(LogicVec::from_u64(0, 32)),
         }
     }
 

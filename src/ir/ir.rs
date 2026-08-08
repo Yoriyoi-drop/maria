@@ -480,7 +480,10 @@ pub enum IrLValue {
         sig_id: SignalId,
         index: Box<IrExpr>,
         elem_width: usize,
-        bit: usize,
+        /// Offset bit dalam elemen — bisa dinamis (`arr[i][j]` dengan j runtime,
+        /// mis. `seeds_q[seed_idx][rd_idx]` di flash_ctrl_lcmgr) maupun
+        /// konstanta (hasil static select).
+        bit: Box<IrExpr>,
     },
     /// Dynamic indexed part-select lvalue: `sig[base +: width]` dengan base
     /// runtime (mis. `packed_data_d[word_sel*BusWidth +: BusWidth] = ...` di

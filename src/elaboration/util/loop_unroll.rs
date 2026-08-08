@@ -677,5 +677,28 @@ pub fn substitute_loop_var_in_expr(expr: &Expr, var_name: &str, value: i64) -> E
             line: 0,
             col: 0,
         },
+        Expr::StructLit { members } => Expr::StructLit {
+            members: members
+                .iter()
+                .map(|m| match m {
+                    crate::ast::expr::StructLitMember::Named(n, e) => {
+                        crate::ast::expr::StructLitMember::Named(
+                            *n,
+                            substitute_loop_var_in_expr(e, var_name, value),
+                        )
+                    }
+                    crate::ast::expr::StructLitMember::Positional(e) => {
+                        crate::ast::expr::StructLitMember::Positional(
+                            substitute_loop_var_in_expr(e, var_name, value),
+                        )
+                    }
+                    crate::ast::expr::StructLitMember::Default(e) => {
+                        crate::ast::expr::StructLitMember::Default(
+                            substitute_loop_var_in_expr(e, var_name, value),
+                        )
+                    }
+                })
+                .collect(),
+        },
     }
 }
