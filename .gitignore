@@ -13,6 +13,8 @@
 /legacy/gui/
 /legacy/src-tauri/
 /rocket-chip
+/cva6
+/Cores-VeeR-EH1
 
 # MICD — incremental compilation database (build artifact)
 /.maria/database/

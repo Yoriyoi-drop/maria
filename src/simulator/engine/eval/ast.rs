@@ -26,12 +26,23 @@ impl SimulationEngine {
                 Value::Real(r) => Ok(LogicVec::from_u64(r.to_bits(), 64)),
             },
             Expr::Ident { name, line, col } => {
+                // F20: catat posisi source terakhir yang diketahui agar
+                // warning/error runtime selalu punya file:line:col.
+                self.set_cur_src_pos(*line, *col);
                 if name == "this" {
                     if let Some(obj_id) = self.current_this {
                         return Ok(LogicVec::from_u64(obj_id as u64, 64));
                     } else {
                         return Err(self.diag_error_at(DiagCode::NullHandle, "'this' used outside of class method", *line, *col));
                     }
+                }
+                // F18: `uvm_test_top` — handle global ke root test UVM (jalur
+                // AST, sama seperti jalur IR di eval/expr.rs SysFunc).
+                if name == "uvm_test_top" {
+                    return Ok(LogicVec::from_u64(
+                        self.root_test_obj_id.unwrap_or(0) as u64,
+                        64,
+                    ));
                 }
                 if let Some(local) = self.get_local(name.as_str()) {
                     return Ok(local);
@@ -104,12 +115,14 @@ impl SimulationEngine {
                 }
             }
             Expr::FuncCall { name, args, .. } if name == "new" => {
-                let _arg_vals: Vec<LogicVec> = args
+                // F17: alokasi object — class di-resolve di situs assignment
+                // (resolve_new_class_hint) karena evaluator ekspresi tidak tahu
+                // tipe LHS. Di sini (konteks non-assignment) class kosong.
+                let arg_vals: Vec<LogicVec> = args
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
                     .collect::<Result<_, _>>()?;
-                let obj_id = self.state.alloc_object(Symbol::intern(""));
-                Ok(LogicVec::from_u64(obj_id as u64, 64))
+                self.allocate_new_object(None, &arg_vals)
             }
             Expr::FuncCall { name, args, .. } if name.ends_with("::new") => {
                 let raw_name = name.strip_suffix("::new").unwrap().to_string();
@@ -125,6 +138,9 @@ impl SimulationEngine {
                         | "uvm_scoreboard"
                         | "uvm_analysis_port"
                         | "uvm_analysis_imp"
+                        | "uvm_analysis_export"
+                        | "uvm_subscriber"
+                        | "uvm_tlm_fifo"
                         | "uvm_test"
                         | "uvm_report_object"
                         | "uvm_factory"
@@ -186,7 +202,10 @@ impl SimulationEngine {
                             .or_insert_with(|| UvmObjectData { name: pname });
                     }
                 }
-                if self.find_method_in_hierarchy(&effective, "new").is_ok() {
+                // F21-F24: builtin UVM punya `methods: vec![]` (no "new" di
+                // extends chain) — tapi `new` wajib di-dispatch ke
+                // execute_uvm_*_method utk meng-insert data / auto-buat child.
+                if self.uvm_needs_new_dispatch(&effective) {
                     self.execute_method(obj_id, "new", &arg_vals)?;
                 }
                 Ok(LogicVec::from_u64(obj_id as u64, 64))
@@ -220,7 +239,7 @@ impl SimulationEngine {
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
                     .collect::<Result<_, _>>()?;
-                let inst_name = if arg_vals.len() > 1 {
+                let mut inst_name = if arg_vals.len() > 1 {
                     logicvec_to_string(&arg_vals[1])
                 } else {
                     String::new()
@@ -230,8 +249,15 @@ impl SimulationEngine {
                 } else {
                     String::new()
                 };
-                let key = (inst_name, field_name);
-                let stored = self.uvm_config_db_data.get(&key).cloned();
+                // F19: inst_path kosong (`get(this, "", ...)`) → resolve ke
+                // path hierarki penuh objek saat ini.
+                if inst_name.is_empty() {
+                    if let Some(oid) = self.current_this {
+                        inst_name = self.uvm_object_full_path(oid);
+                    }
+                }
+                // F19: exact match menang, lalu wildcard paling spesifik.
+                let stored = self.config_db_find(&inst_name, &field_name);
                 if let Some(val) = stored {
                     if let Some(last_arg) = args.get(3) {
                         match last_arg {
@@ -332,7 +358,9 @@ impl SimulationEngine {
                 self.factory_type_overrides.insert(orig, override_type);
                 Ok(LogicVec::from_u64(1, 1))
             }
-            Expr::FuncCall { name, args, .. } => {
+            Expr::FuncCall { name, args, line, col, .. } => {
+                // F20: catat posisi call agar warning runtime punya file:line:col.
+                self.set_cur_src_pos(*line, *col);
                 let arg_vals: Vec<LogicVec> = args
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
@@ -349,6 +377,38 @@ impl SimulationEngine {
                         return Ok(LogicVec::from_u64(result, 32));
                     }
                 }
+                if name == "run_test" {
+                    // F18: run_test("name") dari body method class (jalur AST).
+                    // Guard uvm_phases_started mencegah eksekusi ganda.
+                    let test_name = args
+                        .first()
+                        .map(|a| self.evaluate_ast_expr(a))
+                        .transpose()?
+                        .map(|v| logicvec_to_string(&v))
+                        .unwrap_or_default();
+                    self.run_uvm_test(&test_name)?;
+                    return Ok(LogicVec::from_u64(1, 1));
+                }
+                if name == "$sformatf" {
+                    // F17: $sformatf di body method class — format via
+                    // format_display_ast (argumen AST, field class ter-resolve).
+                    let msg = self.format_display_ast(args);
+                    let mut bits = Vec::with_capacity(msg.len() * 8);
+                    for c in msg.chars() {
+                        let byte = c as u8;
+                        for i in 0..8 {
+                            bits.push(if (byte >> i) & 1 == 1 {
+                                LogicVal::One
+                            } else {
+                                LogicVal::Zero
+                            });
+                        }
+                    }
+                    return Ok(LogicVec {
+                        width: bits.len(),
+                        bits,
+                    });
+                }
                 // Pemanggilan method class tanpa `this.` prefix — dispatch ke
                 // object saat ini bila method ada di hierarki class-nya.
                 if let Some(obj_id) = self.current_this {
@@ -363,11 +423,69 @@ impl SimulationEngine {
                         }
                     }
                 }
+                // F18: method builtin UVM dipanggil tanpa `this.` di body task
+                // komponen (pola driver `get_next_item(it)` / `item_done()`).
+                // Dispatch ke builtin handler via execute_method (hanya di
+                // jalur fallback — override user tetap menang di atas).
+                // get_next_item bersifat output by-ref: item id hasil di-tulis
+                // balik ke argumen pertama bila berupa local/field (pola UVM
+                // `task get_next_item(output RSP item)`).
+                if matches!(
+                    name.as_str(),
+                    "get_next_item" | "try_next_item" | "item_done" | "get_response" | "put_response"
+                    | "start_item" | "finish_item" | "set_sequencer" | "get_sequencer"
+                ) {
+                    if let Some(obj_id) = self.current_this {
+                        if let Some(obj) = self.state.get_object(obj_id) {
+                            let cn = obj.class_name.as_str();
+                            if std::env::var("DBG_UVM").is_ok() && matches!(name.as_str(), "start_item" | "finish_item" | "set_sequencer") {
+                                eprintln!("[DBG-UVM] fallback dispatch {} cn={} drv={} seqr={} seq={}", name, cn, self.is_uvm_driver_hierarchy(cn), self.is_uvm_sequencer_hierarchy(cn), self.is_uvm_sequence_hierarchy(cn));
+                            }
+                            if self.is_uvm_driver_hierarchy(cn)
+                                || self.is_uvm_sequencer_hierarchy(cn)
+                                || self.is_uvm_monitor_hierarchy(cn)
+                                || (self.is_uvm_sequence_hierarchy(cn)
+                                    && matches!(
+                                        name.as_str(),
+                                        "start_item" | "finish_item" | "set_sequencer" | "get_sequencer"
+                                    ))
+                            {
+                                let r = self.execute_method(obj_id, name.as_str(), &arg_vals)?;
+                                if std::env::var("DBG_UVM").is_ok() {
+                                    eprintln!("[DBG-UVM] {} on {} -> r={} width={}", name, cn, r.to_u64(), r.width);
+                                }
+                                if matches!(name.as_str(), "get_next_item" | "try_next_item") {
+                                    if let Some(Expr::Ident { name: var, .. }) = args.first() {
+                                        self.write_local_or_field(var.as_str(), r.clone())?;
+                                    }
+                                }
+                                return Ok(r);
+                            }
+                        }
+                    }
+                }
+                // F16: uvm_report_* dipanggil tanpa `this.` prefix di body
+                // method (pola standar UVM `uvm_report_info(id, msg, verb)`).
+                // HANYA di jalur fallback (setelah hierarchy lookup gagal,
+                // sama dengan pola method.rs:151 "only intercept if class
+                // doesn't override") — override user tetap menang. Dispatch ke
+                // report builtin → emit_severity (counter + fatal_hit).
+                if matches!(
+                    name.as_str(),
+                    "uvm_report_info" | "uvm_report_warning" | "uvm_report_error" | "uvm_report_fatal"
+                ) {
+                    if let Some(obj_id) = self.current_this {
+                        return self.execute_uvm_report_object_method(obj_id, name.as_str(), &arg_vals);
+                    }
+                }
+                // F20: gunakan posisi call terakhir yang diketahui (bukan 0,0)
+                // agar warning punya file:line:col.
+                let (w_line, w_col) = self.cur_src_pos();
                 self.diag_warn_at(
                     DiagCode::NotImplemented,
                     format!("unknown function '{}' in method context; using null default", name),
-                    0,
-                    0,
+                    w_line,
+                    w_col,
                 );
                 Ok(LogicVec::from_u64(0, 64))
             }
@@ -375,7 +493,7 @@ impl SimulationEngine {
                 obj,
                 method,
                 args,
-                with_clause: _,
+                with_clause,
             } => {
                 if let Expr::Ident { name: s, .. } = obj.as_ref() {
                     if s == "super" {
@@ -392,6 +510,23 @@ impl SimulationEngine {
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
                     .collect::<Result<_, _>>()?;
+                // F17: randomize() with {...} di jalur AST (body method class) —
+                // inline constraint AST ditangani solver via
+                // execute_randomize_ast_with (evaluate_ast_expr + current_this
+                // → field class bisa diakses), bukan execute_method yang
+                // mengabaikan with_clause.
+                if method == "randomize" && with_clause.is_some() {
+                    let class_name = self
+                        .state
+                        .get_object(obj_id)
+                        .map(|o| o.class_name)
+                        .unwrap_or_default();
+                    return self.execute_randomize_ast_with(
+                        obj_id,
+                        class_name.as_str(),
+                        with_clause.as_deref(),
+                    );
+                }
                 self.execute_method(obj_id, method.as_str(), &arg_vals)
             }
             Expr::MemberAccess { obj, field } => {
@@ -499,8 +634,30 @@ impl SimulationEngine {
             } => {
                 let val = self.evaluate_ast_expr(inner)?;
                 for item in range_list {
+                    // Range `[lo:hi]` di-parse SV sebagai RangeSelect dengan
+                    // base 0 (`Expr::Value(Decimal(0))`) — evaluasi sebagai
+                    // rentang, bukan bit-select. SV memakai notasi descending
+                    // `[msb:lsb]` (`[1:10]` → msb=1, lsb=10) jadi ambil min/max.
+                    // Base selain 0 = member select asli (`inside {x[7:0]}`)
+                    // → evaluasi sebagai nilai tunggal, bukan rentang.
+                    if let Expr::RangeSelect { expr: base, msb, lsb, .. } = item {
+                        if matches!(base.as_ref(), Expr::Value(Value::Decimal(0))) {
+                            let a = self.evaluate_ast_expr(msb)?.to_u64();
+                            let b = self.evaluate_ast_expr(lsb)?.to_u64();
+                            let (lo, hi) = (a.min(b), a.max(b));
+                            let v = val.to_u64();
+                            if v >= lo && v <= hi {
+                                return Ok(LogicVec::from_u64(1, 1));
+                            }
+                            continue;
+                        }
+                    }
                     let item_val = self.evaluate_ast_expr(item)?;
-                    let eq = val.case_eq(&item_val);
+                    // Normalisasi lebar sebelum case_eq: `addr[7:0]` (8-bit)
+                    // vs literal desimal (32-bit) — bits tidak sama walau
+                    // nilai sama tanpa resize.
+                    let w = val.width.max(item_val.width);
+                    let eq = val.resize(w).case_eq(&item_val.resize(w));
                     if eq == LogicVec::from_u64(1, 1) {
                         return Ok(LogicVec::from_u64(1, 1));
                     }
@@ -627,6 +784,8 @@ impl SimulationEngine {
                 line,
                 col,
             } => {
+                // F20: catat posisi source agar warning di bawah punya lokasi.
+                self.set_cur_src_pos(*line, *col);
                 let qname = Symbol::intern(&format!("{}::{}", package.as_str(), item.as_str()));
                 if let Some(&val) = self.design.pkg_scoped_consts.get(&qname) {
                     return Ok(LogicVec::from_u64(val as u64, 32));
@@ -671,6 +830,105 @@ impl SimulationEngine {
     }
 
 
+    /// F17: alokasi object class + panggil constructor (bila ada). Dipakai
+    /// `x = new(...)` di jalur AST (body method class). `class = None` →
+    /// objek tanpa class_name (perilaku lama untuk konteks non-assignment).
+    pub(crate) fn allocate_new_object(
+        &mut self,
+        class: Option<Symbol>,
+        arg_vals: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
+        if std::env::var("DBG_UVM").is_ok() {
+            eprintln!("[DBG-UVM] allocate_new_object class={:?} nargs={}", class.map(|s| s.to_string()), arg_vals.len());
+        }
+        let raw = class
+            .unwrap_or_else(|| Symbol::intern(""))
+            .as_str()
+            .to_string();
+        let effective = self.factory_type_overrides.get(&raw).cloned().unwrap_or(raw);
+        let obj_id = self.state.alloc_object(Symbol::intern(&effective));
+        // F19: inisialisasi field class ke default 0 (semantics SV — semua
+        // member di-zero-initialize). Tanpa ini, baca field yang belum pernah
+        // di-assign (mis. `if (got_cnt == 0)` sebelum `got_cnt = ...` di
+        // run_phase driver) memunculkan warning RT0001 + null default.
+        if let Some(cls) = self.design.classes.get::<str>(&effective) {
+            if let Some(obj) = self.state.get_object_mut(obj_id) {
+                for field in &cls.fields {
+                    obj.fields
+                        .entry(field.name)
+                        .or_insert_with(|| LogicVec::from_u64(0, field.width.max(1)));
+                }
+            }
+        }
+        // F21-F24: builtin UVM (`methods: vec![]`) — `new` tetap di-dispatch
+        // agar data di-insert / child internal dibuat. Tanpa ini, objek TANPA
+        // `new` override → data tak pernah dibuat → handle null / senyap.
+        if !effective.is_empty() && self.uvm_needs_new_dispatch(&effective) {
+            self.execute_method(obj_id, "new", arg_vals)?;
+        }
+        Ok(LogicVec::from_u64(obj_id as u64, 64))
+    }
+
+    /// F17: resolve tipe class deklarasi local (`my_item it;` → `my_item`)
+    /// pada method yang sedang berjalan, dari `decls` method
+    /// (`DataType::UserDefined`). Dipakai `it = new(...)` untuk mengisi
+    /// class_name object — tanpanya randomize()/get_type_name() gagal.
+    /// F17: evaluasi RHS assignment — `x = new(...)` di-resolve class dari
+    /// tipe deklarasi LHS lalu alokasi object + constructor; selain itu
+    /// evaluasi ekspresi biasa. Helper BERSAMA untuk `evaluate_ast_stmt`
+    /// (function body) dan loop statement block.rs (task body) agar class
+    /// object selalu terisi (tanpa ini randomize()/get_type_name() gagal
+    /// "unknown class").
+    pub(crate) fn eval_ast_assign_rhs(
+        &mut self,
+        rhs: &Expr,
+        lhs: &Expr,
+    ) -> Result<LogicVec, SimError> {
+        if let Expr::FuncCall { name, args, .. } = rhs {
+            if name == "new" {
+                let class = match lhs {
+                    Expr::Ident { name, .. } => self.resolve_new_class_hint(name.as_str()),
+                    _ => None,
+                };
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
+                    .map(|a| self.evaluate_ast_expr(a))
+                    .collect::<Result<_, _>>()?;
+                return self.allocate_new_object(class, &arg_vals);
+            }
+        }
+        self.evaluate_ast_expr(rhs)
+    }
+
+    pub(crate) fn resolve_new_class_hint(&self, name: &str) -> Option<Symbol> {
+        let obj_id = self.current_this?;
+        let class_name = self.state.get_object(obj_id)?.class_name;
+        let class_def = self.design.classes.get(&class_name)?;
+        // F18: cek class FIELD dulu — pola UVM build_phase membuat komponen
+        // ke field (`env = new("env", this)`), bukan local. IrClassField kini
+        // menyimpan dtype (lihat ir.rs).
+        if std::env::var("DBG_UVM").is_ok() {
+            eprintln!("[DBG-UVM] resolve_new_class_hint name={} class={} fields={:?}", name, class_name, class_def.fields.iter().map(|f| (f.name.to_string(), f.dtype.clone().map(|d| format!("{:?}", d)))).collect::<Vec<_>>());
+        }
+        if let Some(f) = class_def.fields.iter().find(|f| f.name.as_str() == name) {
+            if let Some(DataType::UserDefined(s)) = &f.dtype {
+                return Some(*s);
+            }
+        }
+        let mname = self.current_method?;
+        let method_def = class_def.methods.iter().find(|m| m.name == mname)?;
+        for d in &method_def.decls {
+            for dv in &d.names {
+                if dv.name.as_str() == name {
+                    if let DataType::UserDefined(s) = &d.dtype {
+                        return Some(*s);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub(crate) fn evaluate_ast_stmt(&mut self, stmt: &Stmt) -> Result<(), SimError> {
         match stmt {
             Stmt::Block { stmts } => {
@@ -680,7 +938,9 @@ impl SimulationEngine {
                 Ok(())
             }
             Stmt::BlockingAssign { lhs, rhs, delay: _ } => {
-                let val = self.evaluate_ast_expr(rhs)?;
+                // F17: `x = new(...)` — resolve class dari tipe LHS (helper
+                // bersama dgn loop statement block.rs untuk task body).
+                let val = self.eval_ast_assign_rhs(rhs, lhs)?;
                 match lhs {
                     Expr::Ident { name, .. } => self.write_local_or_field(name.as_str(), val),
                     Expr::MemberAccess { obj, field } => {
@@ -795,7 +1055,9 @@ impl SimulationEngine {
                 }
             }
             Stmt::NonBlockingAssign { lhs, rhs, delay: _ } => {
-                let val = self.evaluate_ast_expr(rhs)?;
+                // F17: sama seperti BlockingAssign — `x <= new(...)` juga perlu
+                // class dari tipe LHS.
+                let val = self.eval_ast_assign_rhs(rhs, lhs)?;
                 match lhs {
                     Expr::Ident { name, .. } => self.write_local_or_field(name.as_str(), val),
                     Expr::MemberAccess { obj, field } => {
@@ -1090,7 +1352,18 @@ impl SimulationEngine {
                 self.evaluate_ast_expr(expr)?;
                 Ok(())
             }
-            Stmt::SysCall { name: _, args: _ } => Ok(()),
+            Stmt::SysCall {
+                name,
+                args,
+                line,
+                col,
+            } => {
+                // F20: catat posisi syscall agar warning runtime punya lokasi.
+                self.set_cur_src_pos(*line, *col);
+                // F18: $display/$info/dst di function body (mis. report_phase)
+                // sebelumnya di-skip diam-diam — delegasi ke handler AST.
+                self.handle_ast_syscall(name.as_str(), args)
+            }
             Stmt::SysFinish => {
                 self.running = false;
                 Ok(())

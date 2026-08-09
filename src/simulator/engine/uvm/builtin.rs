@@ -433,7 +433,9 @@ impl SimulationEngine {
                 if self.objection_count == 0 && !self.objection_triggered {
                     self.objection_triggered = true;
                     println!("UVM_PHASE: All objections dropped, ending test");
-                    // Schedule end-of-test via $finish behavior
+                    // F18: jalankan fase akhir (extract/check/report/final)
+                    // pada tree root test SEBELUM menghentikan sim.
+                    self.execute_report_phases()?;
                     self.running = false;
                 }
                 Ok(LogicVec::from_u64(1, 1))
@@ -451,6 +453,10 @@ impl SimulationEngine {
         method: &str,
         args: &[LogicVec],
     ) -> Result<LogicVec, SimError> {
+        // F16: uvm_report_* disambungkan ke severity system (F14/F15) —
+        // emit_severity mencetak dengan prefix severity, increment counter
+        // (ringkasan akhir sim), dan untuk fatal set fatal_hit + running
+        // (hentikan sim seketika + exit code CLI non-zero).
         match method {
             "uvm_report_info" => {
                 let id = args
@@ -461,7 +467,7 @@ impl SimulationEngine {
                     .get(1)
                     .map(logicvec_to_string)
                     .unwrap_or_default();
-                eprintln!("UVM_INFO @ {}: {} [{}]", self.current_time, msg, id);
+                self.emit_severity("info", &format!("@ {}: {} [{}]", self.current_time, msg, id));
                 Ok(LogicVec::from_u64(1, 1))
             }
             "uvm_report_warning" => {
@@ -473,7 +479,7 @@ impl SimulationEngine {
                     .get(1)
                     .map(logicvec_to_string)
                     .unwrap_or_default();
-                eprintln!("UVM_WARNING @ {}: {} [{}]", self.current_time, msg, id);
+                self.emit_severity("warning", &format!("@ {}: {} [{}]", self.current_time, msg, id));
                 Ok(LogicVec::from_u64(1, 1))
             }
             "uvm_report_error" => {
@@ -485,7 +491,7 @@ impl SimulationEngine {
                     .get(1)
                     .map(logicvec_to_string)
                     .unwrap_or_default();
-                eprintln!("UVM_ERROR @ {}: {} [{}]", self.current_time, msg, id);
+                self.emit_severity("error", &format!("@ {}: {} [{}]", self.current_time, msg, id));
                 Ok(LogicVec::from_u64(1, 1))
             }
             "uvm_report_fatal" => {
@@ -497,8 +503,7 @@ impl SimulationEngine {
                     .get(1)
                     .map(logicvec_to_string)
                     .unwrap_or_default();
-                eprintln!("UVM_FATAL @ {}: {} [{}]", self.current_time, msg, id);
-                self.running = false;
+                self.emit_severity("fatal", &format!("@ {}: {} [{}]", self.current_time, msg, id));
                 Ok(LogicVec::from_u64(1, 1))
             }
             _ => self.execute_uvm_object_method(obj_id, method, args),
@@ -666,12 +671,14 @@ impl SimulationEngine {
             "start" => {
                 // args[0] = sequencer obj_id
                 let seqr_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
-                // Store sequencer obj_id on the sequence object's fields
+                // Store sequencer obj_id on the sequence object's fields.
+                // `m_sequencer` adalah nama standar UVM (dipakai macro
+                // `uvm_create` untuk `set_sequencer(m_sequencer)`) — tanpa ini,
+                // `m_sequencer != null` gagal resolve → warning RT0001.
                 if let Some(obj) = self.state.get_object_mut(obj_id) {
-                    obj.fields.insert(
-                        Symbol::intern("__sequencer"),
-                        LogicVec::from_u64(seqr_id as u64, 64),
-                    );
+                    let v = LogicVec::from_u64(seqr_id as u64, 64);
+                    obj.fields.insert(Symbol::intern("__sequencer"), v.clone());
+                    obj.fields.insert(Symbol::intern("m_sequencer"), v);
                 }
                 // Call body()
                 if self
@@ -709,10 +716,26 @@ impl SimulationEngine {
                         })
                         .item_queue
                         .push(item_id);
+                    // F24: release waiter getter (driver get_next_item yang
+                    // block saat queue kosong) — item baru tersedia.
+                    self.uvm_seq_release_getters(seqr_id)?;
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
             "finish_item" => Ok(LogicVec::from_u64(1, 1)),
+            "set_sequencer" => {
+                // UVM: `set_sequencer(m_sequencer)` dipanggil oleh macro
+                // `uvm_create`. Simpan sequencer pada field sequence agar
+                // `m_sequencer`/`__sequencer` resolve (dan start_item tahu
+                // target queue).
+                let seqr_id = args.first().map(|a| a.to_u64() as ObjId).unwrap_or(0);
+                if let Some(obj) = self.state.get_object_mut(obj_id) {
+                    let v = LogicVec::from_u64(seqr_id as u64, 64);
+                    obj.fields.insert(Symbol::intern("__sequencer"), v.clone());
+                    obj.fields.insert(Symbol::intern("m_sequencer"), v);
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
             "get_sequencer" => {
                 let seqr_id = self
                     .state
@@ -801,11 +824,24 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(item as u64, 64))
             }
             "item_done" => {
-                if let Some(data) = self.uvm_sequencer_data.get_mut(&obj_id) {
-                    if data.current_item.is_some() {
-                        data.item_queue.remove(0);
-                        data.current_item = None;
-                    }
+                // F24: release item current + waiter finish_item:{item}. Jangan
+                // double-pop: block.rs proceed path (get_next_item) sudah
+                // meng-pop item dari queue. Hanya pop bila item MASIH terdepan
+                // di queue (pola lama F17: builtin get_next_item tanpa pop).
+                let done_item = self
+                    .uvm_sequencer_data
+                    .get_mut(&obj_id)
+                    .and_then(|sd| {
+                        let item = sd.current_item.take();
+                        if let Some(it) = item {
+                            if sd.item_queue.first() == Some(&it) {
+                                sd.item_queue.remove(0);
+                            }
+                        }
+                        item
+                    });
+                if let Some(item_id) = done_item {
+                    self.uvm_seq_release_finishers(obj_id, item_id)?;
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
@@ -1019,6 +1055,60 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             _ => self.execute_uvm_object_method(obj_id, method, args),
+        }
+    }
+
+    // ─── uvm_subscriber (F22) ───────────────────────────────────────────
+    // Komponen penerima broadcast analysis port. `new` membangun analysis_imp
+    // child secara otomatis (class `__uvm_analysis_imp`, parent = subscriber)
+    // dan menyimpannya di field `analysis_imp` — pola UVM asli
+    // `uvm_subscriber` punya `uvm_analysis_imp #(T) analysis_imp` internal.
+    // User `class my_sub extends uvm_subscriber` cukup meng-override `write()`;
+    // `aport.connect(my_sub.analysis_imp)` → `aport.write(item)` → imp
+    // (execute_uvm_analysis_imp_method) → parent.write (override user).
+    pub(crate) fn execute_uvm_subscriber_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
+        match method {
+            "new" => {
+                let name = if !args.is_empty() {
+                    logicvec_to_string(&args[0])
+                } else {
+                    String::new()
+                };
+                self.uvm_object_data
+                    .entry(obj_id)
+                    .or_insert_with(|| UvmObjectData { name: name.clone() });
+                // Analysis-imp internal: alokasi objek `__uvm_analysis_imp`
+                // dengan parent = subscriber, simpan id di field analysis_imp.
+                let imp_name = format!("{}_imp", if name.is_empty() { "sub" } else { &name });
+                let imp_id = self.state.alloc_object(Symbol::intern("__uvm_analysis_imp"));
+                self.uvm_analysis_imp_data.insert(
+                    imp_id,
+                    UvmAnalysisImpData {
+                        parent: Some(obj_id),
+                        name: imp_name.clone(),
+                    },
+                );
+                self.uvm_object_data
+                    .entry(imp_id)
+                    .or_insert_with(|| UvmObjectData { name: imp_name });
+                if let Some(obj) = self.state.get_object_mut(obj_id) {
+                    obj.fields.insert(
+                        Symbol::intern("analysis_imp"),
+                        LogicVec::from_u64(imp_id as u64, 64),
+                    );
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            // `write` tanpa override user: no-op (broadcast tetap diterima,
+            // tidak error). Override user dijalankan via jalur normal method.rs
+            // (find_method_in_hierarchy menemukan write di class user).
+            "write" => Ok(LogicVec::from_u64(1, 1)),
+            _ => self.execute_uvm_component_method(obj_id, method, args),
         }
     }
 
@@ -1550,6 +1640,33 @@ impl SimulationEngine {
         }
         if parent == "__uvm_analysis_imp" || self.is_uvm_analysis_imp_hierarchy(parent.as_str()) {
             return self.execute_uvm_analysis_imp_method(obj_id, method, args);
+        }
+        // F21: `super.new(name)` di subclass user (`my_event extends uvm_event`)
+        // — data event/barrier di-insert di sini (tanpa arm ini jatuh ke
+        // execute_uvm_object_method yang hanya set nama, data sync tak dibuat).
+        if self.is_uvm_event_hierarchy(parent.as_str()) {
+            return self.execute_uvm_event_method(obj_id, method, args);
+        }
+        if self.is_uvm_barrier_hierarchy(parent.as_str()) {
+            return self.execute_uvm_barrier_method(obj_id, method, args);
+        }
+        // F22: `super.new(name, parent)` di subclass user (`my_sub extends
+        // uvm_subscriber`) — analysis_imp internal dibuat di sini (harus
+        // SEBELUM component check — subscriber extends component).
+        if self.is_uvm_subscriber_hierarchy(parent.as_str()) {
+            return self.execute_uvm_subscriber_method(obj_id, method, args);
+        }
+        // F23: `super.new` di subclass fifo / export internal.
+        if self.is_uvm_tlm_fifo_hierarchy(parent.as_str()) {
+            return self.execute_uvm_tlm_fifo_method(obj_id, method, args);
+        }
+        if self.is_uvm_fifo_export_hierarchy(parent.as_str()) {
+            return self.execute_uvm_fifo_export_method(obj_id, method, args);
+        }
+        // F24: `super.new` di subclass port (`my_port extends uvm_seq_item_port`)
+        // — data port di-insert di sini (sebelum component check).
+        if self.is_uvm_seq_item_port_hierarchy(parent.as_str()) {
+            return self.execute_uvm_seq_item_port_method(obj_id, method, args);
         }
         // Check if parent is uvm_component hierarchy
         if parent == "__uvm_component" || self.is_uvm_component_hierarchy(parent.as_str()) {

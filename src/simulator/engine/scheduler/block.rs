@@ -12,6 +12,35 @@ use rand::Rng;
 const AST_LOOP_ITER_CAP: u64 = 100_000;
 
 impl SimulationEngine {
+    /// F26: mulai eksekusi branch fork — aktifkan fork id utk task body
+    /// (execute_method_body memakainya supaya continuation resume decrement
+    /// fork yang benar) + reset flag suspend task utk branch ini.
+    pub(crate) fn fork_branch_begin(&mut self, fid: usize) {
+        self.active_fork_id = Some(fid);
+        self.task_suspended = false;
+    }
+
+    /// F26: selesai eksekusi branch fork — decrement HANYA bila branch selesai
+    /// langsung (all_consumed) DAN tidak men-suspend task method. Branch yang
+    /// men-suspend task (task_suspended) di-decrement oleh resume
+    /// (ContinueAstBlock dgn fork_id → event.rs fork_decrement) — tanpa ini,
+    /// `fork drv.run(); ...; join` di module initial selesai premature
+    /// (F24 limitation: HANDSHAKE tercetak sebelum driver selesai).
+    pub(crate) fn fork_branch_end(&mut self, fid: usize, all_consumed: bool) -> Result<(), SimError> {
+        self.active_fork_id = None;
+        if std::env::var("DBG_UVM").is_ok() {
+            eprintln!("[DBG-F26] branch_end fid={} consumed={} suspended={}", fid, all_consumed, self.task_suspended);
+        }
+        if self.task_suspended {
+            self.task_suspended = false;
+            Ok(())
+        } else if all_consumed {
+            self.fork_decrement(fid)
+        } else {
+            Ok(())
+        }
+    }
+
     pub(crate) fn evaluate_block_with_delay(&mut self, stmts: &[IrStmt]) -> Result<bool, SimError> {
         self.evaluate_block_with_delay_fork(stmts, None)
     }
@@ -22,6 +51,11 @@ impl SimulationEngine {
         fork_id: Option<usize>,
     ) -> Result<bool, SimError> {
         for (i, stmt) in stmts.iter().enumerate() {
+            // $fatal menghentikan blok seketika (final block tetap jalan
+            // setelah $finish/$fatal — hanya flag fatal_hit yang abort).
+            if self.fatal_hit {
+                return Ok(true);
+            }
             if self.disable_pending.is_some() {
                 return Ok(true);
             }
@@ -246,12 +280,17 @@ impl SimulationEngine {
                 IrStmt::SysCall {
                     name,
                     args: ir_args,
+                    line,
+                    col,
                 } => {
+                    // F20: catat posisi syscall agar warning runtime punya lokasi.
+                    self.set_cur_src_pos(*line, *col);
                     // Handle wrapped $value$plusargs / $test$plusargs from elaborator
                     if name.is_empty() {
                         if let Some(IrExpr::SysFunc {
                             name: fn_name,
                             args: fn_args,
+                            ..
                         }) = ir_args.first()
                         {
                             if fn_name == "value$plusargs" {
@@ -321,7 +360,11 @@ impl SimulationEngine {
                     clock_event,
                     disable_iff,
                     sequence,
+                    line,
+                    col,
                 } => {
+                    // F20: posisi assertion utk diagnostic file:line:col.
+                    self.set_cur_src_pos(*line, *col);
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => !self.assert_off_all,
@@ -349,7 +392,14 @@ impl SimulationEngine {
                                         self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
                                     }
                                 } else {
-                                    eprintln!("assertion failed");
+                                    // F20: via DiagSink agar punya file:line:col.
+                                    let (a_l, a_c) = self.cur_src_pos();
+                                    let _ = self.diag_error_at(
+                                        crate::diagnostics::DiagCode::AssertionFailed,
+                                        "assertion failed",
+                                        a_l,
+                                        a_c,
+                                    );
                                     if !fail_stmt.is_empty() {
                                         self.evaluate_block_with_delay_fork(fail_stmt, fork_id)?;
                                     }
@@ -365,7 +415,11 @@ impl SimulationEngine {
                     clock_event,
                     disable_iff,
                     sequence: _,
+                    line,
+                    col,
                 } => {
+                    // F20: posisi assumption utk diagnostic file:line:col.
+                    self.set_cur_src_pos(*line, *col);
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => !self.assert_off_all,
@@ -382,7 +436,14 @@ impl SimulationEngine {
                                     self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
                                 }
                             } else {
-                                eprintln!("assumption violated");
+                                // F20: via DiagSink agar punya file:line:col.
+                                let (a_l, a_c) = self.cur_src_pos();
+                                self.diag_warn_at(
+                                    crate::diagnostics::DiagCode::AssertionFailed,
+                                    "assumption violated",
+                                    a_l,
+                                    a_c,
+                                );
                                 if !fail_stmt.is_empty() {
                                     self.evaluate_block_with_delay_fork(fail_stmt, fork_id)?;
                                 }
@@ -548,11 +609,10 @@ impl SimulationEngine {
                                 if p.is_empty() {
                                     self.fork_decrement(fid)?;
                                 } else {
+                                    self.fork_branch_begin(fid);
                                     let all_consumed =
                                         self.evaluate_block_with_delay_fork(p, Some(fid))?;
-                                    if all_consumed {
-                                        self.fork_decrement(fid)?;
-                                    }
+                                    self.fork_branch_end(fid, all_consumed)?;
                                 }
                             }
                             self.fork_finish(fid)?;
@@ -564,11 +624,13 @@ impl SimulationEngine {
                                 if p.is_empty() {
                                     any_immediate = true;
                                 } else {
+                                    self.fork_branch_begin(fid);
                                     let all_consumed =
                                         self.evaluate_block_with_delay_fork(p, Some(fid))?;
-                                    if all_consumed {
+                                    if all_consumed && !self.task_suspended {
                                         any_immediate = true;
                                     }
+                                    self.fork_branch_end(fid, all_consumed)?;
                                 }
                             }
                             if any_immediate {
@@ -581,11 +643,10 @@ impl SimulationEngine {
                                 if p.is_empty() {
                                     self.fork_decrement(fid)?;
                                 } else {
+                                    self.fork_branch_begin(fid);
                                     let all_consumed =
                                         self.evaluate_block_with_delay_fork(p, Some(fid))?;
-                                    if all_consumed {
-                                        self.fork_decrement(fid)?;
-                                    }
+                                    self.fork_branch_end(fid, all_consumed)?;
                                 }
                             }
                             // continuation join_none dieksekusi sekali sekarang
@@ -622,6 +683,11 @@ impl SimulationEngine {
         fork_id: Option<usize>,
     ) -> Result<bool, SimError> {
         for (i, stmt) in stmts.iter().enumerate() {
+            // $fatal menghentikan blok seketika (final block tetap jalan
+            // setelah $finish/$fatal — hanya flag fatal_hit yang abort).
+            if self.fatal_hit {
+                return Ok(true);
+            }
             if self.disable_pending.is_some() {
                 return Ok(true);
             }
@@ -656,11 +722,14 @@ impl SimulationEngine {
                     }
                 }
                 crate::ast::Stmt::BlockingAssign { lhs, rhs, delay: _ } => {
-                    let val = self.evaluate_ast_expr(rhs)?;
+                    // F17: `x = new(...)` — class di-resolve dari tipe LHS
+                    // (helper bersama dgn evaluate_ast_stmt di eval/ast.rs).
+                    let val = self.eval_ast_assign_rhs(rhs, lhs)?;
                     self.write_ast_lvalue(lhs, val)?;
                 }
                 crate::ast::Stmt::NonBlockingAssign { lhs, rhs, delay: _ } => {
-                    let val = self.evaluate_ast_expr(rhs)?;
+                    // F17: `x <= new(...)` — class dari tipe LHS.
+                    let val = self.eval_ast_assign_rhs(rhs, lhs)?;
                     // Convert AST lvalue to IrLValue for nba tracking
                     if let Some(ir_lv) = self.ast_lvalue_to_ir(lhs) {
                         self.nba_pending.push((ir_lv, val));
@@ -804,8 +873,23 @@ impl SimulationEngine {
                         );
                         break;
                     }
-                    if !self.evaluate_ast_block_with_delay_fork(inner, fork_id)? {
-                        break;
+                    // F18: ast_loop_continuation agar blok yang suspend (delay /
+                    // get_next_item blocking) di dalam forever loop tetap
+                    // MENGULANG saat di-resume — sama seperti jalur IR.
+                    let old_loop_cont = self.ast_loop_continuation.take();
+                    self.ast_loop_continuation = Some(vec![crate::ast::Stmt::LoopForever {
+                        stmts: inner.clone(),
+                    }]);
+                    let completed = self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                    self.ast_loop_continuation = old_loop_cont;
+                    if !completed {
+                        // F26: body suspend (delay/block) — beri tahu caller
+                        // (fork arm / method body) bahwa blok BELUM selesai.
+                        // Sebelumnya `break` internal → Ok(true) → fork
+                        // decrement premature (join selesai saat task masih
+                        // menunggu). Resume via ast_loop_continuation mengulang
+                        // loop utuh.
+                        return Ok(false);
                     }
                     let cf = self.control_flow.take();
                     if cf == Some(FlowControl::Break) {
@@ -835,8 +919,20 @@ impl SimulationEngine {
                     if !cond_val.to_bool().unwrap_or(false) {
                         break;
                     }
-                    if !self.evaluate_ast_block_with_delay_fork(inner, fork_id)? {
-                        break;
+                    // F18: ast_loop_continuation agar blok yang suspend (delay /
+                    // get_next_item blocking) di dalam while loop tetap
+                    // MENGULANG saat di-resume — sama seperti jalur IR.
+                    let old_loop_cont = self.ast_loop_continuation.take();
+                    self.ast_loop_continuation = Some(vec![crate::ast::Stmt::LoopWhile {
+                        cond: cond.clone(),
+                        stmts: inner.clone(),
+                    }]);
+                    let completed = self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                    self.ast_loop_continuation = old_loop_cont;
+                    if !completed {
+                        // F26: body suspend — blok BELUM selesai (lihat komentar
+                        // LoopForever). Resume via ast_loop_continuation.
+                        return Ok(false);
                     }
                     let cf = self.control_flow.take();
                     if cf == Some(FlowControl::Break) {
@@ -862,8 +958,20 @@ impl SimulationEngine {
                         );
                         break;
                     }
-                    if !self.evaluate_ast_block_with_delay_fork(inner, fork_id)? {
-                        break;
+                    // F19: do-while dengan delay/block — resume lanjut iterasi
+                    // berikutnya (continuation mengulang do-while, cond dicek
+                    // ulang setelah body — perilaku do-while yang benar).
+                    let old_loop_cont = self.ast_loop_continuation.take();
+                    self.ast_loop_continuation = Some(vec![crate::ast::Stmt::DoWhile {
+                        cond: cond.clone(),
+                        stmts: inner.clone(),
+                    }]);
+                    let completed = self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                    self.ast_loop_continuation = old_loop_cont;
+                    if !completed {
+                        // F26: body suspend — blok BELUM selesai (lihat komentar
+                        // LoopForever). Resume via ast_loop_continuation.
+                        return Ok(false);
                     }
                     let cf = self.control_flow.take();
                     if cf == Some(FlowControl::Continue) {
@@ -885,7 +993,8 @@ impl SimulationEngine {
                 } => {
                     if let Some(init_stmt) = init {
                         if !self.evaluate_ast_block_with_delay_fork(&[*init_stmt.clone()], fork_id)? {
-                            break;
+                            // F26: init suspend — blok BELUM selesai.
+                            return Ok(false);
                         }
                     }
                     loop {
@@ -910,14 +1019,28 @@ impl SimulationEngine {
                                 break;
                             }
                         }
-                        if !self.evaluate_ast_block_with_delay_fork(inner, fork_id)? {
-                            break;
+                        // F19: for loop dengan delay/block — continuation
+                        // mempertahankan cond/step; init di-skip (variabel loop
+                        // sudah di-set) sehingga resume lanjut iterasi berikutnya.
+                        let old_loop_cont = self.ast_loop_continuation.take();
+                        self.ast_loop_continuation = Some(vec![crate::ast::Stmt::LoopFor {
+                            init: None,
+                            cond: cond.clone(),
+                            step: step.clone(),
+                            stmts: inner.clone(),
+                        }]);
+                        let completed = self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                        self.ast_loop_continuation = old_loop_cont;
+                        if !completed {
+                            // F26: body suspend — blok BELUM selesai (lihat
+                            // komentar LoopForever).
+                            return Ok(false);
                         }
                         let cf = self.control_flow.take();
                         if cf == Some(FlowControl::Continue) {
                             if let Some(s) = step {
                                 if !self.evaluate_ast_block_with_delay_fork(&[*s.clone()], fork_id)? {
-                                    break;
+                                    return Ok(false);
                                 }
                             }
                             continue;
@@ -941,7 +1064,15 @@ impl SimulationEngine {
                 } => {
                     let count_val = self.evaluate_ast_expr(count)?;
                     let n = count_val.to_u64() as usize;
-                    for _ in 0..n {
+                    // F19: repeat dengan delay/block di dalam body — suspensi
+                    // harus MELANJUTKAN iterasi berikutnya (bukan mengulang
+                    // dari awal). Continuation menyimpan sisa iterasi sebagai
+                    // count literal (`repeat (sisa) begin ... end`).
+                    let mut remaining_iters = n;
+                    loop {
+                        if remaining_iters == 0 {
+                            break;
+                        }
                         if self.disable_pending.is_some() {
                             break;
                         }
@@ -949,8 +1080,29 @@ impl SimulationEngine {
                             self.control_flow = None;
                             break;
                         }
-                        if !self.evaluate_ast_block_with_delay_fork(inner, fork_id)? {
+                        self.ast_loop_iters += 1;
+                        if self.ast_loop_iters > AST_LOOP_ITER_CAP {
+                            self.emit_warning(
+                                crate::diagnostics::diagnostic::DiagCode::NotImplemented,
+                                "AST repeat loop exceeded iteration cap (blocking event in loop without time advance); breaking out to avoid hang",
+                            );
                             break;
+                        }
+                        remaining_iters -= 1;
+                        let old_loop_cont = self.ast_loop_continuation.take();
+                        self.ast_loop_continuation = Some(vec![crate::ast::Stmt::Repeat {
+                            count: crate::ast::Expr::Value(crate::ast::Value::Decimal(
+                                remaining_iters as i64,
+                            )),
+                            stmts: inner.clone(),
+                        }]);
+                        let completed =
+                            self.evaluate_ast_block_with_delay_fork(inner, fork_id)?;
+                        self.ast_loop_continuation = old_loop_cont;
+                        if !completed {
+                            // F26: body suspend — blok BELUM selesai (lihat
+                            // komentar LoopForever).
+                            return Ok(false);
                         }
                         let cf = self.control_flow.take();
                         if cf == Some(FlowControl::Continue) {
@@ -972,6 +1124,13 @@ impl SimulationEngine {
                             if i + 1 < stmts.len() {
                                 v.extend(stmts[i + 1..].iter().cloned());
                             }
+                            // F18: delay di dalam loop AST (forever/while) harus
+                            // mengulang saat resume — sama seperti jalur IR
+                            // (IrStmt::Delay append loop_continuation) dan
+                            // get_next_item blocking.
+                            if let Some(lc) = &self.ast_loop_continuation {
+                                v.extend(lc.clone());
+                            }
                             v
                         };
                         let region = if d == 0 {
@@ -981,7 +1140,12 @@ impl SimulationEngine {
                         };
                         self.push_event(delay_t, RegionEvent {
                             region,
-                            event: EventKind::ContinueAstBlock(remaining, fork_id),
+                            event: EventKind::ContinueAstBlock(
+                                remaining,
+                                fork_id,
+                                self.current_this,
+                                self.current_method,
+                            ),
                         });
                     return Ok(false);
                 }
@@ -1056,7 +1220,14 @@ impl SimulationEngine {
                         return Ok(true);
                     }
                 }
-                crate::ast::Stmt::SysCall { name, args } => {
+                crate::ast::Stmt::SysCall {
+                    name,
+                    args,
+                    line,
+                    col,
+                } => {
+                    // F20: catat posisi syscall agar warning runtime punya lokasi.
+                    self.set_cur_src_pos(*line, *col);
                     // For task context, delegate to SysCall handler
                     self.handle_ast_syscall(name.as_str(), args)?;
                 }
@@ -1065,6 +1236,352 @@ impl SimulationEngine {
                     return Ok(true);
                 }
                 crate::ast::Stmt::Expr { expr } => {
+                    // F18/F24: `get_next_item` blocking — driver UVM memakai pola
+                    // `forever begin get_next_item(it); ...; item_done(); end`.
+                    // Semantics UVM: blokir sampai item tersedia (grant).
+                    // F24 upgrade: waiter-based (bukan polling 1ns) keyed by
+                    // sequencer (label "get_next_item"), release oleh start_item.
+                    // Saat resume, statement get_next_item dieksekusi ULANG →
+                    // proceed path: pop + grant + tulis lvalue (sebelumnya
+                    // lvalue `it` TIDAK pernah ditulis — item tak sampai driver).
+                    if let crate::ast::Expr::FuncCall {
+                        name,
+                        args,
+                        line: _,
+                        col: _,
+                    } = expr
+                    {
+                        let nm = name.as_str();
+                        if nm == "get_next_item" || nm == "try_next_item" {
+                            if let Some(obj_id) = self.current_this {
+                                let seqr = self.uvm_seqr_for(obj_id);
+                                if seqr != 0 {
+                                    if self.uvm_queue_empty(obj_id) {
+                                        // F24 review: `try_next_item` NON-blocking
+                                        // (semantik UVM) — kosong → tulis null (0),
+                                        // tanpa suspend. Hanya get_next_item yang block.
+                                        if nm == "try_next_item" {
+                                            if let Some(lhs) = args.first() {
+                                                self.write_ast_lvalue(
+                                                    lhs,
+                                                    LogicVec::from_u64(0, 64),
+                                                )?;
+                                            }
+                                            continue;
+                                        }
+                                        let mut wait_stmts: Vec<crate::ast::Stmt> = vec![
+                                            crate::ast::Stmt::Expr { expr: expr.clone() },
+                                        ];
+                                        wait_stmts.extend(stmts[i + 1..].to_vec());
+                                        if let Some(lc) = &self.ast_loop_continuation {
+                                            wait_stmts.extend(lc.clone());
+                                        }
+                                        self.uvm_seq_try_wait(
+                                            seqr,
+                                            "get_next_item".to_string(),
+                                            wait_stmts,
+                                            fork_id,
+                                            self.current_this,
+                                            self.current_method,
+                                        )?;
+                                        return Ok(false);
+                                    }
+                                    // Proceed: pop item + grant + tulis lvalue.
+                                    if let Some(item) = self.uvm_seq_pop(seqr) {
+                                        if let Some(lhs) = args.first() {
+                                            self.write_ast_lvalue(
+                                                lhs,
+                                                LogicVec::from_u64(item as u64, 64),
+                                            )?;
+                                        }
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                        // F24: `finish_item(it)` FuncCall di body sequence
+                        // (pola `start_item(it); finish_item(it);` — tanpa obj).
+                        // Block sampai driver item_done utk item tsb (waiter
+                        // label "finish_item:{item}"). Saat resume, statement
+                        // dieksekusi ulang → done → dikonsumsi.
+                        if nm == "finish_item" {
+                            if let Some(obj_id) = self.current_this {
+                                let cls = self
+                                    .state
+                                    .get_object(obj_id)
+                                    .map(|o| o.class_name)
+                                    .unwrap_or_default();
+                                if self.is_uvm_sequence_hierarchy(cls.as_str()) {
+                                    let seqr = self
+                                        .state
+                                        .get_object(obj_id)
+                                        .and_then(|o| o.fields.get("__sequencer"))
+                                        .map(|v| v.to_u64() as ObjId)
+                                        .unwrap_or(0);
+                                    let item_id = args
+                                        .first()
+                                        .map(|a| self.evaluate_ast_expr(a))
+                                        .transpose()?
+                                        .map(|v| v.to_u64() as ObjId)
+                                        .unwrap_or(0);
+                                    if seqr != 0 && self.uvm_seq_finish_blocks(seqr, item_id) {
+                                        let mut wait_stmts: Vec<crate::ast::Stmt> = vec![
+                                            crate::ast::Stmt::Expr { expr: expr.clone() },
+                                        ];
+                                        wait_stmts.extend(stmts[i + 1..].to_vec());
+                                        if let Some(lc) = &self.ast_loop_continuation {
+                                            wait_stmts.extend(lc.clone());
+                                        }
+                                        let label = format!("finish_item:{}", item_id);
+                                        self.uvm_seq_try_wait(
+                                            seqr,
+                                            label,
+                                            wait_stmts,
+                                            fork_id,
+                                            self.current_this,
+                                            self.current_method,
+                                        )?;
+                                        return Ok(false);
+                                    }
+                                    // Item selesai → statement dikonsumsi.
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    // F21/F23: blocking wait uvm_event/uvm_barrier (`wait_*`)
+                    // + blocking put/get/peek uvm_tlm_fifo. Eval obj SEKALI
+                    // (sebelumnya arm fifo dan arm wait_* mengevaluasi obj
+                    // dua kali utk MethodCall yang cocok). MethodCall lain
+                    // (write, start, dll) tidak tersentuh — jalur normal.
+                    if let crate::ast::Expr::MethodCall {
+                        obj,
+                        method,
+                        args,
+                        with_clause: _,
+                    } = expr
+                    {
+                        let m = method.as_str();
+                        let is_wait = m == "wait_trigger"
+                            || m == "wait_on"
+                            || m == "wait_for"
+                            || m == "wait_for_count";
+                        let is_fifo_op = m == "put" || m == "get" || m == "peek";
+                        let is_seq_get = m == "get_next_item" || m == "try_next_item";
+                        let is_finish = m == "finish_item";
+                        if is_wait || is_fifo_op || is_seq_get || is_finish {
+                            let obj_val = self.evaluate_ast_expr(obj)?;
+                            let eid = obj_val.to_u64() as ObjId;
+                            let is_fifo = self
+                                .state
+                                .get_object(eid)
+                                .map(|o| {
+                                    self.is_uvm_tlm_fifo_hierarchy(o.class_name.as_str())
+                                })
+                                .unwrap_or(false);
+                            // ── F23: uvm_tlm_fifo ──
+                            // `fifo.get(item);` / `fifo.put(item);` — hanya utk
+                            // objek hierarchy fifo (class biasa dgn method
+                            // get/put tetap via execute_method). `get`/`peek`
+                            // menulis item ke lvalue arg setelah pop.
+                            if is_fifo && is_fifo_op {
+                                let mut remaining: Vec<crate::ast::Stmt> =
+                                    stmts[i + 1..].to_vec();
+                                if let Some(lc) = &self.ast_loop_continuation {
+                                    remaining.extend(lc.clone());
+                                }
+                                // Statement get/put ini PREPEND ke continuation
+                                // — saat resume dieksekusi ULANG (proceed path:
+                                // pop + tulis lvalue utk get; push utk put).
+                                // Tanpa ini get yang suspend tak pernah
+                                // pop/tulis lvalue (item diambil get berikutnya).
+                                let mut wait_stmts: Vec<crate::ast::Stmt> =
+                                    vec![crate::ast::Stmt::Expr { expr: expr.clone() }];
+                                wait_stmts.extend(remaining);
+                                let blocked = self.uvm_try_fifo_wait(
+                                    eid,
+                                    m,
+                                    wait_stmts,
+                                    fork_id,
+                                    self.current_this,
+                                    self.current_method,
+                                )?;
+                                if blocked {
+                                    return Ok(false);
+                                }
+                                match m {
+                                    "get" | "peek" => {
+                                        let item_id = if m == "get" {
+                                            let got = self
+                                                .uvm_tlm_fifo_data
+                                                .get_mut(&eid)
+                                                .and_then(|fd| fd.queue.pop_front());
+                                            self.uvm_fifo_release_waiters(eid, false)?;
+                                            got
+                                        } else {
+                                            self.uvm_tlm_fifo_data
+                                                .get(&eid)
+                                                .and_then(|fd| fd.queue.front().copied())
+                                        };
+                                        if let Some(it) = item_id {
+                                            if let Some(lhs) = args.first() {
+                                                self.write_ast_lvalue(
+                                                    lhs,
+                                                    LogicVec::from_u64(it as u64, 64),
+                                                )?;
+                                            }
+                                        }
+                                    }
+                                    "put" => {
+                                        if let Some(item_arg) = args.first() {
+                                            let item = self.evaluate_ast_expr(item_arg)?;
+                                            let item_id = item.to_u64() as ObjId;
+                                            if let Some(fd) =
+                                                self.uvm_tlm_fifo_data.get_mut(&eid)
+                                            {
+                                                if fd.queue.len() < fd.capacity {
+                                                    fd.queue.push_back(item_id);
+                                                }
+                                            }
+                                            self.uvm_fifo_release_waiters(eid, true)?;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                // Statement wait dikonsumsi (tidak diulang).
+                                continue;
+                            }
+                            // ── F24: sequence/sequencer/driver handshake ──
+                            // `drv.get_next_item(req)` / `port.get_next_item(req)`
+                            // pada obj driver/sequencer/seq_item_port — block
+                            // bila queue sequencer kosong (waiter label
+                            // "get_next_item", release oleh start_item); proceed:
+                            // pop + grant + tulis item ke lvalue arg. Dan
+                            // `seq.finish_item(it)` pada obj sequence — block
+                            // sampai driver item_done (waiter label
+                            // "finish_item:{item}", release oleh item_done).
+                            let eid_class = self
+                                .state
+                                .get_object(eid)
+                                .map(|o| o.class_name)
+                                .unwrap_or_default();
+                            if is_seq_get && self.uvm_seqr_for(eid) != 0 {
+                                let seqr = self.uvm_seqr_for(eid);
+                                let queue_empty = self
+                                    .uvm_sequencer_data
+                                    .get(&seqr)
+                                    .map(|sd| sd.item_queue.is_empty())
+                                    .unwrap_or(true);
+                                if queue_empty {
+                                    // F24 review: `try_next_item` NON-blocking
+                                    // (semantik UVM) — kosong → tulis null (0),
+                                    // tanpa suspend. Hanya get_next_item yang block.
+                                    if m == "try_next_item" {
+                                        if let Some(lhs) = args.first() {
+                                            self.write_ast_lvalue(
+                                                lhs,
+                                                LogicVec::from_u64(0, 64),
+                                            )?;
+                                        }
+                                        continue;
+                                    }
+                                    let mut wait_stmts: Vec<crate::ast::Stmt> = vec![
+                                        crate::ast::Stmt::Expr { expr: expr.clone() },
+                                    ];
+                                    wait_stmts.extend(stmts[i + 1..].to_vec());
+                                    if let Some(lc) = &self.ast_loop_continuation {
+                                        wait_stmts.extend(lc.clone());
+                                    }
+                                    self.uvm_seq_try_wait(
+                                        seqr,
+                                        "get_next_item".to_string(),
+                                        wait_stmts,
+                                        fork_id,
+                                        self.current_this,
+                                        self.current_method,
+                                    )?;
+                                    return Ok(false);
+                                }
+                                if let Some(item) = self.uvm_seq_pop(seqr) {
+                                    if let Some(lhs) = args.first() {
+                                        self.write_ast_lvalue(
+                                            lhs,
+                                            LogicVec::from_u64(item as u64, 64),
+                                        )?;
+                                    }
+                                }
+                                continue;
+                            }
+                            if is_finish && self.is_uvm_sequence_hierarchy(eid_class.as_str())
+                            {
+                                let seqr = self
+                                    .state
+                                    .get_object(eid)
+                                    .and_then(|o| o.fields.get("__sequencer"))
+                                    .map(|v| v.to_u64() as ObjId)
+                                    .unwrap_or(0);
+                                let item_id = args
+                                    .first()
+                                    .map(|a| self.evaluate_ast_expr(a))
+                                    .transpose()?
+                                    .map(|v| v.to_u64() as ObjId)
+                                    .unwrap_or(0);
+                                if seqr != 0 && self.uvm_seq_finish_blocks(seqr, item_id) {
+                                    let mut wait_stmts: Vec<crate::ast::Stmt> = vec![
+                                        crate::ast::Stmt::Expr { expr: expr.clone() },
+                                    ];
+                                    wait_stmts.extend(stmts[i + 1..].to_vec());
+                                    if let Some(lc) = &self.ast_loop_continuation {
+                                        wait_stmts.extend(lc.clone());
+                                    }
+                                    let label = format!("finish_item:{}", item_id);
+                                    self.uvm_seq_try_wait(
+                                        seqr,
+                                        label,
+                                        wait_stmts,
+                                        fork_id,
+                                        self.current_this,
+                                        self.current_method,
+                                    )?;
+                                    return Ok(false);
+                                }
+                                // Item sudah done → statement dikonsumsi.
+                                continue;
+                            }
+                            // ── F21: uvm_event/uvm_barrier ──
+                            // Semantics UVM: blokir sampai event di-trigger /
+                            // barrier penuh. uvm_try_wait register waiter +
+                            // suspend (side effect count wait_for SEKALI —
+                            // statement wait TIDAK diulang). Resume via
+                            // uvm_release_waiters → ContinueAstBlock.
+                            if is_wait {
+                                let arg_vals: Vec<LogicVec> = args
+                                    .iter()
+                                    .map(|a| self.evaluate_ast_expr(a))
+                                    .collect::<Result<_, _>>()?;
+                                let mut remaining: Vec<crate::ast::Stmt> =
+                                    stmts[i + 1..].to_vec();
+                                if let Some(lc) = &self.ast_loop_continuation {
+                                    remaining.extend(lc.clone());
+                                }
+                                let blocked = self.uvm_try_wait(
+                                    eid,
+                                    m,
+                                    &arg_vals,
+                                    remaining,
+                                    fork_id,
+                                    self.current_this,
+                                    self.current_method,
+                                )?;
+                                if blocked {
+                                    return Ok(false);
+                                }
+                                // Kondisi sudah terpenuhi — statement wait
+                                // dikonsumsi, lanjut statement berikut.
+                                continue;
+                            }
+                        }
+                    }
                     self.evaluate_ast_expr(expr)?;
                 }
                 crate::ast::Stmt::Break => {
@@ -1106,26 +1623,77 @@ impl SimulationEngine {
                     processes,
                     join_type,
                 } => {
-                    let fid = self.fork_groups.len();
-                    let remaining: Vec<crate::ast::Stmt> = if i + 1 < stmts.len() {
+                    let mut remaining: Vec<crate::ast::Stmt> = if i + 1 < stmts.len() {
                         stmts[i + 1..].to_vec()
                     } else {
                         Vec::new()
                     };
-                    // Convert join type
-                    let _ir_join = match join_type {
-                        crate::ast::JoinType::Join => IrJoinType::Join,
-                        crate::ast::JoinType::JoinAny => IrJoinType::JoinAny,
-                        crate::ast::JoinType::JoinNone => IrJoinType::JoinNone,
-                    };
-                    // We need to work with IR Fork here — for AST fork inside a task, we execute immediately
-                    // This is a simplification — full fork support in AST tasks would need more work
-                    // processes is Vec<Stmt> (each branch is a Stmt::Block or single stmt)
-                    for p in processes {
-                        self.evaluate_ast_block_with_delay_fork(std::slice::from_ref(p), Some(fid))?;
+                    // F21 review: fork di dalam loop AST (forever/while) harus
+                    // mengulang saat join selesai — pola sama dengan Delay dan
+                    // wait_* blocking (append ast_loop_continuation).
+                    if let Some(lc) = &self.ast_loop_continuation {
+                        remaining.extend(lc.clone());
                     }
-                    if !remaining.is_empty() {
-                        self.evaluate_ast_block_with_delay_fork(&remaining, None)?;
+                    let count = processes.len();
+                    // F21: fork AST (task/method UVM) kini memakai ForkGroup yang
+                    // benar — continuation AST disimpan di `ast_fork_cont`
+                    // (ForkGroup.continuation hanya Vec<IrStmt>) dan dieksekusi
+                    // di fork_finish saat SEMUA branch selesai. Branch yang
+                    // suspend (delay/wait_*) di-resume via
+                    // ContinueAstBlock(fork_id) → event.rs fork_decrement.
+                    // Sebelumnya remaining dieksekusi LANGSUNG (join selalu
+                    // dilewati — salah bila branch menunggu trigger/barrier).
+                    let reclaimable = !matches!(join_type, crate::ast::JoinType::JoinAny);
+                    let fid = self.alloc_fork_group(count, Vec::new(), reclaimable);
+                    match join_type {
+                        crate::ast::JoinType::Join => {
+                            self.ast_fork_cont.insert(fid, remaining);
+                            for p in processes {
+                                self.fork_branch_begin(fid);
+                                let all_consumed = self
+                                    .evaluate_ast_block_with_delay_fork(
+                                        std::slice::from_ref(p),
+                                        Some(fid),
+                                    )?;
+                                self.fork_branch_end(fid, all_consumed)?;
+                            }
+                        }
+                        crate::ast::JoinType::JoinAny => {
+                            self.fork_groups[fid].remaining = 1;
+                            self.ast_fork_cont.insert(fid, remaining);
+                            let mut any_immediate = false;
+                            for p in processes {
+                                self.fork_branch_begin(fid);
+                                let all_consumed = self
+                                    .evaluate_ast_block_with_delay_fork(
+                                        std::slice::from_ref(p),
+                                        Some(fid),
+                                    )?;
+                                if all_consumed && !self.task_suspended {
+                                    any_immediate = true;
+                                }
+                                self.fork_branch_end(fid, all_consumed)?;
+                            }
+                            if any_immediate {
+                                self.fork_decrement(fid)?;
+                            }
+                        }
+                        crate::ast::JoinType::JoinNone => {
+                            for p in processes {
+                                self.fork_branch_begin(fid);
+                                let all_consumed = self
+                                    .evaluate_ast_block_with_delay_fork(
+                                        std::slice::from_ref(p),
+                                        Some(fid),
+                                    )?;
+                                self.fork_branch_end(fid, all_consumed)?;
+                            }
+                            self.fork_groups[fid].fired = true;
+                            if !remaining.is_empty() {
+                                self.evaluate_ast_block_with_delay_fork(&remaining, None)?;
+                            }
+                            self.fork_finish(fid)?;
+                        }
                     }
                     return Ok(true);
                 }
@@ -1141,7 +1709,14 @@ impl SimulationEngine {
                             self.evaluate_ast_block_with_delay_fork(&[*ps.clone()], fork_id)?;
                         }
                     } else {
-                        eprintln!("assertion failed");
+                        // F20: via DiagSink agar punya file:line:col.
+                        let (a_l, a_c) = self.cur_src_pos();
+                        let _ = self.diag_error_at(
+                            crate::diagnostics::DiagCode::AssertionFailed,
+                            "assertion failed",
+                            a_l,
+                            a_c,
+                        );
                         if let Some(fs) = fail_stmt {
                             self.evaluate_ast_block_with_delay_fork(&[*fs.clone()], fork_id)?;
                         }
@@ -1159,7 +1734,14 @@ impl SimulationEngine {
                             self.evaluate_ast_block_with_delay_fork(&[*ps.clone()], fork_id)?;
                         }
                     } else {
-                        eprintln!("assumption violated");
+                        // F20: via DiagSink agar punya file:line:col.
+                        let (a_l, a_c) = self.cur_src_pos();
+                        self.diag_warn_at(
+                            crate::diagnostics::DiagCode::AssertionFailed,
+                            "assumption violated",
+                            a_l,
+                            a_c,
+                        );
                         if let Some(fs) = fail_stmt {
                             self.evaluate_ast_block_with_delay_fork(&[*fs.clone()], fork_id)?;
                         }
@@ -1185,6 +1767,9 @@ impl SimulationEngine {
 
     pub(crate) fn evaluate_stmt_block(&mut self, stmts: &[IrStmt]) -> Result<(), SimError> {
         for (i, stmt) in stmts.iter().enumerate() {
+            if self.fatal_hit {
+                return Ok(());
+            }
             if self.disable_pending.is_some() {
                 return Ok(());
             }
@@ -1236,11 +1821,16 @@ impl SimulationEngine {
                 IrStmt::SysCall {
                     name,
                     args: ir_args,
+                    line,
+                    col,
                 } => {
+                    // F20: catat posisi syscall agar warning runtime punya lokasi.
+                    self.set_cur_src_pos(*line, *col);
                     if name.is_empty() {
                         if let Some(IrExpr::SysFunc {
                             name: fn_name,
                             args: fn_args,
+                            ..
                         }) = ir_args.first()
                         {
                             self.evaluate_syscall_stmt(
@@ -1272,7 +1862,11 @@ impl SimulationEngine {
                     clock_event,
                     disable_iff,
                     sequence: _,
+                    line,
+                    col,
                 } => {
+                    // F20: posisi assertion utk diagnostic file:line:col.
+                    self.set_cur_src_pos(*line, *col);
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => true,
@@ -1289,7 +1883,14 @@ impl SimulationEngine {
                                     self.evaluate_stmt_block(pass_stmt)?;
                                 }
                             } else {
-                                eprintln!("assertion failed");
+                                // F20: via DiagSink agar punya file:line:col.
+                                let (a_l, a_c) = self.cur_src_pos();
+                                let _ = self.diag_error_at(
+                                    crate::diagnostics::DiagCode::AssertionFailed,
+                                    "assertion failed",
+                                    a_l,
+                                    a_c,
+                                );
                                 if !fail_stmt.is_empty() {
                                     self.evaluate_stmt_block(fail_stmt)?;
                                 }
@@ -1304,7 +1905,11 @@ impl SimulationEngine {
                     clock_event,
                     disable_iff,
                     sequence: _,
+                    line,
+                    col,
                 } => {
+                    // F20: posisi assumption utk diagnostic file:line:col.
+                    self.set_cur_src_pos(*line, *col);
                     let should_check = match clock_event {
                         Some(ref ce) => self.check_concurrent_clock_event(ce),
                         None => true,
@@ -1321,7 +1926,14 @@ impl SimulationEngine {
                                     self.evaluate_stmt_block(pass_stmt)?;
                                 }
                             } else {
-                                eprintln!("assumption violated");
+                                // F20: via DiagSink agar punya file:line:col.
+                                let (a_l, a_c) = self.cur_src_pos();
+                                self.diag_warn_at(
+                                    crate::diagnostics::DiagCode::AssertionFailed,
+                                    "assumption violated",
+                                    a_l,
+                                    a_c,
+                                );
                                 if !fail_stmt.is_empty() {
                                     self.evaluate_stmt_block(fail_stmt)?;
                                 }
@@ -1598,11 +2210,10 @@ impl SimulationEngine {
                                 if p.is_empty() {
                                     self.fork_decrement(fid)?;
                                 } else {
+                                    self.fork_branch_begin(fid);
                                     let all_consumed =
                                         self.evaluate_block_with_delay_fork(p, Some(fid))?;
-                                    if all_consumed {
-                                        self.fork_decrement(fid)?;
-                                    }
+                                    self.fork_branch_end(fid, all_consumed)?;
                                 }
                             }
                             if self.fork_groups[fid].active
@@ -1622,11 +2233,13 @@ impl SimulationEngine {
                                 if p.is_empty() {
                                     any_immediate = true;
                                 } else {
+                                    self.fork_branch_begin(fid);
                                     let all_consumed =
                                         self.evaluate_block_with_delay_fork(p, Some(fid))?;
-                                    if all_consumed {
+                                    if all_consumed && !self.task_suspended {
                                         any_immediate = true;
                                     }
+                                    self.fork_branch_end(fid, all_consumed)?;
                                 }
                             }
                             if any_immediate {
@@ -1647,11 +2260,10 @@ impl SimulationEngine {
                                 if p.is_empty() {
                                     self.fork_decrement(fid)?;
                                 } else {
+                                    self.fork_branch_begin(fid);
                                     let all_consumed =
                                         self.evaluate_block_with_delay_fork(p, Some(fid))?;
-                                    if all_consumed {
-                                        self.fork_decrement(fid)?;
-                                    }
+                                    self.fork_branch_end(fid, all_consumed)?;
                                 }
                             }
                             self.fork_groups[fid].fired = true;
@@ -1666,6 +2278,28 @@ impl SimulationEngine {
             }
         }
         Ok(())
+    }
+
+    /// F18: apakah queue item sequencer (untuk objek `this` saat ini) kosong?
+    /// Dipakai `get_next_item` blocking: driver → sequencer (via sequencer_id),
+    /// atau sequencer langsung. Selain itu dianggap tidak kosong (bukan UVM
+    /// sequencer — biarkan dispatch normal yang menangani).
+    fn uvm_queue_empty(&self, obj_id: ObjId) -> bool {
+        // Driver: cari sequencer yang terhubung.
+        if let Some(dd) = self.uvm_driver_data.get(&obj_id) {
+            if let Some(seqr_id) = dd.sequencer_id {
+                if let Some(sd) = self.uvm_sequencer_data.get(&seqr_id) {
+                    return sd.item_queue.is_empty();
+                }
+            }
+            // Driver tanpa sequencer terhubung → belum ada item → block.
+            return true;
+        }
+        // Sequencer langsung (`seqr.get_next_item(...)`).
+        if let Some(sd) = self.uvm_sequencer_data.get(&obj_id) {
+            return sd.item_queue.is_empty();
+        }
+        false
     }
 
 }

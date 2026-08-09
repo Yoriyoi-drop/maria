@@ -4,16 +4,16 @@
 // Unknown directives (`uvm_*) prefixed with backtick are skipped by preprocessor.
 
 `define uvm_info(ID, MSG, VERBOSITY) \
-  $display("UVM_INFO %s: %s", ID, MSG)
+  $info("UVM_INFO %s: %s", ID, MSG)
 
 `define uvm_warning(ID, MSG) \
-  $display("UVM_WARNING %s: %s", ID, MSG)
+  $warning("UVM_WARNING %s: %s", ID, MSG)
 
 `define uvm_error(ID, MSG) \
-  $display("UVM_ERROR %s: %s", ID, MSG)
+  $error("UVM_ERROR %s: %s", ID, MSG)
 
 `define uvm_fatal(ID, MSG) \
-  begin $display("UVM_FATAL %s: %s", ID, MSG); $finish; end
+  $fatal("UVM_FATAL %s: %s", ID, MSG)
 
 `define uvm_component_utils(TYPE)
 

@@ -30,6 +30,11 @@ impl SimulationEngine {
             sim_limit,
             report_progress: false,
             running: true,
+            fatal_hit: false,
+            sev_info_count: 0,
+            sev_warning_count: 0,
+            sev_error_count: 0,
+            sev_fatal_count: 0,
             cancel_flag: None,
             events: Vec::new(),
             events_base: 0,
@@ -63,6 +68,9 @@ impl SimulationEngine {
             pending_await_target: None,
             pending_wait_orders: Vec::new(),
             loop_continuation: None,
+            ast_loop_continuation: None,
+            active_fork_id: None,
+            task_suspended: false,
             post_loop_tail: Vec::new(),
             current_time: 0,
             fork_groups: Vec::new(),
@@ -81,6 +89,13 @@ impl SimulationEngine {
             uvm_analysis_port_data: HashMap::new(),
             uvm_analysis_imp_data: HashMap::new(),
             uvm_config_db_data: HashMap::new(),
+            uvm_event_data: HashMap::new(),
+            uvm_barrier_data: HashMap::new(),
+            uvm_sync_waiters: HashMap::new(),
+            uvm_tlm_fifo_data: HashMap::new(),
+            uvm_fifo_export_data: HashMap::new(),
+            uvm_seq_item_port_data: HashMap::new(),
+            ast_fork_cont: HashMap::new(),
             sdf_timing_checks: Vec::new(),
             uvm_resource_db_data: HashMap::new(),
             uvm_reg_data: std::collections::HashMap::new(),
@@ -90,6 +105,7 @@ impl SimulationEngine {
             callback_queues: HashMap::new(),
             factory_type_overrides: HashMap::new(),
             root_test_obj_id: None,
+            uvm_phases_started: false,
             process_map: HashMap::new(),
             _next_process_id: 1,
             current_process_id: None,
@@ -149,6 +165,8 @@ impl SimulationEngine {
             current_delta: 0,
             current_process_name: None,
             current_instance_path: None,
+            cur_src_line: std::cell::Cell::new(0),
+            cur_src_col: std::cell::Cell::new(0),
             signal_writers: std::collections::HashMap::new(),
             signal_write_count: std::collections::HashMap::new(),            delta_limit: 20_000_000,
 
@@ -186,17 +204,77 @@ impl SimulationEngine {
         ctx
     }
 
-    /// Emit diagnostic runtime ke DiagSink.
-    pub fn emit_diag(&self, level: DiagLevel, code: DiagCode, message: impl Into<String>) {
-        let msg: String = message.into();
-        let diag = Diagnostic::new(level, code, msg)
-            .with_runtime_context(self.runtime_context());
-        self.diag_sink.push(diag);
+    /// Catat posisi source terakhir yang diketahui (dari evaluasi ekspresi
+    /// berposisi). Diabaikan bila line==0 (posisi tidak tersedia).
+    pub fn set_cur_src_pos(&self, line: usize, col: usize) {
+        if line > 0 {
+            self.cur_src_line.set(line);
+            self.cur_src_col.set(col);
+        }
     }
 
-    /// Emit warning diagnostic ke DiagSink.
+    /// Posisi source terakhir yang diketahui — (0,0) bila belum ada.
+    pub fn cur_src_pos(&self) -> (usize, usize) {
+        (self.cur_src_line.get(), self.cur_src_col.get())
+    }
+
+    /// Lokasi source saat ini sebagai string "file:line:col" — None bila
+    /// posisi belum diketahui (line==0). Dipakai emit_severity & pesan runtime
+    /// lain yang tidak lewat DiagSink agar tetap menunjuk ke baris source.
+    pub fn cur_src_loc_str(&self) -> Option<String> {
+        let (line, col) = self.cur_src_pos();
+        if line == 0 {
+            return None;
+        }
+        let (file, display_line) = self.resolve_source_location(line);
+        Some(format!("{}:{}:{}", file, display_line, col))
+    }
+
+    /// Emit diagnostic runtime ke DiagSink dengan lokasi source saat ini
+    /// (file:line:col via resolve_source_location bila line>0). Level
+    /// non-error/warning (Info/Note/Help/dll.) tetap dipertahankan — hanya
+    /// Warning yang dipetakan ke diag_warn_at (F20).
+    pub fn emit_diag(&self, level: DiagLevel, code: DiagCode, message: impl Into<String>) {
+        let msg: String = message.into();
+        let (line, col) = self.cur_src_pos();
+        match level {
+            DiagLevel::Error => {
+                let _ = self.diag_error_at(code, msg, line, col);
+            }
+            DiagLevel::Fatal => {
+                let _ = self.diag_fatal_at(code, msg, line, col);
+            }
+            DiagLevel::Warning => self.diag_warn_at(code, msg, line, col),
+            _ => {
+                // Level lain (Info/Note/Help/Bug/Debug/dll.): push dengan level
+                // aslinya + snippet bila posisi tersedia (jangan coerce ke Warning).
+                let mut diag = Diagnostic::new(level, code, msg)
+                    .with_runtime_context(self.runtime_context())
+                    .with_code_context();
+                if line > 0 {
+                    if let Some(ref source_lines) = self.design.source_lines {
+                        if line <= source_lines.len() {
+                            let source_line = &source_lines[line - 1];
+                            let (file, display_line) = self.resolve_source_location(line);
+                            diag = diag.with_source_snippet(SourceSnippet::new(
+                                file,
+                                display_line,
+                                col,
+                                source_line,
+                            ));
+                        }
+                    }
+                }
+                self.diag_sink.push(diag);
+            }
+        }
+    }
+
+    /// Emit warning diagnostic ke DiagSink dengan lokasi source saat ini.
     pub fn emit_warning(&self, code: DiagCode, message: impl Into<String>) {
-        self.emit_diag(DiagLevel::Warning, code, message);
+        let msg: String = message.into();
+        let (line, col) = self.cur_src_pos();
+        self.diag_warn_at(code, msg, line, col);
     }
 
     /// Resolve nama file sumber dari directive `` `line `` di merged source,
@@ -210,7 +288,8 @@ impl SimulationEngine {
 
     /// Emit error diagnostic ke DiagSink dan return SimError dengan full context.
     pub fn diag_error(&self, code: DiagCode, message: impl Into<String>) -> SimError {
-        self.diag_error_at(code, message, 0, 0)
+        let (line, col) = self.cur_src_pos();
+        self.diag_error_at(code, message, line, col)
     }
 
     /// Emit error diagnostic dengan posisi source (line, col).
@@ -253,7 +332,8 @@ impl SimulationEngine {
 
     /// Emit fatal diagnostic ke DiagSink dan return SimError dengan full context.
     pub fn diag_fatal(&self, code: DiagCode, message: impl Into<String>) -> SimError {
-        self.diag_fatal_at(code, message, 0, 0)
+        let (line, col) = self.cur_src_pos();
+        self.diag_fatal_at(code, message, line, col)
     }
 
     /// Emit fatal diagnostic dengan posisi source.
@@ -421,9 +501,17 @@ impl SimulationEngine {
         }
         if !self.fork_groups[fid].fired {
             self.fork_groups[fid].fired = true;
-            let cont = std::mem::take(&mut self.fork_groups[fid].continuation);
-            if !cont.is_empty() {
-                self.evaluate_block_with_delay_fork(&cont, None)?;
+            // F21: continuation AST (`fork join` di task/method UVM) disimpan
+            // terpisah di ast_fork_cont — ForkGroup.continuation hanya Vec<IrStmt>.
+            if let Some(ast_cont) = self.ast_fork_cont.remove(&fid) {
+                if !ast_cont.is_empty() {
+                    self.evaluate_ast_block_with_delay_fork(&ast_cont, None)?;
+                }
+            } else {
+                let cont = std::mem::take(&mut self.fork_groups[fid].continuation);
+                if !cont.is_empty() {
+                    self.evaluate_block_with_delay_fork(&cont, None)?;
+                }
             }
         }
         if self.fork_groups[fid].reclaimable {
@@ -1293,7 +1381,16 @@ impl SimulationEngine {
         crate::vpi::callback::dispatch_start_of_simulation();
 
         self.initialize_time_zero()?;
-        self.execute_phases()?;
+        // F19: auto-detect fase UVM HANYA bila source TIDAK memanggil
+        // run_test() eksplisit. Sebelumnya execute_phases() selalu dipanggil
+        // di sini (sebelum event loop) dan menang duluan: class phase dipilih
+        // asal dari iterasi HashMap, lalu guard uvm_phases_started memblokir
+        // `initial run_test("my_test")` — test build_phase (mis. berisi
+        // uvm_config_db::set) tidak pernah dieksekusi. Deteksi eksplisit
+        // membuat run_test user menang; tanpa run_test, auto-detect tetap jalan.
+        if !self.design_has_explicit_run_test() {
+            self.execute_phases()?;
+        }
 
         // ── Register thread-local arena untuk zero-deallocation ──
         // Semua LogicVec::new(), fill(), from_u64() otomatis alokasi dari arena
@@ -1866,6 +1963,7 @@ impl SimulationEngine {
             self.report_full_coverage();
             self.report_coverage();
             self.check_post_simulation_warnings();
+            self.report_severity_summary();
         }
 
         // ── Cleanup: deregister thread-local arena untuk cegah dangling pointer ──
@@ -1881,6 +1979,27 @@ impl SimulationEngine {
         crate::vpi::clear_vpi_engine();
 
         Ok(())
+    }
+
+    /// Ringkasan severity system task di akhir sim (F15). Hanya dicetak bila
+    /// ada warning/error/fatal — sim bersih tidak berisik.
+    fn report_severity_summary(&self) {
+        if self.sev_warning_count == 0 && self.sev_error_count == 0 && self.sev_fatal_count == 0 {
+            return;
+        }
+        eprintln!("\n── Severity Summary ──");
+        if self.sev_fatal_count > 0 {
+            eprintln!("  fatals:  {}", self.sev_fatal_count);
+        }
+        if self.sev_error_count > 0 {
+            eprintln!("  errors:  {}", self.sev_error_count);
+        }
+        if self.sev_warning_count > 0 {
+            eprintln!("  warnings: {}", self.sev_warning_count);
+        }
+        if self.sev_info_count > 0 {
+            eprintln!("  info:    {}", self.sev_info_count);
+        }
     }
 
     /// Check post-simulation warnings: uninitialized registers, unused signals,
@@ -2266,6 +2385,11 @@ impl SimulationEngine {
     }
 
     fn execute_final_blocks(&mut self) -> Result<(), SimError> {
+        // `final` block harus tetap dieksekusi setelah $finish/$fatal (LRM:
+        // final blocks jalan di akhir simulasi). `$fatal` sudah meng-set
+        // fatal_hit yang menghentikan blok statement biasa — reset di sini
+        // agar final block tidak ikut terblokir (lihat arm $fatal).
+        self.fatal_hit = false;
         let bodies: Vec<Vec<IrStmt>> = self
             .design
             .top

@@ -537,21 +537,40 @@ impl Elaborator {
                             with_clause: ir_with,
                         })
                     }
-                    Expr::FuncCall { name, .. } if name.starts_with("$") => {
+                    Expr::FuncCall { name, line, col, .. } if name.starts_with("$") => {
                         let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
                         Ok(IrStmt::SysCall {
                             name: Symbol::intern(""),
                             args: vec![ir_expr],
+                            line: *line,
+                            col: *col,
                         })
                     }
-                    Expr::FuncCall { name, .. } if name.ends_with("::new") => {
+                    Expr::FuncCall { name, line, col, .. } if name.ends_with("::new") => {
                         let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
                         Ok(IrStmt::SysCall {
                             name: Symbol::intern(""),
                             args: vec![ir_expr],
+                            line: *line,
+                            col: *col,
                         })
                     }
-                    Expr::FuncCall { name, .. } => {
+                    Expr::FuncCall { name, args, line, col, .. } if name == "run_test" => {
+                        // F18: run_test("name") adalah statement BER-Efek (bukan
+                        // side-effect-free) — tanpa special-case ini ia di-
+                        // eliminasi diam-diam oleh arm generic di bawah.
+                        let ir_args: Result<Vec<IrExpr>, SimError> = args
+                            .iter()
+                            .map(|a| self.elaborate_expr(a, signal_map, signals))
+                            .collect();
+                        Ok(IrStmt::SysCall {
+                            name: Symbol::intern("run_test"),
+                            args: ir_args?,
+                            line: *line,
+                            col: *col,
+                        })
+                    }
+                    Expr::FuncCall { name, line, col, .. } => {
                         // Check if this is a DPI function call used as a statement
                         let is_dpi = self.design.modules.iter().flat_map(|m| m.items.iter()).any(
                             |item| matches!(item, ModuleItem::DpiImport(d) if d.name == *name),
@@ -561,6 +580,8 @@ impl Elaborator {
                             Ok(IrStmt::SysCall {
                                 name: Symbol::intern("__dpi_stmt"),
                                 args: vec![ir_expr],
+                                line: *line,
+                                col: *col,
                             })
                         } else {
                             // Side-effect-free expression statement — eliminate it
@@ -573,7 +594,7 @@ impl Elaborator {
                     }
                 }
             }
-            Stmt::SysCall { name, args } => {
+            Stmt::SysCall { name, args, line, col } => {
                 let ir_args: Vec<IrExpr> = args
                     .iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
@@ -581,6 +602,8 @@ impl Elaborator {
                 Ok(IrStmt::SysCall {
                     name: *name,
                     args: ir_args,
+                    line: *line,
+                    col: *col,
                 })
             }
             Stmt::SysFinish => Ok(IrStmt::SysFinish),
@@ -1113,6 +1136,7 @@ impl Elaborator {
                 clock_event,
                 disable_iff,
             } => {
+                let (a_line, a_col) = expr_location(cond);
                 let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
                 let pass = match pass_stmt {
                     Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
@@ -1133,6 +1157,8 @@ impl Elaborator {
                     clock_event: clock_event.clone(),
                     disable_iff: ir_disable,
                     sequence: None,
+                    line: a_line,
+                    col: a_col,
                 })
             }
             Stmt::Assume {
@@ -1142,6 +1168,7 @@ impl Elaborator {
                 clock_event,
                 disable_iff,
             } => {
+                let (a_line, a_col) = expr_location(cond);
                 let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
                 let pass = match pass_stmt {
                     Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
@@ -1162,6 +1189,8 @@ impl Elaborator {
                     clock_event: clock_event.clone(),
                     disable_iff: ir_disable,
                     sequence: None,
+                    line: a_line,
+                    col: a_col,
                 })
             }
             Stmt::Cover {
@@ -1892,3 +1921,4 @@ fn value_to_i64(v: &Value) -> i64 {
         Value::Real(_) => 0,
     }
 }
+

@@ -105,7 +105,7 @@ impl SimulationState {
         static WARNED: AtomicBool = AtomicBool::new(false);
         if !WARNED.swap(true, Ordering::Relaxed) {
             eprintln!(
-                "[WARN] SimulationState: signal id {} out of bounds (signals.len={}, next_signals.len={}, changed.len={})",
+                "[WARN] (internal) SimulationState: signal id {} out of bounds (signals.len={}, next_signals.len={}, changed.len={}) — bukan dari source HDL, tidak ada lokasi source",
                 id,
                 self.signals.len(),
                 self.next_signals.len(),
@@ -124,7 +124,7 @@ impl SimulationState {
         static WARNED: AtomicBool = AtomicBool::new(false);
         if !WARNED.swap(true, Ordering::Relaxed) {
             eprintln!(
-                "[WARN] SimulationState: object id {} out of bounds (objects.len={})",
+                "[WARN] (internal) SimulationState: object id {} out of bounds (objects.len={}) — bukan dari source HDL, tidak ada lokasi source",
                 id,
                 self.objects.len()
             );

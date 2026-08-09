@@ -1,0 +1,28 @@
+// ─────────────────────────────────────────────────────────────
+// Contoh F7 — class mandiri (MARIA-HDL.md §8)
+//   * field / func (constructor) / task / constraint
+//   * Lolos type-check penuh (semua tipe internal)
+// Generate: maria mgen class_model.mv
+// ─────────────────────────────────────────────────────────────
+
+class counter_model {
+    field value : uint
+    field limit : uint
+    field clk   : bit
+
+    constraint c { value < limit }
+
+    func new() {
+        value = 0
+        limit = 100
+    }
+
+    func is_done() -> bit {
+        return value >= limit
+    }
+
+    task tick(n : uint) {
+        repeat (n) @(posedge clk)
+        value = value + 1
+    }
+}

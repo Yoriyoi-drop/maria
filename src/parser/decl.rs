@@ -1378,4 +1378,31 @@ impl Parser {
         }
     }
 
+    /// Deteksi pola tipe user-defined dgn packed range diikuti nama port:
+    /// `foo_t [7:0] name` (peek saat ini = `foo_t`, peek_ahead(1) = `[`).
+    /// Bracket berisi colon (range `[7:0]`) dan SETELAH `]` ada ident
+    /// (nama port). Ini membedakan dari unpacked dim (`mat_a [8]` — tidak
+    /// ada colon, setelah `]` adalah koma/`)`) sehingga ident pertama tidak
+    /// salah dimakan sebagai nama port oleh inner loop.
+    pub(crate) fn peek_packed_range_followed_by_ident(&self) -> bool {
+        let mut depth = 0usize;
+        let mut i = 1usize;
+        let mut saw_colon = false;
+        loop {
+            match self.peek_ahead(i) {
+                Token::LBrack | Token::LParen | Token::LBrace => depth += 1,
+                Token::RBrack | Token::RParen | Token::RBrace => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return saw_colon && matches!(self.peek_ahead(i + 1), Token::Ident(_));
+                    }
+                }
+                Token::Colon if depth == 1 => saw_colon = true,
+                Token::Eof => return false,
+                _ => {}
+            }
+            i += 1;
+        }
+    }
+
 }

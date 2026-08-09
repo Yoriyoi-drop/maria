@@ -1,0 +1,36 @@
+// ─────────────────────────────────────────────────────────────
+// Contoh Maria HDL (.mv) — counter 8-bit dengan enable.
+// Generate: maria mgen counter.mv  →  counter.sv + counter.svh
+// ─────────────────────────────────────────────────────────────
+
+package counter_pkg {
+    type Addr = logic[15:0]
+    packed struct Packet {
+        valid : bit,
+        addr  : Addr,
+        data  : logic[31:0]
+    }
+}
+
+module counter #(WIDTH = 8, MOD = 100) {
+    use counter_pkg::*
+
+    in  clk, rst_n : bit
+    in  enable     : bit
+    out count      : logic[WIDTH-1:0]
+    out packet     : Packet
+
+    seq(clk, rst_n) {
+        if (!rst_n) {
+            count <= '0
+        } else if (enable) {
+            count <= (count == MOD-1) ? '0 : count + 1
+        }
+    }
+
+    comb {
+        packet.valid = enable
+        packet.addr  = count
+        packet.data  = 32'd0
+    }
+}

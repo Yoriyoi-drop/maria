@@ -59,6 +59,19 @@ impl Elaborator {
                     return Ok(IrExpr::SysFunc {
                         name: *name,
                         args: vec![],
+                        line: *line,
+                        col: *col,
+                    });
+                }
+                // F18: `uvm_test_top` — handle global ke root test UVM (dibuat
+                // oleh run_test/execute_phases). Di-resolve di evaluator ke
+                // root_test_obj_id; 0 (null) bila tidak ada test.
+                if name.as_str() == "uvm_test_top" {
+                    return Ok(IrExpr::SysFunc {
+                        name: *name,
+                        args: vec![],
+                        line: *line,
+                        col: *col,
                     });
                 }
                 // Check if this ident is a parameter (from param_vals or effective_params)
@@ -443,7 +456,7 @@ impl Elaborator {
                 }
             }
             Expr::Paren(inner) => self.elaborate_expr(inner, signal_map, signals),
-            Expr::FuncCall { name, args, .. } if name.starts_with("$") => match name.as_str() {
+            Expr::FuncCall { name, args, line, col, .. } if name.starts_with("$") => match name.as_str() {
                 "$signed" => {
                     if args.len() != 1 {
                         return Err(self.elab_diag(DiagCode::ParamMismatch, "$signed requires exactly one argument"));
@@ -575,6 +588,8 @@ impl Elaborator {
                             Ok(IrExpr::SysFunc {
                                 name: Symbol::intern("$countones"),
                                 args: vec![ir_arg],
+                                line: *line,
+                                col: *col,
                             })
                         }
                     } else {
@@ -594,6 +609,8 @@ impl Elaborator {
                             Ok(IrExpr::SysFunc {
                                 name: Symbol::intern("$onehot"),
                                 args: vec![ir_arg],
+                                line: *line,
+                                col: *col,
                             })
                         }
                     } else {
@@ -613,6 +630,8 @@ impl Elaborator {
                             Ok(IrExpr::SysFunc {
                                 name: Symbol::intern("$isunknown"),
                                 args: vec![ir_arg],
+                                line: *line,
+                                col: *col,
                             })
                         }
                     } else {
@@ -627,6 +646,8 @@ impl Elaborator {
                     Ok(IrExpr::SysFunc {
                         name: *name,
                         args: ir_args?,
+                        line: *line,
+                        col: *col,
                     })
                 }
             },
@@ -909,7 +930,7 @@ impl Elaborator {
                     expr: Box::new(inner_ir),
                 })
             }
-            Expr::FuncCall { name, args, .. } if name.starts_with("process::") => {
+            Expr::FuncCall { name, args, line, col, .. } if name.starts_with("process::") => {
                 let ir_args: Result<Vec<IrExpr>, SimError> = args
                     .iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
@@ -917,6 +938,8 @@ impl Elaborator {
                 Ok(IrExpr::SysFunc {
                     name: *name,
                     args: ir_args?,
+                    line: *line,
+                    col: *col,
                 })
             }
             Expr::FuncCall { name, args, .. }
@@ -972,7 +995,7 @@ impl Elaborator {
                     args: ir_args?,
                 })
             }
-            Expr::FuncCall { name, args, .. } if name == "uvm_factory::set_type_override_by_type" => {
+            Expr::FuncCall { name, args, line, col, .. } if name == "uvm_factory::set_type_override_by_type" => {
                 let ir_args: Result<Vec<IrExpr>, SimError> = args
                     .iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
@@ -980,9 +1003,11 @@ impl Elaborator {
                 Ok(IrExpr::SysFunc {
                     name: *name,
                     args: ir_args?,
+                    line: *line,
+                    col: *col,
                 })
             }
-            Expr::FuncCall { name, args, .. }
+            Expr::FuncCall { name, args, line, col, .. }
                 if name == "uvm_config_db::set"
                     || name == "uvm_config_db::get"
                     || name == "uvm_resource_db::set"
@@ -996,11 +1021,28 @@ impl Elaborator {
                 Ok(IrExpr::SysFunc {
                     name: *name,
                     args: ir_args?,
+                    line: *line,
+                    col: *col,
                 })
             }                    Expr::FuncCall { name, args, line, col } if name != "new" && name.contains("::") => {
                         let fl = if *line > 0 { *line } else { expr_location(expr).0 };
                         let fc = if *col > 0 { *col } else { expr_location(expr).1 };
                         self.elaborate_package_func_call(name.as_str(), args, signal_map, signals, fl, fc)
+            }
+            Expr::FuncCall { name, args, line, col, .. } if name == "run_test" => {
+                // F18: run_test → IrExpr::SysFunc — dispatch engine menciptakan
+                // objek test & menjalankan fase UVM (run_uvm_test). Jalur
+                // statement terpisah di stmt.rs (IrStmt::SysCall).
+                let ir_args: Result<Vec<IrExpr>, SimError> = args
+                    .iter()
+                    .map(|a| self.elaborate_expr(a, signal_map, signals))
+                    .collect();
+                Ok(IrExpr::SysFunc {
+                    name: *name,
+                    args: ir_args?,
+                    line: *line,
+                    col: *col,
+                })
             }
             Expr::FuncCall { name, args, .. } if name != "new" => {
                 if std::env::var("DBG_PKG").is_ok() && name.as_str() == "aes_circ_byte_shift" {

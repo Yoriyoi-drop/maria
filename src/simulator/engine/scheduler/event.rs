@@ -121,14 +121,41 @@ impl SimulationEngine {
                     }
                 }
             }
-            EventKind::ContinueAstBlock(stmts, fork_id) => {
+            EventKind::ContinueAstBlock(stmts, fork_id, this_opt, method_opt) => {
+                // F18: kontinuasi task/method UVM setelah delay — restore konteks
+                // `this` + method yang disimpan saat suspend (sama seperti pola
+                // PendingAstEventControl). Tanpa ini, body task yang dijalankan
+                // via execute_phases/run_test (`run_phase` dkk) kehilangan
+                // current_this → `this.field` error "used outside of class method".
                 self.ensure_events(t);
+                let old_this = self.current_this;
+                let old_method = self.current_method;
+                self.current_this = this_opt;
+                self.current_method = method_opt;
+                if std::env::var("DBG_UVM").is_ok() {
+                    eprintln!("[DBG-F26] resume ContinueAstBlock fid={:?} nstmts={}", fork_id, stmts.len());
+                }
                 let all_consumed = self.evaluate_ast_block_with_delay_fork(&stmts, fork_id)?;
+                if std::env::var("DBG_UVM").is_ok() {
+                    eprintln!("[DBG-F26] resume done fid={:?} consumed={}", fork_id, all_consumed);
+                }
+                // F21: fork_decrement SEBELUM restore konteks — bila branch ini
+                // adalah branch TERAKHIR yang selesai, fork_finish mengeksekusi
+                // continuation AST setelah join/join_any, yang masih milik
+                // method ini (butuh current_this/current_method yang sama).
+                // Sebelumnya restore terjadi duluan → cont AST dieksekusi tanpa
+                // konteks → field class gagal resolve (warning RT0001 + 0).
                 if let Some(fid) = fork_id {
                     if all_consumed {
                         self.fork_decrement(fid)?;
                     }
                 }
+                if all_consumed {
+                    self.current_this = old_this;
+                    self.current_method = old_method;
+                }
+                // Re-suspend: pertahankan konteks — ContinueAstBlock berikutnya
+                // sudah menyimpan this/method baru di titik suspend-nya.
             }
         }
         Ok(())

@@ -105,5 +105,13 @@ pub fn run(args: &SimArgs) -> Result<(), SimError> {
             format!("{} assertion(s) gagal", assertion_errors),
         ));
     }
+    // F15: $fatal menghentikan sim dengan kegagalan → exit code non-zero
+    // (pola sama dengan assertion failed).
+    if engine.sev_fatal_count > 0 {
+        return Err(SimError::with_diag(
+            crate::diagnostics::DiagCode::AssertionFailed,
+            format!("$fatal: simulasi dihentikan ({} fatal)", engine.sev_fatal_count),
+        ));
+    }
     Ok(())
 }

@@ -457,12 +457,14 @@ pub(crate) fn rename_in_stmt(stmt: &Stmt, rename_map: &HashMap<Symbol, Symbol>) 
                 .collect(),
             default: default.map(|d| Box::new(rename_in_stmt(&d, rename_map))),
         },
-        Stmt::SysCall { name, args } => Stmt::SysCall {
+        Stmt::SysCall { name, args, line, col } => Stmt::SysCall {
             name,
             args: args
                 .into_iter()
                 .map(|a| rename_in_expr(a, rename_map))
                 .collect(),
+            line,
+            col,
         },
         Stmt::SysFinish => Stmt::SysFinish,
         Stmt::Delay { delay, stmt } => Stmt::Delay {

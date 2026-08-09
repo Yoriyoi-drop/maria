@@ -55,6 +55,36 @@ pub fn show(ui: &mut egui::Ui, state: &mut GuiState) {
                 super::super::app::trigger_compile(state);
             }
 
+            // ── F25: Generate (.mv → .sv/.svh) ──
+            // Aktif hanya saat file aktif ber-ekstensi .mv (Maria HDL).
+            let active_is_mv = state
+                .active_file
+                .and_then(|i| state.open_files.get(i))
+                .map(|f| f.path.extension().map(|e| e == "mv").unwrap_or(false))
+                .unwrap_or(false);
+            if ui
+                .add_enabled(active_is_mv, egui::Button::new("⚙ Generate"))
+                .on_hover_text("Generate SV/SVH dari Maria HDL (.mv) — file aktif (Ctrl+G)")
+                .clicked()
+            {
+                super::super::app::trigger_generate(state);
+            }
+            // Generate All: transpile semua .mv proyek (konteks gabungan).
+            let mv_count = state.collect_mv_files().len();
+            if ui
+                .add_enabled(
+                    mv_count > 0,
+                    egui::Button::new(egui::RichText::new("⚙ All").weak()),
+                )
+                .on_hover_text(format!(
+                    "Generate semua .mv proyek ({} file, konteks gabungan)",
+                    mv_count
+                ))
+                .clicked()
+            {
+                super::super::app::trigger_generate_all(state);
+            }
+
             // ── Open project ──
             if ui
                 .button("Open Project")

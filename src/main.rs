@@ -4,7 +4,7 @@
 mod cli;
 use cli::Cli;
 use clap::Parser as ClapParser;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use maria::animasi::{Phase, PipelineAnimator};
@@ -384,6 +384,7 @@ fn main() {
             crate::cli::MariaCmd::Cov(a) => dispatch_cov(a),
             crate::cli::MariaCmd::Wave(a) => dispatch_wave(a),
             crate::cli::MariaCmd::Fmt(a) => dispatch_fmt(a),
+            crate::cli::MariaCmd::Gen(a) => dispatch_gen(a),
             crate::cli::MariaCmd::Prof(a) => dispatch_prof(a),
             crate::cli::MariaCmd::Check(a) => dispatch_check(a),
             crate::cli::MariaCmd::Bench(a) => dispatch_bench(a),
@@ -492,6 +493,15 @@ fn main() {
     }
 }
 
+/// Baca byte sumber sebuah file. Untuk file `.mv` (F8) byte berasal dari
+/// buffer hasil transpile on-the-fly; untuk file lain langsung dari disk.
+fn read_source_bytes(path: &Path, inline: &std::collections::HashMap<PathBuf, Vec<u8>>) -> std::io::Result<Vec<u8>> {
+    if let Some(bytes) = inline.get(path) {
+        return Ok(bytes.clone());
+    }
+    std::fs::read(path)
+}
+
 fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     env.telemetry().metrics.inc_build();
     env.telemetry().trace("run", "pipeline legacy dimulai");
@@ -501,6 +511,67 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     if let Some(ref fpath) = cli.filelist {
         let flist = read_project_file(fpath)?;
         sources.extend(flist);
+    }
+
+    // ── F8: `run x.mv` — transpile on-the-fly ke buffer (tanpa menulis file) ──
+    // File `.mv` di-transpile (lex → parse → check → codegen) menjadi satu
+    // buffer SV (svh + sv, baris `` `include `` di-strip) lalu disuntikkan
+    // sebagai sumber inline; pipeline normal berjalan tanpa menyentuh disk.
+    let mut inline_src: std::collections::HashMap<PathBuf, Vec<u8>> = std::collections::HashMap::new();
+    let mv_files: Vec<String> = sources
+        .iter()
+        .filter(|s| Path::new(s).extension().map(|e| e == "mv").unwrap_or(false))
+        .cloned()
+        .collect();
+    // ── F9: transpile SEMUA .mv sekaligus (konteks gabungan lintas file) ──
+    // `types.mv` mendefinisikan package, `counter.mv` memakainya — keduanya
+    // di-transpile bersama agar `use pkg::*` antar-file lolos type-check.
+    if !mv_files.is_empty() {
+        let mut items: Vec<(String, String)> = Vec::with_capacity(mv_files.len());
+        for p in &mv_files {
+            let base = Path::new(p)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("design")
+                .to_string();
+            let src = std::fs::read_to_string(p).map_err(|e| {
+                SimError::with_diag(DiagCode::IoError, format!("{}: {}", p, e))
+            })?;
+            items.push((src, base));
+        }
+        let results = maria::mv::transpile_many(&items).map_err(|(i, e)| {
+            SimError::with_diag(
+                DiagCode::InvalidSyntax,
+                maria::mv::format_error(&mv_files[i], &items[i].0, &e),
+            )
+        })?;
+        // Defensif: hasil batch harus sejajar dengan input (jangan zip-truncate).
+        assert_eq!(
+            results.len(),
+            mv_files.len(),
+            "transpile_many harus mengembalikan hasil sejajar dengan input"
+        );
+        for (p, tr) in mv_files.iter().zip(results.iter()) {
+            // Gabung .svh + .sv jadi satu buffer; buang baris `` `include "x.svh" ``
+            // (definisi bersama sudah ada di atasnya).
+            let mut buf = tr.svh.clone();
+            buf.push('\n');
+            for line in tr.sv.lines() {
+                let t = line.trim_start();
+                // Strip hanya baris `` `include ... `` (definisi bersama sudah
+                // ada di svh di atasnya). Jangan strip baris backtick lain
+                // (mis. `` `define X_INCLUDE_Y ``) — heuristik harus tepat.
+                if t.starts_with("`include") {
+                    continue;
+                }
+                buf.push_str(line);
+                buf.push('\n');
+            }
+            inline_src.insert(PathBuf::from(p), buf.into_bytes());
+        }
+    }
+    if !mv_files.is_empty() && !cli.quiet {
+        eprintln!("[MV] transpiled {} .mv file(s) on-the-fly (F9)", mv_files.len());
     }
 
     if sources.is_empty() && !cli.gui {
@@ -526,8 +597,10 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     }
     // ── Fast pipeline via CompileSession (skip legacy pipeline entirely) ──
     // Auto-use fast pipeline when filelist is specified (legacy can't handle large file sets)
-    // Also skip expensive auto-incdir scanning for the fast path
-    if cli.fast || cli.filelist.is_some() {
+    // Also skip expensive auto-incdir scanning for the fast path.
+    // Catatan: bila ada sumber .mv (inline F8), jalur legacy dipakai —
+    // run_fast membaca file dari disk dan tidak tahu buffer inline.
+    if (cli.fast || cli.filelist.is_some()) && inline_src.is_empty() {
         return run_fast(cli, None, env);
     }
 
@@ -626,7 +699,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     let mut micd_reused = 0usize;
     let mut need_preprocess: Vec<(usize, &String)> = Vec::new();
     for (idx, path) in sources.iter().enumerate() {
-        if let Ok(content) = std::fs::read(path) {
+        if let Ok(content) = read_source_bytes(Path::new(path), &inline_src) {
             let h = maria::cache::compute_checksum(&content);
             // Koreksi correctness: jangan reuse bila header include berubah.
             let deps_ok = micd.deps_unchanged(std::path::Path::new(path), h).unwrap_or(false);
@@ -657,18 +730,30 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     let fresh_results: Vec<Result<(usize, String, Option<(String, String)>, Vec<PathBuf>), String>> =
         need_preprocess
             .par_iter()
-            .map(|(idx, path)| {
-                let mut pp = pp_for_parallel.clone();
-                match pp.preprocess_file(path) {
+        .map(|(idx, path)| {
+            let mut pp = pp_for_parallel.clone();
+            // Sumber inline (.mv hasil transpile F8) — preprocess dari buffer
+            // (tanpa include; definisi bersama sudah digabung di atasnya).
+            if let Some(bytes) = inline_src.get(Path::new(path)) {
+                let text = String::from_utf8_lossy(bytes).to_string();
+                return match pp.preprocess(&text, None) {
                     Ok(processed) => {
                         let combined_str = format!("`line 1 \"{}\"\n{}\n", path, processed);
-                        let includes: Vec<PathBuf> =
-                            pp.resolved_includes.iter().cloned().collect();
-                        Ok((*idx, combined_str, pp.timescale.clone(), includes))
+                        Ok((*idx, combined_str, pp.timescale.clone(), Vec::new()))
                     }
                     Err(e) => Err(format!("preprocessor '{}': {}", path, e)),
+                };
+            }
+            match pp.preprocess_file(path) {
+                Ok(processed) => {
+                    let combined_str = format!("`line 1 \"{}\"\n{}\n", path, processed);
+                    let includes: Vec<PathBuf> =
+                        pp.resolved_includes.iter().cloned().collect();
+                    Ok((*idx, combined_str, pp.timescale.clone(), includes))
                 }
-            })
+                Err(e) => Err(format!("preprocessor '{}': {}", path, e)),
+            }
+        })
             .collect();
     if !anim_active(&anim) {
         eprintln!("[TIMING] Preprocessing done in {:?}", pp_start.elapsed());
@@ -714,7 +799,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     // ── MICD: simpan hasil preprocess baru untuk run berikutnya ──
     for r in &fresh_results {
         if let Ok((idx, combined_str, ts, includes)) = r {
-            if let Ok(content) = std::fs::read(&sources[*idx]) {
+            if let Ok(content) = read_source_bytes(Path::new(&sources[*idx]), &inline_src) {
                 let h = maria::cache::compute_checksum(&content);
                 let path = std::path::PathBuf::from(&sources[*idx]);
                 micd.cache_preprocessed(
@@ -735,7 +820,11 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
                         (inc.clone(), hh)
                     })
                     .collect();
-                let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                // Ukuran memakai isi sumber yang BENAR-BENAR di-hash (buffer
+                // inline untuk .mv, file disk untuk .sv) agar konsisten dengan
+                // `content_hash` — bukan metadata disk (yang untuk .mv adalah
+                // ukuran sumber .mv asli, bukan buffer transpile).
+                let size = content.len() as u64;
                 micd.record_file(
                     path,
                     h,
@@ -972,7 +1061,13 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
         let mut all_src: Vec<PathBuf> = sources.iter().map(PathBuf::from).collect();
         all_src.extend(cli.libfiles.iter().map(PathBuf::from));
         for src in &all_src {
-            if let Ok(text) = std::fs::read_to_string(src) {
+            // Baca dari buffer inline untuk file `.mv` (F8) agar teks yang
+            // di-scan adalah SV hasil transpile (pola `module X`, `package X`),
+            // bukan sintaks `.mv` asli — atribusi simbol tetap akurat.
+            let text = read_source_bytes(src, &inline_src)
+                .ok()
+                .map(|b| String::from_utf8_lossy(&b).to_string());
+            if let Some(text) = text {
                 for (name, kind) in &syms {
                     if def_file.contains_key(name) {
                         continue;
@@ -1752,6 +1847,14 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
         }
     }
 
+    // F15: $fatal menghentikan sim dengan kegagalan → exit code non-zero.
+    if debugger.engine.sev_fatal_count > 0 {
+        return Err(SimError::with_diag(
+            DiagCode::AssertionFailed,
+            format!("$fatal: simulasi dihentikan ({})", debugger.engine.sev_fatal_count),
+        ));
+    }
+
     Ok(())
 }
 
@@ -1779,6 +1882,9 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
         libfiles: cli.libfiles.iter().map(PathBuf::from).collect(),
         use_fast_lexer: !cli.legacy_lexer,
         use_lazy_elab: cli.lazy,
+        // run_fast tidak pernah dipakai untuk `.mv` (jalur legacy + inline F8),
+        // jadi inline_sources selalu kosong di sini.
+        inline_sources: std::collections::HashMap::new(),
     };
 
     let mut session = CompileSession::new(config);
@@ -2472,6 +2578,14 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
         }
     }
 
+    // F15: $fatal menghentikan sim dengan kegagalan → exit code non-zero.
+    if debugger.engine.sev_fatal_count > 0 {
+        return Err(SimError::with_diag(
+            DiagCode::AssertionFailed,
+            format!("$fatal: simulasi dihentikan ({})", debugger.engine.sev_fatal_count),
+        ));
+    }
+
     Ok(())
 }
 
@@ -2600,6 +2714,20 @@ fn dispatch_fmt(a: &crate::cli::MfmtArgs) -> ! {
         indent: a.indent,
     };
     exit_tool(maria::tools::fmt::run(&args));
+}
+
+fn dispatch_gen(a: &crate::cli::MgenArgs) -> ! {
+    let args = maria::tools::gen::GenArgs {
+        targets: &a.targets,
+        output: a.output.clone(),
+        stdout: a.stdout,
+        check: a.check,
+        svh_only: a.svh_only,
+        sv_only: a.sv_only,
+        no_check: a.no_check,
+        verbose: a.verbose,
+    };
+    exit_tool(maria::tools::gen::run(&args));
 }
 
 fn dispatch_prof(a: &crate::cli::MprofArgs) -> ! {

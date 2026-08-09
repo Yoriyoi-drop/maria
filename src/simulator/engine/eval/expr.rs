@@ -361,7 +361,14 @@ impl SimulationEngine {
                     bits,
                 })
             }
-            IrExpr::SysFunc { name, args } => {
+            IrExpr::SysFunc {
+                name,
+                args,
+                line,
+                col,
+            } => {
+                // F20: catat posisi sysfunc agar warning runtime punya lokasi.
+                self.set_cur_src_pos(*line, *col);
                 match name.as_str() {
                     "$random" => {
                         self.rand_call_count += 1;
@@ -891,6 +898,30 @@ impl SimulationEngine {
                             64,
                         ))
                     }
+                    "run_test" => {
+                        // F18: run_test("name") — buat objek test & jalankan
+                        // fase UVM. No-op bila execute_phases (auto-detect di
+                        // run()) sudah menjalankan fase (guard uvm_phases_started
+                        // di run_uvm_test).
+                        let arg_vals: Vec<LogicVec> = args
+                            .iter()
+                            .map(|a| self.evaluate_expr(a))
+                            .collect::<Result<_, _>>()?;
+                        let test_name = arg_vals
+                            .first()
+                            .map(logicvec_to_string)
+                            .unwrap_or_default();
+                        self.run_uvm_test(&test_name)?;
+                        Ok(LogicVec::from_u64(1, 1))
+                    }
+                    "uvm_test_top" => {
+                        // F18: handle global root test UVM — obj id dari
+                        // run_test/execute_phases; 0 (null) bila tidak ada.
+                        Ok(LogicVec::from_u64(
+                            self.root_test_obj_id.unwrap_or(0) as u64,
+                            64,
+                        ))
+                    }
                     "uvm_config_db::set" => {
                         let arg_vals: Vec<LogicVec> = args
                             .iter()
@@ -920,7 +951,7 @@ impl SimulationEngine {
                             .iter()
                             .map(|a| self.evaluate_expr(a))
                             .collect::<Result<_, _>>()?;
-                        let inst_name = if arg_vals.len() > 1 {
+                        let mut inst_name = if arg_vals.len() > 1 {
                             logicvec_to_string(&arg_vals[1])
                         } else {
                             String::new()
@@ -930,8 +961,15 @@ impl SimulationEngine {
                         } else {
                             String::new()
                         };
-                        let key = (inst_name, field_name);
-                        let stored = self.uvm_config_db_data.get(&key).cloned();
+                        // F19: inst_path kosong (`get(this, "", ...)`) →
+                        // resolve ke path hierarki penuh objek saat ini.
+                        if inst_name.is_empty() {
+                            if let Some(oid) = self.current_this {
+                                inst_name = self.uvm_object_full_path(oid);
+                            }
+                        }
+                        // F19: exact match menang, lalu wildcard paling spesifik.
+                        let stored = self.config_db_find(&inst_name, &field_name);
                         if let Some(val) = stored {
                             if let Some(last_arg) = args.get(3) {
                                 if let IrExpr::Signal(sig_id, _) = last_arg {
@@ -1159,7 +1197,11 @@ impl SimulationEngine {
                         if crate::vpi::systf::call_registered_systf(name.as_str(), true) {
                             return Ok(LogicVec::from_u64(0, 32));
                         }
-                        eprintln!("warning: unsupported system function '{}'", name);
+                        // F20: via DiagSink agar warning punya file:line:col.
+                        self.emit_warning(
+                            crate::diagnostics::DiagCode::NotImplemented,
+                            format!("unsupported system function '{}'", name),
+                        );
                         Ok(LogicVec::from_u64(0, 32))
                     }
                 }
@@ -1267,7 +1309,12 @@ impl SimulationEngine {
                         }
                         self.uvm_component_data.insert(obj_id, cd);
                     }
-                    if self.find_method_in_hierarchy(class_name.as_str(), "new").is_ok() {
+                    // F24: guard hierarchy UVM di jalur IR (module initial) —
+                    // helper sama dengan jalur AST (F21-F24). Builtin UVM punya
+                    // `methods: vec![]` → find_method_in_hierarchy("new") gagal
+                    // → data tak pernah di-insert. Tanpa ini `drv = new(...)`
+                    // di module initial membuat driver tanpa uvm_driver_data.
+                    if self.uvm_needs_new_dispatch(class_name.as_str()) {
                         self.execute_method(obj_id, "new", &arg_vals)?;
                     }
                 }
@@ -1438,7 +1485,11 @@ impl SimulationEngine {
                         continue;
                     }
                     let item_val = self.evaluate_expr(item)?;
-                    let eq = val.case_eq(&item_val);
+                    // Normalisasi lebar sebelum case_eq: `a[7:0] inside {20}`
+                    // (8-bit vs literal 32-bit) — bits tidak sama walau nilai
+                    // sama tanpa resize (sama seperti evaluator AST F12).
+                    let w = val.width.max(item_val.width);
+                    let eq = val.resize(w).case_eq(&item_val.resize(w));
                     if eq == LogicVec::from_u64(1, 1) {
                         return Ok(LogicVec::from_u64(1, 1));
                     }

@@ -1094,6 +1094,9 @@ impl Parser {
     }
 
     pub(crate) fn parse_syscall(&mut self) -> Result<Stmt, SimError> {
+        // F20: posisi token `$` — dipakai diagnostic file:line:col.
+        let sc_line = self.peek_line();
+        let sc_col = self.peek_col();
         self.advance();
         let name_tok = self.peek().clone();
         let name = match &name_tok {
@@ -1126,9 +1129,9 @@ impl Parser {
                         }
                     }
                     self.expect(Token::RParen)?;
-                    Ok(Stmt::SysCall { name, args })
+                    Ok(Stmt::SysCall { name, args, line: sc_line, col: sc_col })
                 } else {
-                    Ok(Stmt::SysCall { name, args: vec![] })
+                    Ok(Stmt::SysCall { name, args: vec![], line: sc_line, col: sc_col })
                 }
             }
             _ => {
@@ -1144,7 +1147,7 @@ impl Parser {
                 }
                 self.expect(Token::RParen)?;
                 self.skip_semi();
-                Ok(Stmt::SysCall { name, args })
+                Ok(Stmt::SysCall { name, args, line: sc_line, col: sc_col })
             }
         }
     }

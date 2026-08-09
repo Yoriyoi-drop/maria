@@ -180,6 +180,11 @@ impl MariaApp {
             if cmd && i.key_pressed(Key::O) {
                 trigger_open_project(&mut self.state);
             }
+            if cmd && i.key_pressed(Key::G) {
+                // F25: Generate SV/SVH dari file .mv aktif (global, seperti
+                // Ctrl+S/Ctrl+O — tidak membajak pengetikan editor).
+                trigger_generate(&mut self.state);
+            }
             if cmd && i.modifiers.shift && i.key_pressed(Key::P) {
                 let opening = !self.state.palette_open;
                 self.state.palette_open = opening;
@@ -255,6 +260,131 @@ pub fn trigger_compile(state: &mut GuiState) {
     // database`) — tanpa root, compile berjalan non-incremental.
     let project_root = state.project_root.clone();
     spawn_compile(tx, paths, project_root);
+}
+
+/// F25: Generate SystemVerilog (.sv/.svh) dari file Maria HDL (.mv) aktif.
+/// Transpile dari konten editor (live, tanpa save dulu) via `mv::transpile`
+/// (type-check E2001–E2007 di level `.mv` — error ditampilkan ke console),
+/// tulis `.sv` + `.svh` di samping file `.mv`, lalu buka `.sv` hasil di
+/// editor. Sinkron (transpile 1 file < ms) — tidak perlu thread.
+pub fn trigger_generate(state: &mut GuiState) {
+    let Some(idx) = state.active_file else {
+        state.log("⚠ Generate: tidak ada file aktif");
+        return;
+    };
+    let Some(of) = state.open_files.get(idx) else {
+        return;
+    };
+    let is_mv = of.path.extension().map(|e| e == "mv").unwrap_or(false);
+    if !is_mv {
+        state.log("⚠ Generate hanya untuk file .mv (Maria HDL)");
+        return;
+    }
+    let name = of.name.clone();
+    let content = of.content.clone();
+    let base = of
+        .path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("design")
+        .to_string();
+    let sv_path = of.path.with_extension("sv");
+    let svh_path = of.path.with_extension("svh");
+    state.log(format!("⚙ Generate {} → .sv/.svh ...", name));
+    match crate::mv::transpile(&content, &base) {
+        Ok(r) => {
+            let sv_lines = r.sv.lines().count();
+            let svh_lines = r.svh.lines().count();
+            let wsv = std::fs::write(&sv_path, &r.sv);
+            let wsvh = if r.svh.is_empty() {
+                Ok(())
+            } else {
+                std::fs::write(&svh_path, &r.svh)
+            };
+            if let Err(e) = wsv {
+                state.log(format!("❌ Generate: gagal menulis {}: {}", sv_path.display(), e));
+                return;
+            }
+            if let Err(e) = wsvh {
+                state.log(format!("❌ Generate: gagal menulis {}: {}", svh_path.display(), e));
+                return;
+            }
+            state.log(format!("✅ Generate: {} ({} baris)", sv_path.display(), sv_lines));
+            if !r.svh.is_empty() {
+                state.log(format!("   + {} ({} baris)", svh_path.display(), svh_lines));
+            }
+            // Buka `.sv` hasil generate di editor (tanpa mengalihkan tab aktif
+            // dari `.mv` — tombol Generate tetap aktif utk regenerate).
+            state.open_file(sv_path);
+            state.active_file = Some(idx);
+        }
+        Err(e) => {
+            state.log(format!("❌ Generate: {}", e.format()));
+        }
+    }
+}
+
+/// F25: Generate SEMUA file `.mv` proyek sekaligus via `transpile_many`
+/// (konteks gabungan F9 — tipe/package antar-file terlihat, mis. `types.mv`
+/// → `counter.mv`). Setiap `.mv` → `.sv` + `.svh` di sampingnya. Sinkron
+/// (parser + check cepat); untuk proyek sangat besar pertimbangkan thread.
+pub fn trigger_generate_all(state: &mut GuiState) {
+    let mv_files = state.collect_mv_files();
+    if mv_files.is_empty() {
+        state.log("⚠ Generate All: tidak ada file .mv di proyek");
+        return;
+    }
+    state.log(format!("⚙ Generate All: {} file .mv (konteks gabungan)...", mv_files.len()));
+    let mut items: Vec<(String, String)> = Vec::with_capacity(mv_files.len());
+    let mut read_failed = None;
+    for p in &mv_files {
+        let base = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("design")
+            .to_string();
+        match std::fs::read_to_string(p) {
+            Ok(src) => items.push((src, base)),
+            Err(e) => {
+                read_failed = Some(format!("{}: {}", p.display(), e));
+                break;
+            }
+        }
+    }
+    if let Some(err) = read_failed {
+        state.log(format!("❌ Generate All: gagal membaca {}", err));
+        return;
+    }
+    match crate::mv::transpile_many(&items) {
+        Ok(results) => {
+            let mut ok_count = 0;
+            let mut first_sv: Option<std::path::PathBuf> = None;
+            for (i, r) in results.iter().enumerate() {
+                let p = &mv_files[i];
+                let sv_path = p.with_extension("sv");
+                let svh_path = p.with_extension("svh");
+                if std::fs::write(&sv_path, &r.sv).is_ok() {
+                    ok_count += 1;
+                    if first_sv.is_none() {
+                        first_sv = Some(sv_path);
+                    }
+                } else {
+                    state.log(format!("❌ Generate All: gagal menulis {}", sv_path.display()));
+                }
+                if !r.svh.is_empty() {
+                    let _ = std::fs::write(&svh_path, &r.svh);
+                }
+            }
+            state.log(format!("✅ Generate All: {} file → .sv/.svh", ok_count));
+            if let Some(sv) = first_sv {
+                state.open_file(sv);
+            }
+        }
+        Err((i, e)) => {
+            let path = mv_files.get(i).map(|p| p.display().to_string()).unwrap_or_default();
+            state.log(format!("❌ Generate All: {}: {}", path, e.format()));
+        }
+    }
 }
 
 /// Trigger: jalankan simulasi pada design ter-compile.

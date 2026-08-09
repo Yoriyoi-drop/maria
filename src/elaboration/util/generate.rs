@@ -903,12 +903,19 @@ fn scope_rename_stmt(stmt: &Stmt, map: &HashMap<Symbol, Symbol>) -> Stmt {
             delay: scope_rename_expr(delay, map),
             stmt: Box::new(scope_rename_stmt(stmt, map)),
         },
-        Stmt::SysCall { name, args } => Stmt::SysCall {
+        Stmt::SysCall {
+            name,
+            args,
+            line,
+            col,
+        } => Stmt::SysCall {
             name: *name,
             args: args
                 .iter()
                 .map(|a| scope_rename_expr(a, map))
                 .collect(),
+            line: *line,
+            col: *col,
         },
         Stmt::Expr { expr } => Stmt::Expr {
             expr: scope_rename_expr(expr, map),

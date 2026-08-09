@@ -141,6 +141,19 @@ impl Preprocessor {
 
             let directive = &trimmed[1..];
             let (cmd, rest) = self.split_directive(directive);
+            // Baris yang diawali backtick bisa berupa DIRECTIVE (`` `ifdef ``,
+            // `` `include ``) ATAU invokasi macro di awal baris (`` `uvm_info(...) ``
+            // — pola umum UVM). Kalau nama setelah backtick adalah macro yang
+            // sudah didefinisikan, ini INVOKASI — expand seperti baris biasa,
+            // bukan directive (sebelumnya di-skip diam-diam → macro UVM & macro
+            // statement lain di awal baris tidak pernah dieksekusi).
+            if emitting && self.defines.contains_key(cmd) {
+                let expanded = self.expand_inline_macros(&raw_line);
+                output.push_str(&expanded);
+                output.push('\n');
+                i += 1;
+                continue;
+            }
 
             match cmd {
                 "include" => {

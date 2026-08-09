@@ -6491,6 +6491,791 @@ endmodule
 }
 
 #[test]
+fn test_uvm_config_db_wildcard_path() {
+    // F19: wildcard path matching — pola UVM nyata `*.agent` /
+    // `uvm_test_top.*` harus match inst_path hierarki, dan exact match
+    // MENANG atas wildcard.
+    let source = r#"
+module tb;
+    int val;
+    int success;
+    initial begin
+        // wildcard tunggal: `*` match satu level hierarki
+        uvm_config_db::set(null, "*.agent", "count", 8);
+        success = uvm_config_db::get(null, "env.agent", "count", val);
+        assert(success == 1);
+        assert(val == 8);
+        // wildcard multi-level: `uvm_test_top.*` match seluruh subtree
+        uvm_config_db::set(null, "uvm_test_top.*", "depth", 3);
+        success = uvm_config_db::get(null, "uvm_test_top.env.agent", "depth", val);
+        assert(success == 1);
+        assert(val == 3);
+        // exact match menang atas wildcard yang juga match
+        uvm_config_db::set(null, "env.agent", "count", 99);
+        success = uvm_config_db::get(null, "env.agent", "count", val);
+        assert(success == 1);
+        assert(val == 99);
+        // wildcard TIDAK match field lain
+        success = uvm_config_db::get(null, "env.agent", "missing", val);
+        assert(success == 0);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let result = simulate_signals(source, 5);
+    assert!(
+        result.is_ok(),
+        "uvm_config_db wildcard test failed: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_uvm_config_db_run_test_hierarchy() {
+    // F19: skenario UVM NYATA — `initial run_test("my_test")` + set di
+    // build_phase test + get(this, "", ...) wildcard di agent. Regresi ini
+    // menangkap 3 bug yang diperbaiki bersama:
+    //  (1) auto-detect execute_phases() menang atas run_test eksplisit
+    //      (guard design_has_explicit_run_test)
+    //  (2) `uvm_config_db::set(...)` statement di body method class dikira
+    //      deklarasi `pkg::type` → parse_function gagal → build_phase
+    //      tidak terdaftar
+    //  (3) NUL terminator dari string_to_logicvec bocor ke inst_path
+    //      (`uvm_test_top\0.agent` → wildcard tidak pernah match)
+    let source = r#"
+class my_agent extends uvm_agent;
+    int got_count;
+    int ok;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        ok = uvm_config_db::get(this, "", "count", got_count);
+        if (ok != 1 || got_count != 8)
+            $error("AGENT get failed ok=%0d count=%0d", ok, got_count);
+    endfunction
+endclass
+
+class my_env extends uvm_env;
+    my_agent ag;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        ag = new("agent", this);
+    endfunction
+endclass
+
+class my_test extends uvm_test;
+    my_env env;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        uvm_config_db::set(this, "*.agent", "count", 8);
+        env = new("env", this);
+    endfunction
+endclass
+
+module tb;
+    initial run_test("my_test");
+endmodule
+"#;
+    let result = simulate_signals(source, 100);
+    assert!(
+        result.is_ok(),
+        "uvm_config_db run_test hierarchy failed: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_uvm_event_sync() {
+    // F21: uvm_event — trigger()/wait_trigger() blocking antar fork branch di
+    // run_phase. `$error` dipakai sebagai kanari: kalau wait_trigger tidak
+    // memblock (join terlalu cepat) atau field tidak ter-set, simulate_str
+    // mengembalikan Err → assert gagal. Menangkap 3 bug: (1) AST fork join
+    // mengeksekusi remaining langsung tanpa menunggu branch; (2) current_this
+    // hilang saat fork_finish mengeksekusi cont AST setelah join; (3) event
+    // data tak ter-insert karena builtin `__uvm_event` punya methods kosong.
+    let source = r#"
+class my_env extends uvm_env;
+    uvm_event done_ev;
+    int t1_done;
+    int t2_done;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    task run_phase();
+        done_ev = new("done_ev");
+        fork
+            begin
+                #10;
+                done_ev.trigger();
+                t1_done = 1;
+            end
+            begin
+                done_ev.wait_trigger();
+                t2_done = 1;
+            end
+        join
+        if (!t1_done || !t2_done)
+            $error("uvm_event sync failed t1=%0d t2=%0d", t1_done, t2_done);
+    endtask
+endclass
+
+class my_test extends uvm_test;
+    my_env env;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        env = new("env", this);
+    endfunction
+endclass
+module tb;
+    initial run_test("my_test");
+endmodule
+"#;
+    let result = simulate_str(source, 500);
+    assert!(
+        result.is_ok(),
+        "uvm_event sync failed: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_uvm_barrier_sync() {
+    // F21: uvm_barrier — threshold 3: ketiga branch harus melewati wait_for
+    // bersamaan; count di-reset setelah release. `$error` kanari bila ada
+    // branch yang tidak pernah di-release (barrier tidak penuh).
+    let source = r#"
+class my_env extends uvm_env;
+    uvm_barrier bar;
+    int a_done;
+    int b_done;
+    int c_done;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    task run_phase();
+        bar = new("bar", 3);
+        if (bar.get_threshold() != 3)
+            $error("barrier threshold wrong: %0d", bar.get_threshold());
+        fork
+            begin
+                #5;
+                bar.wait_for();
+                a_done = 1;
+            end
+            begin
+                #10;
+                bar.wait_for();
+                b_done = 1;
+            end
+            begin
+                #15;
+                bar.wait_for();
+                c_done = 1;
+            end
+        join
+        if (!a_done || !b_done || !c_done)
+            $error("uvm_barrier sync failed a=%0d b=%0d c=%0d", a_done, b_done, c_done);
+    endtask
+endclass
+
+class my_test extends uvm_test;
+    my_env env;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        env = new("env", this);
+    endfunction
+endclass
+module tb;
+    initial run_test("my_test");
+endmodule
+"#;
+    let result = simulate_str(source, 500);
+    assert!(
+        result.is_ok(),
+        "uvm_barrier sync failed: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_uvm_event_subclass_override() {
+    // F21 review fix #1: subclass user `my_event extends uvm_event` — `new`
+    // override + method custom HARUS jalan normal, bukan di-intercept builtin
+    // ("unknown uvm_event method"), dan `super.new` tetap insert data sync.
+    let source = r#"
+class my_event extends uvm_event;
+    int extra;
+    int notify_cnt;
+    function new(string name);
+        super.new(name);
+        extra = 5;
+    endfunction
+    function void notify_extra();
+        notify_cnt = notify_cnt + 1;
+    endfunction
+endclass
+
+class my_env extends uvm_env;
+    my_event ev;
+    int ok1;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    task run_phase();
+        ev = new("ev");
+        if (ev.extra != 5) $error("subclass new override tidak jalan");
+        ev.notify_extra();
+        if (ev.notify_cnt != 1) $error("custom method tidak jalan");
+        fork
+            begin
+                #5;
+                ev.trigger();
+            end
+            begin
+                ev.wait_trigger();
+                ok1 = 1;
+            end
+        join
+        if (ev.triggered() != 1) $error("triggered() salah");
+        if (ok1 != 1) $error("wait_trigger gagal");
+    endtask
+endclass
+
+class my_test extends uvm_test;
+    my_env env;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        env = new("env", this);
+    endfunction
+endclass
+module tb;
+    initial run_test("my_test");
+endmodule
+"#;
+    let result = simulate_str(source, 500);
+    assert!(
+        result.is_ok(),
+        "uvm_event subclass override failed: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_uvm_subscriber_analysis_broadcast() {
+    // F22: uvm_subscriber — monitor menulis item ke analysis_port, connect ke
+    // `sub.analysis_imp` (builtin imp auto-dibuat saat new), broadcast sampai
+    // ke `write` override user. $error kanari: salah count/addr → Err.
+    // Menangkap: (1) analysis_imp internal tak dibuat (field analysis_imp
+    // kosong → connect no-op); (2) report/check phase child TIDAK dipanggil
+    // bila root tak punya phase tsb (fix execute_report_phases propagate).
+    let source = r#"
+class my_item extends uvm_sequence_item;
+    int addr;
+    function new(string name);
+        super.new(name);
+    endfunction
+endclass
+
+class my_monitor extends uvm_monitor;
+    uvm_analysis_port ap;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        ap = uvm_analysis_port::new("ap", this);
+    endfunction
+    task run_phase();
+        my_item it;
+        #10;
+        it = new("it1");
+        it.addr = 42;
+        ap.write(it);
+    endtask
+endclass
+
+class my_sub extends uvm_subscriber;
+    int got_cnt;
+    int last_addr;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void write(my_item t);
+        got_cnt = got_cnt + 1;
+        last_addr = t.addr;
+        if (t.addr != 42) $error("sub addr salah %0d", t.addr);
+    endfunction
+endclass
+
+// F22 review: subscriber TANPA new override — imp harus tetap dibuat via
+// guard is_uvm_subscriber_hierarchy di allocate_new_object (sebelumnya
+// find_method_in_hierarchy("new") gagal → imp tak dibuat → connect(0)).
+class my_sub2 extends uvm_subscriber;
+    int got_cnt;
+    function void write(my_item t);
+        got_cnt = got_cnt + 1;
+        if (t.addr != 42) $error("sub2 addr salah %0d", t.addr);
+    endfunction
+endclass
+
+class my_env extends uvm_env;
+    my_monitor mon;
+    my_sub sub;
+    my_sub2 sub2; // TANPA new override — analysis_imp harus tetap auto-dibuat
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        mon = new("mon", this);
+        sub = new("sub", this);
+        sub2 = new("sub2", this);
+    endfunction
+    function void connect_phase();
+        mon.ap.connect(sub.analysis_imp);
+        mon.ap.connect(sub2.analysis_imp);
+    endfunction
+    function void check_phase();
+        if (sub.got_cnt != 1) $error("sub got_cnt=%0d harusnya 1", sub.got_cnt);
+        if (sub.last_addr != 42) $error("sub last_addr=%0d harusnya 42", sub.last_addr);
+        if (sub2.got_cnt != 1) $error("sub2 (tanpa new override) got_cnt=%0d harusnya 1", sub2.got_cnt);
+    endfunction
+endclass
+
+class my_test extends uvm_test;
+    my_env env;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        env = new("env", this);
+    endfunction
+endclass
+module tb;
+    initial run_test("my_test");
+endmodule
+"#;
+    let result = simulate_str(source, 500);
+    assert!(
+        result.is_ok(),
+        "uvm_subscriber broadcast failed: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_uvm_tlm_fifo_blocking_put_get() {
+    // F23: uvm_tlm_fifo — konsumen `get` blocking (suspend saat kosong,
+    // resume + tulis lvalue saat put), produsen `put` dua item terpisah.
+    // $error kanari: item salah / count salah → Err. Menangkap: (1) statement
+    // get tidak ada di continuation saat resume (pop+write tak terjadi);
+    // (2) release waiter salah-match (wait_label vs current_method).
+    let source = r#"
+class my_item extends uvm_sequence_item;
+    int addr;
+    function new(string name);
+        super.new(name);
+    endfunction
+endclass
+
+class my_env extends uvm_env;
+    uvm_tlm_fifo fifo;
+    my_item r1;
+    my_item r2;
+    int got1;
+    int got2;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        fifo = new("fifo", this, 4);
+        if (fifo.capacity() != 4) $error("capacity salah");
+    endfunction
+    task run_phase();
+        my_item a;
+        my_item b;
+        fork
+            begin
+                fifo.get(r1);
+                got1 = 1;
+                fifo.get(r2);
+                got2 = 1;
+            end
+            begin
+                #10;
+                a = new("a");
+                a.addr = 100;
+                fifo.put(a);
+                #10;
+                b = new("b");
+                b.addr = 200;
+                fifo.put(b);
+            end
+        join
+        if (got1 != 1 || got2 != 1) $error("blocking get gagal got1=%0d got2=%0d", got1, got2);
+        if (r1.addr != 100 || r2.addr != 200) $error("item salah r1=%0d r2=%0d", r1.addr, r2.addr);
+        if (fifo.used() != 0) $error("fifo harus kosong, used=%0d", fifo.used());
+    endtask
+endclass
+
+class my_test extends uvm_test;
+    my_env env;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        env = new("env", this);
+    endfunction
+endclass
+module tb;
+    initial run_test("my_test");
+endmodule
+"#;
+    let result = simulate_str(source, 500);
+    assert!(
+        result.is_ok(),
+        "uvm_tlm_fifo blocking failed: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_uvm_tlm_fifo_analysis_export() {
+    // F23: `fifo.analysis_export.write(item)` (export analysis internal)
+    // memetakan ke put — konsumen `get` menerima item. Tanpa auto-created
+    // export, `fifo.analysis_export` = null handle → write no-op → r1 tak
+    // ter-set → $error kanari.
+    let source = r#"
+class my_item extends uvm_sequence_item;
+    int addr;
+    function new(string name);
+        super.new(name);
+    endfunction
+endclass
+
+class my_env extends uvm_env;
+    uvm_tlm_fifo fifo;
+    my_item r1;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        fifo = new("fifo", this, 4);
+    endfunction
+    task run_phase();
+        my_item a;
+        fork
+            begin
+                fifo.get(r1);
+            end
+            begin
+                #10;
+                a = new("a");
+                a.addr = 77;
+                fifo.analysis_export.write(a);
+            end
+        join
+        if (r1.addr != 77) $error("analysis_export gagal r1=%0d", r1.addr);
+    endtask
+endclass
+
+class my_test extends uvm_test;
+    my_env env;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        env = new("env", this);
+    endfunction
+endclass
+module tb;
+    initial run_test("my_test");
+endmodule
+"#;
+    let result = simulate_str(source, 500);
+    assert!(
+        result.is_ok(),
+        "uvm_tlm_fifo analysis_export failed: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_uvm_tlm_fifo_blocking_put_full_and_peek() {
+    // F23 review: jalur paling berisiko — `put` blocking saat penuh
+    // (capacity 1: put a sukses, put b suspend → getter pop → putter resume
+    // push b) + `peek` blocking (baca head tanpa pop, used tetap).
+    let source = r#"
+class my_item extends uvm_sequence_item;
+    int addr;
+    function new(string name);
+        super.new(name);
+    endfunction
+endclass
+
+class my_env extends uvm_env;
+    uvm_tlm_fifo fifo;
+    my_item r1;
+    my_item r2;
+    int put_b_done;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        fifo = new("fifo", this, 1);
+    endfunction
+    task run_phase();
+        my_item a;
+        my_item b;
+        fork
+            begin
+                a = new("a");
+                a.addr = 1;
+                fifo.put(a);
+                b = new("b");
+                b.addr = 2;
+                fifo.put(b); // penuh → suspend sampai getter pop a
+                put_b_done = 1;
+            end
+            begin
+                #10;
+                fifo.get(r1); // pop a → release putter
+                fifo.peek(r2); // baca b tanpa pop
+            end
+        join
+        if (put_b_done != 1) $error("put blocking saat penuh gagal");
+        if (r1.addr != 1) $error("r1=%0d harusnya 1", r1.addr);
+        if (r2.addr != 2) $error("r2=%0d harusnya 2 (peek)", r2.addr);
+        if (fifo.used() != 1) $error("peek tidak boleh pop, used=%0d", fifo.used());
+        if (fifo.is_empty() != 0 || fifo.is_full() != 1) $error("is_empty/is_full salah");
+    endtask
+endclass
+
+class my_test extends uvm_test;
+    my_env env;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        env = new("env", this);
+    endfunction
+endclass
+module tb;
+    initial run_test("my_test");
+endmodule
+"#;
+    let result = simulate_str(source, 500);
+    assert!(
+        result.is_ok(),
+        "uvm_tlm_fifo blocking put full / peek failed: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_uvm_sequence_driver_blocking_handshake() {
+    // F24: blocking handshake sequence/sequencer/driver — `start_item` push
+    // + release getter, driver `get_next_item` BLOCK sampai item tersedia
+    // (pop + tulis lvalue), `finish_item` BLOCK sampai driver `item_done`
+    // (release finisher per-item). Tanpa sinkronisasi ini, sequence selesai
+    // duluan & driver tak dapat item (got=0). Field `req` (bukan task-local)
+    // karena write_ast_lvalue menulis ke field/signal, bukan local task.
+    let source = r#"
+class my_item extends uvm_sequence_item;
+    int addr;
+    function new(string name);
+        super.new(name);
+    endfunction
+endclass
+
+class my_driver extends uvm_driver;
+    int got_cnt;
+    int last_addr;
+    my_item req;
+    task run();
+        while (got_cnt < 3) begin
+            get_next_item(req);
+            got_cnt = got_cnt + 1;
+            last_addr = req.addr;
+            item_done();
+        end
+    endtask
+endclass
+
+class my_sequence extends uvm_sequence;
+    int sent_cnt;
+    task body();
+        my_item it;
+        it = new("it1");
+        it.addr = 100;
+        start_item(it);
+        finish_item(it);
+        it = new("it2");
+        it.addr = 200;
+        start_item(it);
+        finish_item(it);
+        it = new("it3");
+        it.addr = 300;
+        start_item(it);
+        finish_item(it);
+        sent_cnt = 3;
+    endtask
+endclass
+
+module tb;
+    my_driver drv;
+    uvm_sequencer sqr;
+    my_sequence seq;
+    initial begin
+        drv = new("drv", null);
+        sqr = new("sqr", null);
+        drv.set_sequencer(sqr);
+        seq = new("seq");
+        fork
+            drv.run();
+            seq.start(sqr);
+        join
+        #50;
+        if (drv.got_cnt != 3) $error("driver tak dapat 3 item, got=%0d", drv.got_cnt);
+        if (drv.last_addr != 300) $error("addr terakhir salah %0d", drv.last_addr);
+        if (seq.sent_cnt != 3) $error("sequence tak selesai, sent=%0d", seq.sent_cnt);
+    end
+endmodule
+"#;
+    let result = simulate_str(source, 1000);
+    assert!(
+        result.is_ok(),
+        "uvm sequence/driver blocking handshake failed: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_ir_fork_join_waits_for_suspended_task() {
+    // F26: IR `fork ... join` di module initial TIDAK boleh selesai premature
+    // saat branch men-suspend task method (delay). Sebelumnya arm loop AST
+    // (LoopWhile/LoopForever/LoopFor/Repeat/DoWhile) memakai `break` internal
+    // saat body suspend → `evaluate_ast_block_with_delay_fork` mengembalikan
+    // Ok(true) → fork_branch_end decrement → join selesai sebelum task selesai.
+    // Sekarang `return Ok(false)` diteruskan; resume ContinueAstBlock(fork_id)
+    // yang decrement saat branch benar-benar selesai.
+    let source = r#"
+class worker;
+    int done_cnt;
+    task run();
+        #10;
+        done_cnt = done_cnt + 1;
+    endtask
+endclass
+
+module tb;
+    worker w1, w2;
+    initial begin
+        w1 = new();
+        w2 = new();
+        fork
+            w1.run();
+            w2.run();
+        join
+        // Tanpa fix: join selesai di t=0 → done_cnt masih 0 → $error.
+        if (w1.done_cnt + w2.done_cnt != 2) $error("fork join premature: done=%0d", w1.done_cnt + w2.done_cnt);
+        $finish;
+    end
+endmodule
+"#;
+    let result = simulate_str(source, 100);
+    assert!(
+        result.is_ok(),
+        "fork/join harus menunggu task suspend: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_ir_fork_uvm_handshake_no_workaround() {
+    // F26: fork...join handshake UVM penuh TANPA workaround `#50` setelah
+    // join (sebelumnya wajib karena fork IR selesai premature saat task
+    // suspend). Driver harus dapat 3 item (100/200/300) sebelum join lewat.
+    let source = r#"
+class my_item extends uvm_sequence_item;
+    int addr;
+    function new(string name);
+        super.new(name);
+    endfunction
+endclass
+
+class my_driver extends uvm_driver;
+    int got_cnt;
+    int last_addr;
+    my_item req;
+    task run();
+        while (got_cnt < 3) begin
+            get_next_item(req);
+            got_cnt = got_cnt + 1;
+            last_addr = req.addr;
+            item_done();
+        end
+    endtask
+endclass
+
+class my_sequence extends uvm_sequence;
+    int sent_cnt;
+    task body();
+        my_item it;
+        it = new("it1");
+        it.addr = 100;
+        start_item(it);
+        finish_item(it);
+        it = new("it2");
+        it.addr = 200;
+        start_item(it);
+        finish_item(it);
+        it = new("it3");
+        it.addr = 300;
+        start_item(it);
+        finish_item(it);
+        sent_cnt = 3;
+    endtask
+endclass
+
+module tb;
+    my_driver drv;
+    uvm_sequencer sqr;
+    my_sequence seq;
+    initial begin
+        drv = new("drv", null);
+        sqr = new("sqr", null);
+        drv.set_sequencer(sqr);
+        seq = new("seq");
+        fork
+            drv.run();
+            seq.start(sqr);
+        join
+        // Tanpa #50: join harus menunggu handshake selesai (got=3 last=300 sent=3).
+        if (drv.got_cnt != 3 || drv.last_addr != 300 || seq.sent_cnt != 3)
+            $error("fork join premature: got=%0d last=%0d sent=%0d", drv.got_cnt, drv.last_addr, seq.sent_cnt);
+        $finish;
+    end
+endmodule
+"#;
+    let result = simulate_str(source, 1000);
+    assert!(
+        result.is_ok(),
+        "fork join harus menunggu handshake UVM: {:?}",
+        result.err()
+    );
+}
+
+#[test]
 fn test_uvm_report_object_compile() {
     let source = r#"
 class my_comp extends uvm_component;
@@ -10606,10 +11391,702 @@ endmodule
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, result_sig) = sigs.iter().find(|(n, _)| n == "result").unwrap();
     assert_eq!(result_sig.to_u64(), 1, "inside constraint randomize should succeed");
-    // Inside constraints with range syntax [lo:hi] not yet fully supported by parser.
-    // Validasi nilai cukup periksa bahwa constraint solver menghasilkan nilai valid:
-    // nilai seharusnya di {[1:5], 10, [20:25]} = 11 kemungkinan dari 256
-    // Jika randomize sukses, berarti solver menemukan solusi yang satisfy semua constraint.
+}
+
+#[test]
+fn test_randomize_inside_range_constraint() {
+    // F12: `inside` dengan rentang `[lo:hi]` + nilai tunggal — solver harus
+    // memilih nilai di {[1:5], 10, [20:25]} (11 kemungkinan dari 256) dan
+    // evaluator ulang (eval_constraint_body) harus menyetujui nilai tsb.
+    let source = r#"
+class Packet;
+    rand logic [7:0] addr;
+    constraint allowed_addr {
+        addr inside {[1:5], 10, [20:25]};
+    }
+endclass
+
+module tb;
+    Packet p;
+    int result;
+    int val;
+    initial begin
+        p = new();
+        if (p.randomize()) begin
+            result = 1;
+            val = p.addr;
+        end else begin
+            result = 0;
+        end
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, result_sig) = sigs.iter().find(|(n, _)| n == "result").unwrap();
+    assert_eq!(result_sig.to_u64(), 1, "inside range constraint randomize should succeed");
+    // Nilai harus berada di himpunan yang diizinkan
+    let (_, val_sig) = sigs.iter().find(|(n, _)| n == "val").unwrap();
+    let v = val_sig.to_u64();
+    let in_lo_range = (1..=5).contains(&v);
+    let in_hi_range = (20..=25).contains(&v);
+    assert!(
+        in_lo_range || v == 10 || in_hi_range,
+        "addr={} harus di {{[1:5], 10, [20:25]}}",
+        v
+    );
+}
+
+#[test]
+fn test_randomize_dist_if_solve_constraint() {
+    // F12: dist + if/else + solve-before dalam satu class — solver harus
+    // memenuhi SEMUA: addr ∈ {[1:10],20,30}, data ∈ {0,[1:5]}, dan
+    // if (mode==1) → addr>5 else addr<100.
+    let source = r#"
+class item;
+    rand logic [1:0] mode;
+    rand logic [7:0] addr;
+    rand logic [7:0] data;
+    constraint c_adv {
+        addr inside {[1:10], 20, 30};
+        data dist {0 := 1, [1:5] :/ 9};
+        if (mode == 1) {
+            addr > 5;
+        } else {
+            addr < 100;
+        }
+        solve addr before data;
+    }
+endclass
+
+module tb;
+    item it;
+    int result;
+    logic [7:0] addr_o;
+    logic [7:0] data_o;
+    logic [1:0] mode_o;
+    initial begin
+        it = new();
+        if (it.randomize()) result = 1; else result = 0;
+        addr_o = it.addr;
+        data_o = it.data;
+        mode_o = it.mode;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, result_sig) = sigs.iter().find(|(n, _)| n == "result").unwrap();
+    assert_eq!(
+        result_sig.to_u64(),
+        1,
+        "dist/if/solve constraint randomize should succeed"
+    );
+    // Verifikasi NILAI akhir memenuhi SEMUA constraint (bukan hanya sukses)
+    // — menangkap regresi solver yang "sukses" dengan nilai melanggar.
+    let (_, addr_sig) = sigs.iter().find(|(n, _)| n == "addr_o").unwrap();
+    let (_, data_sig) = sigs.iter().find(|(n, _)| n == "data_o").unwrap();
+    let (_, mode_sig) = sigs.iter().find(|(n, _)| n == "mode_o").unwrap();
+    let addr = addr_sig.to_u64();
+    let data = data_sig.to_u64();
+    let mode = mode_sig.to_u64();
+    let addr_ok = (1..=10).contains(&addr) || addr == 20 || addr == 30;
+    let data_ok = data == 0 || (1..=5).contains(&data);
+    let if_ok = if mode == 1 { addr > 5 } else { addr < 100 };
+    assert!(addr_ok, "addr={} harus di {{[1:10],20,30}}", addr);
+    assert!(data_ok, "data={} harus di {{0,[1:5]}}", data);
+    assert!(if_ok, "mode={} addr={} melanggar if-constraint", mode, addr);
+}
+
+#[test]
+fn test_assert_inside_range_mixed_width() {
+    // Assertion `inside` dengan range + nilai — 8-bit signal vs literal
+    // 32-bit harus tetap equal (fix case_eq resize F12).
+    let source = r#"
+module tb;
+    logic [7:0] a;
+    int ok;
+    initial begin
+        a = 30;
+        assert (a inside {[1:10], 20, 30});
+        ok = 1;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, ok_sig) = sigs.iter().find(|(n, _)| n == "ok").unwrap();
+    assert_eq!(ok_sig.to_u64(), 1, "assert inside range 8-bit vs 32-bit should pass");
+}
+
+#[test]
+fn test_ternary_precedence_lowest() {
+    // F13: precedence `? :` PALING RENDAH di SystemVerilog — di bawah `==`
+    // dan `||`. Bug lama: RHS operator binary menelan `? :` sebagai ternary
+    // lokal → `m == 3 ? 1 : 0` ter-parse `m == (3 ? 1 : 0)` (= `m == 1`),
+    // dan const-fold `3 == 3 ? 1 : 0` menghasilkan 0 (bukan 1).
+    let source = r#"
+module tb;
+    logic [1:0] m;
+    logic [7:0] r1;
+    logic [7:0] r2;
+    logic [7:0] r3;
+    logic [7:0] r4;
+    initial begin
+        m = 3;
+        // (m == 3) ? 1 : 0 — BUKAN m == (3 ? 1 : 0)
+        assert (m == 3 ? 1 : 0);
+        // konstanta penuh ter-fold dengan benar
+        assert (3 == 3 ? 1 : 0);
+        // ternary di RHS assignment
+        r1 = m == 3 ? 7 : 9;
+        // `||` lebih rapat dari ternary: ((m==3)||(m==1)) ? 5 : 6
+        r2 = m == 3 || m == 1 ? 5 : 6;
+        // nested ternary (right-assoc)
+        r3 = m == 1 ? 10 : (m == 3 ? 11 : 12);
+        // ternary di operan aritmetika (dalam paren)
+        r4 = r1 + (m > 2 ? 1 : 0);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, v1) = sigs.iter().find(|(n, _)| n == "r1").unwrap();
+    let (_, v2) = sigs.iter().find(|(n, _)| n == "r2").unwrap();
+    let (_, v3) = sigs.iter().find(|(n, _)| n == "r3").unwrap();
+    let (_, v4) = sigs.iter().find(|(n, _)| n == "r4").unwrap();
+    assert_eq!(v1.to_u64(), 7, "r1 = (m==3)?7:9 harus 7");
+    assert_eq!(v2.to_u64(), 5, "r2 = ((m==3)||(m==1))?5:6 harus 5");
+    assert_eq!(v3.to_u64(), 11, "r3 = nested ternary harus 11");
+    assert_eq!(v4.to_u64(), 8, "r4 = 7 + ((m>2)?1:0) harus 8");
+}
+
+#[test]
+fn test_ternary_in_assertion_with_class_field() {
+    // F13 e2e: ternary di assertion + member class (jalur assertion IR) —
+    // sebelum fix precedence, `it.mode == 1 ? it.addr > 5 : 1` ter-parse
+    // `it.mode == (1 ? ...)` sehingga assertion salah gagal.
+    let source = r#"
+class item;
+    rand logic [1:0] mode;
+    rand logic [7:0] addr;
+    constraint c {
+        addr inside {[1:10], 20, 30};
+        if (mode == 1) { addr > 5; } else { addr < 100; }
+    }
+endclass
+
+module tb;
+    item it;
+    int ok;
+    initial begin
+        it = new();
+        it.randomize();
+        // else-branch dieksekusi bila assertion GAGAL → ok=0 menangkap
+        // regresi precedence (parse salah → assert gagal → ok berubah).
+        ok = 1;
+        assert (it.mode == 1 ? it.addr > 5 : 1) else ok = 0;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, ok_sig) = sigs.iter().find(|(n, _)| n == "ok").unwrap();
+    assert_eq!(
+        ok_sig.to_u64(),
+        1,
+        "assert (it.mode==1 ? it.addr>5 : 1) harus lulus (ok=1)"
+    );
+}
+
+#[test]
+fn test_severity_tasks_info_error_fatal() {
+    // F14: $info/$warning/$error mencetak & simulasi LANJUT; $fatal
+    // menghentikan simulasi SEKETIKA (ok=2 tidak boleh tercapai).
+    let source = r#"
+module tb;
+    int ok;
+    initial begin
+        $info("hello info");
+        $warning("careful now");
+        $error("bad thing");
+        ok = 1;
+        $fatal("boom");
+        ok = 2;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, v) = sigs.iter().find(|(n, _)| n == "ok").unwrap();
+    assert_eq!(
+        v.to_u64(),
+        1,
+        "$error tidak menghentikan (ok=1), $fatal menghentikan (ok=2 tak tercapai)"
+    );
+}
+
+#[test]
+fn test_final_block_after_fatal() {
+    // F14: $fatal menghentikan blok statement (fin_v=1 tak tercapai) TAPI
+    // `final` block tetap dieksekusi (fin_v=42) — fatal_hit di-reset
+    // sebelum execute_final_blocks (LRM: final blocks jalan di akhir sim).
+    let source = r#"
+module tb;
+    int fin_v;
+    initial begin
+        $fatal("boom");
+        fin_v = 1;
+    end
+    final begin
+        fin_v = 42;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, v) = sigs.iter().find(|(n, _)| n == "fin_v").unwrap();
+    assert_eq!(
+        v.to_u64(),
+        42,
+        "final block harus jalan setelah $fatal (fin_v=42, bukan 1)"
+    );
+}
+
+#[test]
+fn test_assert_severity_action_block() {
+    // F14: assert pass → $info (lolos); fail → else $error (lanjut, bukan fatal).
+    // Skenario: kondisi benar → $info; kondisi salah di blok kedua → $error.
+    let source = r#"
+module tb;
+    logic [7:0] a;
+    int ok;
+    initial begin
+        a = 5;
+        assert (a > 3) $info("pass ok") else $error("fail bad");
+        assert (a > 100) $info("unreachable") else $error("expected fail");
+        ok = 1;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, v) = sigs.iter().find(|(n, _)| n == "ok").unwrap();
+    assert_eq!(v.to_u64(), 1, "assert + severity action block: sim berlanjut setelah $error");
+}
+
+#[test]
+fn test_diag_runtime_has_source_location() {
+    // F20: semua warning/error runtime WAJIB mencantumkan file:line:col.
+    // - assertion gagal → diag RT7001 dgn SourceSnippet (baris `assert`).
+    // - $warning/$error → lokasi dicetak via emit_severity (suffix "(at ...)").
+    // Diuji lewat engine langsung agar diag bisa di-flush & diperiksa.
+    let source = r#"
+module tb;
+    logic [3:0] a;
+    initial begin
+        a = 5;
+        assert (a == 1) else $error("assert fail");
+        $warning("careful now");
+        $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 50);
+    engine.run().unwrap();
+    let diags = engine.flush_diagnostics();
+    // Assertion failure harus punya source snippet dengan baris > 0.
+    let assertion = diags
+        .iter()
+        .find(|d| d.code == crate::diagnostics::DiagCode::AssertionFailed && d.message == "assertion failed");
+    assert!(assertion.is_some(), "harus ada diag assertion failed");
+    let snap = assertion.unwrap().source_snippet.as_ref();
+    assert!(snap.is_some(), "assertion failed WAJIB punya source snippet (file:line:col)");
+    if let Some(s) = snap {
+        assert!(s.line > 0, "line assertion harus > 0, got {}", s.line);
+        assert!(
+            s.source_line.contains("assert"),
+            "snippet harus menunjuk baris assert: {:?}",
+            s.source_line
+        );
+    }
+}
+
+#[test]
+fn test_uvm_macro_severity_fatal() {
+    // F16: macro `uvm_info/uvm_warning/uvm_error/uvm_fatal` di AWAL BARIS
+    // ter-expand (fix preprocessor: backtick + nama macro terdefinisi =
+    // invokasi, bukan directive tak dikenal yang di-skip diam-diam) dan
+    // `uvm_fatal → $fatal: menghentikan blok seketika (ok=2 tak tercapai).
+    let source = r#"
+`define uvm_info(ID, MSG, VERBOSITY) \
+    $info("UVM_INFO %s: %s", ID, MSG)
+`define uvm_warning(ID, MSG) \
+    $warning("UVM_WARNING %s: %s", ID, MSG)
+`define uvm_error(ID, MSG) \
+    $error("UVM_ERROR %s: %s", ID, MSG)
+`define uvm_fatal(ID, MSG) \
+    $fatal("UVM_FATAL %s: %s", ID, MSG)
+
+module tb;
+    int ok;
+    initial begin
+        `uvm_info("TB", "starting", 1)
+        `uvm_warning("TB", "careful")
+        `uvm_error("TB", "soft")
+        ok = 1;
+        `uvm_fatal("TB", "boom")
+        ok = 2;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, v) = sigs.iter().find(|(n, _)| n == "ok").unwrap();
+    assert_eq!(
+        v.to_u64(),
+        1,
+        "uvm_fatal harus menghentikan blok (ok=2 tak tercapai)"
+    );
+}
+
+#[test]
+fn test_uvm_report_method_severity() {
+    // F16: uvm_report_* dipanggil TANPA `this.` prefix di body method class
+    // (pola standar UVM) → dispatch ke emit_severity: info lanjut, fatal
+    // menghentikan sim (ok=1 tak tercapai).
+    let source = r#"
+class my_comp extends uvm_component;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void do_report();
+        uvm_report_info("my_id", "info message", 0);
+        uvm_report_fatal("my_id", "fatal message");
+    endfunction
+endclass
+module tb;
+    my_comp c;
+    int ok;
+    initial begin
+        c = my_comp::new("c", 0);
+        c.do_report();
+        ok = 1;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, v) = sigs.iter().find(|(n, _)| n == "ok").unwrap();
+    assert_eq!(
+        v.to_u64(),
+        0,
+        "uvm_report_fatal harus menghentikan sim (ok=1 tak tercapai)"
+    );
+}
+
+#[test]
+fn test_randomize_uvm_sequence_item() {
+    // F17: randomize() pada class UVM (uvm_sequence_item) — builtin randomize
+    // dicek SEBELUM dispatch hierarki UVM (sebelumnya "randomize not
+    // implemented"); constraint class dihormati solver.
+    let source = r#"
+class my_item extends uvm_sequence_item;
+    rand logic [7:0] addr;
+    rand logic [1:0] mode;
+    constraint c { addr inside {[1:10], 20}; mode == 1; }
+    function new(string name);
+        super.new(name);
+    endfunction
+endclass
+module tb;
+    my_item it;
+    int ok;
+    int addr_v;
+    initial begin
+        it = new("it");
+        ok = it.randomize();
+        addr_v = it.addr;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, v) = sigs.iter().find(|(n, _)| n == "ok").unwrap();
+    assert_eq!(v.to_u64(), 1, "randomize() pada uvm_sequence_item harus sukses");
+    let (_, a) = sigs.iter().find(|(n, _)| n == "addr_v").unwrap();
+    let av = a.to_u64();
+    assert!(
+        (1..=10).contains(&av) || av == 20,
+        "constraint inside {{[1:10],20}} dihormati (addr={})",
+        av
+    );
+}
+
+#[test]
+fn test_randomize_with_inline_field_constraint() {
+    // F17: randomize() with { field } di body task class — inline constraint
+    // AST ditangani solver (domain + evaluate_ast_expr + current_this).
+    let source = r#"
+class Packet;
+    rand logic [7:0] addr;
+endclass
+class runner;
+    int last;
+    task go();
+        Packet p;
+        p = new();
+        if (!p.randomize() with { addr > 200; }) begin
+            last = 0;
+        end else begin
+            last = p.addr;
+        end
+    endtask
+endclass
+module tb;
+    runner r;
+    int got;
+    initial begin
+        r = new();
+        r.go();
+        got = r.last;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, v) = sigs.iter().find(|(n, _)| n == "got").unwrap();
+    assert!(
+        v.to_u64() > 200,
+        "inline with {{addr>200}} harus dihormati (got={})",
+        v.to_u64()
+    );
+}
+
+#[test]
+fn test_uvm_do_macro_sequence_e2e() {
+    // F17: macro `uvm_do` (create+randomize+send) di task body uvm_sequence
+    // + raise/drop_objection berjalan end-to-end. `my_item it;` (tipe
+    // user-defined) di task body harus masuk decls (fix parse_task) agar
+    // `it = new()` tahu class-nya (fix allocate_new_object).
+    let source = r#"
+`define uvm_info(ID, MSG, VERBOSITY) \
+    $info("UVM_INFO %s: %s", ID, MSG)
+`define uvm_error(ID, MSG) \
+    $error("UVM_ERROR %s: %s", ID, MSG)
+`define uvm_create(S) \
+    begin \
+        S = new(); \
+    end
+`define uvm_send(S) \
+    begin \
+        start_item(S); \
+        finish_item(S); \
+    end
+`define uvm_do(S) \
+    begin \
+        `uvm_create(S) \
+        if (!S.randomize()) \
+            `uvm_error("RAND", "rand-fail") \
+        `uvm_send(S) \
+    end
+`define uvm_raise_objection(S) \
+    begin \
+        S.raise_objection(); \
+    end
+`define uvm_drop_objection(S) \
+    begin \
+        S.drop_objection(); \
+    end
+
+class my_item extends uvm_sequence_item;
+    rand logic [7:0] addr;
+    constraint c { addr == 42; }
+    function new(string name);
+        super.new(name);
+    endfunction
+endclass
+
+class my_seq extends uvm_sequence;
+    int last_addr;
+    function new(string name);
+        super.new(name);
+    endfunction
+    task body();
+        my_item it;
+        `uvm_do(it)
+        last_addr = it.addr;
+        `uvm_drop_objection(this)
+    endtask
+endclass
+
+class my_sequencer extends uvm_sequencer;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+endclass
+
+module tb;
+    my_sequencer seqr;
+    my_seq seq;
+    int captured;
+    initial begin
+        seqr = my_sequencer::new("seqr", 0);
+        seq = my_seq::new("seq");
+        `uvm_raise_objection(seq)
+        seq.start(seqr);
+        captured = seq.last_addr;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 10).unwrap();
+    let (_, v) = sigs.iter().find(|(n, _)| n == "captured").unwrap();
+    assert_eq!(
+        v.to_u64(),
+        42,
+        "uvm_do harus me-randomize item dengan constraint addr==42 (captured={})",
+        v.to_u64()
+    );
+}
+
+#[test]
+fn test_uvm_run_test_phases() {
+    // F18: run_test() + fase penuh (build/connect/run/report/final) +
+    // get_next_item blocking. Driver `forever begin get_next_item(it);
+    // ...; item_done(); end` harus MEMBLOKIR saat queue sequencer kosong
+    // (bukan spin/return item null), dan objection drop harus memicu
+    // report_phase/final_phase sebelum sim berakhir.
+    let source = r#"
+`define uvm_info(ID, MSG, VERB) $display("Info: UVM_INFO " + ID + ": " + MSG)
+`define uvm_error(ID, MSG) $display("Error: UVM_ERROR " + ID + ": " + MSG)
+`define uvm_do(S) \
+    begin \
+        S = new(); \
+        if (!S.randomize()) \
+            `uvm_error("RAND", "rand-fail") \
+        start_item(S); \
+        finish_item(S); \
+    end
+`define uvm_raise_objection(S) \
+    begin \
+        S.raise_objection(); \
+    end
+`define uvm_drop_objection(S) \
+    begin \
+        S.drop_objection(); \
+    end
+
+class my_item extends uvm_sequence_item;
+    rand logic [7:0] addr;
+    function new(string name);
+        super.new(name);
+    endfunction
+endclass
+
+class my_seq extends uvm_sequence;
+    int sent;
+    function new(string name);
+        super.new(name);
+    endfunction
+    task body();
+        my_item it;
+        `uvm_do(it)
+        sent = it.addr;
+    endtask
+endclass
+
+class my_sequencer extends uvm_sequencer;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+endclass
+
+class my_driver extends uvm_driver;
+    int got;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    task run_phase();
+        my_item it;
+        forever begin
+            get_next_item(it);
+            got = it.addr;
+            item_done();
+        end
+    endtask
+endclass
+
+class my_env extends uvm_env;
+    my_sequencer seqr;
+    my_driver drv;
+    int connect_called;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+        seqr = new("seqr", this);
+        drv = new("drv", this);
+    endfunction
+    function void connect_phase();
+        connect_called = 1;
+        drv.set_sequencer(seqr);
+    endfunction
+endclass
+
+class my_test extends uvm_test;
+    my_env env;
+    int report_called;
+    int final_called;
+    function new(string name);
+        super.new(name);
+    endfunction
+    function void build_phase();
+        env = new("env", this);
+    endfunction
+    task run_phase();
+        my_seq seq;
+        `uvm_raise_objection(this)
+        seq = new("seq");
+        seq.start(env.seqr);
+        #10;
+        `uvm_drop_objection(this)
+    endtask
+    function void report_phase();
+        report_called = 1;
+        $display("MARKER-REPORT");
+    endfunction
+    function void final_phase();
+        final_called = 1;
+        $display("MARKER-FINAL");
+    endfunction
+endclass
+
+module tb;
+    int got_val;
+    int conn;
+    initial begin
+        run_test("my_test");
+        // Driver menerima item di time 0 (fase run) — baca sebelum objection
+        // drop menghentikan sim (#10). F18: `uvm_test_top` handle global.
+        got_val = uvm_test_top.env.drv.got;
+        conn = uvm_test_top.env.connect_called;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 50).unwrap();
+    let get = |name: &str| {
+        sigs
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.to_u64())
+            .unwrap_or(0)
+    };
+    // Driver menerima item yang dikirim sequence (random addr, bukan 0/null).
+    assert!(get("got_val") != 0, "driver harus menerima item via get_next_item (got={})", get("got_val"));
+    // connect_phase env harus dipanggil walau root test tidak punya connect_phase.
+    assert_eq!(get("conn"), 1, "connect_phase env harus jalan");
+    // `run_test` harus memicu fase akhir (report/final) saat objection drop —
+    // marker $display diverifikasi via stdout test (MARKER-REPORT/FINAL).
 }
 
 #[test]

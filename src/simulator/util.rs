@@ -186,12 +186,19 @@ pub fn is_signed_expr(expr: &IrExpr, signals: &[SignalInfo]) -> bool {
 pub fn logicvec_to_string(lv: &LogicVec) -> String {
     let mut s = String::new();
     let mut i = 0;
+    // F19: berhenti di byte NUL pertama (C-style) — string_to_logicvec
+    // menambahkan null terminator (8 bit 0) di akhir; tanpa pemotongan ini
+    // path instance UVM jadi `uvm_test_top\u0000.agent` dan config_db
+    // wildcard matching gagal karena suffix `\0` ikut dibandingkan.
     while i + 7 < lv.width {
         let mut byte = 0u8;
         for j in 0..8 {
             if lv.bits[i + j] == LogicVal::One {
                 byte |= 1 << j;
             }
+        }
+        if byte == 0 {
+            break;
         }
         s.push(byte as char);
         i += 8;
@@ -244,8 +251,44 @@ impl SimulationEngine {
             .iter()
             .filter_map(|a| self.evaluate_expr(a).ok())
             .collect();
-        let mut value_args = value_args.into_iter();
-        let mut result = String::with_capacity(fmt_str.len() + 8 * ir_args.len());
+        self.format_display_fmt(fmt_str, value_args.into_iter())
+    }
+
+    /// F17: format `$display`/`$sformatf` di jalur AST (body method class) —
+    /// argumen dievaluasi via `evaluate_ast_expr` (field class `it.addr` dkk
+    /// ter-resolve via current_this), lalu format spec identik dengan jalur IR.
+    pub(crate) fn format_display_ast(&mut self, ast_args: &[crate::ast::Expr]) -> String {
+        let (fmt_str, start_idx) = if let Some(crate::ast::Expr::String(s)) = ast_args.first() {
+            (s.as_str(), 1)
+        } else {
+            let mut out = String::with_capacity(ast_args.len() * 8);
+            let mut first = true;
+            for arg in ast_args {
+                if let Ok(val) = self.evaluate_ast_expr(arg) {
+                    if !first {
+                        out.push(' ');
+                    }
+                    first = false;
+                    let _ = write!(out, "{}", val);
+                }
+            }
+            return out;
+        };
+        let value_args: Vec<LogicVec> = ast_args[start_idx..]
+            .iter()
+            .filter_map(|a| self.evaluate_ast_expr(a).ok())
+            .collect();
+        self.format_display_fmt(fmt_str, value_args.into_iter())
+    }
+
+    /// Inti formatter `%d/%b/%h/%s/...` — dipakai jalur IR & AST (F17).
+    fn format_display_fmt(
+        &mut self,
+        fmt_str: &str,
+        value_args: impl Iterator<Item = LogicVec>,
+    ) -> String {
+        let mut value_args = value_args;
+        let mut result = String::with_capacity(fmt_str.len() + 8 * 16);
     let mut chars = fmt_str.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '%' {
@@ -397,6 +440,49 @@ impl SimulationEngine {
         }
     }
     result
+    }
+
+    /// Format pesan severity task ($info/$warning/$error/$fatal): argumen
+    /// pertama yang berupa konstanta kecil (finish_number 0–2 per LRM §20.2,
+    /// mis. `$fatal(1, "msg")`) di-skip — finish number bukan bagian pesan.
+    /// Sisanya diformat persis seperti $display.
+    pub(crate) fn format_severity_message(&mut self, ir_args: &[IrExpr]) -> String {
+        let args = match ir_args.first() {
+            Some(IrExpr::Const(v)) if v.to_u64() <= 2 => &ir_args[1..],
+            _ => ir_args,
+        };
+        self.format_display(args)
+    }
+
+    /// Emit severity system task (F14/F15): cetak pesan, increment counter,
+    /// dan untuk `$fatal` set `fatal_hit` + `running=false` (hentikan sim
+    /// seketika). Dipakai jalur IR (`evaluate_lang_syscall`) & jalur AST
+    /// (`handle_ast_syscall`) agar counter & perilaku fatal tidak drift.
+    pub(crate) fn emit_severity(&mut self, name: &str, msg: &str) {
+        // F20: lampirkan lokasi source (file:line:col) bila tersedia agar
+        // $warning/$error/$fatal selalu menunjuk ke baris pemanggil.
+        let loc = self.cur_src_loc_str();
+        let suffix = loc.map(|l| format!(" (at {})", l)).unwrap_or_default();
+        match name {
+            "info" => {
+                println!("Info: {}{}", msg, suffix);
+                self.sev_info_count += 1;
+            }
+            "warning" => {
+                eprintln!("Warning: {}{}", msg, suffix);
+                self.sev_warning_count += 1;
+            }
+            "error" => {
+                eprintln!("Error: {}{}", msg, suffix);
+                self.sev_error_count += 1;
+            }
+            _ => {
+                eprintln!("Fatal: {}{}", msg, suffix);
+                self.sev_fatal_count += 1;
+                self.fatal_hit = true;
+                self.running = false;
+            }
+        }
     }
 }
 

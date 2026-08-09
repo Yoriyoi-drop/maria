@@ -1,0 +1,67 @@
+// AXI-Lite interface (F26 — MARIA-HDL.md §6.10)
+// Interface di-emit ke .svh; port module bertipe interface di-emit tanpa
+// arah; field interface diakses via dot: `axi_if.awvalid`.
+
+interface axi_lite {
+    in  clk : bit
+    sig awaddr  : logic[31:0]
+    sig awvalid : bit
+    sig awready : bit
+    sig wdata   : logic[31:0]
+    sig wready  : bit
+
+    modport slave {
+        in  awaddr, awvalid, wdata
+        out awready, wready
+    }
+    modport master {
+        out awaddr, awvalid, wdata
+        in  awready, wready
+    }
+}
+
+module axi_slave {
+    in axi_if : axi_lite
+    out done  : bit
+
+    sig cnt : logic[3:0]
+
+    seq(axi_if.clk) {
+        if (axi_if.awvalid && axi_if.awready) {
+            cnt <= cnt + 1
+            done <= 1
+        } else {
+            done <= 0
+        }
+    }
+
+    comb {
+        // slave siap menerima saat addr valid
+        axi_if.awready = axi_if.awvalid
+    }
+}
+
+module tb_axi {
+    in clk : bit
+    sig bus    : axi_lite
+    sig done   : bit
+
+    // instansiasi interface (koneksi port interface)
+    inst axi_lite u_axi (
+        .clk(clk),
+        .awaddr(32'h00),
+        .awvalid(1'b1),
+        .awready(1'b1),
+        .wdata(32'hdead_beef),
+        .wready(1'b1)
+    )
+    // module dengan port interface
+    inst axi_slave u_slave (
+        .axi_if(bus),
+        .done(done)
+    )
+
+    initial {
+        $display("tb_axi: interface contoh siap")
+    }
+}

@@ -494,8 +494,11 @@ impl SimulationEngine {
                 if dpi_info.is_some() {
                     return self.call_dpi_function(name, &arg_vals, return_width, is_task);
                 }
-                // Unknown DPI — return 0
-                eprintln!("warning: DPI function '{}' not found in imports, returning 0", name);
+                // Unknown DPI — return 0 (F20: via DiagSink agar punya lokasi)
+                self.emit_warning(
+                    crate::diagnostics::DiagCode::DpiError,
+                    format!("DPI function '{}' not found in imports, returning 0", name),
+                );
                 Ok(LogicVec::from_u64(0, return_width))
             }
         }
@@ -538,7 +541,10 @@ impl SimulationEngine {
                         return engine.call_function(name, arg_vals, &scope);
                     }
                     Err(e) => {
-                        eprintln!("warning: DPI '{}' not found in loaded libraries: {}", name, e);
+                        self.emit_warning(
+                            crate::diagnostics::DiagCode::DpiError,
+                            format!("DPI '{}' not found in loaded libraries: {}", name, e),
+                        );
                     }
                 }
             }
@@ -557,7 +563,10 @@ impl SimulationEngine {
         return_width: usize,
         _is_task: bool,
     ) -> Result<LogicVec, SimError> {
-        eprintln!("warning: DPI function '{}' not available (compile with --features dpi)", name);
+        self.emit_warning(
+            crate::diagnostics::DiagCode::DpiError,
+            format!("DPI function '{}' not available (compile with --features dpi)", name),
+        );
         Ok(LogicVec::from_u64(0, return_width.max(1)))
     }
 
@@ -585,6 +594,18 @@ impl SimulationEngine {
             }
         } else if name == "finish" {
             self.running = false;
+        } else if name == "info" || name == "warning" || name == "error" || name == "fatal" {
+            // $info / $warning / $error / $fatal (LRM 1800 §20.2) — jalur AST.
+            // Format argumen seperti $display; $fatal menghentikan simulasi.
+            let ir_args: Vec<IrExpr> = args
+                .iter()
+                .map(|a| match a {
+                    crate::ast::Expr::String(s) => IrExpr::String(s.clone()),
+                    _ => IrExpr::Const(self.evaluate_ast_expr(a).unwrap_or(LogicVec::new(32))),
+                })
+                .collect();
+            let msg = self.format_severity_message(&ir_args);
+            self.emit_severity(name, &msg);
         }
         Ok(())
     }

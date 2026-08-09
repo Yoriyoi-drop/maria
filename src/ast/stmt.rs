@@ -110,6 +110,9 @@ pub enum Stmt {
     SysCall {
         name: Symbol,
         args: Vec<Expr>,
+        /// Posisi source (`$name`) untuk diagnostic file:line:col (F20).
+        line: usize,
+        col: usize,
     },
     SysFinish,
     Delay {

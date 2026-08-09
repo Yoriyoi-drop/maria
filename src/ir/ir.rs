@@ -89,6 +89,11 @@ pub struct IrClassField {
     pub width: usize,
     pub array_depth: usize,
     pub elem_width: usize,
+    /// F18: tipe deklarasi field (`my_env env;` → UserDefined "my_env").
+    /// Dipakai resolve_new_class_hint untuk `field = new(...)` di build_phase
+    /// — tanpa ini objek class UVM dibuat dengan class_name kosong dan
+    /// constructor/parent-link tidak pernah dijalankan.
+    pub dtype: Option<crate::ast::DataType>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -378,6 +383,9 @@ pub enum IrStmt {
     SysCall {
         name: Symbol,
         args: Vec<IrExpr>,
+        /// Posisi source (`$name`) untuk diagnostic file:line:col (F20).
+        line: usize,
+        col: usize,
     },
     SysFinish,
     Null,
@@ -418,6 +426,9 @@ pub enum IrStmt {
         clock_event: Option<crate::ast::types::ClockEvent>,
         disable_iff: Option<Box<IrExpr>>,
         sequence: Option<Box<IrSequence>>,
+        /// Posisi source assertion utk diagnostic file:line:col (F20).
+        line: usize,
+        col: usize,
     },
     Assume {
         cond: IrExpr,
@@ -426,6 +437,9 @@ pub enum IrStmt {
         clock_event: Option<crate::ast::types::ClockEvent>,
         disable_iff: Option<Box<IrExpr>>,
         sequence: Option<Box<IrSequence>>,
+        /// Posisi source assumption utk diagnostic file:line:col (F20).
+        line: usize,
+        col: usize,
     },
     Cover {
         cond: IrExpr,
@@ -540,6 +554,9 @@ pub enum IrExpr {
     SysFunc {
         name: Symbol,
         args: Vec<IrExpr>,
+        /// Posisi source (`$name`) untuk diagnostic file:line:col (F20).
+        line: usize,
+        col: usize,
     },
     NewCall {
         class_name: Symbol,

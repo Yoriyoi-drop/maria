@@ -43,6 +43,12 @@ pub struct SessionConfig {
     pub use_fast_lexer: bool,
     /// Gunakan lazy elaboration (HIR-based, on-demand)
     pub use_lazy_elab: bool,
+    /// Sumber inline per path (F10): path yang ADA di peta ini TIDAK dibaca
+    /// dari disk — kontennya diambil dari buffer (hasil transpile `.mv` F9).
+    /// Dipakai `open_project`/`open_elaborated` (src/tools/mod.rs) agar semua
+    /// tool (`msim`/`mcov`/`melab`/`mprof`/`mbench`/`mlint`/`mcheck`) bisa
+    /// menerima file `.mv` tanpa menulis file ke disk.
+    pub inline_sources: std::collections::HashMap<PathBuf, Vec<u8>>,
 }
 
 impl Default for SessionConfig {
@@ -57,6 +63,7 @@ impl Default for SessionConfig {
             libfiles: Vec::new(),
             use_fast_lexer: true,
             use_lazy_elab: false,
+            inline_sources: std::collections::HashMap::new(),
         }
     }
 }
@@ -117,7 +124,32 @@ pub struct SessionTiming {
     pub cached_files: usize,
     /// Files that were actually processed
     pub processed_files: usize,
-}/// Merge `other` into `target` by MOVING elements (O(1) per field, no cloning).
+}/// F10: sumber konten file — buffer inline (transpile `.mv`) atau mmap disk.
+/// Enum ini menjaga jalur mmap tetap zero-copy (tanpa `to_vec()`) agar design
+/// besar (mis. opentitan) tidak memboros memori saat fase preprocess paralel
+/// (setiap file di-copy penuh = spike memori ~ukuran design).
+enum SourceBytes<'a> {
+    Inline(&'a [u8]),
+    Disk(MmapFile),
+}
+
+impl<'a> SourceBytes<'a> {
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            SourceBytes::Inline(b) => b,
+            SourceBytes::Disk(m) => m.as_bytes(),
+        }
+    }
+
+    fn checksum(&self) -> u64 {
+        match self {
+            SourceBytes::Inline(b) => compute_checksum(b),
+            SourceBytes::Disk(m) => m.checksum,
+        }
+    }
+}
+
+/// Merge `other` into `target` by MOVING elements (O(1) per field, no cloning).
 /// After calling, `other`'s Vec fields are empty (elements moved to `target`).
 fn extend_design_move(target: &mut Design, other: &mut Design) {
     target.modules.append(&mut other.modules);
@@ -187,6 +219,9 @@ impl CompileSession {
         let prev_designs = &self.prev_designs;
         let prev_combined = &self.prev_combined_sources;
         let prev_checksums = &self.prev_checksums;
+        // F10: sumber inline (buffer transpile `.mv`) — path di peta ini tidak
+        // dibaca dari disk. Disalin sebelum closure agar tidak borrow self.
+        let inline_sources = &self.config.inline_sources;
 
         // Shared collection for combined source strings (indexed by file position)
         let combined_parts = &self.combined_parts;
@@ -218,17 +253,28 @@ impl CompileSession {
                 }
 
                 // ── Slow path: process file ──
-                let mmap = MmapFile::open(path)
-                    .map_err(|e| SimError::Io(e.kind(), format!("{}: {}", path.to_string_lossy(), e)))?;
-                let cksum = mmap.checksum;
+                // F10: path yang ada di inline_sources memakai buffer (hasil
+                // transpile `.mv`) — checksum dihitung dari buffer, bukan disk.
+                // File normal tetap zero-copy via MmapFile (tanpa to_vec).
+                let holder: SourceBytes = if let Some(bytes) = inline_sources.get(path) {
+                    SourceBytes::Inline(bytes.as_slice())
+                } else {
+                    SourceBytes::Disk(MmapFile::open(path).map_err(|e| {
+                        SimError::Io(e.kind(), format!("{}: {}", path.to_string_lossy(), e))
+                    })?)
+                };
+                let cksum = holder.checksum();
                 // Use mmap data directly without extra .to_string() copy
-                cache.register_file(path, mmap.as_bytes());
+                cache.register_file(path, holder.as_bytes());
 
                 let mut pp = base_pp.clone();
                 let path_str = path.to_string_lossy();
+                let src_str = String::from_utf8_lossy(holder.as_bytes()).into_owned();
                 let preprocessed = pp
-                    .preprocess(mmap.as_str(), None)
+                    .preprocess(&src_str, None)
                     .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("preprocessor {}: {}", path_str, e)))?;
+                // Jalur inline tidak menambah include deps (buffer sudah
+                // menggabungkan definisi bersama; `include di-strip).
                 if !pp.resolved_includes.is_empty() {
                     let mut inc = include_deps.lock().unwrap();
                     inc.insert(
@@ -839,6 +885,10 @@ impl CompileSession {
             .sources
             .iter()
             .chain(self.config.libfiles.iter())
+            // F10: path inline (buffer transpile `.mv`) TIDAK di-restore —
+            // kontennya tidak stabil di disk (hash basis buffer vs .mv) dan
+            // selalu di-transpile ulang tiap run. MICD hanya untuk file disk.
+            .filter(|p| !self.config.inline_sources.contains_key(*p))
             .cloned()
             .collect();
 
@@ -952,6 +1002,14 @@ impl CompileSession {
         let mut hash_by_path: HashMap<PathBuf, u64> = HashMap::new();
         let mut built_changed = 0usize;
         for (path, design) in &self.prev_designs {
+            // F10: path inline (buffer transpile `.mv`) tidak direkam ke MICD.
+            // Hash basis-nya berbeda (buffer vs isi .mv di disk) — merekamnya
+            // bisa membuat run_fast berikutnya me-restore AST transpile
+            // seolah-olah file itu SV mentah (design salah). Setiap run
+            // meng-transpile ulang, jadi tidak ada yang hilang.
+            if self.config.inline_sources.contains_key(path) {
+                continue;
+            }
             let is_restored = self.micd_restored_paths.contains(path);
             let (content_hash, combined, design_bytes) = if is_restored {
                 // Hash konten == hash tersimpan (diverifikasi saat attach).
@@ -1033,6 +1091,12 @@ impl CompileSession {
         let mut symbol_uses: Vec<(PathBuf, String)> = Vec::new();
         if full_write {
             for (path, design) in &self.prev_designs {
+                // F10: konsisten dengan loop `items` di atas — path inline
+                // (buffer transpile `.mv`) tidak ikut turunan (symbols /
+                // verify / type_entries) agar tidak merekam entry hash 0.
+                if self.config.inline_sources.contains_key(path) {
+                    continue;
+                }
                 for m in &design.modules {
                     symbols.push((m.name.to_string(), "module".to_string(), path.clone()));
                 }
@@ -1971,6 +2035,64 @@ mod tests {
         let ready = graph.initial_ready();
         assert!(ready.contains(&leaf), "leaf should be in initial ready set");
         assert!(!ready.contains(&top), "top should not be ready yet");
+    }
+
+    // ── F10: inline_sources (buffer transpile `.mv`) ──
+
+    #[test]
+    fn test_inline_sources_compiles_from_buffer() {
+        // Path yang TIDAK ada di disk namun terdaftar di inline_sources harus
+        // di-compile dari buffer — dipakai tools untuk file `.mv` (F10).
+        let fake = PathBuf::from("nonexistent_inline_f10.sv");
+        let src = "module inline_f10;\n  logic clk;\n  always #5 clk = ~clk;\nendmodule\n";
+        let mut inline = HashMap::new();
+        inline.insert(fake.clone(), src.as_bytes().to_vec());
+        let config = SessionConfig {
+            sources: vec![fake.clone()],
+            inline_sources: inline,
+            ..Default::default()
+        };
+        let mut session = CompileSession::new(config);
+        let (design, _index) = session.compile().expect("inline source harus compile");
+        assert!(
+            design.modules.iter().any(|m| m.name.as_str() == "inline_f10"),
+            "module dari buffer inline harus ter-compile"
+        );
+        // Tanpa inline_sources → error (file tidak ada di disk).
+        let config2 = SessionConfig {
+            sources: vec![fake.clone()],
+            ..Default::default()
+        };
+        let mut session2 = CompileSession::new(config2);
+        assert!(session2.compile().is_err(), "path non-existen tanpa inline harus error");
+    }
+
+    #[test]
+    fn test_inline_sources_mixed_with_disk() {
+        // Campuran: satu file dari disk + satu file dari buffer inline (pola
+        // `types.mv` → buffer, `counter.sv` → disk, dipakai tool multi-file).
+        let dir = std::env::temp_dir().join(format!("maria_inline_mix_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let disk_path = dir.join("disk_mod.sv");
+        std::fs::write(
+            &disk_path,
+            "module disk_mod;\n  logic x;\n  always_comb x = 1'b0;\nendmodule\n",
+        )
+        .unwrap();
+        let inline_path = PathBuf::from("inline_peer.sv");
+        let src = "module inline_peer;\n  logic y;\n  always_comb y = 1'b1;\nendmodule\n";
+        let mut inline = HashMap::new();
+        inline.insert(inline_path.clone(), src.as_bytes().to_vec());
+        let config = SessionConfig {
+            sources: vec![disk_path, inline_path],
+            inline_sources: inline,
+            ..Default::default()
+        };
+        let mut session = CompileSession::new(config);
+        let (design, _index) = session.compile().expect("campuran disk+inline harus compile");
+        let names: Vec<&str> = design.modules.iter().map(|m| m.name.as_str()).collect();
+        assert!(names.contains(&"disk_mod"));
+        assert!(names.contains(&"inline_peer"));
     }
 }
 

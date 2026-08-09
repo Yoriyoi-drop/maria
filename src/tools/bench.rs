@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use crate::error::SimError;
 use crate::frontend::CompileSession;
-use crate::tools::{collect_targets, human_bytes, make_session_config, section, kv};
+use crate::tools::{collect_targets, human_bytes, make_session_config_with_mv, section, kv};
 
 /// Opsi mbench.
 pub struct BenchArgs<'a> {
@@ -31,11 +31,21 @@ pub fn run(args: &BenchArgs) -> Result<(), SimError> {
     let files = collect_targets(args.targets)?;
     let runs = args.runs.max(1);
 
+    // F10: `.mv` di-transpile ke buffer inline (svh+sv) agar mbench bisa
+    // mengukur performa pipeline Maria HDL tanpa menulis file ke disk.
+    let cfg_template =
+        make_session_config_with_mv(files.clone(), args.incdirs, args.defines, None)?;
+
+    // Hitung baris dari buffer inline bila tersedia (file `.mv`) — metrik
+    // baris tetap bermakna untuk Maria HDL; fallback baca disk.
     let total_lines: usize = files
         .iter()
         .map(|f| {
-            std::fs::read_to_string(f)
-                .map(|s| s.lines().count())
+            cfg_template
+                .inline_sources
+                .get(f)
+                .map(|b| String::from_utf8_lossy(b).lines().count())
+                .or_else(|| std::fs::read_to_string(f).ok().map(|s| s.lines().count()))
                 .unwrap_or(0)
         })
         .sum();
@@ -47,7 +57,7 @@ pub fn run(args: &BenchArgs) -> Result<(), SimError> {
 
     let mut results: Vec<RunResult> = Vec::new();
     for i in 0..runs {
-        let cfg = make_session_config(files.clone(), args.incdirs, args.defines, None);
+        let mut cfg = cfg_template.clone();
         let mut session = CompileSession::new(cfg);
 
         let start = Instant::now();

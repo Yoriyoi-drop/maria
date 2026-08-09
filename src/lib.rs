@@ -36,6 +36,9 @@ pub mod parser;
 pub mod simulator;
 pub mod waveform;
 
+// ── Maria HDL (.mv) — bahasa baru Maria, transpile ke SystemVerilog (MARIA-HDL.md) ──
+pub mod mv;
+
 // ── New Module Structure (under construction) ──
 pub mod backend;
 pub mod cache;

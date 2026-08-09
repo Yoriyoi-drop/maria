@@ -1119,7 +1119,7 @@ fn inline_funcs_in_stmt(
                 Stmt::Block { stmts: preamble }
             }
         }
-        Stmt::SysCall { name, args } => {
+        Stmt::SysCall { name, args, line, col } => {
             let mut preamble = Vec::new();
             let new_args = args
                 .into_iter()
@@ -1138,6 +1138,8 @@ fn inline_funcs_in_stmt(
             let main = Stmt::SysCall {
                 name,
                 args: new_args,
+                line,
+                col,
             };
             if preamble.is_empty() {
                 main

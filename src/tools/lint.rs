@@ -632,7 +632,7 @@ fn scan_stmt_reads(stmts: &[Stmt], reads: &mut HashSet<Symbol>, writes: &mut Has
                 }
             }
             Stmt::Expr { expr } => scan_expr_reads(expr, reads, writes),
-            Stmt::SysCall { name, args } => {
+            Stmt::SysCall { name, args, .. } => {
                 reads.insert(*name);
                 for a in args {
                     scan_expr_reads(a, reads, writes);

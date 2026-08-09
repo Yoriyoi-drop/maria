@@ -87,6 +87,13 @@ pub struct TaskDecl {
 pub enum ConstraintItem {
     Expr(Expr),
     SolveBefore { vars: Vec<Symbol> },
+    /// `if (cond) { items } else { items }` — constraint kondisional (F12).
+    /// Solver mengevaluasi cond lalu menerapkan hanya cabang yang terpenuhi.
+    If {
+        cond: Expr,
+        then: Vec<ConstraintItem>,
+        els: Vec<ConstraintItem>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

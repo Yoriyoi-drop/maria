@@ -1,0 +1,33 @@
+// ─────────────────────────────────────────────────────────────
+// Contoh F7 — class + UVM subset (MARIA-HDL.md §8)
+//   * extends uvm_test, rand field, constraint, method func/task
+//   * `uvm_config_db::set(...)` (static scoped), `super.new(...)`,
+//     method call `seqr.start_item(...)`, delay-only `#100`
+//
+// CATATAN: contoh ini memakai tipe UVM eksternal (`uvm_sequencer`)
+// yang tidak didefinisikan di file ini → generate dengan escape hatch:
+//     maria mgen my_test.mv --no-check
+// Output class SV valid untuk tool dengan pustaka UVM (Verilator/VCS).
+// ─────────────────────────────────────────────────────────────
+
+class my_test extends uvm_test {
+    field count     : uint
+    rand field seed : uint
+
+    constraint c { seed > 10, seed < 200 }
+
+    func new(name : string) {
+        super.new(name)
+    }
+
+    func build_phase() {
+        uvm_config_db::set(this, "*.agent", "count", count)
+    }
+
+    task run_phase() {
+        var seqr : uvm_sequencer
+        seqr.start_item(item)
+        seqr.finish_item(item)
+        #100
+    }
+}

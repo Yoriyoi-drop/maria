@@ -37,14 +37,7 @@ pub fn substitute_class_types(
             ClassMember::Constraint { name, body } => {
                 let new_body = body
                     .into_iter()
-                    .map(|ci| match ci {
-                        ConstraintItem::Expr(e) => {
-                            ConstraintItem::Expr(substitute_expr_types(e, param_name, replacement))
-                        }
-                        ConstraintItem::SolveBefore { vars } => {
-                            ConstraintItem::SolveBefore { vars }
-                        }
-                    })
+                    .map(|ci| substitute_constraint_item(ci, param_name, replacement))
                     .collect();
                 new_members.push(ClassMember::Constraint {
                     name,
@@ -142,5 +135,30 @@ pub fn substitute_expr_types(e: Expr, param_name: &str, replacement: &DataType) 
             col,
         },
         other => other,
+    }
+}
+
+/// Substitusi type parameter di dalam satu item constraint (F12). Rekursif
+/// ke dalam cabang `if/else` — item di luar cabang (`Expr`, `SolveBefore`)
+/// diteruskan apa adanya (tanpa ekspresi tipe yang relevan).
+fn substitute_constraint_item(
+    ci: ConstraintItem,
+    param_name: &str,
+    replacement: &DataType,
+) -> ConstraintItem {
+    match ci {
+        ConstraintItem::Expr(e) => ConstraintItem::Expr(substitute_expr_types(e, param_name, replacement)),
+        ConstraintItem::SolveBefore { vars } => ConstraintItem::SolveBefore { vars },
+        ConstraintItem::If { cond, then, els } => ConstraintItem::If {
+            cond: substitute_expr_types(cond, param_name, replacement),
+            then: then
+                .into_iter()
+                .map(|ci| substitute_constraint_item(ci, param_name, replacement))
+                .collect(),
+            els: els
+                .into_iter()
+                .map(|ci| substitute_constraint_item(ci, param_name, replacement))
+                .collect(),
+        },
     }
 }

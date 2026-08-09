@@ -23,7 +23,15 @@ impl SimulationEngine {
         for (i, port) in method_def.ports.iter().enumerate() {
             let port_width = port.resolved_width(&HashMap::new()).unwrap_or(1);
             let val = if i < args.len() {
-                args[i].resize(port_width)
+                // F18: jangan resize port 1-bit — `string name` / handle class
+                // (`uvm_component parent`) di-resolve width 1, resize(1)
+                // menghancurkan string & obj id (super.new(name, parent)
+                // kehilangan argumen). Vector eksplisit ([7:0]) tetap resize.
+                if port_width > 1 {
+                    args[i].resize(port_width)
+                } else {
+                    args[i].clone()
+                }
             } else {
                 LogicVec::new(port_width)
             };
@@ -47,9 +55,28 @@ impl SimulationEngine {
 
         if !method_def.stmts.is_empty() {
             if method_def.is_task {
-                let completed = self.evaluate_ast_block_with_delay_fork(&method_def.stmts, None)?;
+                // F26: fork id aktif (dari branch fork IR/AST) diteruskan ke
+                // evaluasi task body — continuation resume (ContinueAstBlock)
+                // membawa fork_id ini → event.rs fork_decrement saat selesai.
+                // Sebelumnya selalu None → task di dalam `fork ... join`
+                // (module initial) suspend dgn fork_id None → resume tak
+                // pernah decrement → join selesai premature. `task_suspended`
+                // memberitahu fork arm utk TIDAK decrement di titik ini
+                // (resume yang decrement — cegah double-decrement).
+                let completed = self
+                    .evaluate_ast_block_with_delay_fork(&method_def.stmts, self.active_fork_id)?;
+                if std::env::var("DBG_UVM").is_ok() {
+                    eprintln!("[DBG-F26] task '{}' fid={:?} completed={} nstmts={}", method, self.active_fork_id, completed, method_def.stmts.len());
+                }
                 if !completed {
-                    // Task suspended by delay — keep scope & context alive for continuation
+                    // Task suspended by delay — keep scope & context alive for
+                    // continuation. F26 fix review: flag `task_suspended` HANYA
+                    // di-set saat task berjalan di dalam branch fork
+                    // (active_fork_id terisi) — di luar fork flag tidak relevan
+                    // dan tidak boleh mengotori fork_branch_end berikutnya.
+                    if self.active_fork_id.is_some() {
+                        self.task_suspended = true;
+                    }
                     self.current_method = old_method;
                     return Ok(LogicVec::new(0));
                 }

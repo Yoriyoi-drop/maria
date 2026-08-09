@@ -169,6 +169,8 @@ mod tests {
             clock_event: None,
             disable_iff: None,
             sequence: None,
+            line: 0,
+            col: 0,
         };
 
         let processes = vec![Process::Combinational {
@@ -192,6 +194,8 @@ mod tests {
             clock_event: None,
             disable_iff: None,
             sequence: None,
+            line: 0,
+            col: 0,
         };
 
         let inner_block = IrStmt::Block {
@@ -217,6 +221,8 @@ mod tests {
             clock_event: None,
             disable_iff: None,
             sequence: None,
+            line: 0,
+            col: 0,
         };
         let assert_b = IrStmt::Assert {
             cond: IrExpr::Const(LogicVec::from_u64(1, 1)),
@@ -225,6 +231,8 @@ mod tests {
             clock_event: None,
             disable_iff: None,
             sequence: None,
+            line: 0,
+            col: 0,
         };
 
         let if_stmt = IrStmt::If {
@@ -347,6 +355,8 @@ mod tests {
             clock_event: None,
             disable_iff: None,
             sequence: None,
+            line: 0,
+            col: 0,
         };
 
         let design = IrDesign {
@@ -397,6 +407,8 @@ mod tests {
             clock_event: None,
             disable_iff: None,
             sequence: None,
+            line: 0,
+            col: 0,
         };
 
         let design = IrDesign {
@@ -522,6 +534,8 @@ mod tests {
             clock_event: None,
             disable_iff: None,
             sequence: None,
+            line: 0,
+            col: 0,
         };
 
         let design = IrDesign {
@@ -583,6 +597,8 @@ mod tests {
             clock_event: None,
             disable_iff: None,
             sequence: None,
+            line: 0,
+            col: 0,
         };
 
         let mut engine = test_engine_with_induction();
@@ -697,6 +713,8 @@ mod tests {
             clock_event: None,
             disable_iff: None,
             sequence: None,
+            line: 0,
+            col: 0,
         };
 
         let mut engine = test_engine_with_induction();
@@ -771,6 +789,8 @@ mod tests {
             clock_event: None,
             disable_iff: None,
             sequence: None,
+            line: 0,
+            col: 0,
         };
 
         let mut engine = test_engine_with_induction();

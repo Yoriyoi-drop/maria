@@ -391,9 +391,6 @@ impl Parser {
                         // memakan `[]` / `[$]`.
                     } else if matches!(self.peek_ahead(1), Token::LBrack) {
                         // Tipe user-defined dgn packed range (`foo_t [7:0] name`).
-                        if std::env::var("MARIA_DEBUG_PARSE").is_ok() {
-                            eprintln!("[DBG-PORT] fn: type-dims ident '{}' adv", name.as_str());
-                        }
                         self.advance();
                     }
                 } else {
@@ -429,7 +426,15 @@ impl Parser {
                     // Inner loop hanya boleh memakan nama dgn tipe yang sama.
                     // Catatan: `Ident LBrack` TIDAK boleh break — itu unpacked
                     // array dim (`logic [7:0] mat_a [8]`), bukan tipe baru.
-                    if matches!(self.peek_ahead(1), Token::Ident(_)) {
+                    // KECUALI pola `foo_t [7:0] name`: ident pertama adalah
+                    // TIPE user-defined (bukan nama), `[7:0]` packed range,
+                    // dan ident setelah `]` adalah nama port. Tanpa break di
+                    // sini, `foo_t` dimakan sebagai nama port pertama & `name`
+                    // sebagai port kedua → formal bergeser → error E2001.
+                    if matches!(self.peek_ahead(1), Token::Ident(_))
+                        || (self.peek_ahead(1) == &Token::LBrack
+                            && self.peek_packed_range_followed_by_ident())
+                    {
                         break;
                     }
                     let pn = *pname;
@@ -496,6 +501,15 @@ impl Parser {
                         None
                     };
                     while let Token::Ident(pname) = self.peek() {
+                        // Pola `foo_t [7:0] name` — ident pertama adalah TIPE
+                        // user-defined (bukan nama port); loop luar yang
+                        // menangani tipe/range berikutnya. Sama seperti jalur
+                        // ANSI (lihat komentar panjang di parse_function).
+                        if self.peek_ahead(1) == &Token::LBrack
+                            && self.peek_packed_range_followed_by_ident()
+                        {
+                            break;
+                        }
                         let pn = *pname;
                         self.advance();
                         self.skip_unpacked_dims()?;
@@ -525,8 +539,20 @@ impl Parser {
                 }
                 Token::Ident(_) => {
                     // User-defined type declaration: ident followed by ident or ::
+                    // KECUALI pola `pkg::func(...)`: ident pertama adalah PACKAGE,
+                    // `::` scope, dan `(` memulai call — ini STATEMENT (bukan
+                    // deklarasi). Sebelumnya `uvm_config_db::set(this, ...)`
+                    // dikira deklarasi `pkg::type name` → parse_decl gagal di
+                    // koma pertama → parse_function Err → method class tidak
+                    // terdaftar → build_phase (berisi uvm_config_db::set)
+                    // hilang diam-diam. Sama seperti is_decl_stmt_start.
                     match self.peek_ahead(1) {
                         Token::Ident(_) | Token::Scope => {
+                            let is_scoped_call = matches!(self.peek_ahead(1), Token::Scope)
+                                && matches!(self.peek_ahead(3), Token::LParen);
+                            if is_scoped_call {
+                                break;
+                            }
                             let decl = self.parse_decl()?;
                             decls.push(decl);
                         }
@@ -688,6 +714,17 @@ impl Parser {
                     } else if matches!(self.peek_ahead(1), Token::Ident(_)) {
                         // User-defined type `foo_t name` — skip tipe.
                         self.advance();
+                    } else if self.peek_ahead(1) == &Token::LBrack
+                        && (self.peek_ahead(2) == &Token::RBrack
+                            || self.peek_ahead(2) == &Token::Dollar)
+                    {
+                        // `name []` / `name [$]` — nama port dgn dimensi unpacked
+                        // kosong/queue (BUKAN tipe). Jangan advance: inner loop
+                        // akan memakannya sebagai nama port lalu `skip_unpacked_dims`
+                        // memakan `[]` / `[$]`.
+                    } else if matches!(self.peek_ahead(1), Token::LBrack) {
+                        // Tipe user-defined dgn packed range (`foo_t [7:0] name`).
+                        self.advance();
                     }
                     // else: nama port biasa — inner loop bawah yang memproses.
                 } else if !matches!(self.peek(), Token::LBrack | Token::Comma) {
@@ -775,6 +812,15 @@ impl Parser {
                         None
                     };
                     while let Token::Ident(pname) = self.peek() {
+                        // Pola `foo_t [7:0] name` — ident pertama adalah TIPE
+                        // user-defined (bukan nama port); loop luar yang
+                        // menangani tipe/range berikutnya. Sama seperti jalur
+                        // ANSI (lihat komentar panjang di parse_function).
+                        if self.peek_ahead(1) == &Token::LBrack
+                            && self.peek_packed_range_followed_by_ident()
+                        {
+                            break;
+                        }
                         let pn = *pname;
                         self.advance();
                         self.skip_unpacked_dims()?;
@@ -797,6 +843,25 @@ impl Parser {
                 | Token::String | Token::Real | Token::RealTime | Token::WReal
                 | Token::Mailbox | Token::Semaphore => {
                     decls.push(self.parse_decl()?);
+                }
+                Token::Ident(_) => {
+                    // Tipe user-defined: `my_item it;` (ident diikuti ident/::)
+                    // — sama seperti parse_function. Sebelumnya task body
+                    // menganggapnya statement → decls task kosong → `it = new()`
+                    // tak punya tipe class (F17).
+                    // KECUALI `pkg::func(...)` — ini statement call, bukan
+                    // deklarasi (lihat komentar panjang di parse_function).
+                    match self.peek_ahead(1) {
+                        Token::Ident(_) | Token::Scope => {
+                            let is_scoped_call = matches!(self.peek_ahead(1), Token::Scope)
+                                && matches!(self.peek_ahead(3), Token::LParen);
+                            if is_scoped_call {
+                                break;
+                            }
+                            decls.push(self.parse_decl()?);
+                        }
+                        _ => break,
+                    }
                 }
                 Token::Begin => {
                     // `begin...end` TIDAK harus statement terakhir: statement

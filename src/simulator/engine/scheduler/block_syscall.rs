@@ -37,6 +37,19 @@ impl SimulationEngine {
             } else {
                 print!("{}", msg);
             }
+        } else if name == "run_test" {
+            // F18: run_test("name") dari statement (initial/program block).
+            // Tanpa special-case di elaborator, statement ini di-eliminasi
+            // sebagai side-effect-free; di sini efeknya dijalankan.
+            let arg_vals: Vec<LogicVec> = ir_args
+                .iter()
+                .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
+                .collect();
+            let test_name = arg_vals
+                .first()
+                .map(logicvec_to_string)
+                .unwrap_or_default();
+            self.run_uvm_test(&test_name)?;
         } else if name == "strobe" {
             self.strobe_events.push(ir_args.to_vec());
         } else if name == "fstrobe" {
@@ -195,7 +208,15 @@ impl SimulationEngine {
                 } else {
                     match VcdWriter::new(&path, design) {
                         Ok(v) => self.vcd = Some(v),
-                        Err(e) => eprintln!("VCD: cannot create '{}': {}", path, e),
+                        // F20: via DiagSink agar error punya file:line:col.
+                        Err(e) => {
+                            let _ = self.diag_error_at(
+                                crate::diagnostics::DiagCode::WaveformError,
+                                format!("VCD: cannot create '{}': {}", path, e),
+                                self.cur_src_pos().0,
+                                self.cur_src_pos().1,
+                            );
+                        }
                     }
                 }
             }
@@ -579,13 +600,13 @@ impl SimulationEngine {
                         h as u32
                     }
                 } else {
-                    eprintln!(
-                        "warning: $coverage_model: covergroup '{}' not found",
-                        name
-                    );
-                    0
-                }
-            } else if let Some(first_cg) = self.design.covergroups.first() {
+                self.emit_warning(
+                    crate::diagnostics::DiagCode::NotImplemented,
+                    format!("$coverage_model: covergroup '{}' not found", name),
+                );
+                0
+            }
+        } else if let Some(first_cg) = self.design.covergroups.first() {
                 if let Some((&h, _)) = self
                     .coverage_model_handles
                     .iter()
@@ -608,7 +629,10 @@ impl SimulationEngine {
                 }
             }
         } else if name == "load_coverage_db" {
-            eprintln!("warning: $load_coverage_db not yet implemented");
+            self.emit_warning(
+                crate::diagnostics::DiagCode::NotImplemented,
+                "$load_coverage_db not yet implemented",
+            );
         } else if name == "swrite" || name == "sformat" {
             if let Some(IrExpr::Signal(out_id, _)) = ir_args.first() {
                 let format_args = &ir_args[1..];
@@ -729,7 +753,10 @@ impl SimulationEngine {
             {
                 // Handled by VPI
             } else {
-                eprintln!("warning: unknown system call '{}' ignored", name);
+                self.emit_warning(
+                    crate::diagnostics::DiagCode::NotImplemented,
+                    format!("unknown system call '{}' ignored", name),
+                );
             }
         }
         Ok(true)
@@ -746,6 +773,15 @@ impl SimulationEngine {
         ir_args: &[IrExpr],
     ) -> Result<bool, SimError> {
         match name {
+            "info" | "warning" | "error" | "fatal" => {
+                // $info / $warning / $error / $fatal — severity system tasks
+                // (LRM 1800 §20.2). Argumen diformat persis seperti $display.
+                // $fatal menghentikan simulasi (setara $finish(1)); yang lain
+                // hanya mencetak dan simulasi berlanjut.
+                let msg = self.format_severity_message(ir_args);
+                self.emit_severity(name, &msg);
+                Ok(true)
+            }
             "timeformat" => {
                 // $timeformat(units, precision, suffix, min_width) — IEEE 1800
                 let mut units = -9i64;
@@ -903,6 +939,19 @@ impl SimulationEngine {
             } else {
                 print!("{}", msg);
             }
+        } else if name == "run_test" {
+            // F18: run_test("name") dari statement (initial/program block).
+            // Tanpa special-case di elaborator, statement ini di-eliminasi
+            // sebagai side-effect-free; di sini efeknya dijalankan.
+            let arg_vals: Vec<LogicVec> = ir_args
+                .iter()
+                .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
+                .collect();
+            let test_name = arg_vals
+                .first()
+                .map(logicvec_to_string)
+                .unwrap_or_default();
+            self.run_uvm_test(&test_name)?;
         } else if name == "strobe" {
             self.strobe_events.push(ir_args.to_vec());
         } else if name == "fstrobe" {
@@ -1003,7 +1052,15 @@ impl SimulationEngine {
                 } else {
                     match VcdWriter::new(&path, design) {
                         Ok(v) => self.vcd = Some(v),
-                        Err(e) => eprintln!("VCD: cannot create '{}': {}", path, e),
+                        // F20: via DiagSink agar error punya file:line:col.
+                        Err(e) => {
+                            let _ = self.diag_error_at(
+                                crate::diagnostics::DiagCode::WaveformError,
+                                format!("VCD: cannot create '{}': {}", path, e),
+                                self.cur_src_pos().0,
+                                self.cur_src_pos().1,
+                            );
+                        }
                     }
                 }
             }
@@ -1379,7 +1436,10 @@ impl SimulationEngine {
                         h as u32
                     }
                 } else {
-                    eprintln!("warning: $coverage_model: covergroup '{}' not found", name);
+                    self.emit_warning(
+                        crate::diagnostics::DiagCode::NotImplemented,
+                        format!("$coverage_model: covergroup '{}' not found", name),
+                    );
                     0
                 }
             } else if let Some(first_cg) = self.design.covergroups.first() {
@@ -1400,7 +1460,10 @@ impl SimulationEngine {
                 }
             }
         } else if name == "load_coverage_db" {
-            eprintln!("warning: $load_coverage_db not yet implemented");
+            self.emit_warning(
+                crate::diagnostics::DiagCode::NotImplemented,
+                "$load_coverage_db not yet implemented",
+            );
         } else if name == "swrite" || name == "sformat" {
             if let Some(IrExpr::Signal(out_id, _)) = ir_args.first() {
                 let format_args = &ir_args[1..];
@@ -1478,7 +1541,10 @@ impl SimulationEngine {
             if !crate::vpi::systf::call_registered_systf(&vpi_name, false)
                 && !crate::vpi::systf::call_registered_systf(&vpi_name, true)
             {
-                eprintln!("warning: unknown system call '{}' ignored", name);
+                self.emit_warning(
+                    crate::diagnostics::DiagCode::NotImplemented,
+                    format!("unknown system call '{}' ignored", name),
+                );
             }
         }
         Ok(())

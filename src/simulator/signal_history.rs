@@ -198,7 +198,7 @@ impl SignalHistoryStore {
         // Spill to disk (separate from memory borrow)
         if let Some((old_time, old_val)) = spill_candidate {
             if let Err(e) = self.spill_entry(name, old_time, &old_val) {
-                eprintln!("warning: signal history spill failed: {}", e);
+                eprintln!("warning: (internal) signal history spill failed: {} — bukan dari source HDL, tidak ada lokasi source", e);
             }
             self.total_spilled += 1;
         }

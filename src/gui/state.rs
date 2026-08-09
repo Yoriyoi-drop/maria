@@ -979,6 +979,31 @@ impl GuiState {
         walk(&self.files, &mut out);
         out
     }
+
+    /// F25: kumpulkan file `.mv` (Maria HDL) dari tree — utk tombol Generate
+    /// (SV/SVH). Compile (collect_sv_files) TIDAK menyentuh .mv — file `.mv`
+    /// di-transpile ke `.sv` dulu, baru di-compile.
+    pub fn collect_mv_files(&self) -> Vec<PathBuf> {
+        fn walk(nodes: &[FileNode], out: &mut Vec<PathBuf>) {
+            for n in nodes {
+                if n.is_dir {
+                    walk(&n.children, out);
+                } else {
+                    let ext = n
+                        .path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("");
+                    if ext == "mv" {
+                        out.push(n.path.clone());
+                    }
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(&self.files, &mut out);
+        out
+    }
 }
 
 // ─────────────────────────── Helper text (Quick Fix) ───────────────────────────

@@ -7,7 +7,7 @@ use crate::elaboration::elaborator::ElaborateMode;
 use crate::error::SimError;
 use crate::frontend::CompileSession;
 use crate::simulator::SimulationEngine;
-use crate::tools::{collect_targets, make_session_config, section, kv};
+use crate::tools::{collect_targets, make_session_config_with_mv, section, kv};
 use std::time::Instant;
 
 /// Opsi mprof.
@@ -28,7 +28,14 @@ struct PhaseTime {
 /// Jalankan mprof.
 pub fn run(args: &ProfArgs) -> Result<(), SimError> {
     let files = collect_targets(args.targets)?;
-    let cfg = make_session_config(files, args.incdirs, args.defines, args.top.map(|s| s.to_string()));
+    // F10: `.mv` di-transpile ke buffer inline (svh+sv) agar mprof bisa
+    // memprofil pipeline Maria HDL tanpa menulis file ke disk.
+    let cfg = make_session_config_with_mv(
+        files,
+        args.incdirs,
+        args.defines,
+        args.top.map(|s| s.to_string()),
+    )?;
     let mut session = CompileSession::new(cfg);
 
     let compile_start = Instant::now();

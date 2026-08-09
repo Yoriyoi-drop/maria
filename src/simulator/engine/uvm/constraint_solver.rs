@@ -1,4 +1,4 @@
-use crate::ast::expr::{BinaryOp, Expr, Value};
+use crate::ast::expr::{BinaryOp, DistItem, DistWeight, Expr, Value};
 use crate::ast::types::ConstraintItem;
 use crate::diagnostics::DiagCode;
 use crate::error::SimError;
@@ -12,6 +12,16 @@ use std::collections::{HashMap, HashSet};
 pub(crate) enum SolveResult {
     Satisfied,
     Unsatisfiable,
+}
+
+/// Inline constraint `randomize() with {...}` — F17. Bisa berupa AST
+/// (jalur method class: dievaluasi via `evaluate_ast_expr` dengan
+/// `current_this` sehingga field class diakses langsung) atau IR (jalur
+/// modul: sudah di-elaborate ke signal).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum InlineConstraint<'a> {
+    Ast(&'a Expr),
+    Ir(&'a IrExpr),
 }
 
 /// Analyzed domains for rand variables
@@ -88,13 +98,75 @@ impl VarDomain {
 }
 
 impl SimulationEngine {
+    /// Evaluasi daftar item constraint secara rekursif (F12): ekspresi divalidasi
+    /// via `evaluate_ast_expr`; `if/else` mengevaluasi kondisinya lalu menerapkan
+    /// HANYA cabang yang terpenuhi; `solve-before` dilewati (urutan sudah
+    /// diekstrak). Dipakai solver + rejection fallback — hasil `false` bila ada
+    /// item yang tidak terpenuhi.
+    pub(crate) fn eval_constraint_body(&mut self, items: &[ConstraintItem]) -> Result<bool, SimError> {
+        for item in items {
+            match item {
+                ConstraintItem::Expr(e) => {
+                    // `x dist {...}` SEBAGAI CONSTRAINT = membership: nilai `x`
+                    // harus berada di himpunan distribusi (nilai & range),
+                    // BUKAN mengambil nilai acak dari distribusi (IrExpr::Dist
+                    // dipakai saat dist menjadi RHS assignment).
+                    if let Expr::Dist { expr: inner, items: dis } = e {
+                        let val = self.evaluate_ast_expr(inner)?;
+                        let mut ok = false;
+                        for di in dis {
+                            match di {
+                                DistItem::Value(v, _) => {
+                                    let vv = self.evaluate_ast_expr(v)?;
+                                    let w = val.width.max(vv.width);
+                                    if val.resize(w).case_eq(&vv.resize(w))
+                                        == LogicVec::from_u64(1, 1)
+                                    {
+                                        ok = true;
+                                        break;
+                                    }
+                                }
+                                DistItem::Range(lo, hi, _) => {
+                                    let a = self.evaluate_ast_expr(lo)?.to_u64();
+                                    let b = self.evaluate_ast_expr(hi)?.to_u64();
+                                    let v = val.to_u64();
+                                    if v >= a.min(b) && v <= a.max(b) {
+                                        ok = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if !ok {
+                            return Ok(false);
+                        }
+                        continue;
+                    }
+                    let r = self.evaluate_ast_expr(e)?;
+                    if !r.to_bool().unwrap_or(false) {
+                        return Ok(false);
+                    }
+                }
+                ConstraintItem::If { cond, then, els } => {
+                    let c = self.evaluate_ast_expr(cond)?.to_bool().unwrap_or(false);
+                    let branch = if c { then.as_slice() } else { els.as_slice() };
+                    if !self.eval_constraint_body(branch)? {
+                        return Ok(false);
+                    }
+                }
+                ConstraintItem::SolveBefore { .. } => {}
+            }
+        }
+        Ok(true)
+    }
+
     /// Enhanced constraint solver: analyze constraints, compute domains, guided generation,
     /// with bounded backtracking. Falls back to rejection sampling with more attempts.
     pub(crate) fn solve_constraints(
         &mut self,
         obj_id: ObjId,
         class_name: &str,
-        inline_constraint: Option<&IrExpr>,
+        inline_constraint: Option<InlineConstraint<'_>>,
     ) -> Result<SolveResult, SimError> {
         let class_def = self.design.classes.get(class_name)
             .ok_or_else(|| SimError::with_diag(
@@ -122,22 +194,26 @@ impl SimulationEngine {
             domains.insert(*fname, VarDomain::default());
         }
 
-        // Analyze class constraints
-        let mut complex_class_constraints: Vec<&Expr> = Vec::new();
+        // Analyze class constraints: ekstrak domain HANYA dari item ekspresi
+        // level-atas yang sederhana. Item `if/else` (F12) bersifat kondisional
+        // — tidak diekstrak ke domain, divalidasi penuh di eval_constraint_body.
         for (_, body) in &class_def.constraints {
             for item in body {
                 if let ConstraintItem::Expr(expr) = item {
-                    if !analyze_constraint_for_domains(expr, &mut domains) {
-                        complex_class_constraints.push(expr);
-                    }
+                    let _ = analyze_constraint_for_domains(expr, &mut domains);
                 }
             }
         }
 
-        // Analyze inline constraints (with_clause)
-        let mut inline_ir_constraints: Vec<IrExpr> = Vec::new();
+        // Analyze inline constraints (with_clause) — F17: AST inline
+        // (jalur method class) ikut diekstrak domain-nya, sehingga field lebar
+        // tetap terpandu guided generation (bukan rejection murni).
+        if let Some(InlineConstraint::Ast(expr)) = inline_constraint {
+            let _ = analyze_constraint_for_domains(expr, &mut domains);
+        }
+        let mut inline_constraints: Vec<InlineConstraint<'_>> = Vec::new();
         if let Some(wc) = inline_constraint {
-            inline_ir_constraints.push(wc.clone());
+            inline_constraints.push(wc);
         }
 
         // Step 4: Guided generation with bounded backtracking
@@ -157,25 +233,26 @@ impl SimulationEngine {
                 }
             }
 
-            // Evaluate class constraints
+            // Evaluate class constraints: evaluasi PENUH semua body (termasuk
+            // item if/else F12). Domain sederhana sudah dijamin generasi
+            // terpandu; evaluasi ulang penuh = correctness check.
             let mut all_satisfied = true;
-
-            // First: complex class constraints (not already analyzed into domains)
-            for expr in &complex_class_constraints {
-                let result = self.evaluate_ast_expr(expr)?;
-                if !result.to_bool().unwrap_or(false) {
+            for (_, body) in &class_def.constraints {
+                if !self.eval_constraint_body(body)? {
                     all_satisfied = false;
                     break;
                 }
             }
 
-            // Then: simple constraints stored in domains are already satisfied by generation,
-            // but we still check the simplest form for correctness
-
-            // Evaluate inline constraint
-            if all_satisfied && !inline_ir_constraints.is_empty() {
-                for wc in &inline_ir_constraints {
-                    let result = self.evaluate_expr(wc)?;
+            // Evaluate inline constraint — F17: AST inline dievaluasi via
+            // evaluate_ast_expr (current_this sudah di-set → field class
+            // `addr` dkk ter-resolve), IR inline via evaluate_expr.
+            if all_satisfied && !inline_constraints.is_empty() {
+                for wc in &inline_constraints {
+                    let result = match wc {
+                        InlineConstraint::Ast(e) => self.evaluate_ast_expr(e)?,
+                        InlineConstraint::Ir(ir) => self.evaluate_expr(ir)?,
+                    };
                     if !result.to_bool().unwrap_or(false) {
                         all_satisfied = false;
                         break;
@@ -329,6 +406,42 @@ fn analyze_constraint_for_domains(expr: &Expr, domains: &mut HashMap<Symbol, Var
             }
         }
 
+        // Dist: var dist { v := w, [lo:hi] :/ w } — nilai/range distribusi
+        // diekstrak ke domain.inside (guided generation), sama seperti inside.
+        // Tanpa ini, field dist hanya bisa dipenuhi rejection sampling — gagal
+        // total untuk ruang nilai lebar (mis. 32-bit) walau satisfiable.
+        Expr::Dist { expr, items } => {
+            if let Expr::Ident { name, .. } = expr.as_ref() {
+                if let Some(domain) = domains.get_mut(name) {
+                    for item in items {
+                        match item {
+                            DistItem::Value(e, _) => {
+                                if let Some(v) = try_extract_u64(e) {
+                                    domain.inside.push(InsideRange { lo: v, hi: v });
+                                    domain.min = Some(domain.min.map(|m| m.min(v)).unwrap_or(v));
+                                    domain.max = Some(domain.max.map(|m| m.max(v)).unwrap_or(v));
+                                } else {
+                                    return false;
+                                }
+                            }
+                            DistItem::Range(lo, hi, _) => {
+                                if let (Some(a), Some(b)) = (try_extract_u64(lo), try_extract_u64(hi)) {
+                                    let (l, h) = (a.min(b), a.max(b));
+                                    domain.inside.push(InsideRange { lo: l, hi: h });
+                                    domain.min = Some(domain.min.map(|m| m.min(l)).unwrap_or(l));
+                                    domain.max = Some(domain.max.map(|m| m.max(h)).unwrap_or(h));
+                                } else {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    return true;
+                }
+            }
+            false
+        }
+
         // Inside: var inside { range_list }
         Expr::Inside { expr, range_list } => {
             if let Expr::Ident { name, .. } = expr.as_ref() {
@@ -349,6 +462,24 @@ fn analyze_constraint_for_domains(expr: &Expr, domains: &mut HashMap<Symbol, Var
                                         domain.min = Some(domain.min.map(|m| m.min(lo)).unwrap_or(lo));
                                         domain.max = Some(domain.max.map(|m| m.max(hi)).unwrap_or(hi));
                                     }
+                                } else {
+                                    return false;
+                                }
+                            }
+                            // Range `[a:b]` di dalam inside di-parse sebagai
+                            // RangeSelect dgn base `Value(Decimal(0))` (lihat
+                            // parser/expr.rs Token::Inside) — evaluasi
+                            // msb/lsb sebagai rentang. Base selain 0 = member
+                            // select asli (`inside {x[7:0]}`) → jangan
+                            // diperlakukan sebagai rentang.
+                            Expr::RangeSelect { expr: base, msb, lsb, .. }
+                                if matches!(base.as_ref(), Expr::Value(Value::Decimal(0))) =>
+                            {
+                                if let (Some(a), Some(b)) = (try_extract_u64(msb), try_extract_u64(lsb)) {
+                                    let (lo, hi) = (a.min(b), a.max(b));
+                                    domain.inside.push(InsideRange { lo, hi });
+                                    domain.min = Some(domain.min.map(|m| m.min(lo)).unwrap_or(lo));
+                                    domain.max = Some(domain.max.map(|m| m.max(hi)).unwrap_or(hi));
                                 } else {
                                     return false;
                                 }

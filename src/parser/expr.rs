@@ -58,8 +58,9 @@ impl Parser {
             self.expect(Token::Colon)?;
             let hi = self.parse_expr(0)?;
             self.expect(Token::RBrack)?;
-            if self.peek() == &Token::Equiv {
-                // :=
+            // `:=` di-lex sebagai AssignOp (lexer.rs: `AssignOp, // :=`);
+            // `Equiv` adalah `===` (case equality) — BUKAN dist weight.
+            if self.peek() == &Token::AssignOp {
                 self.advance();
                 let val = self.parse_expr(0)?;
                 let weight = const_eval_simple(&val).unwrap_or(0) as u64;
@@ -85,8 +86,8 @@ impl Parser {
         } else {
             // Single value: expr := weight or expr :/ weight
             let expr = self.parse_expr(0)?;
-            if self.peek() == &Token::Equiv {
-                // :=
+            // `:=` = AssignOp (bukan Equiv/`===`)
+            if self.peek() == &Token::AssignOp {
                 self.advance();
                 let val = self.parse_expr(0)?;
                 let weight = const_eval_simple(&val).unwrap_or(0) as u64;
@@ -171,6 +172,17 @@ impl Parser {
                 Token::AmpAmp => Some((2, BinaryOp::LogicalAnd)),
                 Token::PipePipe => Some((1, BinaryOp::LogicalOr)),
                 Token::Question => {
+                    // Precedence ternary PALING RENDAH di SystemVerilog — di bawah
+                    // `||` (tabel: 1). Tanpa guard min_prec ini, RHS dari operator
+                    // binary yang lebih rapat akan menelan `? :` sebagai ternary
+                    // lokal: `m == 3 ? 1 : 0` ter-parse `m == (3 ? 1 : 0)`
+                    // (= `m == 1`) alih-alih `(m == 3) ? 1 : 0`. Guard
+                    // `0 < min_prec` → ternary hanya dibentuk di level ekspresi
+                    // penuh (min_prec == 0); di RHS binary, break → ternary
+                    // ditangani oleh loop pemanggil (LRM 1800 §11.4.11).
+                    if 0 < min_prec {
+                        break;
+                    }
                     self.advance();
                     let true_expr = self.parse_expr(0)?;
                     self.expect(Token::Colon)?;
@@ -255,6 +267,34 @@ impl Parser {
                     match old_lhs {
                         Expr::MethodCall { obj, method, args, with_clause: None } => {
                             lhs = Expr::MethodCall { obj, method, args, with_clause: Some(Box::new(with_expr)) };
+                        }
+                        // F17: pola UVM `!x.randomize() with { ... }` — `with`
+                        // melekat ke MethodCall DALAM, `!` tetap di luar:
+                        // `!(x.randomize() with { ... })`. Sebelumnya parser
+                        // error "'with' clause can only follow a method call".
+                        Expr::UnaryOp {
+                            op: UnaryOp::Not,
+                            expr,
+                        } => {
+                            if let Expr::MethodCall {
+                                obj,
+                                method,
+                                args,
+                                with_clause: None,
+                            } = *expr
+                            {
+                                lhs = Expr::UnaryOp {
+                                    op: UnaryOp::Not,
+                                    expr: Box::new(Expr::MethodCall {
+                                        obj,
+                                        method,
+                                        args,
+                                        with_clause: Some(Box::new(with_expr)),
+                                    }),
+                                };
+                            } else {
+                                return Err(self.err("'with' clause can only follow a method call"));
+                            }
                         }
                         _ => return Err(self.err("'with' clause can only follow a method call")),
                     }
@@ -365,10 +405,14 @@ impl Parser {
             Token::Dollar
                 if matches!(self.peek_ahead(1), Token::RBrack | Token::Comma | Token::RParen | Token::Colon) =>
             {
+                let dl = self.peek_line();
+                let dc = self.peek_col();
                 self.advance();
-                Ok(Expr::Ident { name: Symbol::intern("$"), line: 0, col: 0 })
+                Ok(Expr::Ident { name: Symbol::intern("$"), line: dl, col: dc })
             }
             Token::Dollar => {
+                let sf_line = self.peek_line();
+                let sf_col = self.peek_col();
                 self.advance();
                 let name_tok = self.peek().clone();
                 let name_sym = match &name_tok {
@@ -407,7 +451,7 @@ impl Parser {
                     self.expect(Token::RParen)?;
                     Ok(Expr::FuncCall { name: full_name, args, line: fl, col: fc })
                 } else {
-                    Ok(Expr::Ident { name: full_name, line: 0, col: 0 })
+                    Ok(Expr::Ident { name: full_name, line: sf_line, col: sf_col })
                 }
             }
             Token::Ident(name) => {
@@ -494,7 +538,7 @@ impl Parser {
                             col: sc_col,
                         });
                     }
-                    return Ok(Expr::Ident { name: class_prefix, line: 0, col: 0 });
+                    return Ok(Expr::Ident { name: class_prefix, line, col });
                 }
                 // Type cast: type_name'(expr)
                 if self.peek() == &Token::Quote {
@@ -516,6 +560,8 @@ impl Parser {
                 }
             }
             Token::Number { value, base, width, is_signed } => {
+                let num_line = self.peek_line();
+                let num_col = self.peek_col();
                 self.advance();
                 if self.peek() == &Token::Quote && self.peek_ahead(1) == &Token::LParen {
                     self.advance(); self.advance();
@@ -569,7 +615,7 @@ impl Parser {
                         };
                         Expr::Value(Value::Decimal(scaled.unwrap_or(n)))
                     }
-                    else { Expr::Ident { name: value, line: 0, col: 0 } }
+                    else { Expr::Ident { name: value, line: num_line, col: num_col } }
                 };
                 Ok(val)
             }
@@ -594,7 +640,12 @@ impl Parser {
                     Ok(Expr::FuncCall { name: Symbol::intern("new"), args, line: fl, col: fc })
                 }
             }
-            Token::This => { self.advance(); Ok(Expr::Ident { name: Symbol::intern("this"), line: 0, col: 0 }) }
+            Token::This => {
+                let th_line = self.peek_line();
+                let th_col = self.peek_col();
+                self.advance();
+                Ok(Expr::Ident { name: Symbol::intern("this"), line: th_line, col: th_col })
+            }
             Token::Null => { self.advance(); Ok(Expr::Null) }
             Token::Plus | Token::Minus | Token::Tilde | Token::Amp | Token::Pipe | Token::Caret
             | Token::TildeAmp | Token::TildePipe | Token::CaretTilde => {

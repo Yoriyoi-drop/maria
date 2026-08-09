@@ -292,12 +292,14 @@ pub fn substitute_loop_var_in_stmt(stmt: &Stmt, var_name: &str, value: i64) -> S
             delay: substitute_loop_var_in_expr(delay, var_name, value),
             stmt: Box::new(substitute_loop_var_in_stmt(stmt, var_name, value)),
         },
-        Stmt::SysCall { name, args } => Stmt::SysCall {
+        Stmt::SysCall { name, args, line, col } => Stmt::SysCall {
             name: *name,
             args: args
                 .iter()
                 .map(|a| substitute_loop_var_in_expr(a, var_name, value))
                 .collect(),
+            line: *line,
+            col: *col,
         },
         Stmt::Expr { expr } => Stmt::Expr {
             expr: substitute_loop_var_in_expr(expr, var_name, value),

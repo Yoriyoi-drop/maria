@@ -25,6 +25,9 @@ pub enum MariaCmd {
     Wave(MwaveArgs),
     /// mfmt — formatter Verilog/SystemVerilog
     Fmt(MfmtArgs),
+    /// mgen — generate SystemVerilog (.sv/.svh) dari Maria HDL (.mv)
+    #[command(alias = "mgen")]
+    Gen(MgenArgs),
     /// mprof — performance profiler pipeline (lexer→parser→elab→sim)
     Prof(MprofArgs),
     /// mcheck — project health checker (missing file, circular include, deps)
@@ -282,6 +285,43 @@ pub struct MfmtArgs {
     /// Periksa saja — report file yang berbeda format (exit 1 bila ada)
     #[arg(long)]
     pub check: bool,
+}
+
+/// mgen — Generator SystemVerilog dari Maria HDL (.mv).
+#[derive(clap::Args, Clone)]
+pub struct MgenArgs {
+    /// Input: file .mv atau direktori (recursive scan *.mv)
+    #[arg(required = true)]
+    pub targets: Vec<String>,
+
+    /// Direktori output (default: di samping file input)
+    #[arg(short = 'o', long = "output")]
+    pub output: Option<String>,
+
+    /// Print .sv ke stdout (debug, satu file saja)
+    #[arg(long)]
+    pub stdout: bool,
+
+    /// Verifikasi output up-to-date — exit 1 bila ada file yang beda (CI)
+    #[arg(long)]
+    pub check: bool,
+
+    /// Hanya generate .svh
+    #[arg(long = "svh-only")]
+    pub svh_only: bool,
+
+    /// Lewati type-check (E2001–E2007) — untuk konstruk eksternal yang
+    /// belum dipahami checker
+    #[arg(long)]
+    pub no_check: bool,
+
+    /// Hanya generate .sv
+    #[arg(long = "sv-only")]
+    pub sv_only: bool,
+
+    /// Report per-file yang diproses
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 /// mprof — Performance Profiler.

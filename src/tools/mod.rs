@@ -9,6 +9,7 @@ pub mod check;
 pub mod cov;
 pub mod elab;
 pub mod fmt;
+pub mod gen;
 pub mod inspect;
 pub mod lint;
 pub mod prof;
@@ -44,7 +45,11 @@ pub fn collect_targets(paths: &[String]) -> Result<Vec<PathBuf>, SimError> {
             return Err(diag_io(format!("path tidak ditemukan: '{}'", p)));
         }
         if path.is_dir() {
-            let res = FileDiscovery::scan_dir(path, &DiscoveryOptions::default());
+            // F10: sertakan `.mv` (Maria HDL) di scan direktori — tool yang
+            // memakai open_project/open_elaborated otomatis men-transpile-nya.
+            let mut opts = DiscoveryOptions::default();
+            opts.extensions.push("mv".into());
+            let res = FileDiscovery::scan_dir(path, &opts);
             out.extend(res.files.into_iter().map(|f| f.path));
         } else {
             let is_list = path
@@ -89,6 +94,73 @@ fn make_session_config(
     cfg
 }
 
+/// F10: bangun `SessionConfig` dari daftar file + CLI options, sekaligus
+/// transpile semua `.mv` ke buffer inline. Satu-satunya cara membuat config
+/// dengan dukungan `.mv` — dipakai open_project / open_elaborated / prof /
+/// bench (DRY, agar tidak ada call site yang lupa memasang inline_sources).
+fn make_session_config_with_mv(
+    files: Vec<PathBuf>,
+    incdirs: &[String],
+    defines: &[String],
+    top: Option<String>,
+) -> Result<SessionConfig, SimError> {
+    let inline = transpile_mv_to_inline(&files)?;
+    let mut cfg = make_session_config(files, incdirs, defines, top);
+    cfg.inline_sources = inline;
+    Ok(cfg)
+}
+
+/// F10: transpile semua file `.mv` dalam daftar ke buffer SV inline (svh+sv
+/// digabung, baris `` `include `` di-strip — definisi bersama sudah ada di
+/// atasnya). File non-`.mv` tidak disentuh. Hasil: peta path → buffer.
+///
+/// Memakai `transpile_many` (konteks gabungan F9) sehingga package lintas-file
+/// (`types.mv` → `counter.mv`) bekerja di tool manapun.
+pub fn transpile_mv_to_inline(
+    files: &[PathBuf],
+) -> Result<std::collections::HashMap<PathBuf, Vec<u8>>, SimError> {
+    let mv_idx: Vec<usize> = files
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.extension().map(|e| e == "mv").unwrap_or(false))
+        .map(|(i, _)| i)
+        .collect();
+    if mv_idx.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let mut items: Vec<(String, String)> = Vec::with_capacity(mv_idx.len());
+    for &i in &mv_idx {
+        let p = &files[i];
+        let base = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("design")
+            .to_string();
+        let src = std::fs::read_to_string(p)
+            .map_err(|e| diag_io(format!("{}: {}", p.display(), e)))?;
+        items.push((src, base));
+    }
+    let results = crate::mv::transpile_many(&items)
+        .map_err(|(i, e)| diag_io(format!("{}: {}", files[mv_idx[i]].display(), e)))?;
+
+    let mut inline = std::collections::HashMap::new();
+    for (&i, tr) in mv_idx.iter().zip(results.iter()) {
+        let mut buf = tr.svh.clone();
+        buf.push('\n');
+        for line in tr.sv.lines() {
+            let t = line.trim_start();
+            if t.starts_with("`include") {
+                continue;
+            }
+            buf.push_str(line);
+            buf.push('\n');
+        }
+        inline.insert(files[i].clone(), buf.into_bytes());
+    }
+    Ok(inline)
+}
+
 /// Buka project: expand target → CompileSession → parse semua file secara
 /// paralel (dengan cache MICD bila tersedia) → merged `Design` + session.
 ///
@@ -101,7 +173,7 @@ pub fn open_project(
     top: Option<&str>,
 ) -> Result<(Design, CompileSession), SimError> {
     let files = collect_targets(targets)?;
-    let cfg = make_session_config(files, incdirs, defines, top.map(|s| s.to_string()));
+    let cfg = make_session_config_with_mv(files, incdirs, defines, top.map(|s| s.to_string()))?;
     let mut session = CompileSession::new(cfg);
     let (design, _index) = session.compile()?;
     Ok((design, session))
@@ -117,7 +189,7 @@ pub fn open_elaborated(
     mode: ElaborateMode,
 ) -> Result<(CompileSession, Design, crate::ir::IrDesign), SimError> {
     let files = collect_targets(targets)?;
-    let cfg = make_session_config(files, incdirs, defines, top.map(|s| s.to_string()));
+    let cfg = make_session_config_with_mv(files, incdirs, defines, top.map(|s| s.to_string()))?;
     let mut session = CompileSession::new(cfg);
     let (design, ir, _len) = session.compile_and_elaborate_with_mode(top, mode)?;
     Ok((session, design, ir))

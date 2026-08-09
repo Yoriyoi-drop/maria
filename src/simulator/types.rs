@@ -82,7 +82,7 @@ pub struct StateSnapshot {
 pub enum EventKind {
     EvalProcess(usize),
     ContinueBlock(Continuation),
-    ContinueAstBlock(Vec<crate::ast::Stmt>, Option<usize>),
+    ContinueAstBlock(Vec<crate::ast::Stmt>, Option<usize>, Option<ObjId>, Option<Symbol>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -212,6 +212,99 @@ pub struct UvmComponentData {
     pub report_verbosity: u32,
 }
 
+/// UVM event data: sinkronisasi antar komponen (`uvm_event`).
+/// `triggered`/`on` di-set oleh trigger(); waiter (`wait_trigger`/`wait_on`)
+/// di-block sampai flag naik — pola blocking ContinueAstBlock di block.rs.
+#[derive(Debug, Clone)]
+pub struct UvmEventData {
+    /// Nama event (dari `new(name)`).
+    pub name: String,
+    /// Flag `triggered` — dibaca `triggered()` / `wait_trigger()`.
+    pub triggered: bool,
+    /// Flag `on` — dibaca `is_on()` / `wait_on()`.
+    pub on: bool,
+}
+
+impl UvmEventData {
+    /// F21 review: `on` default FALSE (semantics UVM — event baru off;
+    /// `wait_on()` harus block sampai `trigger()`/`on_off(1)` menyalakannya).
+    /// Sebelumnya `on: true` membuat `wait_on()` langsung return (tak pernah
+    /// block). `reset()` juga mematikan `on` (UVM reset: on=0, triggered=0).
+    pub fn new(name: String) -> Self {
+        UvmEventData {
+            name,
+            triggered: false,
+            on: false,
+        }
+    }
+}
+
+/// UVM barrier data: sinkronisasi N-proses (`uvm_barrier`).
+/// Setiap `wait_for()` menambah `count`; saat `count >= threshold` semua
+/// waiter di-release dan count di-reset ke 0 (auto-reset, seperti UVM asli).
+#[derive(Debug, Clone)]
+pub struct UvmBarrierData {
+    /// Nama barrier (dari `new(name, threshold)`).
+    pub name: String,
+    /// Jumlah proses yang harus menunggu sebelum semua dilepas.
+    pub threshold: u32,
+    /// Jumlah proses yang sudah sampai (dari wait_for/wait_for_count).
+    pub count: u32,
+}
+
+impl UvmBarrierData {
+    pub fn new(name: String, threshold: u32) -> Self {
+        UvmBarrierData {
+            name,
+            threshold: threshold.max(1),
+            count: 0,
+        }
+    }
+}
+
+/// F23: uvm_tlm_fifo — buffer FIFO TLM dgn blocking put/get/peek.
+/// Queue berisi ObjId item (handle object). `put` saat penuh & `get` saat
+/// kosong di-block (suspend + waiter, pola sama dengan uvm_event/barrier);
+/// `analysis_export.write(item)` (export internal) memetakan ke put non-block.
+#[derive(Debug, Clone)]
+pub struct UvmTlmFifoData {
+    pub name: String,
+    /// Antrean item (ObjId).
+    pub queue: std::collections::VecDeque<ObjId>,
+    /// Kapasitas (default 1, dari `new(name, parent, size)`).
+    pub capacity: usize,
+    /// Export internal (`analysis_export`) — id objek `__uvm_fifo_export`.
+    pub export_id: Option<ObjId>,
+}
+
+impl UvmTlmFifoData {
+    pub fn new(name: String, capacity: usize) -> Self {
+        UvmTlmFifoData {
+            name,
+            queue: std::collections::VecDeque::new(),
+            capacity: capacity.max(1),
+            export_id: None,
+        }
+    }
+}
+
+/// F21: waiter blocking `wait_trigger`/`wait_on`/`wait_for`/`wait_for_count`
+/// yang di-suspend — kontinuasi AST + konteks method, di-resume saat
+/// trigger()/barrier penuh (pola sama dengan get_next_item blocking).
+#[derive(Debug, Clone)]
+pub struct UvmSyncWaiter {
+    /// Statement sisa setelah titik suspend (statement wait TIDAK diulang
+    /// karena `wait_for` punya side effect count += 1).
+    pub continuation: Vec<crate::ast::Stmt>,
+    pub fork_id: Option<usize>,
+    pub this: Option<ObjId>,
+    /// Konteks method class yang sedang berjalan (dipakai resume ContinueAstBlock).
+    pub method: Option<Symbol>,
+    /// F23: label wait utk release selektif — "get"/"peek"/"put" (fifo)
+    /// atau nama method wait lain (event/barrier). Bukan konteks method.
+    pub wait_label: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct UvmSequencerData {
     pub item_queue: Vec<ObjId>,
@@ -222,6 +315,16 @@ pub struct UvmSequencerData {
 pub struct UvmDriverData {
     pub sequencer_id: Option<ObjId>,
     pub current_item: Option<ObjId>,
+}
+
+/// F24: uvm_seq_item_port — port koneksi driver↔sequencer (UVM asli
+/// `seq_item_port.get_next_item(req)` / `.item_done()`). Menyimpan sequencer
+/// yang di-connect; method get_next_item/item_done/try_next_item mendelegasi
+/// ke sequencer tsb. Blocking get_next_item di-intercept block.rs (waiter
+/// keyed by sequencer id, label "get_next_item").
+#[derive(Debug, Clone)]
+pub struct UvmSeqItemPortData {
+    pub sequencer_id: Option<ObjId>,
 }
 
 #[derive(Debug, Clone)]

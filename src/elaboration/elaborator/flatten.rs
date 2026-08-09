@@ -480,7 +480,12 @@ impl Elaborator {
                     body: new_body,
                 })
             }
-            IrStmt::SysCall { name, args } => {
+            IrStmt::SysCall {
+                name,
+                args,
+                line,
+                col,
+            } => {
                 let new_args = args
                     .iter()
                     .map(|a| self.translate_expr(a, map_sig))
@@ -488,6 +493,8 @@ impl Elaborator {
                 Ok(IrStmt::SysCall {
                     name: *name,
                     args: new_args,
+                    line: *line,
+                    col: *col,
                 })
             }
             IrStmt::EventControl { sigs, body } => {
@@ -555,6 +562,8 @@ impl Elaborator {
                 clock_event,
                 disable_iff,
                 sequence: _,
+                line,
+                col,
             } => {
                 let new_cond = self.translate_expr(cond, map_sig);
                 let new_pass = self.translate_stmts(pass_stmt, map_sig)?;
@@ -569,6 +578,8 @@ impl Elaborator {
                     clock_event: clock_event.clone(),
                     disable_iff: new_disable,
                     sequence: None,
+                    line: *line,
+                    col: *col,
                 })
             }
             IrStmt::Assume {
@@ -578,6 +589,8 @@ impl Elaborator {
                 clock_event,
                 disable_iff,
                 sequence: _,
+                line,
+                col,
             } => {
                 let new_cond = self.translate_expr(cond, map_sig);
                 let new_pass = self.translate_stmts(pass_stmt, map_sig)?;
@@ -592,6 +605,8 @@ impl Elaborator {
                     clock_event: clock_event.clone(),
                     disable_iff: new_disable,
                     sequence: None,
+                    line: *line,
+                    col: *col,
                 })
             }
             IrStmt::Cover {
@@ -767,12 +782,19 @@ impl Elaborator {
             ),
             IrExpr::Signed(inner) => IrExpr::Signed(Box::new(self.translate_expr(inner, map_sig))),
             IrExpr::String(s) => IrExpr::String(s.clone()),
-            IrExpr::SysFunc { name, args } => IrExpr::SysFunc {
+            IrExpr::SysFunc {
+                name,
+                args,
+                line,
+                col,
+            } => IrExpr::SysFunc {
                 name: *name,
                 args: args
                     .iter()
                     .map(|a| self.translate_expr(a, map_sig))
                     .collect(),
+                line: *line,
+                col: *col,
             },
             IrExpr::NewCall { class_name, args } => IrExpr::NewCall {
                 class_name: *class_name,

@@ -45,9 +45,15 @@ const BUILTIN_UVM_CLASSES: &[&str] = &[
     "uvm_sequencer",
     "uvm_driver",
     "uvm_monitor",
+    "uvm_env",
+    "uvm_agent",
     "uvm_scoreboard",
     "uvm_analysis_port",
     "uvm_analysis_imp",
+    "uvm_analysis_export",
+    "uvm_subscriber",
+    "uvm_tlm_fifo",
+    "uvm_seq_item_port",
     "uvm_test",
     "uvm_config_db",
     "uvm_report_object",
@@ -982,6 +988,8 @@ let mut top = match self.modules.remove(&top_name) {
                     Some("uvm_sequencer") => cls.extends = Some(Symbol::intern("__uvm_sequencer")),
                     Some("uvm_driver") => cls.extends = Some(Symbol::intern("__uvm_driver")),
                     Some("uvm_monitor") => cls.extends = Some(Symbol::intern("__uvm_monitor")),
+                    Some("uvm_env") => cls.extends = Some(Symbol::intern("__uvm_env")),
+                    Some("uvm_agent") => cls.extends = Some(Symbol::intern("__uvm_agent")),
                     Some("uvm_scoreboard") => cls.extends = Some(Symbol::intern("__uvm_scoreboard")),
                     Some("uvm_analysis_port") => {
                         cls.extends = Some(Symbol::intern("__uvm_analysis_port"))
@@ -989,8 +997,18 @@ let mut top = match self.modules.remove(&top_name) {
                     Some("uvm_analysis_imp") => {
                         cls.extends = Some(Symbol::intern("__uvm_analysis_imp"))
                     }
+                    Some("uvm_analysis_export") => {
+                        cls.extends = Some(Symbol::intern("__uvm_analysis_export"))
+                    }
+                    Some("uvm_subscriber") => cls.extends = Some(Symbol::intern("__uvm_subscriber")),
+                    Some("uvm_tlm_fifo") => cls.extends = Some(Symbol::intern("__uvm_tlm_fifo")),
+                    Some("uvm_seq_item_port") => {
+                        cls.extends = Some(Symbol::intern("__uvm_seq_item_port"))
+                    }
                     Some("uvm_test") => cls.extends = Some(Symbol::intern("__uvm_test")),
                     Some("uvm_config_db") => cls.extends = Some(Symbol::intern("__uvm_config_db")),
+                    Some("uvm_event") => cls.extends = Some(Symbol::intern("__uvm_event")),
+                    Some("uvm_barrier") => cls.extends = Some(Symbol::intern("__uvm_barrier")),
                     Some("uvm_report_object") => {
                         cls.extends = Some(Symbol::intern("__uvm_report_object"))
                     }
@@ -1131,6 +1149,103 @@ let mut top = match self.modules.remove(&top_name) {
                     rand_fields: vec![],
                 },
             );
+            // F23: uvm_analysis_export — passthrough port (connect + write
+            // broadcast, data sama dengan analysis port). extends analysis port
+            // sehingga is_uvm_analysis_port_hierarchy otomatis benar.
+            classes.insert(
+                Symbol::intern("__uvm_analysis_export"),
+                IrClassDef {
+                    name: Symbol::intern("__uvm_analysis_export"),
+                    extends: Some(Symbol::intern("__uvm_analysis_port")),
+                    type_params: vec![],
+                    fields: vec![],
+                    methods: vec![],
+                    constraints: vec![],
+                    rand_fields: vec![],
+                },
+            );
+            // F23: uvm_tlm_fifo — FIFO TLM blocking put/get/peek + export
+            // analysis internal (__uvm_fifo_export) utk `fifo.analysis_export`.
+            classes.insert(
+                Symbol::intern("__uvm_tlm_fifo"),
+                IrClassDef {
+                    name: Symbol::intern("__uvm_tlm_fifo"),
+                    extends: Some(Symbol::intern("__uvm_component")),
+                    type_params: vec![],
+                    fields: vec![],
+                    methods: vec![],
+                    constraints: vec![],
+                    rand_fields: vec![],
+                },
+            );
+            classes.insert(
+                Symbol::intern("__uvm_fifo_export"),
+                IrClassDef {
+                    name: Symbol::intern("__uvm_fifo_export"),
+                    extends: Some(Symbol::intern("__uvm_analysis_export")),
+                    type_params: vec![],
+                    fields: vec![],
+                    methods: vec![],
+                    constraints: vec![],
+                    rand_fields: vec![],
+                },
+            );
+            // F24: uvm_seq_item_port — port driver↔sequencer. Method
+            // get_next_item/item_done/try_next_item mendelegasi ke sequencer
+            // yang di-connect (`connect(seqr)`). Blocking get_next_item
+            // di-intercept block.rs (waiter keyed by sequencer).
+            classes.insert(
+                Symbol::intern("__uvm_seq_item_port"),
+                IrClassDef {
+                    name: Symbol::intern("__uvm_seq_item_port"),
+                    extends: Some(Symbol::intern("__uvm_component")),
+                    type_params: vec![],
+                    fields: vec![],
+                    methods: vec![],
+                    constraints: vec![],
+                    rand_fields: vec![],
+                },
+            );
+            // F22: uvm_subscriber — komponen penerima broadcast analysis port.
+            // `new` di-dispatch builtin (auto-buat analysis_imp child + set
+            // field `analysis_imp`); `write` user override jalan normal
+            // (pattern override-check di method.rs); tanpa override → no-op.
+            classes.insert(
+                Symbol::intern("__uvm_subscriber"),
+                IrClassDef {
+                    name: Symbol::intern("__uvm_subscriber"),
+                    extends: Some(Symbol::intern("__uvm_component")),
+                    type_params: vec![],
+                    fields: vec![],
+                    methods: vec![],
+                    constraints: vec![],
+                    rand_fields: vec![],
+                },
+            );
+            classes.insert(
+                Symbol::intern("__uvm_env"),
+                IrClassDef {
+                    name: Symbol::intern("__uvm_env"),
+                    extends: Some(Symbol::intern("__uvm_component")),
+                    type_params: vec![],
+                    fields: vec![],
+                    methods: vec![],
+                    constraints: vec![],
+                    rand_fields: vec![],
+                },
+            );
+            classes.insert(
+                Symbol::intern("__uvm_agent"),
+                IrClassDef {
+                    name: Symbol::intern("__uvm_agent"),
+                    extends: Some(Symbol::intern("__uvm_component")),
+                    type_params: vec![],
+                    fields: vec![],
+                    methods: vec![],
+                    constraints: vec![],
+                    rand_fields: vec![],
+                },
+            );
             classes.insert(
                 Symbol::intern("__uvm_test"),
                 IrClassDef {
@@ -1159,6 +1274,34 @@ let mut top = match self.modules.remove(&top_name) {
                 Symbol::intern("__uvm_resource_db"),
                 IrClassDef {
                     name: Symbol::intern("__uvm_resource_db"),
+                    extends: Some(Symbol::intern("__uvm_object")),
+                    type_params: vec![],
+                    fields: vec![],
+                    methods: vec![],
+                    constraints: vec![],
+                    rand_fields: vec![],
+                },
+            );
+            // F21: uvm_event — sinkronisasi trigger/wait antar komponen.
+            // Method di-dispatch di builtin.rs execute_uvm_event_method;
+            // blocking wait_trigger/wait_on di-block di block.rs (jalur AST).
+            classes.insert(
+                Symbol::intern("__uvm_event"),
+                IrClassDef {
+                    name: Symbol::intern("__uvm_event"),
+                    extends: Some(Symbol::intern("__uvm_object")),
+                    type_params: vec![],
+                    fields: vec![],
+                    methods: vec![],
+                    constraints: vec![],
+                    rand_fields: vec![],
+                },
+            );
+            // F21: uvm_barrier — sinkronisasi N-proses (threshold).
+            classes.insert(
+                Symbol::intern("__uvm_barrier"),
+                IrClassDef {
+                    name: Symbol::intern("__uvm_barrier"),
                     extends: Some(Symbol::intern("__uvm_object")),
                     type_params: vec![],
                     fields: vec![],
@@ -4167,6 +4310,8 @@ impl Elaborator {
                             width: total_width,
                             array_depth,
                             elem_width: actual_elem_width,
+                            // F18: simpan tipe deklarasi untuk resolve_new_class_hint
+                            dtype: Some(decl.dtype.clone()),
                         });
                     }
                 }

@@ -95,6 +95,18 @@ pub struct SimulationEngine {
     /// tetap bersih).
     pub report_progress: bool,
     pub running: bool,
+    /// `$fatal` telah dipanggil — menghentikan eksekusi blok statement yang
+    /// sedang berjalan SEKETIKA (beda dari `running=false` yang dipakai
+    /// `$finish`, karena `final` block tetap harus dieksekusi setelah
+    /// `$finish`/`$fatal`).
+    pub fatal_hit: bool,
+    /// Penghitung severity system task ($info/$warning/$error/$fatal, F14) —
+    /// dipakai ringkasan akhir sim (`report_severity_summary`) & exit code
+    /// CLI non-zero untuk `$fatal` (F15).
+    pub sev_info_count: u64,
+    pub sev_warning_count: u64,
+    pub sev_error_count: u64,
+    pub sev_fatal_count: u64,
     /// Flag pembatalan eksternal (GUI "Stop"). Diperiksa setiap time step di
     /// run loop — jika bernilai true, simulasi berhenti lebih awal.
     pub cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
@@ -147,6 +159,19 @@ pub struct SimulationEngine {
     pub pending_await_target: Option<ObjId>,
     pub pending_wait_orders: Vec<WaitOrderState>,
     pub loop_continuation: Option<Vec<IrStmt>>,
+    /// F18: kontinuasi loop untuk jalur AST (task/method UVM) — set saat
+    /// body loop suspend (delay / get_next_item blocking) agar loop MENGULANG
+    /// saat di-resume. Terpisah dari `loop_continuation` (yang bertipe IrStmt).
+    pub ast_loop_continuation: Option<Vec<crate::ast::Stmt>>,
+    /// F26: fork id yang sedang mengeksekusi branch (IR/AST) — diteruskan ke
+    /// task body (execute_method_body) agar continuation resume decrement fork
+    /// yang benar. Tanpa ini task di dalam fork (module initial) suspend dgn
+    /// fork_id None → resume tak pernah decrement → join selesai premature.
+    pub active_fork_id: Option<usize>,
+    /// F26: task method baru saja suspend (evaluate_ast_block_with_delay_fork
+    /// return false) — branch fork yang memanggil task TIDAK boleh decrement di
+    /// titik ini; resume (ContinueAstBlock dgn fork_id) yang decrement.
+    pub task_suspended: bool,
     pub post_loop_tail: Vec<IrStmt>,
     pub current_time: u64,
     pub fork_groups: Vec<ForkGroup>,
@@ -167,6 +192,24 @@ pub struct SimulationEngine {
     pub uvm_analysis_port_data: HashMap<ObjId, UvmAnalysisPortData>,
     pub uvm_analysis_imp_data: HashMap<ObjId, UvmAnalysisImpData>,
     pub uvm_config_db_data: HashMap<(String, String), LogicVec>,
+    /// F21: uvm_event data per objek (triggered/on).
+    pub uvm_event_data: HashMap<ObjId, UvmEventData>,
+    /// F21: uvm_barrier data per objek (threshold/count).
+    pub uvm_barrier_data: HashMap<ObjId, UvmBarrierData>,
+    /// F21: waiter blocking `wait_trigger`/`wait_on`/`wait_for` — kontinuasi
+    /// AST yang di-suspend per objek event/barrier, di-resume saat trigger/
+    /// barrier penuh (pola sama dengan get_next_item blocking).
+    pub uvm_sync_waiters: HashMap<ObjId, Vec<crate::simulator::types::UvmSyncWaiter>>,
+    // F23: data uvm_tlm_fifo (queue ObjId + capacity + export internal).
+    pub uvm_tlm_fifo_data: HashMap<ObjId, crate::simulator::types::UvmTlmFifoData>,
+    // F23: data export analysis internal fifo (__uvm_fifo_export) — parent fifo.
+    pub uvm_fifo_export_data: HashMap<ObjId, ObjId>,
+    /// F24: data uvm_seq_item_port (port driver↔sequencer, sequencer ter-connect).
+    pub uvm_seq_item_port_data: HashMap<ObjId, crate::simulator::types::UvmSeqItemPortData>,
+    /// F21: continuation AST setelah `fork join`/`join_any` di jalur AST
+    /// (class method/task UVM). ForkGroup.continuation bertipe `Vec<IrStmt>`,
+    /// jadi cont AST disimpan terpisah dan dieksekusi di `fork_finish`.
+    pub ast_fork_cont: HashMap<usize, Vec<crate::ast::Stmt>>,
     pub sdf_timing_checks: Vec<TimingCheck>,
     pub uvm_resource_db_data: HashMap<(String, String), LogicVec>,
     /// UVM register layer data: register objects
@@ -181,6 +224,12 @@ pub struct SimulationEngine {
     pub callback_queues: HashMap<(String, String), crate::simulator::types::UvmCallbackData>,
     pub factory_type_overrides: HashMap<String, String>,
     pub root_test_obj_id: Option<ObjId>,
+    /// F18: fase UVM sudah dijalankan (oleh execute_phases auto-detect ATAU
+    /// run_test()). Guard anti-duplikasi: run_test() yang dipanggil dari
+    /// initial block berjalan SETELAH execute_phases di run() (initial hanya
+    /// di-schedule ke event loop), jadi tanpa guard ini objek test dibuat dua
+    /// kali dan fase dieksekusi dua kali.
+    pub uvm_phases_started: bool,
     pub process_map: HashMap<ObjId, ProcessInfo>,
     pub _next_process_id: usize,
     pub current_process_id: Option<ObjId>,
@@ -268,6 +317,13 @@ pub struct SimulationEngine {
     pub current_process_name: Option<String>,
     /// Current instance path (for runtime context), e.g. "soc.cpu0.fetch"
     pub current_instance_path: Option<String>,
+    /// Posisi source (line, col) terakhir yang diketahui saat evaluasi —
+    /// di-set dari ekspresi berposisi (Ident/FuncCall/ScopedIdent). Dipakai
+    /// warning/error runtime yang tidak membawa lokasi eksplisit agar selalu
+    /// mencantumkan file:line:col (F20). Cell agar bisa di-set dari &mut self
+    /// evaluator dan dibaca dari &self helper emit.
+    pub cur_src_line: std::cell::Cell<usize>,
+    pub cur_src_col: std::cell::Cell<usize>,
     /// Race detection: tracks which process (ObjId) last wrote each signal in current delta
     pub signal_writers: std::collections::HashMap<SignalId, Option<ObjId>>,
     /// Race detection: write count per signal per time step (for oscillation detection)

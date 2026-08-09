@@ -1,0 +1,55 @@
+// ─────────────────────────────────────────────────────────────
+// Contoh Maria HDL (.mv) — FSM traffic light.
+// Generate: maria mgen traffic.mv  →  traffic.sv + traffic.svh
+// ─────────────────────────────────────────────────────────────
+
+package traffic_pkg {
+    enum State { RED, GREEN, YELLOW }
+}
+
+module traffic #(GREEN_T = 30, YELLOW_T = 5) {
+    use traffic_pkg::*
+
+    in  clk, rst_n : bit
+    out state      : State
+    out red, green, yellow : bit
+
+    reg state : State
+    reg timer : uint[8]
+
+    seq(clk, rst_n) {
+        if (!rst_n) {
+            state <= RED
+            timer <= 0
+        } else {
+            case (state) {
+                RED: {
+                    if (timer == GREEN_T) {
+                        state <= GREEN
+                        timer <= 0
+                    } else {
+                        timer <= timer + 1
+                    }
+                }
+                GREEN: {
+                    if (timer == YELLOW_T) {
+                        state <= YELLOW
+                        timer <= 0
+                    } else {
+                        timer <= timer + 1
+                    }
+                }
+                YELLOW: {
+                    state <= RED
+                    timer <= 0
+                }
+            }
+        }
+    }
+
+    comb {
+        red    = (state == RED)
+        green  = (state == GREEN)
+        yellow = (state == YELLOW)
+    }
+}

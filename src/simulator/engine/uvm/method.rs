@@ -4,7 +4,7 @@ use crate::diagnostics::DiagCode;
 use crate::ir::*;
 use crate::ast::*;
 use crate::Symbol;
-use crate::simulator::engine::uvm::constraint_solver::SolveResult;
+use crate::simulator::engine::uvm::constraint_solver::{InlineConstraint, SolveResult};
 use std::collections::{HashMap, HashSet};
 
 impl SimulationEngine {
@@ -19,6 +19,9 @@ impl SimulationEngine {
             .get_object(obj_id)
             .map(|o| o.class_name)
             .unwrap_or_default();
+        if std::env::var("DBG_UVM").is_ok() && matches!(method, "start_item" | "finish_item" | "get_next_item" | "item_done") {
+            eprintln!("[DBG-UVM] execute_method {} class={} is_seq={}", method, class_name, self.is_uvm_sequence_hierarchy(class_name.as_str()));
+        }
         if class_name.is_empty() {
             // Method call pada null handle / class tak dikenal: warning + default
             // agar simulasi tetap berjalan (null-handle chain pada kode UVM).
@@ -34,6 +37,40 @@ impl SimulationEngine {
         if class_name == "__semaphore" {
             return self.execute_semaphore_method(obj_id, method, args);
         }
+        // F21: uvm_event / uvm_barrier — sinkronisasi antar komponen.
+        // is_uvm_*_hierarchy menelusuri extends chain: objek dibuat dengan
+        // class_name asli (`uvm_event` dari tipe field), bukan `__uvm_event`.
+        // HANYA intercept bila method TIDAK dioverride user (pola randomize:
+        // "only intercept if class doesn't override") — class `my_event
+        // extends uvm_event` dengan `new` override / method custom (mis.
+        // notify_extra) harus jalan normal, bukan "unknown uvm_event method".
+        let user_override = self
+            .find_method_in_hierarchy(class_name.as_str(), method)
+            .is_ok();
+        if !user_override && self.is_uvm_event_hierarchy(class_name.as_str()) {
+            return self.execute_uvm_event_method(obj_id, method, args);
+        }
+        if !user_override && self.is_uvm_barrier_hierarchy(class_name.as_str()) {
+            return self.execute_uvm_barrier_method(obj_id, method, args);
+        }
+        // F22: uvm_subscriber — `new` builtin (auto-buat analysis_imp child +
+        // field analysis_imp); `write`/method lain dioverride user → normal.
+        if !user_override && self.is_uvm_subscriber_hierarchy(class_name.as_str()) {
+            return self.execute_uvm_subscriber_method(obj_id, method, args);
+        }
+        // F23: uvm_tlm_fifo — `new` builtin (queue + analysis_export internal);
+        // put/get/peek blocking di block.rs; query lain dioverride user → normal.
+        if !user_override && self.is_uvm_tlm_fifo_hierarchy(class_name.as_str()) {
+            return self.execute_uvm_tlm_fifo_method(obj_id, method, args);
+        }
+        if !user_override && self.is_uvm_fifo_export_hierarchy(class_name.as_str()) {
+            return self.execute_uvm_fifo_export_method(obj_id, method, args);
+        }
+        // F24: uvm_seq_item_port — `new` builtin (data port + component);
+        // get_next_item/item_done mendelegasi ke sequencer; user override normal.
+        if !user_override && self.is_uvm_seq_item_port_hierarchy(class_name.as_str()) {
+            return self.execute_uvm_seq_item_port_method(obj_id, method, args);
+        }
         if class_name == "__process" {
             return self.execute_process_method(obj_id, method, args);
         }
@@ -44,6 +81,18 @@ impl SimulationEngine {
                 return self
                     .sample_covergroup(cg_name)
                     .map(|_| LogicVec::from_u64(1, 1));
+            }
+        }
+        // F17: built-in randomize() harus dicek SEBELUM dispatch hierarki UVM.
+        // Sebelumnya check ini berada setelah semua `is_uvm_*_hierarchy` —
+        // untuk class UVM (uvm_sequence_item, uvm_object, dkk) randomize()
+        // dicegat lebih dulu dan jatuh ke "randomize not implemented". Hanya
+        // dipakai bila tidak ada override user (pola "only intercept if class
+        // doesn't override").
+        if method == "randomize" {
+            let has_user_method = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
+            if !has_user_method {
+                return self.execute_randomize(obj_id, class_name.as_str());
             }
         }
         // Check uvm_callbacks hierarchy (must be before general object dispatch)
@@ -163,13 +212,6 @@ impl SimulationEngine {
         let pre_cb_method = format!("pre_{}", method);
         self.invoke_callbacks(class_name.as_str(), &pre_cb_method, args)?;
 
-        // Check for built-in randomize() — only if no user-defined override exists
-        if method == "randomize" {
-            let has_user_method = self.find_method_in_hierarchy(class_name.as_str(), method).is_ok();
-            if !has_user_method {
-                return self.execute_randomize(obj_id, class_name.as_str());
-            }
-        }
         // Normal dispatch: find method in the full class hierarchy (virtual dispatch)
         let method_def = self.find_method_in_hierarchy(class_name.as_str(), method)?.clone();
         // Static methods don't receive `this`
@@ -208,12 +250,38 @@ impl SimulationEngine {
             return self.execute_randomize(obj_id, class_name);
         }
         // Try the smart constraint solver first
-        match self.solve_constraints(obj_id, class_name, with_clause)? {
+        match self.solve_constraints(obj_id, class_name, with_clause.map(InlineConstraint::Ir))? {
             SolveResult::Satisfied => Ok(LogicVec::from_u64(1, 1)),
             SolveResult::Unsatisfiable => {
                 // Fall back to rejection sampling with inline constraint
-                self.randomize_rejection_fallback(obj_id, class_name, with_clause)
+                self.randomize_rejection_fallback(
+                    obj_id,
+                    class_name,
+                    with_clause.map(InlineConstraint::Ir),
+                )
             }
+        }
+    }
+
+    /// F17: randomize() with {...} di jalur AST (body method class) — inline
+    /// constraint AST dievaluasi via evaluate_ast_expr dengan current_this,
+    /// sehingga field class (`addr`) bisa diakses langsung tanpa elaborasi IR.
+    pub(crate) fn execute_randomize_ast_with(
+        &mut self,
+        obj_id: ObjId,
+        class_name: &str,
+        with_clause: Option<&Expr>,
+    ) -> Result<LogicVec, SimError> {
+        if with_clause.is_none() {
+            return self.execute_randomize(obj_id, class_name);
+        }
+        match self.solve_constraints(obj_id, class_name, with_clause.map(InlineConstraint::Ast))? {
+            SolveResult::Satisfied => Ok(LogicVec::from_u64(1, 1)),
+            SolveResult::Unsatisfiable => self.randomize_rejection_fallback(
+                obj_id,
+                class_name,
+                with_clause.map(InlineConstraint::Ast),
+            ),
         }
     }
 
@@ -223,7 +291,7 @@ impl SimulationEngine {
         &mut self,
         obj_id: ObjId,
         class_name: &str,
-        with_clause: Option<&IrExpr>,
+        with_clause: Option<InlineConstraint<'_>>,
     ) -> Result<LogicVec, SimError> {
         let class_def = self
             .design
@@ -286,22 +354,11 @@ impl SimulationEngine {
                 }
             }
 
-            // Evaluate all class constraints
+            // Evaluate all class constraints (rekursif — termasuk if/else F12)
             let mut all_satisfied = true;
             for (_, body) in &class_def.constraints {
-                for item in body {
-                    match item {
-                        ConstraintItem::Expr(expr) => {
-                            let result = self.evaluate_ast_expr(expr)?;
-                            if !result.to_bool().unwrap_or(false) {
-                                all_satisfied = false;
-                                break;
-                            }
-                        }
-                        ConstraintItem::SolveBefore { .. } => {}
-                    }
-                }
-                if !all_satisfied {
+                if !self.eval_constraint_body(body)? {
+                    all_satisfied = false;
                     break;
                 }
             }
@@ -309,7 +366,10 @@ impl SimulationEngine {
             // Evaluate inline constraint
             if all_satisfied {
                 if let Some(wc) = with_clause {
-                    let wc_result = self.evaluate_expr(wc)?;
+                    let wc_result = match wc {
+                        InlineConstraint::Ast(e) => self.evaluate_ast_expr(e)?,
+                        InlineConstraint::Ir(ir) => self.evaluate_expr(ir)?,
+                    };
                     if !wc_result.to_bool().unwrap_or(false) {
                         all_satisfied = false;
                     }

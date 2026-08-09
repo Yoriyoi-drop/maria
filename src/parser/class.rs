@@ -15,6 +15,81 @@ use crate::parser::lexer::*;
 impl Parser {
     /// Fast skip for first pass: collect class name + fast-skip body to endclass.
     /// Does NOT parse members — dramatically faster for class discovery pass.
+    /// Parse isi blok `constraint name { ... }` (berhenti di `}` tanpa
+    /// memakannya). Item: `solve a before b`, `if (c) {..} else {..}` (F12,
+    /// constraint kondisional), atau ekspresi (termasuk `inside`/`dist`).
+    /// Ekspresi yang gagal di-skip ke `;` (recovery — perilaku lama).
+    fn parse_constraint_items(&mut self) -> Result<Vec<ConstraintItem>, SimError> {
+        let mut body = Vec::new();
+        while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+            // `solve var before var, var` (di-lex: Ident("solve"), Ident("before"))
+            if let Token::Ident(ref s) = self.peek() {
+                if s == "solve" {
+                    self.advance();
+                    let mut vars = Vec::new();
+                    let first_var = self.expect_ident()?;
+                    vars.push(first_var);
+                    if let Token::Ident(ref s2) = self.peek() {
+                        if s2 == "before" {
+                            self.advance();
+                            loop {
+                                let v = self.expect_ident()?;
+                                vars.push(v);
+                                if self.peek() == &Token::Comma {
+                                    self.advance();
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    self.skip_semi();
+                    body.push(ConstraintItem::SolveBefore { vars });
+                    continue;
+                }
+            }
+            // `if (cond) { items } else { items }` (F12)
+            if self.peek() == &Token::If {
+                self.advance();
+                self.expect(Token::LParen)?;
+                let cond = self.parse_expr(0)?;
+                self.expect(Token::RParen)?;
+                self.expect(Token::LBrace)?;
+                let then = self.parse_constraint_items()?;
+                self.expect(Token::RBrace)?;
+                let mut els = Vec::new();
+                if self.peek() == &Token::Else {
+                    self.advance();
+                    self.expect(Token::LBrace)?;
+                    els = self.parse_constraint_items()?;
+                    self.expect(Token::RBrace)?;
+                }
+                body.push(ConstraintItem::If { cond, then, els });
+                continue;
+            }
+            // Ekspresi constraint (relasional/equality/inside/dist)
+            // parse_expr might fail on complex constraint expressions;
+            // if so, skip to ';' to recover
+            match self.parse_expr(0) {
+                Ok(expr) => {
+                    self.skip_semi();
+                    body.push(ConstraintItem::Expr(expr));
+                }
+                Err(_) => {
+                    // Error in constraint expression — skip to ';' or '}'
+                    loop {
+                        match self.peek() {
+                            Token::Semi => { self.advance(); break; }
+                            Token::RBrace | Token::Eof => break,
+                            _ => { self.advance(); }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(body)
+    }
+
     pub(crate) fn parse_class_fast(&mut self) -> Result<(), SimError> {
         self.advance(); // consume 'class'
         // Skip optional #(type T = ...) parameter list
@@ -300,57 +375,31 @@ impl Parser {
                         }
                     }
                 }
+                Token::Ident(_) => {
+                    // F18: field class bertipe user-defined (`my_env env;`).
+                    // Sebelumnya hanya type-param Ident yang diparse sebagai
+                    // field — tipe user-defined lain di-skip diam-diam oleh
+                    // fallback `_ => advance()`, sehingga class fields kosong
+                    // dan `env = new("env", this)` di build_phase tidak bisa
+                    // resolve class (lihat resolve_new_class_hint).
+                    match self.parse_decl() {
+                        Ok(mut decl) => {
+                            for n in &mut decl.names {
+                                n.is_rand = false;
+                            }
+                            members.push(ClassMember::Decl(decl));
+                        }
+                        Err(_) => {
+                            let _ = self.skip_until_semi_or_end();
+                        }
+                    }
+                }
                 Token::Constraint => {
                     self.advance();
                     let cname = self.expect_ident()?;
                     self.expect(Token::LBrace)?;
-                    let mut body = Vec::new();
-                    while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
-                        if let Token::Ident(ref s) = self.peek() {
-                            if s == "solve" {
-                                self.advance();
-                                let mut vars = Vec::new();
-                                let first_var = self.expect_ident()?;
-                                vars.push(first_var);
-                                if let Token::Ident(ref s2) = self.peek() {
-                                    if s2 == "before" {
-                                        self.advance();
-                                        loop {
-                                            let v = self.expect_ident()?;
-                                            vars.push(v);
-                                            if self.peek() == &Token::Comma {
-                                                self.advance();
-                                            } else {
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                                self.skip_semi();
-                                body.push(ConstraintItem::SolveBefore { vars });
-                                continue;
-                            }
-                        }
-                        // parse_expr might fail on complex constraint expressions;
-                        // if so, skip to ';' to recover
-                        match self.parse_expr(0) {
-                            Ok(expr) => {
-                                self.skip_semi();
-                                body.push(ConstraintItem::Expr(expr));
-                            }
-                            Err(_) => {
-                                // Error in constraint expression — skip to ';' or '}'
-                                loop {
-                                    match self.peek() {
-                                        Token::Semi => { self.advance(); break; }
-                                        Token::RBrace | Token::Eof => break,
-                                        _ => { self.advance(); }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    self.advance(); // consume '}'
+                    let body = self.parse_constraint_items()?;
+                    self.expect(Token::RBrace)?;
                     members.push(ClassMember::Constraint { name: cname, body });
                 }
                 Token::Class => {
