@@ -1,0 +1,15 @@
+[package]
+name = "maria-core"
+version = "0.3.0"
+edition = "2021"
+description = "Maria core: intern (Symbol/Span), arena, error, diagnostics, config, animasi, logic values"
+
+[dependencies]
+crossbeam = "0.8"
+dashmap = "6"
+fxhash = "0.2"
+num_cpus = "1"
+parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }

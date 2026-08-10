@@ -1,0 +1,10 @@
+[package]
+name = "maria-elaboration"
+version = "0.3.0"
+edition = "2021"
+description = "Maria elaboration: AST → IR, signal resolution, parameter override, generate unrolling"
+
+[dependencies]
+maria-core = { path = "../maria-core" }
+maria-ast = { path = "../maria-ast" }
+maria-ir = { path = "../maria-ir" }

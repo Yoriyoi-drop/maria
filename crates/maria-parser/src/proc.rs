@@ -1,0 +1,1247 @@
+// Parser submodule: procedural block / function / task / generate parsing
+// Tanggung jawab: parse_always, parse_initial, parse_final, parse_sensitivity_events,
+// parse_sensitivity_list, parse_assign, parse_delay,
+// parse_function, parse_task, parse_generate_block/Item/BlockBody
+
+use super::Parser;
+use maria_ast::*;
+use maria_ast::types::const_eval_simple;
+use maria_core::error::SimError;
+use maria_core::intern::Symbol;
+use crate::lexer::*;
+
+impl Parser {
+    /// Skip dimensi unpacked array setelah nama port/deklarasi:
+    /// `arr[]`, `arr[$]` (queue), `arr[N]`, `arr[msb:lsb]`, `arr[2][3]`.
+    /// Dimensi unpacked tidak mempengaruhi parse port — hanya dikonsumsi agar
+    /// `]` kosong / `$` tidak gagal di `parse_expr` (pola `ref bit [7:0] arr[]`
+    /// dan `const ref int int_q[$]` umum di OpenTitan DV).
+    pub(crate) fn skip_unpacked_dims(&mut self) -> Result<(), SimError> {
+        while self.peek() == &Token::LBrack {
+            self.advance(); // '['
+            if self.peek() == &Token::Dollar && self.peek_ahead(1) == &Token::RBrack {
+                self.advance(); // '$' — queue `[$]`
+            } else if self.peek() != &Token::RBrack {
+                self.parse_expr(0)?;
+                if self.peek() == &Token::Colon {
+                    self.advance();
+                    self.parse_expr(0)?;
+                }
+            }
+            self.expect(Token::RBrack)?;
+        }
+        Ok(())
+    }
+
+    /// Parse range packed `[msb:lsb]` ATAU lewati dimensi unpacked (`[N]`,
+    /// `[]`) setelah nama port. Mengembalikan `Some(range)` hanya untuk
+    /// `[expr:expr]`. Saat `parse_range` gagal (mis. `[8]` single-ekspresi),
+    /// posisi di-restore lalu bracket dikonsumsi sebagai dimensi unpacked.
+    pub(crate) fn parse_port_dims(&mut self) -> Result<Option<ExprRange>, SimError> {
+        if self.peek() != &Token::LBrack {
+            return Ok(None);
+        }
+        let saved = self.pos.get();
+        if let Ok(Some(er)) = self.parse_range() {
+            return Ok(Some(er));
+        }
+        self.pos.set(saved);
+        while self.peek() == &Token::LBrack {
+            self.advance();
+            if self.peek() == &Token::Dollar && self.peek_ahead(1) == &Token::RBrack {
+                self.advance(); // '$' — queue `[$]`
+            } else if self.peek() != &Token::RBrack {
+                let _ = self.parse_expr(0);
+                if self.peek() == &Token::Colon {
+                    self.advance();
+                    let _ = self.parse_expr(0);
+                }
+            }
+            self.expect(Token::RBrack)?;
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn parse_always(&mut self) -> Result<AlwaysBlock, SimError> {
+        let kind = match self.peek() {
+            Token::Always => {
+                self.advance();
+                AlwaysKind::Always
+            }
+            Token::AlwaysComb => {
+                self.advance();
+                AlwaysKind::AlwaysComb
+            }
+            Token::AlwaysFF => {
+                self.advance();
+                AlwaysKind::AlwaysFF
+            }
+            Token::AlwaysLatch => {
+                self.advance();
+                AlwaysKind::AlwaysLatch
+            }
+            _ => unreachable!(),
+        };
+
+        let sensitivity = if self.peek() == &Token::At {
+            self.advance();
+            Some(self.parse_sensitivity_list()?)
+        } else {
+            None
+        };
+
+        let stmts = self.parse_stmt_block()?;
+
+        Ok(AlwaysBlock {
+            kind,
+            sensitivity,
+            stmts,
+        })
+    }
+
+    pub(crate) fn parse_initial(&mut self) -> Result<InitialBlock, SimError> {
+        self.advance();
+        let stmts = self.parse_stmt_block()?;
+        Ok(InitialBlock { stmts })
+    }
+
+    pub(crate) fn parse_final(&mut self) -> Result<InitialBlock, SimError> {
+        self.advance();
+        let stmts = self.parse_stmt_block()?;
+        Ok(InitialBlock { stmts })
+    }
+
+    pub(crate) fn parse_sensitivity_events(&mut self) -> Result<Vec<SensitivityEvent>, SimError> {
+        let mut events = Vec::new();
+        loop {
+            if self.peek() == &Token::RParen {
+                break;
+            }
+            let event = if self.peek() == &Token::Star {
+                self.advance();
+                SensitivityEvent::Wildcard
+            } else if self.peek() == &Token::PosEdge {
+                self.advance();
+                // parse_expr (bukan parse_primary) agar `@(posedge sig[idx])`
+                // dan member access ikut terdukung.
+                let expr = self.parse_expr(0)?;
+                SensitivityEvent::PosEdge(expr)
+            } else if self.peek() == &Token::NegEdge {
+                self.advance();
+                let expr = self.parse_expr(0)?;
+                SensitivityEvent::NegEdge(expr)
+            } else {
+                let expr = self.parse_expr(0)?;
+                SensitivityEvent::Level(expr)
+            };
+            // LANG-27: `@(posedge clk iff (en))` — guard kondisi event.
+            // `iff` di-lex sebagai Ident("iff") (tidak ada token khusus).
+            let event = if matches!(self.peek(), Token::Ident(s) if s == "iff") {
+                self.advance();
+                let cond = self.parse_expr(0)?;
+                SensitivityEvent::Iff {
+                    event: Box::new(event),
+                    cond,
+                }
+            } else {
+                event
+            };
+            events.push(event);
+            if self.peek() == &Token::Or || self.peek() == &Token::Comma {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        Ok(events)
+    }
+
+    pub(crate) fn parse_sensitivity_list(&mut self) -> Result<SensitivityList, SimError> {
+        // Handle @* or @(*)
+        if self.peek() == &Token::Star {
+            self.advance();
+            return Ok(SensitivityList {
+                events: vec![SensitivityEvent::Wildcard],
+            });
+        }
+        if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
+            self.advance(); // (
+            self.advance(); // *
+                            // Check for @( * ) — closing paren may or may not be present
+            if self.peek() == &Token::RParen {
+                self.advance();
+            }
+            return Ok(SensitivityList {
+                events: vec![SensitivityEvent::Wildcard],
+            });
+        }
+        self.expect(Token::LParen)?;
+        let events = self.parse_sensitivity_events()?;
+        self.expect(Token::RParen)?;
+        Ok(SensitivityList { events })
+    }
+
+    pub(crate) fn parse_assign(&mut self) -> Result<ContinuousAssign, SimError> {
+        self.advance();
+
+        let delay = if self.peek() == &Token::Hash {
+            Some(self.parse_delay()?)
+        } else {
+            None
+        };
+
+        let lhs = self.parse_expr(0)?;
+        self.expect(Token::BlockingAssign)?;
+        let rhs = self.parse_expr(0)?;
+        self.skip_semi();
+
+        Ok(ContinuousAssign { lhs, rhs, delay })
+    }
+
+    pub(crate) fn parse_delay(&mut self) -> Result<Delay, SimError> {
+        self.advance();
+        self.expect(Token::LParen)?;
+        let rise = Some(self.parse_expr(0)?);
+        let fall = if self.peek() == &Token::Comma {
+            self.advance();
+            Some(self.parse_expr(0)?)
+        } else {
+            None
+        };
+        let turnoff = if self.peek() == &Token::Comma {
+            self.advance();
+            Some(self.parse_expr(0)?)
+        } else {
+            None
+        };
+        self.expect(Token::RParen)?;
+        Ok(Delay {
+            rise,
+            fall,
+            turnoff,
+        })
+    }
+
+    pub(crate) fn parse_function(&mut self, virtual_flag: bool) -> Result<FunctionDecl, SimError> {
+        self.advance(); // consume 'function'
+                        // Capture optional 'static' qualifier
+        let is_static = if matches!(self.peek(), Token::Static) {
+            self.advance();
+            true
+        } else {
+            if matches!(self.peek(), Token::Auto) {
+                self.advance();
+            }
+            false
+        };
+        // Parse optional return type
+        let return_type = match self.peek() {
+            Token::Void => {
+                self.advance();
+                Some(Box::new(DataType::Void))
+            }
+            Token::Int => {
+                self.advance();
+                Some(Box::new(DataType::Int))
+            }
+            Token::Integer => {
+                self.advance();
+                Some(Box::new(DataType::Integer))
+            }
+            Token::String => {
+                self.advance();
+                Some(Box::new(DataType::String))
+            }
+            Token::Byte => {
+                self.advance();
+                Some(Box::new(DataType::Byte))
+            }
+            Token::Shortint => {
+                self.advance();
+                Some(Box::new(DataType::Shortint))
+            }
+            Token::Longint => {
+                self.advance();
+                Some(Box::new(DataType::Longint))
+            }
+            Token::Time => {
+                self.advance();
+                Some(Box::new(DataType::Time))
+            }
+            Token::Bit => {
+                self.advance();
+                Some(Box::new(DataType::Bit))
+            }
+            Token::Logic => {
+                self.advance();
+                Some(Box::new(DataType::Logic))
+            }
+            Token::Signed => {
+                self.advance();
+                Some(Box::new(DataType::Signed(Box::new(DataType::Logic))))
+            }
+    Token::Ident(name) if self.type_param_names.contains(name) => {
+        let tp_name = *name;
+        self.advance();
+        Some(Box::new(DataType::UserDefined(tp_name)))
+    }
+            Token::Ident(_) if matches!(self.peek_ahead(1), Token::Ident(_) | Token::LBrack | Token::Scope) => {
+                let first = self.expect_ident()?;
+                let tp_name = if self.peek() == &Token::Scope {
+                    self.advance();
+                    let second = self.expect_ident()?;
+                    Symbol::intern(&format!("{}::{}", first, second))
+                } else {
+                    first
+                };
+                Some(Box::new(DataType::UserDefined(tp_name)))
+            }
+            _ => None,
+        };
+        if self.peek() == &Token::Unsigned {
+            self.advance();
+        }
+        let range = if self.peek() == &Token::LBrack {
+            self.parse_range()?
+        } else {
+            None
+        };
+        self.skip_extra_packed_dims()?;
+        let name_tok = self.peek().clone();
+        let name = match &name_tok {
+            Token::Ident(n) => {
+                self.advance();
+                *n
+            }
+            Token::New => {
+                self.advance();
+                Symbol::intern("new")
+            }
+            _ => {
+                return Err(self.err("expected function name"))
+            }
+        };
+        // Handle out-of-body method: class_name :: method_name
+        let name = if self.peek() == &Token::Scope {
+            self.advance(); // consume ::
+            let tok = self.peek().clone();
+            match &tok {
+                Token::Ident(m) => {
+                    self.advance();
+                    *m
+                }
+                Token::New => {
+                    self.advance();
+                    Symbol::intern("new")
+                }
+                _ => {
+                    return Err(self.err("expected method name after ::"));
+                }
+            }
+        } else {
+            name
+        };
+        // Parse ANSI-style port list in parens (e.g., function new(int level, string name))
+        let mut ports = Vec::new();
+        let mut decls = Vec::new();
+        let mut last_direction: Option<PortDirection> = None;
+        if self.peek() == &Token::LParen {
+            self.advance();
+            while self.peek() != &Token::RParen && self.peek() != &Token::Eof {
+                // Track whether we saw int/integer for 32-bit default width
+                let is_int = matches!(self.peek(), Token::Int | Token::Integer);
+                // Skip type keywords and direction keywords
+                if matches!(
+                    self.peek(),
+                    Token::Int
+                        | Token::Integer
+                        | Token::String
+                        | Token::Void
+                        | Token::Reg
+                        | Token::Logic
+                        | Token::Wire
+                        | Token::Signed
+                        | Token::Unsigned
+                        | Token::Input
+                        | Token::Output
+                        | Token::Inout
+                        | Token::Ref
+                ) {
+                    if matches!(
+                        self.peek(),
+                        Token::Input | Token::Output | Token::Inout | Token::Ref
+                    ) {
+                        last_direction = Some(match self.peek() {
+                            Token::Input => PortDirection::Input,
+                            Token::Output => PortDirection::Output,
+                            Token::Ref => PortDirection::Ref,
+                            _ => PortDirection::Inout,
+                        });
+                    }
+                    self.advance();
+                } else if let Token::Ident(name) = self.peek() {
+                    if self.type_param_names.contains(name) {
+                        self.advance();
+                    } else if self.peek_ahead(1) == &Token::Scope {
+                        // Scoped type `pkg::type name` (mis.
+                        // `prim_mubi_pkg::mubi4_t val` di lc_ctrl_pkg). Konsumsi
+                        // `pkg :: type` sebagai TIPE — BUKAN nama port. Sebelumnya
+                        // `pkg` jadi port pertama & `val` bergeser → inline
+                        // substitution port tidak cocok → "signal 'val' not found".
+                        self.advance(); // pkg
+                        self.advance(); // ::
+                        self.advance(); // type
+                    } else if matches!(self.peek_ahead(1), Token::Ident(_)) {
+                        // User-defined type name diikuti nama port (`mubi4_t a`).
+                        self.advance();
+                    } else if self.peek_ahead(1) == &Token::LBrack
+                        && (self.peek_ahead(2) == &Token::RBrack
+                            || self.peek_ahead(2) == &Token::Dollar)
+                    {
+                        // `name []` / `name [$]` — nama port dgn dimensi unpacked
+                        // kosong/queue (BUKAN tipe). Jangan advance: inner loop
+                        // akan memakannya sebagai nama port lalu `skip_unpacked_dims`
+                        // memakan `[]` / `[$]`.
+                    } else if matches!(self.peek_ahead(1), Token::LBrack) {
+                        // Tipe user-defined dgn packed range (`foo_t [7:0] name`).
+                        self.advance();
+                    }
+                } else {
+                    // Unknown token in port list — advance to avoid infinite loop
+                    self.advance();
+                    continue;
+                }
+                // Parse range like [7:0] — simpan ke expr_range (dan range
+                // bila konstanta) agar lebar port function bisa di-resolve.
+                // Sebelumnya range dibuang → `func_port_width` selalu 1 →
+                // width mismatch saat inlining function package.
+                let mut expr_range = None;
+                let mut range = None;
+                if let Some(er) = self.parse_port_dims()? {
+                    if let (Ok(m), Ok(l)) =
+                        (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
+                    {
+                        range = Some(Range {
+                            msb: m as usize,
+                            lsb: l as usize,
+                        });
+                    } else {
+                        expr_range = Some(er);
+                    }
+                } else if is_int {
+                    range = Some(Range { msb: 31, lsb: 0 });
+                }
+                self.skip_extra_packed_dims()?;
+                // Parse port name(s)
+                while let Token::Ident(pname) = self.peek() {
+                    // Jika setelah nama ada ident lagi, ini bukan nama
+                    // port kedua melainkan tipe port baru (`(mubi4_t a, mubi4_t b)`).
+                    // Inner loop hanya boleh memakan nama dgn tipe yang sama.
+                    // Catatan: `Ident LBrack` TIDAK boleh break — itu unpacked
+                    // array dim (`logic [7:0] mat_a [8]`), bukan tipe baru.
+                    // KECUALI pola `foo_t [7:0] name`: ident pertama adalah
+                    // TIPE user-defined (bukan nama), `[7:0]` packed range,
+                    // dan ident setelah `]` adalah nama port. Tanpa break di
+                    // sini, `foo_t` dimakan sebagai nama port pertama & `name`
+                    // sebagai port kedua → formal bergeser → error E2001.
+                    if matches!(self.peek_ahead(1), Token::Ident(_))
+                        || (self.peek_ahead(1) == &Token::LBrack
+                            && self.peek_packed_range_followed_by_ident())
+                    {
+                        break;
+                    }
+                    let pn = *pname;
+                    self.advance();
+                    self.skip_unpacked_dims()?;
+                    ports.push(FunctionPort {
+                        name: pn,
+                        range: range.clone(),
+                        expr_range: expr_range.clone(),
+                        direction: last_direction,
+                    });
+                    if self.peek() == &Token::Comma {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            self.expect(Token::RParen)?;
+        }
+        if self.peek() == &Token::Semi {
+            self.advance();
+        }
+        // Parse ports and declarations until 'begin' or statement.
+        // `stmts` diisi dari blok `begin...end` (bila ada) dan/atau statement
+        // sisa body function — begin...end TIDAK harus jadi statement terakhir.
+        let mut stmts: Vec<Stmt> = Vec::new();
+        loop {
+            match self.peek() {
+                Token::Input | Token::Output | Token::Inout | Token::Ref => {
+                    let direction = match self.peek() {
+                        Token::Input => {
+                            self.advance();
+                            PortDirection::Input
+                        }
+                        Token::Output => {
+                            self.advance();
+                            PortDirection::Output
+                        }
+                        Token::Ref => {
+                            self.advance();
+                            PortDirection::Ref
+                        }
+                        _ => {
+                            self.advance();
+                            PortDirection::Inout
+                        }
+                    };
+                    // F34: konsumsi keyword tipe dasar SETELAH direction pada
+                    // port non-ANSI (`input int x;`, `input logic [7:0] x;`).
+                    // Sebelumnya `int` tidak dikonsumsi → port `x` tidak masuk
+                    // func.ports (masuk func.decls) → inline membuat temp ganda
+                    // (`_arg0` vs `x`) → argumen tak pernah sampai ke body.
+                    let mut port_is_int = false;
+                    while matches!(
+                        self.peek(),
+                        Token::Int
+                            | Token::Integer
+                            | Token::Reg
+                            | Token::Logic
+                            | Token::Wire
+                            | Token::Bit
+                            | Token::Byte
+                            | Token::Shortint
+                            | Token::Longint
+                            | Token::Time
+                            | Token::String
+                            | Token::Real
+                            | Token::RealTime
+                            | Token::WReal
+                            | Token::Signed
+                            | Token::Unsigned
+                    ) {
+                        if matches!(self.peek(), Token::Int | Token::Integer) {
+                            port_is_int = true;
+                        }
+                        self.advance();
+                    }
+                    let port_range = if self.peek() == &Token::LBrack {
+                        let er = self.parse_port_dims()?; // `[msb:lsb]` atau skip unpacked
+                        er.as_ref().and_then(|er| {
+                            if let (Ok(m), Ok(l)) =
+                                (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
+                            {
+                                Some(Range {
+                                    msb: m as usize,
+                                    lsb: l as usize,
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                    } else if port_is_int {
+                        Some(Range { msb: 31, lsb: 0 })
+                    } else {
+                        None
+                    };
+                    while let Token::Ident(pname) = self.peek() {
+                        // Pola `foo_t [7:0] name` — ident pertama adalah TIPE
+                        // user-defined (bukan nama port); loop luar yang
+                        // menangani tipe/range berikutnya. Sama seperti jalur
+                        // ANSI (lihat komentar panjang di parse_function).
+                        if self.peek_ahead(1) == &Token::LBrack
+                            && self.peek_packed_range_followed_by_ident()
+                        {
+                            break;
+                        }
+                        let pn = *pname;
+                        self.advance();
+                        self.skip_unpacked_dims()?;
+                        ports.push(FunctionPort {
+                            name: pn,
+                            range: port_range.clone(),
+                            expr_range: None,
+                            direction: Some(direction),
+                        });
+                        if self.peek() == &Token::Comma {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.skip_semi();
+                }
+                Token::Wire | Token::Reg | Token::Logic | Token::Int | Token::Integer => {
+                    let decl = self.parse_decl()?;
+                    decls.push(decl);
+                }
+                Token::Bit | Token::Byte | Token::Shortint | Token::Longint | Token::Time
+                | Token::String | Token::Real | Token::RealTime | Token::WReal
+                | Token::Mailbox | Token::Semaphore => {
+                    let decl = self.parse_decl()?;
+                    decls.push(decl);
+                }
+                Token::Ident(_) => {
+                    // User-defined type declaration: ident followed by ident or ::
+                    // KECUALI pola `pkg::func(...)`: ident pertama adalah PACKAGE,
+                    // `::` scope, dan `(` memulai call — ini STATEMENT (bukan
+                    // deklarasi). Sebelumnya `uvm_config_db::set(this, ...)`
+                    // dikira deklarasi `pkg::type name` → parse_decl gagal di
+                    // koma pertama → parse_function Err → method class tidak
+                    // terdaftar → build_phase (berisi uvm_config_db::set)
+                    // hilang diam-diam. Sama seperti is_decl_stmt_start.
+                    match self.peek_ahead(1) {
+                        Token::Ident(_) | Token::Scope => {
+                            let is_scoped_call = matches!(self.peek_ahead(1), Token::Scope)
+                                && matches!(self.peek_ahead(3), Token::LParen);
+                            if is_scoped_call {
+                                break;
+                            }
+                            let decl = self.parse_decl()?;
+                            decls.push(decl);
+                        }
+                        _ => break,
+                    }
+                }
+                Token::Auto | Token::Static => {
+                    // automatic/static variable declaration in function body
+                    self.advance();
+                    // Try to parse as declaration
+                    if let Ok(decl) = self.parse_decl() {
+                        decls.push(decl);
+                    } else {
+                        return Err(self.err("expected declaration after automatic/static"));
+                    }
+                }
+                Token::Begin => {
+                    // `begin...end` TIDAK harus statement terakhir: statement
+                    // lain (return, assignment, foreach, dst.) boleh mengikuti
+                    // sebelum `endfunction`. Simpan blok sebagai `stmts` awal
+                    // lalu break ke loop statement kedua di bawah.
+                    stmts = self.parse_stmt_block()?;
+                    break;
+                }
+                Token::EndFunction => {
+                    self.advance(); // consume 'endfunction'
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
+                    return Ok(FunctionDecl {
+                        name,
+                        range,
+                        return_type,
+                        ports,
+                        decls,
+                        stmts: vec![],
+                        virtual_flag,
+                        is_static,
+                    });
+                }
+                _ => break,
+            }
+        }
+        // Parse statements until endfunction — sisa body setelah `begin...end`
+        // (atau body penuh bila tidak ada blok begin).
+        loop {
+            if matches!(self.peek(), Token::EndFunction | Token::End | Token::EndClass | Token::EndInterface | Token::EndPackage | Token::Eof) {
+                break;
+            }
+            stmts.push(self.parse_stmt()?);
+        }
+        match self.peek() {
+            Token::EndFunction => {
+                self.advance();
+            }
+            _ => {
+                return Err(self.err("expected endfunction"));
+            }
+        }
+        if self.peek() == &Token::Colon {
+            self.advance();
+            if matches!(self.peek(), Token::Ident(_)) {
+                self.advance();
+            }
+        }
+        Ok(FunctionDecl {
+            name,
+            range,
+            return_type,
+            ports,
+            decls,
+            stmts,
+            virtual_flag,
+            is_static,
+        })
+    }
+
+    pub(crate) fn parse_task(&mut self, virtual_flag: bool) -> Result<TaskDecl, SimError> {
+        self.advance(); // consume 'task'
+                        // Capture optional 'static' qualifier
+        let is_static = if matches!(self.peek(), Token::Static) {
+            self.advance();
+            true
+        } else {
+            if matches!(self.peek(), Token::Auto) {
+                self.advance();
+            }
+            false
+        };
+        let name = self.expect_ident()?;
+        // Handle out-of-body method: class_name :: method_name
+        let name = if self.peek() == &Token::Scope {
+            self.advance(); // consume ::
+            let tok = self.peek().clone();
+            match &tok {
+                Token::Ident(m) => {
+                    self.advance();
+                    *m
+                }
+                _ => {
+                    return Err(self.err("expected method name after ::"));
+                }
+            }
+        } else {
+            name
+        };
+        let mut ports = Vec::new();
+        let mut decls = Vec::new();
+        let mut last_direction: Option<PortDirection> = None;
+        // Parse ANSI-style port list in parens (e.g., task set_val(input [7:0] x))
+        if self.peek() == &Token::LParen {
+            self.advance();
+            while self.peek() != &Token::RParen && self.peek() != &Token::Eof {
+                // Comma setelah default value (mis. `task f(uint a = 10, int b)`) 
+                // tidak dikonsumsi oleh inner ident loop — consume di sini agar 
+                // loop tidak berputar tanpa progres.
+                if self.peek() == &Token::Comma {
+                    self.advance();
+                    continue;
+                }
+                let is_int = matches!(self.peek(), Token::Int | Token::Integer);
+                if matches!(
+                    self.peek(),
+                    Token::Int
+                        | Token::Integer
+                        | Token::String
+                        | Token::Void
+                        | Token::Reg
+                        | Token::Logic
+                        | Token::Wire
+                        | Token::Signed
+                        | Token::Input
+                        | Token::Output
+                        | Token::Inout
+                        | Token::Ref
+                ) {
+                    if matches!(
+                        self.peek(),
+                        Token::Input | Token::Output | Token::Inout | Token::Ref
+                    ) {
+                        last_direction = Some(match self.peek() {
+                            Token::Input => PortDirection::Input,
+                            Token::Output => PortDirection::Output,
+                            Token::Ref => PortDirection::Ref,
+                            _ => PortDirection::Inout,
+                        });
+                    }
+                    self.advance();
+                } else if let Token::Ident(_) = self.peek() {
+                    if self.peek_ahead(1) == &Token::Scope {
+                        // Scoped type `pkg::type name` — konsumsi `pkg :: type`
+                        // sebagai tipe, bukan nama port.
+                        self.advance(); // pkg
+                        self.advance(); // ::
+                        self.advance(); // type
+                    } else if matches!(self.peek_ahead(1), Token::Ident(_)) {
+                        // User-defined type `foo_t name` — skip tipe.
+                        self.advance();
+                    } else if self.peek_ahead(1) == &Token::LBrack
+                        && (self.peek_ahead(2) == &Token::RBrack
+                            || self.peek_ahead(2) == &Token::Dollar)
+                    {
+                        // `name []` / `name [$]` — nama port dgn dimensi unpacked
+                        // kosong/queue (BUKAN tipe). Jangan advance: inner loop
+                        // akan memakannya sebagai nama port lalu `skip_unpacked_dims`
+                        // memakan `[]` / `[$]`.
+                    } else if matches!(self.peek_ahead(1), Token::LBrack) {
+                        // Tipe user-defined dgn packed range (`foo_t [7:0] name`).
+                        self.advance();
+                    }
+                    // else: nama port biasa — inner loop bawah yang memproses.
+                } else if !matches!(self.peek(), Token::LBrack | Token::Comma) {
+                    self.advance();
+                    continue;
+                }
+                let range: Option<Range> = if let Ok(Some(er)) = self.parse_port_dims() {
+                    if let (Ok(m), Ok(l)) =
+                        (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
+                    {
+                        Some(Range {
+                            msb: m as usize,
+                            lsb: l as usize,
+                        })
+                    } else {
+                        None
+                    }
+                } else if is_int {
+                    Some(Range { msb: 31, lsb: 0 })
+                } else {
+                    None
+                };
+                while let Token::Ident(pname) = self.peek() {
+                    let pn = *pname;
+                    self.advance();
+                    ports.push(FunctionPort {
+                        name: pn,
+                        range: range.clone(),
+                        expr_range: None,
+                        direction: last_direction,
+                    });
+                    if self.peek() == &Token::Comma {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            self.expect(Token::RParen)?;
+        }
+        if self.peek() == &Token::Semi {
+            self.advance();
+        }
+
+        // Parse non-ANSI port declarations and body.
+        // `stmts` diisi dari blok `begin...end` (bila ada) dan/atau statement
+        // sisa body task — begin...end TIDAK harus jadi statement terakhir.
+        let mut stmts: Vec<Stmt> = Vec::new();
+        loop {
+            match self.peek() {
+                Token::Input | Token::Output | Token::Inout | Token::Ref => {
+                    let direction = match self.peek() {
+                        Token::Input => {
+                            self.advance();
+                            PortDirection::Input
+                        }
+                        Token::Output => {
+                            self.advance();
+                            PortDirection::Output
+                        }
+                        Token::Ref => {
+                            self.advance();
+                            PortDirection::Ref
+                        }
+                        _ => {
+                            self.advance();
+                            PortDirection::Inout
+                        }
+                    };
+                    // F34: konsumsi keyword tipe dasar SETELAH direction pada
+                    // port non-ANSI (`input int x;`, `input logic [7:0] x;`)
+                    // — sama seperti fix parse_function (lihat komentar di
+                    // sana). Sebelumnya port masuk func.decls → inline temp
+                    // ganda → argumen tak sampai ke body task.
+                    let mut port_is_int = false;
+                    while matches!(
+                        self.peek(),
+                        Token::Int
+                            | Token::Integer
+                            | Token::Reg
+                            | Token::Logic
+                            | Token::Wire
+                            | Token::Bit
+                            | Token::Byte
+                            | Token::Shortint
+                            | Token::Longint
+                            | Token::Time
+                            | Token::String
+                            | Token::Real
+                            | Token::RealTime
+                            | Token::WReal
+                            | Token::Signed
+                            | Token::Unsigned
+                    ) {
+                        if matches!(self.peek(), Token::Int | Token::Integer) {
+                            port_is_int = true;
+                        }
+                        self.advance();
+                    }
+                    let port_range = if self.peek() == &Token::LBrack {
+                        let er = self.parse_port_dims()?; // `[msb:lsb]` atau skip unpacked
+                        er.as_ref().and_then(|er| {
+                            if let (Ok(m), Ok(l)) =
+                                (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
+                            {
+                                Some(Range {
+                                    msb: m as usize,
+                                    lsb: l as usize,
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                    } else if port_is_int {
+                        Some(Range { msb: 31, lsb: 0 })
+                    } else {
+                        None
+                    };
+                    while let Token::Ident(pname) = self.peek() {
+                        // Pola `foo_t [7:0] name` — ident pertama adalah TIPE
+                        // user-defined (bukan nama port); loop luar yang
+                        // menangani tipe/range berikutnya. Sama seperti jalur
+                        // ANSI (lihat komentar panjang di parse_function).
+                        if self.peek_ahead(1) == &Token::LBrack
+                            && self.peek_packed_range_followed_by_ident()
+                        {
+                            break;
+                        }
+                        let pn = *pname;
+                        self.advance();
+                        self.skip_unpacked_dims()?;
+                        ports.push(FunctionPort {
+                            name: pn,
+                            range: port_range.clone(),
+                            expr_range: None,
+                            direction: Some(direction),
+                        });
+                        if self.peek() == &Token::Comma {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.skip_semi();
+                }
+                Token::Wire | Token::Reg | Token::Logic | Token::Int | Token::Integer
+                | Token::Bit | Token::Byte | Token::Shortint | Token::Longint | Token::Time
+                | Token::String | Token::Real | Token::RealTime | Token::WReal
+                | Token::Mailbox | Token::Semaphore => {
+                    decls.push(self.parse_decl()?);
+                }
+                Token::Ident(_) => {
+                    // Tipe user-defined: `my_item it;` (ident diikuti ident/::)
+                    // — sama seperti parse_function. Sebelumnya task body
+                    // menganggapnya statement → decls task kosong → `it = new()`
+                    // tak punya tipe class (F17).
+                    // KECUALI `pkg::func(...)` — ini statement call, bukan
+                    // deklarasi (lihat komentar panjang di parse_function).
+                    match self.peek_ahead(1) {
+                        Token::Ident(_) | Token::Scope => {
+                            let is_scoped_call = matches!(self.peek_ahead(1), Token::Scope)
+                                && matches!(self.peek_ahead(3), Token::LParen);
+                            if is_scoped_call {
+                                break;
+                            }
+                            decls.push(self.parse_decl()?);
+                        }
+                        _ => break,
+                    }
+                }
+                Token::Begin => {
+                    // `begin...end` TIDAK harus statement terakhir: statement
+                    // lain boleh mengikuti sebelum `endtask`. Simpan blok sebagai
+                    // `stmts` awal lalu break ke loop statement kedua.
+                    stmts = self.parse_stmt_block()?;
+                    break;
+                }
+                Token::EndTask => {
+                    self.advance(); // consume 'endtask'
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
+                    return Ok(TaskDecl {
+                        name,
+                        ports,
+                        decls,
+                        stmts: vec![],
+                        virtual_flag,
+                        is_static,
+                    });
+                }
+                _ => break,
+            }
+        }
+        loop {
+            if matches!(self.peek(), Token::EndTask | Token::End | Token::EndClass | Token::EndInterface | Token::EndPackage | Token::Eof) {
+                break;
+            }
+            stmts.push(self.parse_stmt()?);
+        }
+        match self.peek() {
+            Token::EndTask => {
+                self.advance();
+            }
+            _ => {
+                return Err(self.err("expected endtask"));
+            }
+        }
+        if self.peek() == &Token::Colon {
+            self.advance();
+            if matches!(self.peek(), Token::Ident(_)) {
+                self.advance();
+            }
+        }
+        Ok(TaskDecl {
+            name,
+            ports,
+            decls,
+            stmts,
+            virtual_flag,
+            is_static,
+        })
+    }
+
+    pub(crate) fn parse_generate_block(&mut self) -> Result<GenerateBlock, SimError> {
+        self.advance(); // consume 'generate'
+        let mut items = Vec::new();
+        loop {
+            match self.peek() {
+                Token::EndGenerate => {
+                    self.advance();
+                    return Ok(GenerateBlock { items });
+                }
+                Token::Eof => {
+                    return Err(self.err("unexpected EOF in generate block"));
+                }
+                _ => {
+                    let item = self.parse_generate_item()?;
+                    items.push(item);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn parse_generate_item(&mut self) -> Result<GenerateItem, SimError> {
+        match self.peek() {
+            Token::If => {
+                self.advance();
+                self.expect(Token::LParen)?;
+                let cond = self.parse_expr(0)?;
+                if std::env::var("DBG_GEN_IF").is_ok() {
+                    let (df, dl) = self.resolve_source_file(self.peek_line());
+                    eprintln!("DBG-GEN-IF: parse generate-if {}:{} line {}: {:?}", df, dl, self.peek_line(), format!("{:?}", cond));
+                }
+                self.expect(Token::RParen)?;
+                let (true_label, true_items) = self.parse_generate_block_body()?;
+                let false_items = if self.peek() == &Token::Else {
+                    self.advance();
+                    self.parse_generate_block_body()?.1
+                } else {
+                    Vec::new()
+                };
+                Ok(GenerateItem::If {
+                    cond,
+                    true_items,
+                    false_items,
+                    label: true_label,
+                })
+            }
+            Token::For => {
+                self.advance();
+                self.expect(Token::LParen)?;
+                // Skip optional 'genvar' keyword
+                if self.peek() == &Token::GenVar {
+                    self.advance();
+                }
+                // Skip optional tipe var: `for (int i = ...)`, `for (int unsigned
+                // i = ...)`, `for (logic [3:0] i = ...)` — pola umum di reg_top
+                // OpenTitan. Sebelumnya `int unsigned slice_idx` gagal dengan
+                // "expected genvar name" → modul besar terpotong.
+                while matches!(
+                    self.peek(),
+                    Token::Int
+                        | Token::Integer
+                        | Token::Bit
+                        | Token::Logic
+                        | Token::Reg
+                        | Token::Byte
+                        | Token::Shortint
+                        | Token::Longint
+                        | Token::Time
+                        | Token::Signed
+                        | Token::Unsigned
+                ) {
+                    self.advance();
+                }
+                // Range tipe di generate for: `for (logic [7:0] i = ...)`.
+                // Urutan token: `[` msb `:` lsb `]` — parse msb dulu, baru
+                // harapkan Colon (sebelumnya expect(Colon) langsung setelah
+                // LBrack → selalu gagal karena token berikutnya adalah msb).
+                if self.peek() == &Token::LBrack {
+                    self.advance();
+                    let _ = self.parse_expr(0)?;
+                    self.expect(Token::Colon)?;
+                    let _ = self.parse_expr(0)?;
+                    self.expect(Token::RBrack)?;
+                }
+                let var_tok = self.peek().clone();
+                let var = match &var_tok {
+                    Token::Ident(n) => {
+                        self.advance();
+                        *n
+                    }
+                    _ => {
+                        return Err(self.err("expected genvar name"))
+                    }
+                };
+                // Parse init: i = <expr>
+                let _init = if self.peek() != &Token::Semi {
+                    self.expect(Token::BlockingAssign)?;
+                    let init_expr = self.parse_expr(0)?;
+                    self.expect(Token::Semi)?;
+                    Some(Stmt::BlockingAssign {
+                        lhs: Expr::Ident { name: var, line: 0, col: 0 },
+                        rhs: init_expr,
+                        delay: None,
+                    })
+                } else {
+                    self.advance();
+                    None
+                };
+                // Parse condition
+                let cond = if self.peek() != &Token::Semi {
+                    let c = Some(self.parse_expr(0)?);
+                    self.expect(Token::Semi)?;
+                    c
+                } else {
+                    self.advance();
+                    None
+                };
+                // Parse step
+                let step = if self.peek() != &Token::RParen {
+                    Some(self.parse_stmt()?)
+                } else {
+                    None
+                };
+                self.expect(Token::RParen)?;
+                let (body_label, body_items) = self.parse_generate_block_body()?;
+                Ok(GenerateItem::For {
+                    var,
+                    init: _init,
+                    cond,
+                    step,
+                    body_items,
+                    label: body_label,
+                })
+            }
+            Token::GenVar => {
+                self.skip_until_semi_or_end()?;
+                // genvar declaration - skip, handled by For loop above
+                self.parse_generate_item()
+            }
+            Token::Case | Token::CaseX | Token::CaseZ => {
+                let case_type = match self.peek() {
+                    Token::Case => GenerateCaseType::Normal,
+                    Token::CaseX => GenerateCaseType::CaseX,
+                    Token::CaseZ => GenerateCaseType::CaseZ,
+                    _ => unreachable!(),
+                };
+                self.advance();
+                self.expect(Token::LParen)?;
+                let expr = self.parse_expr(0)?;
+                self.expect(Token::RParen)?;
+
+                let mut items = Vec::new();
+                let mut default = None;
+
+                loop {
+                    if self.peek() == &Token::Endcase || self.peek() == &Token::Eof {
+                        break;
+                    }
+
+                    if self.peek() == &Token::Default {
+                        self.advance();
+                        self.expect(Token::Colon)?;
+                        default = Some(self.parse_generate_block_body()?.1);
+                    } else {
+                        let mut labels = Vec::new();
+                        loop {
+                            let label = self.parse_expr(0)?;
+                            labels.push(label);
+                            if self.peek() == &Token::Comma {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                        self.expect(Token::Colon)?;
+                        let body = self.parse_generate_block_body()?.1;
+                        items.push(CaseGenerateItem { labels, body });
+                    }
+                }
+
+                self.expect(Token::Endcase)?;
+                Ok(GenerateItem::Case {
+                    case_type,
+                    expr,
+                    items,
+                    default,
+                })
+            }
+            _ => {
+                let item = self.parse_module_item()?;
+                match item {
+                    Some(mi) => Ok(GenerateItem::Items(vec![mi])),
+                    None => Err(self.err("expected generate item")),
+                }
+            }
+        }
+    }
+
+    pub(crate) fn parse_generate_block_body(
+        &mut self,
+    ) -> Result<(Option<Symbol>, Vec<ModuleItem>), SimError> {
+        if self.peek() == &Token::Begin {
+            self.advance();
+            // Optional begin label: `begin [: name]` — tangkap untuk scope generate.
+            let mut label = None;
+            if self.peek() == &Token::Colon {
+                self.advance();
+                if let Token::Ident(n) = self.peek().clone() {
+                    self.advance();
+                    label = Some(n);
+                }
+            } else if let Token::Ident(n) = self.peek().clone() {
+                // bentuk `begin name : ...` (tanpa colon) — jarang, abaikan label
+                self.advance();
+                if self.peek() == &Token::Colon {
+                    self.advance();
+                }
+                label = Some(n);
+            }
+            let mut items = Vec::new();
+            loop {
+                if matches!(self.peek(), Token::End | Token::Eof) {
+                    self.advance();
+                    // Handle optional : name after end
+                    if self.peek() == &Token::Colon {
+                        self.advance();
+                        if matches!(self.peek(), Token::Ident(_)) {
+                            self.advance();
+                        }
+                    }
+                    break;
+                }
+                match self.parse_module_item()? {
+                    Some(mi) => items.push(mi),
+                    None => {
+                        self.skip_until_semi_or_end()?;
+                    }
+                }
+            }
+            Ok((label, items))
+        } else {
+            match self.parse_module_item()? {
+                Some(mi) => Ok((None, vec![mi])),
+                None => Ok((None, Vec::new())),
+            }
+        }
+    }
+
+}

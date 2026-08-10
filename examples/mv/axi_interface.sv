@@ -29,19 +29,10 @@ module axi_slave (
 endmodule
 
 module tb_axi (
-    input  bit clk
-);
-    axi_lite bus;
-    bit done;
 
-    axi_lite u_axi (
-        .clk     (clk),
-        .awaddr  (32'h00),
-        .awvalid (1'b1),
-        .awready (1'b1),
-        .wdata   (32'hdead_beef),
-        .wready  (1'b1)
-    );
+);
+    axi_lite bus();
+    bit done;
 
     axi_slave u_slave (
         .axi_if (bus),
@@ -50,6 +41,26 @@ module tb_axi (
 
     // ── initial ──
     initial begin
-        $display("tb_axi: interface contoh siap");
+        while (1) begin
+            bus.clk = 0;
+            #5 bus.clk = 1;
+            #5;
+        end
+    end
+
+    // ── initial ──
+    initial begin
+        bus.awaddr = 32'h0000_0010;
+        bus.awvalid = 1;
+        bus.wdata = 32'hdead_beef;
+        bus.wready = 1;
+        #40 begin
+            if (done) begin
+                $display("TB_AXI_OK done=%0d", done);
+            end else begin
+                $display("TB_AXI_BROKEN done=%0d", done);
+            end
+        end
+        $finish;
     end
 endmodule

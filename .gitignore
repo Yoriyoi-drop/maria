@@ -16,8 +16,12 @@
 /cva6
 /Cores-VeeR-EH1
 
-# MICD — incremental compilation database (build artifact)
-/.maria/database/
+# MICD — incremental compilation database (build artifact, semua level crate)
+**/.maria/database/
+
+# Waveform artifacts (FST dari simulasi/test)
+*.fst
+*.fst.gz
 /XiangShan/
 /.tools/
 /openc910/

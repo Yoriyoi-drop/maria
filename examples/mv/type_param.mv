@@ -1,0 +1,57 @@
+// ─────────────────────────────────────────────────────────────
+// Contoh F32 — type parameter di Maria HDL (MARIA-HDL.md §6)
+//   * `type Word16 = logic[15:0]` — typedef alias (F4).
+//   * `module shifter #(T : type = logic[7:0], N = 2)` — param TIPE
+//     dengan default; `T` sah sbg tipe port/signal di dalam module
+//     (`in d : T`, `sig r : T`) — validasi check.rs (F32) + lebar
+//     ter-resolve dari default.
+//   * `inst shifter u16 #(.T(Word16), .N(3)) (...)` — override type
+//     param (nilai = nama tipe) + override nilai param biasa.
+// Generate: maria mgen type_param.mv
+// Simulasi: maria type_param.sv --top tb_tp -T 200
+// ─────────────────────────────────────────────────────────────
+
+type Word16 = logic[15:0]
+
+module shifter #(T : type = logic[7:0], N = 2) {
+    in  clk : bit
+    in  d   : T
+    out q   : T
+    sig r   : T
+
+    seq(clk) {
+        r <= d << N
+        q <= r
+    }
+}
+
+module tb_tp {
+    sig clk : bit
+    sig d8, q8    : logic[7:0]
+    sig d16, q16  : logic[15:0]
+
+    // default: T = logic[7:0], N = 2
+    inst shifter u8 (.clk, .d(d8), .q(q8))
+    // override: T = Word16 (logic[15:0]), N = 3
+    inst shifter u16 #(.T(Word16), .N(3)) (.clk, .d(d16), .q(q16))
+
+    initial {
+        clk = 0
+        d8  = 8'h01
+        d16 = 16'h0001
+        #10
+        repeat (3) @(posedge clk) {}
+        #1
+        // q8  = 01 << 2 = 4; q16 = 0001 << 3 = 8 (2 posedge utk pipeline r→q)
+        if (q8 == 8'h04 && q16 == 16'h0008) {
+            $display("TB_TP_OK q8=%0d q16=%0d", q8, q16)
+        } else {
+            $display("TB_TP_BROKEN q8=%0d q16=%0d", q8, q16)
+        }
+        $finish
+    }
+
+    initial {
+        forever #5 clk = ~clk
+    }
+}

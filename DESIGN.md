@@ -57,7 +57,7 @@
 | **LazyElaborator → CompileSession** | `LazyElaborator` now wired into `CompileSession`. New `--lazy` CLI flag. `elaborate_lazy_module()`, `elaborated_count()`, `is_lazy_elaborated()` methods. Pre-registers module ports on compile. |
 | **JIT Compiler enhanced** | `CompiledExpr`, `JITCache` with hit-rate tracking, `compile_binary/unary/const` methods, 7 intrinsics (add/sub/and/or/xor/eq/lt). 7 unit tests verify compilation and caching. |
 | **`--lazy` CLI wired** | `--lazy` flag now has observable behavior: `--lazy --compile-only` skips full elaboration (compile-only HIR mode). `--lazy` without compile-only pre-populates LazyElaborator + does full elaboration for simulation. `compile_and_elaborate()` and `compile_lazy_only()` methods added to `CompileSession`. |
-| **backend/ module align** | `src/backend/mod.rs` updated with proper re-exports: `backend::simulator`, `backend::waveform`, `backend::CoverageEngine`, `backend::Debugger` — sesuai DESIGN.md. |
+| **backend/ module align** | re-exports backend/simulator/waveform kini di maria-api + maria-simulator (src/backend shim DIHAPUS pada migrasi final 2026-08-10). |
 | **Bug fix: lazy pre-registration** | Fixed bug where each module was assigned ALL ports from ALL modules instead of only its own ports. Now correctly uses per-module port iteration. |
 | **elaborate_lazy_module() fallback** | Now falls back to `merged_design` for on-demand AST→HIR conversion on cache miss. Extracts port/signal data and populates LazyElaborator dynamically. |
 

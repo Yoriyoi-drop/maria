@@ -1,0 +1,9 @@
+[package]
+name = "maria-ast"
+version = "0.3.0"
+edition = "2021"
+description = "Maria AST: expr, stmt, types, const_eval, inline — struktur sintaks SystemVerilog"
+
+[dependencies]
+maria-core = { path = "../maria-core" }
+serde = { version = "1", features = ["derive"] }

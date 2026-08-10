@@ -1,0 +1,8 @@
+[package]
+name = "maria-mv"
+version = "0.3.0"
+edition = "2021"
+description = "Maria HDL (.mv) transpiler — bahasa RTL Maria → SystemVerilog"
+
+[dependencies]
+# maria-mv murni std — tanpa dependensi eksternal.

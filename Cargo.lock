@@ -1904,31 +1904,228 @@ dependencies = [
  "cranelift-module",
  "crossbeam",
  "dashmap 6.2.1",
- "eframe",
  "fxhash",
  "itertools 0.12.1",
  "libloading",
- "lsp-types",
  "lz4_flex",
+ "maria-api",
+ "maria-ast",
+ "maria-compiler",
+ "maria-core",
+ "maria-elaboration",
+ "maria-env",
+ "maria-ir",
+ "maria-mv",
+ "maria-parser",
+ "maria-simulator",
+ "maria-tools",
  "memmap2",
  "mimalloc",
  "num_cpus",
  "parking_lot",
  "rand",
  "rayon",
- "rfd",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
  "thread_local",
  "tokio",
  "toml",
- "tower-lsp",
- "url",
  "walkdir",
  "wavefst",
  "xxhash-rust",
+]
+
+[[package]]
+name = "maria-api"
+version = "0.3.0"
+dependencies = [
+ "maria-compiler",
+ "maria-core",
+ "maria-elaboration",
+ "maria-env",
+ "maria-formal",
+ "maria-gui",
+ "maria-ir",
+ "maria-mv",
+ "maria-parser",
+ "maria-simulator",
+ "maria-tools",
+]
+
+[[package]]
+name = "maria-ast"
+version = "0.3.0"
+dependencies = [
+ "maria-core",
+ "serde",
+]
+
+[[package]]
+name = "maria-compiler"
+version = "0.3.0"
+dependencies = [
+ "bincode",
+ "cranelift",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-module",
+ "crossbeam",
+ "dashmap 6.2.1",
+ "lz4_flex",
+ "maria-ast",
+ "maria-core",
+ "maria-elaboration",
+ "maria-ir",
+ "maria-parser",
+ "memmap2",
+ "num_cpus",
+ "parking_lot",
+ "rayon",
+ "serde",
+ "serde_json",
+ "walkdir",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "maria-core"
+version = "0.3.0"
+dependencies = [
+ "crossbeam",
+ "dashmap 6.2.1",
+ "fxhash",
+ "num_cpus",
+ "parking_lot",
+ "serde",
+ "toml",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "maria-elaboration"
+version = "0.3.0"
+dependencies = [
+ "maria-ast",
+ "maria-core",
+ "maria-ir",
+]
+
+[[package]]
+name = "maria-env"
+version = "0.3.0"
+dependencies = [
+ "lsp-types",
+ "maria-ast",
+ "maria-compiler",
+ "maria-core",
+ "maria-elaboration",
+ "maria-ir",
+ "maria-parser",
+ "maria-simulator",
+ "num_cpus",
+ "rayon",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tower-lsp",
+]
+
+[[package]]
+name = "maria-formal"
+version = "0.3.0"
+dependencies = [
+ "maria-core",
+ "maria-ir",
  "z3",
+]
+
+[[package]]
+name = "maria-gui"
+version = "0.3.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "maria-ast",
+ "maria-compiler",
+ "maria-core",
+ "maria-elaboration",
+ "maria-ir",
+ "maria-mv",
+ "maria-parser",
+ "maria-simulator",
+ "rfd",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "maria-ir"
+version = "0.3.0"
+dependencies = [
+ "maria-ast",
+ "maria-core",
+]
+
+[[package]]
+name = "maria-mv"
+version = "0.3.0"
+
+[[package]]
+name = "maria-parser"
+version = "0.3.0"
+dependencies = [
+ "maria-ast",
+ "maria-core",
+]
+
+[[package]]
+name = "maria-simulator"
+version = "0.3.0"
+dependencies = [
+ "cranelift",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-module",
+ "libloading",
+ "maria-ast",
+ "maria-compiler",
+ "maria-core",
+ "maria-elaboration",
+ "maria-ir",
+ "maria-parser",
+ "rand",
+ "rayon",
+ "wavefst",
+]
+
+[[package]]
+name = "maria-tests"
+version = "0.3.0"
+dependencies = [
+ "maria-api",
+ "maria-compiler",
+ "maria-core",
+ "maria-elaboration",
+ "maria-env",
+ "maria-ir",
+ "maria-parser",
+ "maria-simulator",
+]
+
+[[package]]
+name = "maria-tools"
+version = "0.3.0"
+dependencies = [
+ "maria-ast",
+ "maria-compiler",
+ "maria-core",
+ "maria-elaboration",
+ "maria-ir",
+ "maria-mv",
+ "maria-parser",
+ "maria-simulator",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,0 +1,26 @@
+[package]
+name = "maria-api"
+version = "0.3.0"
+edition = "2021"
+description = "Maria API — lapisan public API RTL Simulator (pindahan src/lib.rs)"
+
+[dependencies]
+maria-core = { path = "../maria-core" }
+maria-ir = { path = "../maria-ir" }
+maria-parser = { path = "../maria-parser" }
+maria-elaboration = { path = "../maria-elaboration" }
+maria-compiler = { path = "../maria-compiler" }
+maria-simulator = { path = "../maria-simulator" }
+maria-mv = { path = "../maria-mv" }
+maria-env = { path = "../maria-env" }
+maria-tools = { path = "../maria-tools" }
+maria-formal = { path = "../maria-formal", optional = true }
+maria-gui = { path = "../maria-gui", optional = true }
+
+[features]
+# LSP server — tower-lsp/lsp-types di maria-env
+lsp = ["maria-env/lsp"]
+# Formal verification (Z3 SMT solver + BMC engine)
+formal = ["dep:maria-formal", "maria-formal/formal"]
+# Native GUI (egui)
+gui = ["dep:maria-gui"]

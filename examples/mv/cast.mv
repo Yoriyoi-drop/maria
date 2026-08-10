@@ -1,0 +1,48 @@
+// ─────────────────────────────────────────────────────────────
+// Contoh F33 — type cast di Maria HDL (MARIA-HDL.md §6)
+//   * `Word16'(a)` — cast ke typedef (lebar 16) — emit SV `Word16'(a)`,
+//     elaborator resolve lebar typedef level file (.svh).
+//   * `logic'(a)` — cast 1-bit (nilai bit-0).
+//   * `bit'(a[0])` — cast ke tipe dasar dari ekspresi index.
+//   * Cast divalidasi di check.rs: tipe target dikenal (E2005) + lebar
+//     ikut E2002 (RHS cast lebih lebar dari LHS → error).
+// Generate: maria mgen cast.mv
+// Simulasi: maria sim cast.sv cast.svh --top tb_cast -T 50
+//   (cast.svh berisi typedef Word16 — sim butuh kedua file)
+// ─────────────────────────────────────────────────────────────
+
+type Word16 = logic[15:0]
+
+module cast_dut {
+    in  a : logic[15:0]
+    out w : Word16
+    out lo : logic[7:0]
+    out b  : bit
+
+    comb {
+        w  = Word16'(a)
+        lo = logic'(a) ? 8'hAA : 8'h55
+        b  = bit'(a[0])
+    }
+}
+
+module tb_cast {
+    sig a : logic[15:0]
+    sig w : Word16
+    sig lo : logic[7:0]
+    sig b : bit
+
+    inst cast_dut u (.a, .w, .lo, .b)
+
+    initial {
+        a = 16'h1234
+        #10
+        // a[0]=0 → logic'(a)=0 → lo=8'h55; b=bit'(0)=0; w=16'h1234
+        if (w == 16'h1234 && lo == 8'h55 && b == 0) {
+            $display("TB_CAST_OK w=%0h lo=%0h b=%0d", w, lo, b)
+        } else {
+            $display("TB_CAST_BROKEN w=%0h lo=%0h b=%0d", w, lo, b)
+        }
+        $finish
+    }
+}

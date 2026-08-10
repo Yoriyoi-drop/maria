@@ -1,0 +1,18 @@
+[package]
+name = "maria-tools"
+version = "0.3.0"
+edition = "2021"
+description = "Maria CLI tools — minspect, mlint, melab, msim, mcov, mwave, mfmt, mprof, mcheck, mbench"
+
+[dependencies]
+maria-core = { path = "../maria-core" }
+maria-ast = { path = "../maria-ast" }
+maria-ir = { path = "../maria-ir" }
+maria-parser = { path = "../maria-parser" }
+maria-elaboration = { path = "../maria-elaboration" }
+maria-compiler = { path = "../maria-compiler" }
+maria-simulator = { path = "../maria-simulator" }
+maria-mv = { path = "../maria-mv" }
+
+# mcov/bench: export coverage/benchmark report sebagai JSON
+serde_json = "1"

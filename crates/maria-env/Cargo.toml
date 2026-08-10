@@ -1,0 +1,30 @@
+[package]
+name = "maria-env"
+version = "0.3.0"
+edition = "2021"
+description = "Maria Enterprise Context Architecture (GlobalEnv) + LSP server + plugin system"
+
+[dependencies]
+maria-core = { path = "../maria-core" }
+maria-ast = { path = "../maria-ast" }
+maria-ir = { path = "../maria-ir" }
+maria-parser = { path = "../maria-parser" }
+maria-elaboration = { path = "../maria-elaboration" }
+maria-compiler = { path = "../maria-compiler" }
+maria-simulator = { path = "../maria-simulator" }
+
+# Eksternal (shared dengan root/maria-compiler)
+num_cpus = "1"
+toml = "0.8"
+serde_json = "1"
+rayon = "1"
+
+# ── Opsional: LSP Server ──
+tower-lsp = { version = "0.20", optional = true }
+lsp-types = { version = "0.94", optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
+
+[features]
+lsp = ["tower-lsp", "lsp-types", "tokio"]
+# dpi: info ketersediaan DPI-C (simulation/dpi.rs cfg) — di-wire dari root
+dpi = []

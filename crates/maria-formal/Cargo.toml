@@ -1,0 +1,15 @@
+[package]
+name = "maria-formal"
+version = "0.3.0"
+edition = "2021"
+description = "Maria formal verification engine — Z3 SMT + BMC"
+
+[dependencies]
+maria-ir = { path = "../maria-ir" }
+maria-core = { path = "../maria-core" }
+
+# Z3 SMT solver (thread-local context) — feature "formal"
+z3 = { version = "0.20", optional = true }
+
+[features]
+formal = ["z3"]

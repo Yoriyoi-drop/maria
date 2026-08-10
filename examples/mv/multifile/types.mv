@@ -1,0 +1,32 @@
+// ─────────────────────────────────────────────────────────────
+// Contoh F30 — multi-file (MARIA-HDL.md §7.4)
+//   File 1/3: tipe bersama + interface — di-emit ke `types.svh`.
+//   * package `chip_types` — typedef/enum lintas-file (dipakai dut.mv
+//     dan tb.mv lewat `use chip_types::*`, konteks gabungan F9).
+//   * interface `mem_if` — port module + instance (F26/F28).
+// Generate: maria mgen examples/mv/multifile
+// Simulasi: maria sim types.svh dut.sv tb.sv --top tb_mem -T 200
+// ─────────────────────────────────────────────────────────────
+
+package chip_types {
+    type Addr  = logic[15:0]
+    type Data  = logic[31:0]
+    enum State { IDLE, WR, RD }
+}
+
+interface mem_if {
+    in  clk : bit
+    sig addr : logic[15:0]
+    sig we   : bit
+    sig din  : logic[31:0]
+    sig dout : logic[31:0]
+
+    modport slave {
+        in  addr, we, din
+        out dout
+    }
+    modport master {
+        out addr, we, din
+        in  dout
+    }
+}

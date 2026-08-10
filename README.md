@@ -88,17 +88,17 @@ cargo test <test_name>
 | Layer | File | LOC |
 |-------|------|-----|
 | CLI | `src/main.rs` | — |
-| Library | `src/lib.rs` | — |
+| Library | `crates/maria-api/` | public API (ex `src/lib.rs`) |
 | Preprocessor | `src/parser/preprocessor.rs` | — |
 | Lexer | `src/parser/lexer.rs` | — |
 | Parser | `src/parser/parser.rs` | ~5100 |
 | AST | `src/ast/` | expr, stmt, types, const_eval, inline |
 | Elaborator | `src/elaboration/elaborator.rs` | ~3400 |
 | IR | `src/ir/ir.rs` | — |
-| Simulator | `src/simulator/` | engine(~6700), state, value, types, sdf, util, jit, parallel |
+| Simulator | `crates/maria-simulator/` | engine, state, value, types, sdf, util, jit, parallel |
 | Waveform | `src/waveform/` | vcd.rs, fst.rs |
 | Debugger | `src/debugger/` | mod.rs (~585) |
-| Tests | `src/tests/` | mod.rs + edge, parse_error, elab_error, fuzz, regression |
+| Tests | `crates/maria-tests/` | ex `src/tests` + edge_tests + debug_lexer |
 | UVM macros | `uvm_macros.svh` | — |
 
 ## License

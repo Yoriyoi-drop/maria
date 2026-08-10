@@ -1,0 +1,28 @@
+[package]
+name = "maria-gui"
+version = "0.3.0"
+edition = "2021"
+description = "Maria GUI — RTL Engineering Control Center (egui native, pengganti Tauri)"
+
+[dependencies]
+maria-core = { path = "../maria-core" }
+maria-ast = { path = "../maria-ast" }
+maria-ir = { path = "../maria-ir" }
+maria-parser = { path = "../maria-parser" }
+maria-elaboration = { path = "../maria-elaboration" }
+maria-compiler = { path = "../maria-compiler" }
+maria-simulator = { path = "../maria-simulator" }
+maria-mv = { path = "../maria-mv" }
+
+# Native GUI: egui via eframe (wgpu utama + glow fallback)
+eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow", "wgpu", "wayland", "x11"] }
+egui = { version = "0.35", default-features = false }
+# Dialog file native (buka folder / simpan coverage)
+rfd = "0.17"
+# Serialisasi workspace state + coverage
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[bin]]
+name = "maria-gui"
+path = "src/bin/maria_gui.rs"

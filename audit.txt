@@ -2,7 +2,7 @@
 ║            AUDIT BRUTAL — MARIA HDL SIMULATOR ECOSYSTEM                     ║
 ║            Principal HDL Compiler Engineer / EDA Architect Review            ║
 ║            Target: Commercial SoC Tape-Out Readiness                        ║
-║            Date: 2026-07-28 (updated)                                       ║
+║            Date: 2026-08-10 (updated)                                       ║
 ║            Version: 0.3.0                                                   ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~67K LOC, 1167 test functions,
+Maria adalah simulator RTL berbasis Rust (~157K LOC, 1617 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -34,13 +34,14 @@ formal verification, LSP/IDE, compiled-code simulation,
 distributed/parallel simulation engine, coverage minimal,
 constraint solver inadequate, waveform database tidak ada, CI/CD ✅ sudah ada,
 tidak ada regression infrastructure, tidak ada VHDL/SystemC co-sim,
-dan pre-existing test failures (ALL FIXED ✅ — 1167 tests pass, 0 fail).
+dan pre-existing test failures (ALL FIXED ✅ — 1617 tests pass, 0 fail).
 
 Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 ~18ms untuk 400 module, zero-deallocation sim arena, struktur
-kode terorganisir rapi, ✅ CI/CD aktif, ✅ 1167 tests pass 0 fail,
+kode terorganisir rapi, ✅ CI/CD aktif, ✅ 1617 tests pass 0 fail,
+✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
-dan ✅ 43 item audit telah diperbaiki.
+dan ✅ 44 item audit telah diperbaiki (termasuk monorepo workspace, Arsitektur-08).
 
 ═══════════════════════════════════════════════════════════════════════════════
 2. ARCHITECTURE REVIEW
@@ -54,7 +55,7 @@ Arsitektur 3-tier (Frontend/AST/Backend) dengan cross-cutting layers.
 MASALAH ARSITEKTUR KRITIS:
 
 Arsitektur-01: ⚠️ Tidak ada SSA form — masih open
-  Root Cause: IR (src/ir/ir.rs) adalah flat AST-style, bukan SSA.
+  Root Cause: IR (crates/maria-ir/src/ir.rs) adalah flat AST-style, bukan SSA.
   Impact: Tidak bisa optimasi global (CSE, DCE, LICM, GVN).
   Severity: Critical
   Fix: Implement SSA-based MIR dengan dominance frontier.
@@ -118,6 +119,161 @@ Arsitektur-07: ⚠️ Tidak ada persistent design database — masih open
   Fix: Implement design database (like Libero's .db atau
   VCS's .syn/.simv).
   Complexity: Phase 5-6
+
+Arsitektur-08: ✅ Monorepo workspace (src/ → crates/) — FIXED (fondasi 11/12)
+  Root Cause: Seluruh logika (~157K LOC, 28 modul) hidup dalam SATU crate
+  monolitik `maria`. Semua modul saling terlihat tanpa batas dependensi
+  eksplisit; perubahan satu file memicu rebuild modul besar; test tidak
+  terisolasi per komponen; grafik dependensi tidak terdokumentasi.
+  Impact: Maintainability rendah, compile unit besar (borrow-check seluruh
+  project), dependency graph implisit, sulit diuji terpisah.
+  Severity: High
+  Fix: Workspace Cargo dengan crate bottom-up acyclic. Rencana 12 crate:
+    1.  maria-core        ← intern, arena, error, diagnostics, config, animasi, logic
+    2.  maria-ast         ← ast (expr, stmt, types, const_eval, inline)
+    3.  maria-ir          ← ir (IrDesign/IrStmt/IrExpr; re-export LogicVec dari core)
+    4.  maria-parser      ← parser                    (SELESAI — 2026-08-10)
+    5.  maria-elaboration ← elaboration               (SELESAI — 2026-08-10)
+    6.  maria-compiler    ← frontend+cache+micd+hir+mir+profiling (SELESAI — 2026-08-10)
+    7.  maria-simulator   ← simulator+waveform+scheduler+debugger+vpi (SELESAI — 2026-08-10)
+    8.  maria-mv          ← mv (Maria HDL)            (SELESAI — 2026-08-10)
+    9.  maria-formal      ← formal                    (SELESAI — 2026-08-10)
+    10. maria-env         ← env + lsp                 (SELESAI — 2026-08-10)
+    11. maria-tools       ← tools                     (SELESAI — 2026-08-10)
+    12. maria-gui         ← gui (egui)                (SELESAI — 2026-08-10)
+    13. maria-api         ← src/lib.rs (API publik + re-export maria_*) (SELESAI — 2026-08-10)
+    14. maria-tests       ← src/tests + edge_tests + debug_lexer (SELESAI — 2026-08-10)
+  Complexity: Phase bertahap — 14/14 member, target akhir tercapai: src/ = main.rs + cli.rs
+  STATUS: ✅ FIXED (selesai) — 2026-08-10
+  UPDATE 12/12 + FINAL (maria-gui + maria-api + maria-tests):
+    (a) maria-gui: seluruh src/gui/ (25 file, ~9.7K LOC, egui native) pindah
+        ke crates/maria-gui; self-ref `crate::gui::` (12 situs di 6 file) →
+        `crate::` (modul kini di akar crate); +serde_json di Cargo.toml;
+        binary `maria-gui` pindah ke crate (src/bin/maria_gui.rs →
+        crates/maria-gui/src/bin/, pakai `maria_gui::run()`); root feature
+        gui = ["maria-api/gui"].
+    (b) maria-api: seluruh isi src/lib.rs (compile_str/compile_files/
+        simulate_str/simulate_signals/run_simulation/read_project_file/
+        compare_asts + re-export maria_* + test_util) pindah ke crate baru
+        maria-api. src/backend/ (shim re-export mati) DIHAPUS.
+    (c) maria-tests: src/tests/ (mod.rs 14.8K LOC + bench_release/
+        stress_tests/bench_profile/debug_lex_check) + src/edge_tests.rs
+        (2.5K LOC) + src/debug_lexer.rs pindah ke crate baru maria-tests.
+        `pub use maria_api::*;` + mirror private use (fs/Lexer/Parser/
+        Preprocessor) membuat seluruh `crate::simulator` (57 situs) &
+        `crate::compile_str` tetap valid TANPA edit 15K LOC test; features
+        jit/dpi wired langsung ke maria-simulator/maria-env; include_str!
+        bench dikoreksi ../../ → ../../../../ (kedalaman crate).
+    (d) main.rs: `maria::` → `maria_api::` (80 situs blanket); contoh
+        examples/test_new_method.rs + test_class_var.rs ikut di-update.
+  UPDATE 11/12 (maria-tools): seluruh src/tools/ (12 file, 10 tool CLI:
+    minspect/mlint/melab/msim/mcov/mwave/mfmt/mprof/mcheck/mbench; mod.rs →
+    lib.rs) pindah ke crates/maria-tools (~4K LOC). Self-ref `crate::tools::`
+    (8 situs di check/elab/inspect/prof) → `crate::` (mod.rs jadi lib.rs,
+    path lama invalid); `crate::simulator` (4) → `maria_simulator::simulator`;
+    `crate::waveform` (2) → `maria_simulator::waveform`;
+    `crate::SessionConfig` → `maria_compiler::frontend::compile_session::
+    SessionConfig`. Cargo.toml: deps 8 maria_* + serde_json (mcov/bench JSON
+    export). Konsumen: lib.rs `pub mod tools` → `pub use maria_tools as tools`
+    — `maria::tools::*` di main.rs (dispatch_* 10 tool) tetap valid.
+  UPDATE 10/12 (maria-env): src/env/ (84 file, 12 context GlobalEnv) +
+    src/lsp/ (2 file, tower-lsp) + src/plugin/ (2 file, 221 LOC — hanya
+    dipakai env) pindah ke crates/maria-env (~5.2K LOC). Self-ref
+    `crate::simulator` (10) → `maria_simulator::simulator`, `crate::waveform`
+    (1) → `maria_simulator::waveform`; `crate::plugin` (4) tetap valid
+    (plugin ikut pindah sebagai submodule). Cargo.toml: deps 7 maria_*
+    + num_cpus/toml/serde_json/rayon + tower-lsp/lsp-types/tokio (opsional
+    feature `lsp`); root: hapus tower-lsp/lsp-types/url (pindah ke crate),
+    tokio tetap di root (main.rs Runtime LSP), feature lsp →
+    ["maria-env/lsp", "tokio"], dpi → +"maria-env/dpi". Konsumen: lib.rs
+    `pub mod env/lsp/plugin` → `pub use maria_env::{env, lsp (cfg), plugin}`
+    — path `maria::env::*`/`maria::lsp::*` di main.rs tetap valid. Modul lsp
+    di-gate `#[cfg(feature = "lsp")]` di crate. FIX: BuildInfo crate_name
+    hardcode "maria" (env! CARGO_PKG_NAME = "maria-env"); test config/startup
+    pakai root_rel() (CARGO_MANIFEST_DIR/../..) — cwd test = direktori crate.
+    FIX maria-formal: root dep kini `optional = true` + feature formal =
+    ["dep:maria-formal", "maria-formal/formal"] — build --no-default-features
+    sebelumnya gagal (maria-formal non-optional selalu di-compile tanpa z3).
+  UPDATE 9/12 (maria-formal): seluruh src/formal/ (mod→lib, bmc, sat, tests;
+    ~1.7K LOC) pindah ke crates/maria-formal. Deps: maria-ir + maria-core +
+    z3 (optional, feature `formal`); root feature `formal` →
+    `maria-formal/formal` (dep z3 root dihapus — kini di crate). Self-ref
+    test `crate::formal::*` → `crate::*` (modul sudah di root crate).
+    Konsumen: lib.rs `pub mod formal` (cfg) → `pub use maria_formal as
+    formal` — `maria::formal::*` di main.rs (run_formal) tetap valid tanpa
+    edit. Cargo.toml root: members + deps + wiring feature.
+  UPDATE 8/12 (maria-mv): seluruh src/mv/ (ast, check, codegen, lexer, parser,
+    mod→lib; ~7.9K LOC) pindah ke crates/maria-mv — crate PALING BERSIH: tanpa
+    dependensi maria_* sama sekali (0 crate:: refs keluar). Self-ref
+    `crate::mv::*` (9 situs di lexer/parser/check/codegen) → `crate::*`.
+    Konsumen: gui/app.rs + tools/gen.rs + tools/mod.rs ganti `crate::mv` →
+    `maria_mv` (gen.rs `use maria_mv as mv` agar prefix `mv::` tetap valid);
+    lib.rs `pub use maria_mv as mv` — path `maria::mv::*` di main.rs tetap
+    valid. Cargo.toml: tanpa dependensi eksternal.
+  UPDATE 7/12 (maria-simulator): seluruh src/{simulator (56), waveform (7),
+    scheduler (4), debugger (1), vpi (8)} pindah ke crates/maria-simulator
+    (~27.5K LOC, crate TERBESAR). KEPUTUSAN: scheduler SELURUHNYA (termasuk
+    sim_dag/clock_domain/cdc) ikut pindah — sim_dag bergantung pada
+    simulator::parallel (cycle jika terpisah); cluster kompilasi
+    (dag/incremental/work_stealing/priority) sudah di maria-compiler.
+    Self-ref: `crate::Symbol` (25 situs) → `maria_core::Symbol` (re-export
+    baru di maria-core root: pub use intern::{init_string_table, Span,
+    Symbol}); test `crate::compile_str` (2 situs) → helper baru
+    `crates/maria-simulator/src/test_util.rs` (pipeline penuh).
+    Konsumen: lib.rs hapus 5 pub mod → `pub use maria_simulator::{debugger,
+    scheduler, simulator, vpi, waveform}` (path `maria::simulator::*` dkk
+    tetap valid); main.rs `maria::scheduler::cdc` kini via re-export
+    (scheduler pindah penuh). Cargo.toml: deps core/ast/ir/parser/
+    elaboration/compiler + rand/rayon/wavefst + cranelift (jit) + libloading
+    (dpi), wiring fitur root jit/dpi → maria-simulator/jit|dpi.
+    Visibility: `is_line_excluded` pub(crate)→pub (dipakai tests lintas crate);
+    doctest work_stealing `maria::scheduler` → `maria_compiler::scheduler`.
+  UPDATE 6/12 (maria-compiler): src/{frontend,cache,micd,hir,mir,profiling}
+    (8+6+14+3+5+5 file) + cluster scheduler {dag,incremental,work_stealing,
+    priority} (dipakai compiler/env; sim_dag/clock_domain/cdc tetap di
+    src/scheduler utk crate 7 — sim_dag bergantung pada crate::simulator::parallel,
+    memutusnya akan membuat cycle compiler→simulator) pindah ke
+    crates/maria-compiler (~17K LOC). Self-ref micd/ast.rs test
+    `crate::SessionConfig` → `crate::frontend::compile_session::SessionConfig`;
+    konsumen (env cache/database/telemetry/runtime/compiler, gui/backend,
+    lsp, tools 5 file, tests 4 file, simulator engine/uvm, lib.rs, main.rs)
+    ganti `crate::frontend|micd|cache|hir|mir|profiling` → `maria_compiler::*`
+    dan `maria::scheduler::*` cluster pindahan → `maria_compiler::scheduler::*`
+    (src/scheduler/mod.rs re-export agar path polos tetap valid).
+    Cargo.toml: +num_cpus, parking_lot, serde_json, walkdir. Test path
+    relatif `test/counter.sv` (cwd test = direktori crate) → helper
+    `root_rel()` berbasis CARGO_MANIFEST_DIR.
+  UPDATE 5/12 (maria-elaboration): seluruh src/elaboration/ (elaborator/
+    always,expr,ext,flatten,mod,stmt + util/ 9 submodule + lib.rs ex mod.rs)
+    pindah ke crates/maria-elaboration. Self-ref `crate::elaboration::util::*`
+    → `crate::util::*`; dependensi ke `crate::cache::checksum` diputus dengan
+    memindahkan checksum.rs ke maria-core (pola LogicVal) — cache re-export
+    `pub use maria_core::checksum` agar micd dkk tetap valid. Konsumen (env,
+    frontend, lsp, tools, tests, simulator/eval/ast, lib.rs, main.rs) ganti
+    `crate::elaboration`/`maria::elaboration` → `maria_elaboration`.
+  UPDATE 4/12 (maria-parser): seluruh src/parser/ (lexer, preprocessor,
+    util, specify, udp, config, package, class, expr, stmt, decl, instance,
+    proc + Parser di mod.rs → lib.rs) pindah ke crates/maria-parser (~11.3K
+    LOC, 13 file). Self-ref `crate::parser::lexer::*` → `crate::lexer::*`;
+    `maria_ir::LogicVal` (FillLit token) → `maria_core::LogicVal` (parser
+    kini tidak lagi depend ke maria-ir); debug print `crate::tools::expr_to_string`
+    → `format!("{:?}", cond)` (hindari dependensi parser→tools). Konsumen
+    (frontend, env/compiler, lsp, tools/fmt, tests, main.rs, lib.rs) ganti
+    `crate::parser`/`maria::parser` → `maria_parser`. `env/compiler/parser.rs`
+    (wrapper parse/parse_strict) tetap di src/ — bukan bagian parser crate.
+    Target akhir (keputusan user): src/ hanya main.rs + cli.rs — seluruh
+    logika pindah ke crates, sesi lanjutan membawa crate 5-12.
+  Cycle breaker: LogicVal/LogicVec dipindah dari src/ir/ir.rs ke
+    maria-core/src/logic.rs (memutus siklus ast↔ir: ast::Expr::FillLit
+    memakai LogicVal). maria-ir re-export maria_core::{LogicVal, LogicVec}
+    agar `maria_ir::LogicVec` dan `use maria_ir::*` tetap valid.
+  Visibility: DataType::width()/DeclKind::default_width() di maria-ast
+    diubah pub(crate)→pub (dipakai elaboration lintas crate).
+  Orphan rule: impl Display for LogicVal/LogicVec pindah ke maria-core
+    (Rust orphan rules melarang impl trait untuk tipe asing).
+  API root: lib.rs tetap re-export maria_core::{Symbol, Span, SimError,
+    DiagCode, ...} — `maria::compile_str`/`simulate_str` dkk TIDAK berubah.
+  Build: `cargo build --workspace`, `cargo test --workspace`.
 
 2.2 SCHEDULER ARCHITECTURE
 
@@ -648,8 +804,8 @@ LSP-15:[] No folding range (Low)
 LSP-16:[] No signature help (Medium)
 LSP-17:[] No completion resolve (Medium)
 LSP-18:[] No incremental document sync (Medium)
-LSP-19: ✅ Diagnostic publishing via parser (src/lsp/backend.rs, publishDiagnostics pada
-        open/change/save/close)
+LSP-19: ✅ Diagnostic publishing via parser (crates/maria-env/src/lsp/backend.rs,
+        publishDiagnostics pada open/change/save/close)
 LSP-20:[] No format-on-save / document formatting (High)
 LSP-21:[] No code lens for test run (Medium)
 LSP-22:[] No color provider (Low)
@@ -735,6 +891,11 @@ CRIT-001:[x] 2 pre-existing test failures — Foundation tidak stabil
              UPDATE 2026-07-30: 2 additional SDF test failures fixed
              (test_sdf_parse + test_timing_checks_parse — old SDF syntax not matching parser capabilities).
              Now 1167 tests pass, 0 fail.
+             UPDATE 2026-08-10: fondasi monorepo workspace (11/12 crate selesai:
+             maria-core, maria-ast, maria-ir, maria-parser, maria-elaboration,
+             maria-compiler, maria-simulator, maria-mv, maria-formal, maria-env,
+             maria-tools)
+             — 1606 tests pass, 0 fail (mv + formal + env tests ikut ke crate).
 
 CRIT-002: ✅ Domain analysis constraint solver (guided generation)
            src/simulator/engine/uvm/constraint_solver.rs (116 LOC — NEW)
@@ -746,7 +907,8 @@ CRIT-002: ✅ Domain analysis constraint solver (guided generation)
            STATUS: ✅ FIXED — rejection sampling 100 → domain solver 10K
 
 CRIT-003: ✅ Z3 SMT solver + BMC engine (formal verification) — NEW
-           src/formal/ (4 files, ~750 LOC) — NEW: mod.rs, sat.rs, bmc.rs, tests.rs
+           crates/maria-formal/ (4 files, ~1.7K LOC — pindah dari src/formal/
+           migrasi crate 9): lib.rs, sat.rs, bmc.rs, tests.rs
            Fitur: Z3 bit-vector SMT solver (z3 0.20, thread-local context), IrExpr→Z3 BV/Bool translation, BMC dengan transition relation encoding (sig_vars[d][i] untuk sinyal di tiap depth), next-state constraints dari BlockingAssign di combinational processes, per-depth assertion check (¬property → SAT = counterexample). CLI flags: --formal dan --formal-bound. run_formal() helper dengan non-zero exit untuk CI/CD. 22 unit tests. 0 compilation errors.
            Limitation: BMC tanpa initial state constraints, combinational assignments pakai prev-depth (1-cycle delay), width mismatch zero-extension via zero_extend_match helper. Induction-based proof belum implement.
            STATUS: ✅ FIXED — Z3 BMC engine wired dengan CLI flags + 22 tests
@@ -795,7 +957,8 @@ CRIT-006: ✅ MIR→Cranelift full body JIT compiler — NBA deferral + recursiv
            STATUS: 1160 tests pass, 2 pre-existing SDF failures
 
 CRIT-007: ✅ LSP server MVP (tower-lsp 0.20 + lsp-types 0.94)
-           src/lsp/backend.rs (200+ LOC) — LspBackend implements LanguageServer:
+           crates/maria-env/src/lsp/backend.rs (200+ LOC — migrasi crate 10) —
+           LspBackend implements LanguageServer:
            • TextDocumentSyncKind::FULL for open/change/save/close
            • publishDiagnostics via preprocessor → lexer → parser pipeline
            • Diagnostic severity mapping (ERROR/WARNING) with 1-based→0-based position
@@ -830,7 +993,7 @@ CRIT-009: ✅ DPI-C full support (parser→elaborator→engine→3rd-party C lib
            src/simulator/engine/eval/expr.rs — IrExpr::DpiCall dispatch
            src/parser/stmt.rs: parse_dpi_import() — parses import/export "DPI-C"
            src/elaboration/elaborator/ext.rs: elaborate_dpi_imports() — AST→IR
-           src/ir/ir.rs: IrDpiImport struct + IrExpr::DpiCall variant
+           crates/maria-ir/src/ir.rs: IrDpiImport struct + IrExpr::DpiCall variant
            13 unit tests (import function/task/void/multi-arg, scope management,
            time query, chandle store, export register, export task, bit/Logic vector
            helpers, chandle conversion, built-in SV bit functions).
@@ -1360,7 +1523,7 @@ DEBT-06: ✅ FIXED — temp_signals di inline.rs migrated from
          Vec<(String, usize)> to Vec<(Symbol, usize)>. Symbol interned
          once at push site and reused for rename_map insert + Expr::Ident,
          eliminating 2-3 redundant intern calls per temporary signal.
-         Two files changed: src/ast/inline.rs + src/elaboration/elaborator/mod.rs
+         Two files changed: crates/maria-ast/src/inline.rs + src/elaboration/elaborator/mod.rs
          Built with both default-features and --no-default-features.
          1167 tests pass, 0 fail.
          Impact: Inefficient memory, repeated interning
@@ -2250,7 +2413,7 @@ Detail perbaikan per round:
    - Files: src/cache/cache_manager.rs
 
 ✅ DEBT-18: Symbol interning for daemon mode (reset_string_table)
-   - Files: src/intern/string_intern.rs
+   - Files: crates/maria-core/src/intern/string_intern.rs
 
 ═══ ROUND 8 — PREPROCESSOR + AST ═══
 
@@ -2293,9 +2456,9 @@ Detail perbaikan per round:
    - Files: src/elaboration/elaborator/expr.rs
 
 ✅ Package constants (skalar + array) evaluasi penuh
-   - src/ast/const_eval_ext.rs (NEW): eval_package_constants,
+   - crates/maria-ast/src/const_eval_ext.rs (NEW): eval_package_constants,
      flatten_consts_into_ctx, flatten_imported_consts_into_ctx
-   - src/ast/const_eval.rs: BitSelect lookup via key `name[idx]` (array params)
+   - crates/maria-ast/src/const_eval.rs: BitSelect lookup via key `name[idx]` (array params)
    - src/elaboration/elaborator/mod.rs: pkg_const_scalars + pkg_const_arrays
      di-merge ke effective_params + collect_package_param_ctx
 
@@ -2381,11 +2544,11 @@ Detail perbaikan per round:
    - Files: src/parser/mod.rs
 
 ✅ ERR: Nested error code stripping
-   - strip_nested_error_codes() di src/error.rs — hapus `error[EXXXX]: `
+   - strip_nested_error_codes() di crates/maria-core/src/error.rs — hapus `error[EXXXX]: `
      berlapis agar tidak duplikasi kode saat error dibungkus
 
 ✅ LOC: Source location multi-file (resolve_source_location)
-   - src/diagnostics/mod.rs: `line N "file" directive → (file, line) relatif
+   - crates/maria-core/src/diagnostics/mod.rs: `line N "file" directive → (file, line) relatif
    - compile_session.rs: per-file base offsets utk posisi global
    - Elaborator: elab_diag_at dengan inst.line/col (error lokasi instance)
 
@@ -2410,7 +2573,7 @@ Detail perbaikan per round:
      lalu `:` → range [msb:lsb], `]` → single size [N] → [N-1:0].
 
 ✅ ELAB: Port unpacked-array dilipat ke width total
-   - src/ast/types.rs: struct Port + field `array_range: Option<Range>`
+   - crates/maria-ast/src/types.rs: struct Port + field `array_range: Option<Range>`
    - src/elaboration/elaborator/mod.rs: jalur port kini melipat array depth ke
      total_width dan set array_depth + elem_width (sebelumnya hardcode depth=1,
      penyebab $bits port array under-count)
@@ -3009,7 +3172,7 @@ END OF AUDIT REPORT
      (baris output berikutnya), range (start,end) 1-based di-push ke
      Preprocessor.coverage_exclusions saat coverage_on; region yang belum
      ditutup ditutup di EOF. Hanya saat emitting=true.
-   - src/ir/ir.rs: IrDesign + field pub coverage_exclusions: Vec<(usize,usize)>.
+   - crates/maria-ir/src/ir.rs: IrDesign + field pub coverage_exclusions: Vec<(usize,usize)>.
    - src/lib.rs compile_str: ir_design.coverage_exclusions =
      pp.coverage_exclusions.clone() (bawa dari preprocessor ke design).
    - src/simulator/engine/mod.rs + core.rs: field coverage_exclusions di

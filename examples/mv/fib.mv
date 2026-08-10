@@ -1,0 +1,34 @@
+// F35: recursive function di .mv — runtime CALL (tidak di-inline) via
+// execute_module_function_call. Body function dieksekusi via AST eval
+// (evaluate_ast_block_with_delay_fork) sehingga pemanggilan REKURSIF di
+// dalam body tetap mengenali module function. Fix: nama function di-pre-insert
+// sebagai lokal (agar LHS `fact = expr` non-ANSI menulis ke slot return),
+// `__func_ret` tidak di-pre-insert (agar get_local("__func_ret") = None untuk
+// non-ANSI → fallback ke nama function → return benar).
+//
+// Contoh: fib(15) = 610, factorial(5) = 120
+
+func fib(n : int) -> int {
+    if (n <= 1) {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+func factorial(n : int) -> int {
+    if (n <= 1) {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+
+module tb_fib {
+    sig o_fib : logic[31:0]
+    sig o_fact : logic[31:0]
+    initial {
+        o_fib = fib(15)
+        o_fact = factorial(5)
+        #1
+        $display("TB_FIB fib=%0d fact=%0d", o_fib, o_fact)
+    }
+}

@@ -1,0 +1,9 @@
+[package]
+name = "maria-parser"
+version = "0.3.0"
+edition = "2021"
+description = "Maria parser: lexer, preprocessor, Parser — SystemVerilog sintaks → AST"
+
+[dependencies]
+maria-core = { path = "../maria-core" }
+maria-ast = { path = "../maria-ast" }

@@ -1,0 +1,58 @@
+// ─────────────────────────────────────────────────────────────
+// Contoh F30 — multi-file (MARIA-HDL.md §7.4)
+//   File 3/3: testbench — `inst memory_dut` dengan module yang
+//   didefinisikan di `dut.mv` (file LAIN). Validasi koneksi port F29
+//   berjalan lintas-file lewat konteks gabungan check_many: target
+//   dikenal → nama port & jumlah positional tetap diperiksa.
+// ─────────────────────────────────────────────────────────────
+
+module tb_mem {
+    use chip_types::*
+
+    sig bus  : mem_if      // instance interface (F28: `mem_if bus();`)
+    sig rst_n : bit
+    sig st   : State
+    sig addr : Addr
+    sig done : bit
+
+    // module dari file lain — port `axi` (bukan `bus`): alias hier F28
+    inst memory_dut u_dut (
+        .axi(bus),
+        .rst_n(rst_n),
+        .st(st),
+        .addr(addr)
+    )
+
+    initial {
+        // clock generator lewat field interface
+        while (1) {
+            bus.clk = 0
+            #5
+            bus.clk = 1
+            #5
+        }
+    }
+
+    initial {
+        // reset: lepas setelah 3 siklus
+        rst_n = 0
+        #30
+        rst_n = 1
+
+        // drive request via field interface
+        bus.we   = 1
+        bus.addr = 16'h10
+        bus.din  = 32'hcafe
+
+        #60
+
+        // 6 posedge setelah reset → addr = 6 (0→1→…→6)
+        if (addr == 16'h6 && st == WR) {
+            $display("TB_MF_OK addr=%0d st=%0d", addr, st)
+            done = 1
+        } else {
+            $display("TB_MF_BROKEN addr=%0d st=%0d", addr, st)
+        }
+        $finish
+    }
+}

@@ -1,0 +1,31 @@
+[package]
+name = "maria-simulator"
+version = "0.3.0"
+edition = "2021"
+description = "Maria simulation engine: simulator, waveform, scheduler (sim cluster), debugger, VPI"
+
+[dependencies]
+maria-core = { path = "../maria-core" }
+maria-ast = { path = "../maria-ast" }
+maria-ir = { path = "../maria-ir" }
+maria-parser = { path = "../maria-parser" }
+maria-elaboration = { path = "../maria-elaboration" }
+maria-compiler = { path = "../maria-compiler" }
+
+# Parallel eval (rayon), FST waveform (wavefst), RNG ($urandom dkk)
+rand = "0.8"
+rayon = "1"
+wavefst = { version = "0.1", default-features = false, features = ["gzip"] }
+
+# Optional: Cranelift JIT (simulator/jit.rs + jit_cranelift.rs) — feature "jit"
+cranelift = { version = "0.110", optional = true }
+cranelift-jit = { version = "0.110", optional = true }
+cranelift-frontend = { version = "0.110", optional = true }
+cranelift-module = { version = "0.110", optional = true }
+
+# Optional: DPI-C FFI (simulator/dpi.rs) — feature "dpi"
+libloading = { version = "0.8", optional = true }
+
+[features]
+jit = ["cranelift", "cranelift-jit", "cranelift-frontend", "cranelift-module"]
+dpi = ["libloading"]

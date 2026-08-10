@@ -1,0 +1,9 @@
+[package]
+name = "maria-ir"
+version = "0.3.0"
+edition = "2021"
+description = "Maria IR: IrDesign, IrStmt, IrExpr, LogicVec — intermediate representation hasil elaborasi"
+
+[dependencies]
+maria-core = { path = "../maria-core" }
+maria-ast = { path = "../maria-ast" }

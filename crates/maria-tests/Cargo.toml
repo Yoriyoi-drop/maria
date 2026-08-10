@@ -1,0 +1,22 @@
+[package]
+name = "maria-tests"
+version = "0.3.0"
+edition = "2021"
+description = "Maria — test suite terpadu (pindahan src/tests, src/edge_tests, src/debug_lexer)"
+
+[dependencies]
+maria-api = { path = "../maria-api" }
+maria-ir = { path = "../maria-ir" }
+maria-core = { path = "../maria-core" }
+maria-compiler = { path = "../maria-compiler" }
+maria-parser = { path = "../maria-parser" }
+maria-elaboration = { path = "../maria-elaboration" }
+# Dep langsung utk feature wiring jit/dpi (test memakai simulator::jit + simulator::dpi)
+maria-simulator = { path = "../maria-simulator" }
+maria-env = { path = "../maria-env" }
+
+[features]
+default = ["jit", "dpi"]
+# Test suite memakai simulator::jit (JIT intrinsics) dan simulator::dpi
+jit = ["maria-simulator/jit"]
+dpi = ["maria-simulator/dpi", "maria-env/dpi"]

@@ -1,4 +1,4 @@
-use maria::compile_str;
+use maria_api::compile_str;
 fn main() {
     let source = r#"
 class counter;

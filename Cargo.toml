@@ -1,12 +1,30 @@
 [workspace]
 # src-tauri dipindah ke legacy/ (digantikan GUI egui di src/gui/)
+# Migrasi monorepo: logika dipindah bertahap dari src/ ke crates/.
 resolver = "2"
+members = [
+    "crates/maria-core",
+    "crates/maria-ast",
+    "crates/maria-ir",
+    "crates/maria-parser",
+    "crates/maria-elaboration",
+    "crates/maria-compiler",
+    "crates/maria-simulator",
+    "crates/maria-mv",
+    "crates/maria-formal",
+    "crates/maria-env",
+    "crates/maria-tools",
+    "crates/maria-gui",
+    "crates/maria-api",
+    "crates/maria-tests",
+]
 
 [package]
 name = "maria"
 version = "0.3.0"
 edition = "2021"
 description = "RTL Simulator untuk SystemVerilog - dibangun dengan Rust"
+default-run = "maria"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -38,6 +56,19 @@ serde_json = "1"
 # Config file TOML (configs/*.toml — compiler/simulasi/coverage/debug)
 toml = "0.8"
 
+# ── Workspace crates (migrasi monorepo: src/ → crates/) ──
+maria-core = { path = "crates/maria-core" }
+maria-ast = { path = "crates/maria-ast" }
+maria-ir = { path = "crates/maria-ir" }
+maria-parser = { path = "crates/maria-parser" }
+maria-elaboration = { path = "crates/maria-elaboration" }
+maria-compiler = { path = "crates/maria-compiler" }
+maria-simulator = { path = "crates/maria-simulator" }
+maria-mv = { path = "crates/maria-mv" }
+maria-env = { path = "crates/maria-env" }
+maria-tools = { path = "crates/maria-tools" }
+maria-api = { path = "crates/maria-api" }
+
 # ── Opsional: JIT Compilation (cranelift) ──
 cranelift = { version = "0.110", optional = true }
 cranelift-jit = { version = "0.110", optional = true }
@@ -47,46 +78,35 @@ cranelift-module = { version = "0.110", optional = true }
 # ── Opsional: DPI-C FFI ──
 libloading = { version = "0.8", optional = true }
 
-# ── Opsional: LSP Server ──
-tower-lsp = { version = "0.20", optional = true }
-lsp-types = { version = "0.94", optional = true }
-url = { version = "2", optional = true }
+# ── Opsional: LSP Server — tower-lsp/lsp-types kini di maria-env ──
+# tokio tetap di root: main.rs membuat Runtime untuk LSP (cfg feature lsp).
 tokio = { version = "1", features = ["full"], optional = true }
 
-# ── Opsional: Formal Verification (Z3 SMT) ──
-z3 = { version = "0.20", optional = true }
+# ── Opsional: Formal Verification (Z3 SMT) — z3 kini di maria-formal ──
 
-# ── Opsional: GUI native (egui) — pengganti Tauri ──
-# Backend rendering: wgpu (GPU/Vulkan) sebagai utama untuk performa 60-144 FPS
-# saat compiler bekerja, glow (OpenGL) tetap dikompilasi sebagai fallback bila
-# GPU/driver wgpu bermasalah. Renderer dipilih saat runtime (Renderer::Wgpu).
-eframe = { version = "0.35", default-features = false, features = ["default_fonts", "glow", "wgpu", "wayland", "x11"], optional = true }
-rfd = { version = "0.17", optional = true }
+# ── Opsional: GUI native (egui) — eframe/egui/rfd kini di maria-gui ──
+# Backend rendering: wgpu (GPU/Vulkan) utama + glow (OpenGL) fallback.
+# Crate maria-gui mengelola deps GUI; root hanya wiring feature gui.
 
 [features]
 # Semua fitur diaktifkan secara default
 # Untuk build minimal: cargo build --no-default-features
 default = ["lsp", "jit", "formal", "dpi"]
 
-# LSP server (tower-lsp + tokio) — IDE integration via --lsp flag
-lsp = ["tower-lsp", "lsp-types", "url", "tokio"]
+# LSP server — re-export di maria-api; tokio untuk Runtime di main.rs
+lsp = ["maria-api/lsp", "tokio"]
 
 # Cranelift JIT — compiled-code simulation (expression + body level)
-jit = ["cranelift", "cranelift-jit", "cranelift-frontend", "cranelift-module"]
+jit = ["cranelift", "cranelift-jit", "cranelift-frontend", "cranelift-module", "maria-simulator/jit"]
 
-# Formal verification (Z3 SMT solver + BMC engine)
-formal = ["z3"]
+# Formal verification (Z3 SMT solver + BMC engine) — di maria-api
+formal = ["maria-api/formal"]
 
 # DPI-C foreign language interface
-dpi = ["libloading"]
+dpi = ["libloading", "maria-simulator/dpi", "maria-env/dpi"]
 
-# Native GUI (egui) — menggantikan frontend Tauri/React
-gui = ["dep:eframe", "dep:rfd"]
-
-[[bin]]
-name = "maria-gui"
-path = "src/bin/maria_gui.rs"
-required-features = ["gui"]
+# Native GUI (egui) — re-export di maria-api; binary `maria-gui` di crate maria-gui
+gui = ["maria-api/gui"]
 
 [profile.release]
 opt-level = 3

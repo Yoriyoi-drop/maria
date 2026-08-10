@@ -15,21 +15,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - run: cargo test --lib
+      # root package kini binary-only (src/ = main.rs + cli.rs);
+      # test suite terpadu di crate maria-tests.
+      - run: cargo test --workspace
 
   benchmark:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - run: cargo test --release --lib bench_release_sim_throughput_counter bench_release_compile_counter bench_release_string_intern bench_release_memory_stress
+      - run: cargo test -p maria-tests --release bench_release_sim_throughput_counter bench_release_compile_counter bench_release_string_intern bench_release_memory_stress
 
   clippy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - run: cargo clippy --lib
+      - run: cargo clippy --workspace --all-targets
 
   fmt:
     runs-on: ubuntu-latest

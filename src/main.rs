@@ -7,32 +7,32 @@ use clap::Parser as ClapParser;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use maria::animasi::{Phase, PipelineAnimator};
-use maria::frontend::CompileSession;
-use maria::SessionConfig;
-use maria::debugger::Debugger;
-use maria::elaboration::elaborator::{ElaborateMode, Elaborator};
-use maria::diagnostics::DiagCode;
-use maria::diagnostics::DiagLevel;
-use maria::error::SimError;
-use maria::ir::LogicVec;
-use maria::parser::lexer::Lexer;
-use maria::parser::Parser;
-use maria::parser::preprocessor::Preprocessor;
-use maria::read_project_file;
-use maria::simulator::Breakpoint;
-use maria::simulator::DebugMode;
-use maria::simulator::SimulationEngine;
-use maria::simulator::Watchpoint;
-use maria::waveform::VcdWriter;
+use maria_core::animasi::{Phase, PipelineAnimator};
+use maria_compiler::frontend::CompileSession;
+use maria_api::SessionConfig;
+use maria_api::debugger::Debugger;
+use maria_elaboration::elaborator::{ElaborateMode, Elaborator};
+use maria_core::diagnostics::DiagCode;
+use maria_core::diagnostics::DiagLevel;
+use maria_core::error::SimError;
+use maria_ir::LogicVec;
+use maria_parser::lexer::Lexer;
+use maria_parser::Parser;
+use maria_parser::preprocessor::Preprocessor;
+use maria_api::read_project_file;
+use maria_api::simulator::Breakpoint;
+use maria_api::simulator::DebugMode;
+use maria_api::simulator::SimulationEngine;
+use maria_api::simulator::Watchpoint;
+use maria_api::waveform::VcdWriter;
 use rayon::prelude::*;
 
 /// Emit a list of diagnostics through TerminalEmitter.
-fn emit_diags(diags: &[maria::diagnostics::diagnostic::Diagnostic]) {
+fn emit_diags(diags: &[maria_core::diagnostics::diagnostic::Diagnostic]) {
     if diags.is_empty() {
         return;
     }
-    let mut emitter = maria::diagnostics::TerminalEmitter::new();
+    let mut emitter = maria_core::diagnostics::TerminalEmitter::new();
     for diag in diags {
         let _ = emitter.emit(diag);
     }
@@ -43,10 +43,10 @@ fn emit_diags(diags: &[maria::diagnostics::diagnostic::Diagnostic]) {
 /// Prioritas: source_snippet (punya line:col) → span (byte offset) → tanpa lokasi.
 fn elab_abort_diag(
     elab_errs: usize,
-    diags: &[maria::diagnostics::diagnostic::Diagnostic],
+    diags: &[maria_core::diagnostics::diagnostic::Diagnostic],
     message: impl Into<String>,
-) -> maria::diagnostics::diagnostic::Diagnostic {
-    use maria::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic};
+) -> maria_core::diagnostics::diagnostic::Diagnostic {
+    use maria_core::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic};
     let first_err = diags.iter().find(|d| d.is_error());
     let loc = first_err.and_then(|d| {
         d.source_snippet
@@ -76,7 +76,7 @@ fn elab_abort_diag(
 /// menyetelnya (CLI menang). Field yang tidak punya padanan CLI (opt_level,
 /// lto, max_parse_steps, lint check, dsb.) dibiarkan sebagai dokumentasi.
 /// jobs diterapkan langsung ke rayon pool di main() (bukan lewat cli).
-fn apply_config_to_cli(cli: &mut Cli, cfg: &maria::config::MariaConfig) {
+fn apply_config_to_cli(cli: &mut Cli, cfg: &maria_core::config::MariaConfig) {
     // compiler.cache=false / incremental=false → lewati MICD (setara --recompile).
     if cfg.compiler.cache == Some(false) || cfg.compiler.incremental == Some(false) {
         cli.recompile = true;
@@ -158,7 +158,7 @@ fn apply_config_to_cli(cli: &mut Cli, cfg: &maria::config::MariaConfig) {
 /// benar-benar berlaku (sebelumnya hanya dicek saat menyimpan UCDB, sehingga
 /// gate CI dari config tidak pernah aktif).
 fn check_coverage_threshold(
-    engine: &maria::simulator::SimulationEngine,
+    engine: &maria_api::simulator::SimulationEngine,
     threshold: f64,
     quiet: bool,
 ) -> Result<(), SimError> {
@@ -205,7 +205,7 @@ fn pick_elab_mode(cli: &Cli) -> ElaborateMode {
 /// Bersihkan database MICD (`.maria/database`). Menghapus isi
 /// `<root>/.maria/database` (atau `MARIA_MICD_DIR` bila di-set).
 fn run_clean() -> ! {
-    use maria::micd::MicdDatabase;
+    use maria_compiler::micd::MicdDatabase;
     let root = MicdDatabase::default_root();
     if root.exists() {
         match std::fs::remove_dir_all(&root) {
@@ -304,8 +304,8 @@ fn anim_abort(anim: &mut Option<PipelineAnimator>, errors: usize, warnings: usiz
 /// Run formal verification (BMC) and print results.
 /// Returns Err if any assertion fails (counterexample found — for CI/CD integration).
 #[cfg(feature = "formal")]
-fn run_formal(ir_design: &maria::ir::IrDesign, bound: u64, quiet: bool) -> Result<(), SimError> {
-    use maria::formal::*;
+fn run_formal(ir_design: &maria_ir::IrDesign, bound: u64, quiet: bool) -> Result<(), SimError> {
+    use maria_api::formal::*;
     let mut formal_cfg = FormalConfig::default();
     formal_cfg.bound = bound;
     let mut formal_engine = FormalEngine::new(formal_cfg);
@@ -354,11 +354,11 @@ fn main() {
     // `--config <path>` eksplisit; tanpa itu, auto-load `configs/compiler.toml`
     // bila ada. Field config diterapkan HANYA bila CLI tidak menyetelnya
     // (CLI menang). Jobs di-terapkan ke rayon pool di bawah.
-    let cfg = match maria::config::MariaConfig::load_auto(cli.config.as_deref()) {
+    let cfg = match maria_core::config::MariaConfig::load_auto(cli.config.as_deref()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("warning: {}", e);
-            maria::config::MariaConfig::default()
+            maria_core::config::MariaConfig::default()
         }
     };
     apply_config_to_cli(&mut cli, &cfg);
@@ -394,7 +394,7 @@ fn main() {
     // ── GUI mode: launch the native egui application ──
     #[cfg(feature = "gui")]
     if cli.gui {
-        if let Err(e) = maria::gui::run() {
+        if let Err(e) = maria_api::gui::run() {
             eprintln!("GUI error: {}", e);
             process::exit(1);
         }
@@ -410,7 +410,7 @@ fn main() {
     #[cfg(feature = "lsp")]
     if cli.lsp {
         let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime for LSP");
-        rt.block_on(maria::lsp::run_lsp_server());
+        rt.block_on(maria_api::lsp::run_lsp_server());
         return;
     }
     #[cfg(not(feature = "lsp"))]
@@ -422,8 +422,8 @@ fn main() {
     // ── Bangun GlobalEnv (enterprise context architecture, doc/env.md) ──
     // ConfigContext memakai config yang sudah di-load (tanpa baca ulang);
     // CLI override diterapkan ke config (CLI menang atas file/env).
-    let mut cfgctx = maria::env::ConfigContext::from_loaded(cfg, cli.config.as_deref());
-    let mut cli_overrides = maria::env::EnvCliOptions::default();
+    let mut cfgctx = maria_api::env::ConfigContext::from_loaded(cfg, cli.config.as_deref());
+    let mut cli_overrides = maria_api::env::EnvCliOptions::default();
     cli_overrides.max_time = cli.max_time;
     cli_overrides.force_sim = Some(cli.force_sim);
     cli_overrides.recompile = cli.recompile;
@@ -443,7 +443,7 @@ fn main() {
             Err(e) => eprintln!("warning: filelist '{}': {}", fpath, e),
         }
     }
-    let mut ws = maria::env::WorkspaceContext::open_in(
+    let mut ws = maria_api::env::WorkspaceContext::open_in(
         &std::env::current_dir().unwrap_or_default(),
     );
     ws.set_explicit_sources(cli_sources);
@@ -464,17 +464,17 @@ fn main() {
         ws.add_libfile(f);
     }
 
-    let mut env = match maria::env::for_cli(cfgctx, ws) {
+    let mut env = match maria_api::env::for_cli(cfgctx, ws) {
         Ok(env) => env,
         Err(e) => {
             eprintln!("warning: startup env: {} — memakai env minimal", e);
-            maria::env::GlobalEnv::minimal()
+            maria_api::env::GlobalEnv::minimal()
         }
     };
 
     let result = run(cli.clone(), &mut env);
     if cli.gdiag {
-        eprintln!("{}", maria::diagnostics::diag_global().coverage_report());
+        eprintln!("{}", maria_core::diagnostics::diag_global().coverage_report());
     }
 
     // ── Lifecycle shutdown + ringkasan telemetry ──
@@ -482,11 +482,11 @@ fn main() {
         eprintln!("[env] {}", env.telemetry().summary());
         eprintln!("[env] uptime={:?}", env.uptime());
     }
-    maria::env::shutdown(&mut env);
+    maria_api::env::shutdown(&mut env);
 
     if let Err(e) = result {
         // Use TerminalEmitter for pretty diagnostic output
-        let mut emitter = maria::diagnostics::TerminalEmitter::new();
+        let mut emitter = maria_core::diagnostics::TerminalEmitter::new();
         let diag = e.to_diagnostic();
         let _ = emitter.emit(&diag);
         process::exit(e.exit_code());
@@ -502,7 +502,7 @@ fn read_source_bytes(path: &Path, inline: &std::collections::HashMap<PathBuf, Ve
     std::fs::read(path)
 }
 
-fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
+fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     env.telemetry().metrics.inc_build();
     env.telemetry().trace("run", "pipeline legacy dimulai");
     let mut sources: Vec<String> = cli.files.clone();
@@ -539,10 +539,10 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
             })?;
             items.push((src, base));
         }
-        let results = maria::mv::transpile_many(&items).map_err(|(i, e)| {
+        let results = maria_api::mv::transpile_many(&items).map_err(|(i, e)| {
             SimError::with_diag(
                 DiagCode::InvalidSyntax,
-                maria::mv::format_error(&mv_files[i], &items[i].0, &e),
+                maria_api::mv::format_error(&mv_files[i], &items[i].0, &e),
             )
         })?;
         // Defensif: hasil batch harus sejajar dengan input (jangan zip-truncate).
@@ -576,7 +576,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
 
     if sources.is_empty() && !cli.gui {
         return Err(SimError::with_diag(
-            maria::diagnostics::DiagCode::InvalidSyntax,
+            maria_core::diagnostics::DiagCode::InvalidSyntax,
             "no input files: berikan file .sv atau gunakan `--filelist <file>` (bantuan: `maria --help`)",
         ));
     }
@@ -669,11 +669,11 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     // ── MICD: hasil preprocess di-cache per file (konten-hash). File yang
     // tidak berubah di-reuse → preprocessor di-skip. Database scoped per
     // project (ProjectID) agar tidak tercampur antar project. ──
-    let micd_root = maria::micd::MicdDatabase::default_root();
+    let micd_root = maria_compiler::micd::MicdDatabase::default_root();
     let proot = std::env::current_dir().unwrap_or_default();
     let src_paths: Vec<std::path::PathBuf> =
         sources.iter().map(std::path::PathBuf::from).collect();
-    let pid = maria::micd::MicdDatabase::project_id(
+    let pid = maria_compiler::micd::MicdDatabase::project_id(
         &proot,
         &src_paths,
         &cli.incdirs.iter().map(PathBuf::from).collect::<Vec<_>>(),
@@ -683,7 +683,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect::<Vec<_>>(),
     );
-    let mut micd = maria::micd::MicdDatabase::open_project_with_context(
+    let mut micd = maria_compiler::micd::MicdDatabase::open_project_with_context(
         &micd_root,
         &pid,
         &proot,
@@ -700,7 +700,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     let mut need_preprocess: Vec<(usize, &String)> = Vec::new();
     for (idx, path) in sources.iter().enumerate() {
         if let Ok(content) = read_source_bytes(Path::new(path), &inline_src) {
-            let h = maria::cache::compute_checksum(&content);
+            let h = maria_compiler::cache::compute_checksum(&content);
             // Koreksi correctness: jangan reuse bila header include berubah.
             let deps_ok = micd.deps_unchanged(std::path::Path::new(path), h).unwrap_or(false);
             if deps_ok {
@@ -800,11 +800,11 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     for r in &fresh_results {
         if let Ok((idx, combined_str, ts, includes)) = r {
             if let Ok(content) = read_source_bytes(Path::new(&sources[*idx]), &inline_src) {
-                let h = maria::cache::compute_checksum(&content);
+                let h = maria_compiler::cache::compute_checksum(&content);
                 let path = std::path::PathBuf::from(&sources[*idx]);
                 micd.cache_preprocessed(
                     path.clone(),
-                    maria::micd::PreprocEntry {
+                    maria_compiler::micd::PreprocEntry {
                         content_hash: h,
                         combined: combined_str.clone(),
                         timescale: ts.clone(),
@@ -815,7 +815,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
                     .iter()
                     .map(|inc| {
                         let hh = std::fs::read(inc)
-                            .map(|b| maria::cache::compute_checksum(&b))
+                            .map(|b| maria_compiler::cache::compute_checksum(&b))
                             .unwrap_or(0);
                         (inc.clone(), hh)
                     })
@@ -829,18 +829,18 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
                     path,
                     h,
                     vec![],
-                    maria::micd::FileStatus::Unchanged,
+                    maria_compiler::micd::FileStatus::Unchanged,
                     0,
                     size,
                     include_hashes,
                 );
                 // verify.mdb: jalur legacy juga menandai file terverifikasi
                 // (parse) agar store lengkap walau tanpa `--fast`.
-                let mut v = maria::micd::VerifyResult::fresh(h);
+                let mut v = maria_compiler::micd::VerifyResult::fresh(h);
                 v.parse_ok = true;
                 v.set_check(
-                    maria::micd::VerifyCheckKind::Parse,
-                    maria::micd::CheckResult::pass(0),
+                    maria_compiler::micd::VerifyCheckKind::Parse,
+                    maria_compiler::micd::CheckResult::pass(0),
                 );
                 micd.set_verify(v);
             }
@@ -860,7 +860,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
         prof.restored_designs = micd_reused;
         prof.cache_hits = micd_reused;
         prof.cache_misses = micd.files.len().saturating_sub(micd_reused);
-        prof.peak_mem_kb = maria::micd::peak_rss_kb();
+        prof.peak_mem_kb = maria_compiler::micd::peak_rss_kb();
         micd.set_stats(prof);
         if let Err(e) = micd.save() {
             eprintln!("[MICD] stats save warning: {}", e);
@@ -879,7 +879,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
         if cli.print_tokens {
             println!("  {:4}:{:4} {}", line, col, tok);
         }
-        if tok == maria::parser::lexer::Token::Eof {
+        if tok == maria_parser::lexer::Token::Eof {
             break;
         }
         tokens.push((tok, line, col));
@@ -920,7 +920,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
         },
         Err(e) => {
             if !parser.errors.is_empty() {
-                let mut emitter = maria::diagnostics::TerminalEmitter::new();
+                let mut emitter = maria_core::diagnostics::TerminalEmitter::new();
                 for diag in &parser.errors {
                     let _ = emitter.emit(diag);
                 }
@@ -932,12 +932,12 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     // In compile-only mode, individual construct errors are non-fatal
     if !parser.errors.is_empty() {
         let has_real_errors = parser.errors.iter().any(|d| d.is_error());
-        let mut emitter = maria::diagnostics::TerminalEmitter::new();
+        let mut emitter = maria_core::diagnostics::TerminalEmitter::new();
         for diag in &parser.errors {
             let _ = emitter.emit(diag);
         }
         if has_real_errors && !cli.compile_only {
-            return Err(maria::error::SimError::from_parse_diagnostic(parser.errors[0].clone()));
+            return Err(maria_core::error::SimError::from_parse_diagnostic(parser.errors[0].clone()));
         }
     }
     let ts_for_ir = design_timescale.clone();
@@ -962,7 +962,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
                                 let mut lib_tokens = Vec::new();
                                 loop {
                                     let (tok, line, col) = lexer.next_token();
-                                    if tok == maria::parser::lexer::Token::Eof {
+                                    if tok == maria_parser::lexer::Token::Eof {
                                         break;
                                     }
                                     lib_tokens.push((tok, line, col));
@@ -1011,7 +1011,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
                 let mut lib_tokens = Vec::new();
                 loop {
                     let (tok, line, col) = lexer.next_token();
-                    if tok == maria::parser::lexer::Token::Eof {
+                    if tok == maria_parser::lexer::Token::Eof {
                         break;
                     }
                     lib_tokens.push((tok, line, col));
@@ -1043,7 +1043,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     // lewat scan teks sumber (`module X`, `package X`, dst) karena AST legacy
     // tidak membawa info file.
     {
-        use maria::ast::ModuleItem;
+        use maria_ast::ModuleItem;
         let mut syms: Vec<(String, String)> = Vec::new();
         for m in &design.modules {
             syms.push((m.name.to_string(), "module".to_string()));
@@ -1083,16 +1083,16 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
             let mut sig = 0u64;
             sig = sig
                 .wrapping_mul(31)
-                .wrapping_add(maria::cache::compute_checksum(m.name.as_str().as_bytes()));
+                .wrapping_add(maria_compiler::cache::compute_checksum(m.name.as_str().as_bytes()));
             for p in &m.ports {
                 sig = sig
                     .wrapping_mul(31)
-                    .wrapping_add(maria::cache::compute_checksum(p.name.as_str().as_bytes()));
+                    .wrapping_add(maria_compiler::cache::compute_checksum(p.name.as_str().as_bytes()));
             }
             for pr in &m.params {
                 sig = sig
                     .wrapping_mul(31)
-                    .wrapping_add(maria::cache::compute_checksum(pr.name.as_str().as_bytes()));
+                    .wrapping_add(maria_compiler::cache::compute_checksum(pr.name.as_str().as_bytes()));
             }
             micd.set_module_type(m.name.to_string(), sig);
             let file = def_file
@@ -1340,8 +1340,8 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     };
 
     // Set X-propagation mode from CLI
-    if let Some(mode) = maria::simulator::types::XPropagationMode::from_str(&cli.xprop) {
-        maria::simulator::value::set_xprop_mode(mode);
+    if let Some(mode) = maria_api::simulator::types::XPropagationMode::from_str(&cli.xprop) {
+        maria_api::simulator::value::set_xprop_mode(mode);
         if !cli.quiet {
             println!("X-propagation mode: {}", mode.as_str());
         }
@@ -1351,13 +1351,13 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
 
     // ── Distributed simulation mode ──
     if cli.dist_master {
-        let config = maria::simulator::distributed::MasterConfig {
+        let config = maria_api::simulator::distributed::MasterConfig {
             port: cli.dist_port,
             num_partitions: cli.num_partitions,
             verbose: !cli.quiet,
             ..Default::default()
         };
-        let mut master = maria::simulator::distributed::DistributedMaster::new(config);
+        let mut master = maria_api::simulator::distributed::DistributedMaster::new(config);
         master.run(&ir_design, cli.max_time.unwrap_or(u64::MAX))?;
         if !cli.quiet {
             println!("Distributed simulation (master) complete");
@@ -1366,13 +1366,13 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     }
 
     if cli.dist_slave {
-        let config = maria::simulator::distributed::SlaveConfig {
+        let config = maria_api::simulator::distributed::SlaveConfig {
             master_host: cli.master_host.clone(),
             master_port: cli.dist_port,
             max_time: cli.max_time.unwrap_or(u64::MAX),
             verbose: !cli.quiet,
         };
-        let mut slave = maria::simulator::distributed::DistributedSlave::new(config);
+        let mut slave = maria_api::simulator::distributed::DistributedSlave::new(config);
         slave.run(&ir_design)?;
         if !cli.quiet {
             println!("Distributed simulation (slave) complete");
@@ -1384,14 +1384,14 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     // dengan `--max-time <n>`. Tidak ada konstanta batas "ajaib".
     let sim_limit = cli
         .max_time
-        .map(maria::simulator::SimulationLimit::Finite)
-        .unwrap_or(maria::simulator::SimulationLimit::Unlimited);
+        .map(maria_api::simulator::SimulationLimit::Finite)
+        .unwrap_or(maria_api::simulator::SimulationLimit::Unlimited);
     let mut engine = SimulationEngine::new_with_limit(ir_design, sim_limit);
     engine.report_progress = !cli.quiet;
 
     // ── Set SDF timing mode ──
-    if let Some(mode) = maria::simulator::sdf::TimingMode::from_str(&cli.timing_mode) {
-        maria::simulator::sdf::set_timing_mode(mode);
+    if let Some(mode) = maria_api::simulator::sdf::TimingMode::from_str(&cli.timing_mode) {
+        maria_api::simulator::sdf::set_timing_mode(mode);
         if !cli.quiet {
             println!("SDF timing mode: {}", mode.as_str());
         }
@@ -1401,7 +1401,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
 
     // ── SDF Annotation (applies timing delays from Standard Delay Format file) ──
     if let Some(ref sdf_path) = cli.sdf {
-        let sdf_data = maria::simulator::sdf::SdfData::parse_file(sdf_path)
+        let sdf_data = maria_api::simulator::sdf::SdfData::parse_file(sdf_path)
             .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("SDF parse failed: {}", e)))?;
         engine.annotate_sdf(&sdf_data)?;
         if !cli.quiet {
@@ -1443,7 +1443,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
             // Auto-detect: all output ports are outputs, all input ports are inputs
             engine.design.top.signals.iter().enumerate()
                 .filter_map(|(id, s)| {
-                    let is_output = matches!(s.kind, maria::ir::SignalKind::Output | maria::ir::SignalKind::Inout);
+                    let is_output = matches!(s.kind, maria_ir::SignalKind::Output | maria_ir::SignalKind::Inout);
                     Some((id, s.name.to_string(), is_output))
                 })
                 .collect()
@@ -1454,7 +1454,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
         }
 
         let n_sigs = signal_mapping.len();
-        let cosim_state = maria::simulator::cosim::start_cosim_server(cosim_port, n_sigs);
+        let cosim_state = maria_api::simulator::cosim::start_cosim_server(cosim_port, n_sigs);
         engine.cosim_state = cosim_state;
         engine.cosim_signals = signal_mapping.clone();
 
@@ -1473,7 +1473,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
 
     // ── UPF Power Intent (power-aware simulation) ──
     if let Some(ref upf_path) = cli.upf {
-        match maria::simulator::upf::PowerIntent::parse_file(upf_path) {
+        match maria_api::simulator::upf::PowerIntent::parse_file(upf_path) {
             Ok(mut power_intent) => {
                 power_intent.build_signal_mapping(&engine.design.top.signals);
                 if !cli.quiet {
@@ -1491,7 +1491,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
     // Load DPI shared libraries
     #[cfg(feature = "dpi")]
     if !cli.dpi_libs.is_empty() {
-        use maria::simulator::dpi::DpiEngine;
+        use maria_api::simulator::dpi::DpiEngine;
         #[allow(unused_imports)]
         use std::sync::Mutex;
         fn get_dpi_engine() -> &'static Mutex<Option<DpiEngine>> {
@@ -1589,7 +1589,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
 
     // CSV waveform setup
     if let Some(ref csv_path) = cli.waveform_csv {
-        let csv = maria::waveform::CsvWaveWriter::new(csv_path, &engine.design)
+        let csv = maria_api::waveform::CsvWaveWriter::new(csv_path, &engine.design)
             .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("CSV creation failed: {}", e)))?;
         engine.set_csv(csv);
         if !cli.quiet {
@@ -1599,7 +1599,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
 
     // Signal statistics setup
     if cli.signal_stats.is_some() {
-        let stats = maria::waveform::SignalStats::new(&engine.design);
+        let stats = maria_api::waveform::SignalStats::new(&engine.design);
         engine.set_signal_stats(stats);
     }
 
@@ -1709,7 +1709,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
         } else {
             gtkw_path.clone()
         };
-        match maria::waveform::save_gtkw(&path, &vcd_path, &debugger.engine.design) {
+        match maria_api::waveform::save_gtkw(&path, &vcd_path, &debugger.engine.design) {
             Ok(()) => {
                 if !cli.quiet {
                     println!("GTKWave save file written to '{}'", path);
@@ -1727,7 +1727,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
         } else {
             html_path.clone()
         };
-        match maria::waveform::save_html_viewer(&path, csv_ref, &debugger.engine.design) {
+        match maria_api::waveform::save_html_viewer(&path, csv_ref, &debugger.engine.design) {
             Ok(()) => {
                 if !cli.quiet {
                     println!("HTML waveform viewer written to '{}'", path);
@@ -1763,7 +1763,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
 
     // Save coverage database if requested
     if let Some(ref covdb_path) = cli.coverage_ucdb {
-        let mut covdb = maria::simulator::coverage_db::CoverageDatabase::with_path(covdb_path);
+        let mut covdb = maria_api::simulator::coverage_db::CoverageDatabase::with_path(covdb_path);
         covdb.merge_from_engine(&debugger.engine);
         if let Err(e) = covdb.save() {
             eprintln!("warning: coverage DB save failed: {}", e);
@@ -1787,7 +1787,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
         } else {
             html_path.clone()
         };
-        let mut covdb = maria::simulator::coverage_db::CoverageDatabase::new();
+        let mut covdb = maria_api::simulator::coverage_db::CoverageDatabase::new();
         covdb.merge_from_engine(&debugger.engine);
         if let Err(e) = covdb.export_html(&path) {
             eprintln!("warning: HTML coverage report failed: {}", e);
@@ -1812,7 +1812,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
         if !cli.quiet {
             println!("Running CDC analysis...");
         }
-        let cdc_analysis = maria::scheduler::cdc::CdcAnalysis::analyze(&debugger.engine.design);
+        let cdc_analysis = maria_api::scheduler::cdc::CdcAnalysis::analyze(&debugger.engine.design);
 
         // Print summary to console
         if !cli.quiet {
@@ -1859,7 +1859,7 @@ fn run(cli: Cli, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
 }
 
 /// Run compilation + simulation using the new parallel pipeline (CompileSession + FastLexer).
-fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env::GlobalEnv) -> Result<(), SimError> {
+fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     env.telemetry().trace("run_fast", "pipeline paralel dimulai");
     let mut sources: Vec<PathBuf> = cli.files.iter().map(PathBuf::from).collect();
     if let Some(ref fpath) = cli.filelist {
@@ -1899,15 +1899,15 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
     // MICD scoped per project (ProjectID): OpenTitan dan test/counter.sv
     // tidak pernah berbagi database → tidak ada kontaminasi lintas project.
     {
-        let micd_root = maria::micd::MicdDatabase::default_root();
+        let micd_root = maria_compiler::micd::MicdDatabase::default_root();
         let proot = std::env::current_dir().unwrap_or_default();
-        let pid = maria::micd::MicdDatabase::project_id(
+        let pid = maria_compiler::micd::MicdDatabase::project_id(
             &proot,
             &session.config.sources,
             &session.config.incdirs,
             &session.config.defines,
         );
-        let db = maria::micd::MicdDatabase::open_project_with_context(
+        let db = maria_compiler::micd::MicdDatabase::open_project_with_context(
             &micd_root,
             &pid,
             &proot,
@@ -2141,10 +2141,10 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
 
     // Configure remote cache backend
     if let Some(ref remote_dir) = cli.cache_remote_dir {
-        let sync_mode = maria::cache::cache_manager::RemoteSyncMode::from_str(&cli.cache_remote_sync);
-        match maria::cache::FilesystemCache::new(remote_dir) {
+        let sync_mode = maria_compiler::cache::cache_manager::RemoteSyncMode::from_str(&cli.cache_remote_sync);
+        match maria_compiler::cache::FilesystemCache::new(remote_dir) {
             Ok(backend) => {
-                let remote: std::sync::Arc<dyn maria::cache::RemoteCacheBackend> =
+                let remote: std::sync::Arc<dyn maria_compiler::cache::RemoteCacheBackend> =
                     std::sync::Arc::new(backend);
                 session.set_remote_cache(remote, sync_mode);
                 if !cli.quiet {
@@ -2233,8 +2233,8 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
     };
 
     // Set X-propagation mode from CLI
-    if let Some(mode) = maria::simulator::types::XPropagationMode::from_str(&cli.xprop) {
-        maria::simulator::value::set_xprop_mode(mode);
+    if let Some(mode) = maria_api::simulator::types::XPropagationMode::from_str(&cli.xprop) {
+        maria_api::simulator::value::set_xprop_mode(mode);
         if !cli.quiet {
             println!("X-propagation mode: {}", mode.as_str());
         }
@@ -2246,14 +2246,14 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
     // dengan `--max-time <n>`. Tidak ada konstanta batas "ajaib".
     let sim_limit = cli
         .max_time
-        .map(maria::simulator::SimulationLimit::Finite)
-        .unwrap_or(maria::simulator::SimulationLimit::Unlimited);
+        .map(maria_api::simulator::SimulationLimit::Finite)
+        .unwrap_or(maria_api::simulator::SimulationLimit::Unlimited);
     let mut engine = SimulationEngine::new_with_limit(ir_design, sim_limit);
     engine.report_progress = !cli.quiet;
 
     // ── SDF Annotation (applies timing delays from Standard Delay Format file) ──
     if let Some(ref sdf_path) = cli.sdf {
-        let sdf_data = maria::simulator::sdf::SdfData::parse_file(sdf_path)
+        let sdf_data = maria_api::simulator::sdf::SdfData::parse_file(sdf_path)
             .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("SDF parse failed: {}", e)))?;
         engine.annotate_sdf(&sdf_data)?;
         if !cli.quiet {
@@ -2282,7 +2282,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
 
     // ── UPF Power Intent (power-aware simulation) ──
     if let Some(ref upf_path) = cli.upf {
-        match maria::simulator::upf::PowerIntent::parse_file(upf_path) {
+        match maria_api::simulator::upf::PowerIntent::parse_file(upf_path) {
             Ok(mut power_intent) => {
                 power_intent.build_signal_mapping(&engine.design.top.signals);
                 if !cli.quiet {
@@ -2300,7 +2300,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
     // Load DPI shared libraries
     #[cfg(feature = "dpi")]
     if !cli.dpi_libs.is_empty() {
-        use maria::simulator::dpi::DpiEngine;
+        use maria_api::simulator::dpi::DpiEngine;
         #[allow(unused_imports)]
         use std::sync::Mutex;
         fn get_dpi_engine() -> &'static Mutex<Option<DpiEngine>> {
@@ -2394,7 +2394,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
 
     // CSV waveform setup (fast path)
     if let Some(ref csv_path) = cli.waveform_csv {
-        let csv = maria::waveform::CsvWaveWriter::new(csv_path, &engine.design)
+        let csv = maria_api::waveform::CsvWaveWriter::new(csv_path, &engine.design)
             .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("CSV creation failed: {}", e)))?;
         engine.set_csv(csv);
         if !cli.quiet {
@@ -2404,7 +2404,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
 
     // Signal statistics setup
     if cli.signal_stats.is_some() {
-        let stats = maria::waveform::SignalStats::new(&engine.design);
+        let stats = maria_api::waveform::SignalStats::new(&engine.design);
         engine.set_signal_stats(stats);
     }
 
@@ -2497,7 +2497,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
         } else {
             gtkw_path.clone()
         };
-        match maria::waveform::save_gtkw(&path, &vcd_path, &debugger.engine.design) {
+        match maria_api::waveform::save_gtkw(&path, &vcd_path, &debugger.engine.design) {
             Ok(()) => {
                 if !cli.quiet {
                     println!("GTKWave save file written to '{}'", path);
@@ -2515,7 +2515,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
         } else {
             html_path.clone()
         };
-        match maria::waveform::save_html_viewer(&path, csv_ref, &debugger.engine.design) {
+        match maria_api::waveform::save_html_viewer(&path, csv_ref, &debugger.engine.design) {
             Ok(()) => {
                 if !cli.quiet {
                     println!("HTML waveform viewer written to '{}'", path);
@@ -2534,7 +2534,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
 
     // Save coverage database if requested
     if let Some(ref covdb_path) = cli.coverage_ucdb {
-        let mut covdb = maria::simulator::coverage_db::CoverageDatabase::with_path(covdb_path);
+        let mut covdb = maria_api::simulator::coverage_db::CoverageDatabase::with_path(covdb_path);
         covdb.merge_from_engine(&debugger.engine);
         if let Err(e) = covdb.save() {
             eprintln!("warning: coverage DB save failed: {}", e);
@@ -2558,7 +2558,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria::env
         } else {
             html_path.clone()
         };
-        let mut covdb = maria::simulator::coverage_db::CoverageDatabase::new();
+        let mut covdb = maria_api::simulator::coverage_db::CoverageDatabase::new();
         covdb.merge_from_engine(&debugger.engine);
         if let Err(e) = covdb.export_html(&path) {
             eprintln!("warning: HTML coverage report failed: {}", e);
@@ -2612,7 +2612,7 @@ fn dispatch_inspect(a: &crate::cli::MinspectArgs) -> ! {
             }
             _ => (None, a.targets.clone()),
         };
-    let args = maria::tools::inspect::InspectArgs {
+    let args = maria_api::tools::inspect::InspectArgs {
         targets: &targets,
         command,
         incdirs: &a.incdirs,
@@ -2620,11 +2620,11 @@ fn dispatch_inspect(a: &crate::cli::MinspectArgs) -> ! {
         top: a.top.as_deref(),
         json: a.json,
     };
-    exit_tool(maria::tools::inspect::run(&args));
+    exit_tool(maria_api::tools::inspect::run(&args));
 }
 
 fn dispatch_lint(a: &crate::cli::MlintArgs) -> ! {
-    let args = maria::tools::lint::LintArgs {
+    let args = maria_api::tools::lint::LintArgs {
         targets: &a.targets,
         incdirs: &a.incdirs,
         defines: &a.defines,
@@ -2636,11 +2636,11 @@ fn dispatch_lint(a: &crate::cli::MlintArgs) -> ! {
         fsm: a.fsm,
         quiet: a.quiet,
     };
-    exit_tool(maria::tools::lint::run(&args));
+    exit_tool(maria_api::tools::lint::run(&args));
 }
 
 fn dispatch_elab(a: &crate::cli::MelabArgs) -> ! {
-    let args = maria::tools::elab::ElabArgs {
+    let args = maria_api::tools::elab::ElabArgs {
         files: &a.files,
         incdirs: &[],
         defines: &[],
@@ -2649,11 +2649,11 @@ fn dispatch_elab(a: &crate::cli::MelabArgs) -> ! {
         params: a.params,
         signals: a.signals,
     };
-    exit_tool(maria::tools::elab::run(&args));
+    exit_tool(maria_api::tools::elab::run(&args));
 }
 
 fn dispatch_sim(a: &crate::cli::MsimArgs) -> ! {
-    let args = maria::tools::sim::SimArgs {
+    let args = maria_api::tools::sim::SimArgs {
         files: &a.files,
         incdirs: &a.incdirs,
         defines: &a.defines,
@@ -2664,11 +2664,11 @@ fn dispatch_sim(a: &crate::cli::MsimArgs) -> ! {
         assertions: a.assertions,
         coverage: a.coverage,
     };
-    exit_tool(maria::tools::sim::run(&args));
+    exit_tool(maria_api::tools::sim::run(&args));
 }
 
 fn dispatch_cov(a: &crate::cli::McovArgs) -> ! {
-    let args = maria::tools::cov::CovArgs {
+    let args = maria_api::tools::cov::CovArgs {
         files: &a.files,
         incdirs: &a.incdirs,
         defines: &a.defines,
@@ -2679,45 +2679,45 @@ fn dispatch_cov(a: &crate::cli::McovArgs) -> ! {
         html: a.html,
         threshold: a.threshold,
     };
-    exit_tool(maria::tools::cov::run(&args));
+    exit_tool(maria_api::tools::cov::run(&args));
 }
 
 fn dispatch_wave(a: &crate::cli::MwaveArgs) -> ! {
     let args = match &a.cmd {
-        crate::cli::MwaveCmd::Merge { inputs, output } => maria::tools::wave::WaveArgs::Merge {
+        crate::cli::MwaveCmd::Merge { inputs, output } => maria_api::tools::wave::WaveArgs::Merge {
             inputs: inputs.clone(),
             output: output.clone(),
         },
         crate::cli::MwaveCmd::Export { input, format, output } => {
-            maria::tools::wave::WaveArgs::Export {
+            maria_api::tools::wave::WaveArgs::Export {
                 input: input.clone(),
                 format: format.clone(),
                 output: output.clone(),
             }
         }
         crate::cli::MwaveCmd::Filter { input, signals, output } => {
-            maria::tools::wave::WaveArgs::Filter {
+            maria_api::tools::wave::WaveArgs::Filter {
                 input: input.clone(),
                 signals: signals.clone(),
                 output: output.clone(),
             }
         }
     };
-    exit_tool(maria::tools::wave::run(&args));
+    exit_tool(maria_api::tools::wave::run(&args));
 }
 
 fn dispatch_fmt(a: &crate::cli::MfmtArgs) -> ! {
-    let args = maria::tools::fmt::FmtArgs {
+    let args = maria_api::tools::fmt::FmtArgs {
         files: &a.files,
         inplace: a.inplace,
         check: a.check,
         indent: a.indent,
     };
-    exit_tool(maria::tools::fmt::run(&args));
+    exit_tool(maria_api::tools::fmt::run(&args));
 }
 
 fn dispatch_gen(a: &crate::cli::MgenArgs) -> ! {
-    let args = maria::tools::gen::GenArgs {
+    let args = maria_api::tools::gen::GenArgs {
         targets: &a.targets,
         output: a.output.clone(),
         stdout: a.stdout,
@@ -2727,22 +2727,22 @@ fn dispatch_gen(a: &crate::cli::MgenArgs) -> ! {
         no_check: a.no_check,
         verbose: a.verbose,
     };
-    exit_tool(maria::tools::gen::run(&args));
+    exit_tool(maria_api::tools::gen::run(&args));
 }
 
 fn dispatch_prof(a: &crate::cli::MprofArgs) -> ! {
-    let args = maria::tools::prof::ProfArgs {
+    let args = maria_api::tools::prof::ProfArgs {
         targets: &a.targets,
         incdirs: &a.incdirs,
         defines: &a.defines,
         top: a.top.as_deref(),
         max_time: a.max_time.unwrap_or(u64::MAX),
     };
-    exit_tool(maria::tools::prof::run(&args));
+    exit_tool(maria_api::tools::prof::run(&args));
 }
 
 fn dispatch_check(a: &crate::cli::McheckArgs) -> ! {
-    let args = maria::tools::check::CheckArgs {
+    let args = maria_api::tools::check::CheckArgs {
         targets: &a.targets,
         all: a.all,
         missing: a.missing,
@@ -2751,23 +2751,23 @@ fn dispatch_check(a: &crate::cli::McheckArgs) -> ! {
         cycles: a.cycles,
         timescale: a.timescale,
     };
-    exit_tool(maria::tools::check::run(&args));
+    exit_tool(maria_api::tools::check::run(&args));
 }
 
 fn dispatch_bench(a: &crate::cli::MbenchArgs) -> ! {
-    let args = maria::tools::bench::BenchArgs {
+    let args = maria_api::tools::bench::BenchArgs {
         targets: &a.targets,
         incdirs: &a.incdirs,
         defines: &a.defines,
         runs: a.runs,
     };
-    exit_tool(maria::tools::bench::run(&args));
+    exit_tool(maria_api::tools::bench::run(&args));
 }
 
 /// Jalankan tool, cetak error via TerminalEmitter, exit dengan kode.
 fn exit_tool(result: Result<(), SimError>) -> ! {
     if let Err(e) = result {
-        let mut emitter = maria::diagnostics::TerminalEmitter::new();
+        let mut emitter = maria_core::diagnostics::TerminalEmitter::new();
         let diag = e.to_diagnostic();
         let _ = emitter.emit(&diag);
         process::exit(e.exit_code());

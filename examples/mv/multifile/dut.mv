@@ -1,0 +1,29 @@
+// ─────────────────────────────────────────────────────────────
+// Contoh F30 — multi-file (MARIA-HDL.md §7.4)
+//   File 2/3: DUT — memakai tipe dari `types.mv` (file lain, F9) +
+//   port interface `mem_if` + seq clock lewat field interface (F27).
+// ─────────────────────────────────────────────────────────────
+
+module memory_dut {
+    use chip_types::*
+
+    in  axi   : mem_if
+    in  rst_n : bit
+    out st    : State
+    out addr  : Addr
+
+    seq(axi.clk, rst_n) {
+        if (!rst_n) {
+            addr <= '0
+            st   <= IDLE
+        } else {
+            addr <= addr + 1
+            st   <= WR
+        }
+    }
+
+    comb {
+        // slave siap menerima: dout mengikuti din
+        axi.dout = axi.din
+    }
+}
