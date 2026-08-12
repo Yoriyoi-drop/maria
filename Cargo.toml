@@ -12,6 +12,10 @@ members = [
     "crates/maria-simulator",
     "crates/maria-mv",
     "crates/maria-formal",
+    "crates/maria-sir",
+    "crates/maria-netlist",
+    "crates/maria-tech",
+    "crates/maria-synth",
     "crates/maria-env",
     "crates/maria-tools",
     "crates/maria-gui",
@@ -65,6 +69,9 @@ maria-elaboration = { path = "crates/maria-elaboration" }
 maria-compiler = { path = "crates/maria-compiler" }
 maria-simulator = { path = "crates/maria-simulator" }
 maria-mv = { path = "crates/maria-mv" }
+maria-sir = { path = "crates/maria-sir" }
+maria-tech = { path = "crates/maria-tech" }
+maria-synth = { path = "crates/maria-synth" }
 maria-env = { path = "crates/maria-env" }
 maria-tools = { path = "crates/maria-tools" }
 maria-api = { path = "crates/maria-api" }

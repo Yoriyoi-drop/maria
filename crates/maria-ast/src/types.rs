@@ -710,6 +710,10 @@ pub struct FunctionPort {
     pub range: Option<Range>,
     pub expr_range: Option<ExprRange>,
     pub direction: Option<PortDirection>,
+    /// Default value (`task f(int x = 5)`) — dipakai inline untuk port yang
+    /// TIDAK di-pass saat call (formal harus tetap di-rename agar body tidak
+    /// meninggalkan nama formal → E2001). None bila tanpa default.
+    pub default: Option<Expr>,
 }
 
 impl FunctionPort {

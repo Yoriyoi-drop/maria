@@ -289,6 +289,11 @@ pub struct SimulationEngine {
     pub sequence_attempts: Vec<SequenceAttempt>,
     pub recursion_depth: HashMap<Symbol, usize>,
     pub max_recursion_depth: usize,
+    /// F35: `return` AST menandai stop-blok lintas nested (set oleh handler
+    /// Stmt::Return di block.rs & ast.rs; dicek di iterasi loop blok; hanya
+    /// di-clear oleh wrapper method/function helper). Field TERPISAH dari
+    /// control_flow IR (Break/Continue) agar tak bocor ke evaluasi IR.
+    pub ast_return_pending: bool,
     pub objection_count: usize,
     pub objection_triggered: bool,
     /// JIT evaluator (native code compilation for fast expression eval)

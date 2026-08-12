@@ -940,7 +940,14 @@ impl SimulationEngine {
     pub(crate) fn evaluate_ast_stmt(&mut self, stmt: &Stmt) -> Result<(), SimError> {
         match stmt {
             Stmt::Block { stmts } => {
+                // F35: `return` AST menandai stop-blok (ast_return_pending) —
+                // statement setelah return TIDAK boleh dieksekusi (bug:
+                // `if (n<=1) return n; return f(n-1)+f(n-2);` → statement
+                // kedua tetap jalan → rekursi tak berujung).
                 for s in stmts {
+                    if self.ast_return_pending {
+                        break;
+                    }
                     self.evaluate_ast_stmt(s)?;
                 }
                 Ok(())
@@ -1203,7 +1210,7 @@ impl SimulationEngine {
                 for item in items {
                     for pat in &item.labels {
                         let pat_val = self.evaluate_ast_expr(pat)?;
-                        if case_val.eq(&pat_val) {
+                        if case_val.case_val_eq(&pat_val) {
                             self.evaluate_ast_stmt(&item.stmt)?;
                             matched = true;
                             break;
@@ -1413,9 +1420,14 @@ impl SimulationEngine {
                 if let Some(ref method) = self.current_method {
                     self.set_local(method.as_str(), val);
                 }
+                // F35: stop-blok — statement setelah return tidak boleh jalan.
+                self.ast_return_pending = true;
                 Ok(())
             }
-            Stmt::Return(None) => Ok(()),
+            Stmt::Return(None) => {
+                self.ast_return_pending = true;
+                Ok(())
+            }
             Stmt::StmtAssign { lhs, rhs } => {
                 let val = self.evaluate_ast_expr(rhs)?;
                 match lhs {

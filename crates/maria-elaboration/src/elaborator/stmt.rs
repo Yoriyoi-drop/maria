@@ -563,6 +563,30 @@ impl Elaborator {
                         args,
                         with_clause,
                     } => {
+                        // F36: receiver instance (interface instance seperti
+                        // `clk_if.set_active()`) — emit MethodCallStmt dengan
+                        // obj HierRef; engine no-op bila instance tak punya
+                        // method tersimulasi.
+                        if let Expr::Ident { name, .. } = obj.as_ref() {
+                            if self.is_current_module_instance(name) {
+                                let ir_args: Vec<IrExpr> = args
+                                    .iter()
+                                    .map(|a| self.elaborate_expr(a, signal_map, signals))
+                                    .collect::<Result<_, _>>()?;
+                                let ir_with = match with_clause {
+                                    Some(wc) => Some(Box::new(
+                                        self.elaborate_expr(wc, signal_map, signals)?,
+                                    )),
+                                    None => None,
+                                };
+                                return Ok(IrStmt::MethodCallStmt {
+                                    obj: IrExpr::HierRef(*name),
+                                    method: *method,
+                                    args: ir_args,
+                                    with_clause: ir_with,
+                                });
+                            }
+                        }
                         let ir_obj = self.elaborate_expr(obj, signal_map, signals)?;
                         let ir_args: Vec<IrExpr> = args
                             .iter()
@@ -639,6 +663,51 @@ impl Elaborator {
                 }
             }
             Stmt::SysCall { name, args, line, col } => {
+                // F42: syscall waveform dump ($dumpvars/$dumpall/$dumpfile/...) —
+                // argumen berupa path hierarkis module (`$dumpvars(0, tb_top)`)
+                // yang bukan signal. Toleransi: arg tak ter-resolve menjadi
+                // konstanta 0 + warning, bukan E2001 yang memblokir modul.
+                let dump_syscalls = [
+                    "dumpvars",
+                    "dumpall",
+                    "dumpoff",
+                    "dumpon",
+                    "dumpfile",
+                    "dumpflush",
+                    "dumplimit",
+                    "wlfdumpvars",
+                    "wlfdumpall",
+                    "wlfopen",
+                ];
+                if dump_syscalls.contains(&name.as_str()) {
+                    let ir_args: Vec<IrExpr> = args
+                        .iter()
+                        .map(|a| {
+                            match self.elaborate_expr(a, signal_map, signals) {
+                                Ok(ir) => ir,
+                                Err(e) => {
+                                    self.elab_warn_at(
+                                        DiagCode::ModuleNotFound,
+                                        format!(
+                                            "$({}) argument not resolvable — treated as 0: {}",
+                                            name.as_str(),
+                                            e
+                                        ),
+                                        expr_location(a).0,
+                                        expr_location(a).1,
+                                    );
+                                    IrExpr::Const(LogicVec::from_u64(0, 32))
+                                }
+                            }
+                        })
+                        .collect();
+                    return Ok(IrStmt::SysCall {
+                        name: *name,
+                        args: ir_args,
+                        line: *line,
+                        col: *col,
+                    });
+                }
                 let ir_args: Vec<IrExpr> = args
                     .iter()
                     .map(|a| self.elaborate_expr(a, signal_map, signals))
@@ -690,8 +759,16 @@ impl Elaborator {
                                 match self.hier_event_edge(expr, signal_map, signals, true) {
                                     Some((sid, edge)) => sigs.push((sid, Some(edge))),
                                     None => {
-                                        return Err(self.elab_diag(DiagCode::ModuleNotFound,
-                                            "cannot resolve signal in @(...)".to_string()))
+                                        // F38: event tak ter-resolve (clocking block
+                                        // interface `@(sck_clk.cbn)`, hier path) —
+                                        // degrade warning + skip, bukan hard error.
+                                        self.elab_warn_at(
+                                            DiagCode::NotImplemented,
+                                            "cannot resolve signal in @(...) — event skipped".to_string(),
+                                            expr_location(expr).0,
+                                            expr_location(expr).1,
+                                        );
+                                        continue;
                                     }
                                 }
                             }
@@ -703,17 +780,30 @@ impl Elaborator {
                                 match self.hier_event_edge(expr, signal_map, signals, false) {
                                     Some((sid, edge)) => sigs.push((sid, Some(edge))),
                                     None => {
-                                        return Err(self.elab_diag(DiagCode::ModuleNotFound,
-                                            "cannot resolve signal in @(...)".to_string()))
+                                        self.elab_warn_at(
+                                            DiagCode::NotImplemented,
+                                            "cannot resolve signal in @(...) — event skipped".to_string(),
+                                            expr_location(expr).0,
+                                            expr_location(expr).1,
+                                        );
+                                        continue;
                                     }
                                 }
                             }
                         }
                         SensitivityEvent::Level(expr) => {
-                            let sig_id = resolve_expr_signal(expr, signal_map).ok_or_else(
-                                || self.elab_diag(DiagCode::ModuleNotFound, "cannot resolve signal in @(...)".to_string()),
-                            )?;
-                            sigs.push((sig_id, None));
+                            match resolve_expr_signal(expr, signal_map) {
+                                Some(sig_id) => sigs.push((sig_id, None)),
+                                None => {
+                                    self.elab_warn_at(
+                                        DiagCode::NotImplemented,
+                                        "cannot resolve signal in @(...) — event skipped".to_string(),
+                                        expr_location(expr).0,
+                                        expr_location(expr).1,
+                                    );
+                                    continue;
+                                }
+                            }
                         }
                         SensitivityEvent::Wildcard => unreachable!("handled above"),
                         // Iff sudah dibuka di atas — arm ini tidak akan tercapai.
@@ -826,14 +916,24 @@ impl Elaborator {
                 })
             }
             Stmt::Delay { delay, stmt } => {
-                let d = const_eval_params(delay, &self.param_vals).map_err(|e| {
-                    let (l, c) = crate::util::generate::expr_location(delay);
-                    self.elab_diag_at(
-                        DiagCode::SimulationError,
-                        format!("cannot evaluate delay: {}", e),
-                        l, c,
-                    )
-                })? as u64;
+                // Delay dinamis (`#(CLK_PERIOD/2)` dengan CLK_PERIOD real
+                // signal, bukan parameter) tidak bisa di-const-eval — engine
+                // hanya mendukung delay konstan. Jangan gagalkan elaborasi
+                // (modul AST oscillator OpenTitan seperti io_osc/sys_osc/rng
+                // memakai pola ini): emit warning + fallback delay 1 agar
+                // modul tetap bisa dielaborasi dan disimulasikan.
+                let d = match const_eval_params(delay, &self.param_vals) {
+                    Ok(v) => v as u64,
+                    Err(e) => {
+                        let (l, c) = crate::util::generate::expr_location(delay);
+                        self.elab_warn_at(
+                            DiagCode::SimulationError,
+                            format!("non-constant delay evaluated as 1: {}", e),
+                            l, c,
+                        );
+                        1
+                    }
+                };
                 let body = vec![self.elaborate_stmt(stmt, signal_map, known_modules, signals)?];
                 Ok(IrStmt::Delay { delay: d, body })
             }
@@ -947,9 +1047,19 @@ impl Elaborator {
                 index_vars,
                 stmts,
             } => {
-                let sig_id = signal_map.get(array_var).ok_or_else(|| {
-                    self.elab_diag(DiagCode::ModuleNotFound, format!("array '{}' not found for foreach", array_var))
-                })?;
+                // F44: array foreach tak ter-resolve (queue port task yang
+                // tidak di-rename saat inline, array milik UVM/class, dll) —
+                // degrade warning + skip body, bukan hard error.
+                let Some(sig_id) = signal_map.get(array_var) else {
+                    let (l, c) = (0, 0);
+                    self.elab_warn_at(
+                        DiagCode::NotImplemented,
+                        format!("array '{}' not found for foreach — loop skipped", array_var),
+                        l,
+                        c,
+                    );
+                    return Ok(IrStmt::Null);
+                };
                 let sig_info = signals.get(*sig_id).ok_or_else(|| {
                     self.elab_diag(DiagCode::ModuleNotFound, format!("signal info not found for '{}'", array_var))
                 })?;
@@ -968,10 +1078,16 @@ impl Elaborator {
                 } else {
                     let n = sig_info.array_depth;
                     if n == 0 {
-                        return Err(self.elab_diag(DiagCode::TypeMismatch, format!(
-                            "'{}' is not an array, cannot use foreach",
-                            array_var
-                        )));
+                        // F44: array scalar / tak dikenal — degrade warning +
+                        // skip, bukan hard error (pola foreach DV/task).
+                        let (l, c) = (0, 0);
+                        self.elab_warn_at(
+                            DiagCode::NotImplemented,
+                            format!("'{}' is not an array, cannot use foreach — loop skipped", array_var),
+                            l,
+                            c,
+                        );
+                        return Ok(IrStmt::Null);
                     }
                     let mut all_stmts = Vec::new();
                     let iv = index_vars
@@ -1403,22 +1519,35 @@ impl Elaborator {
                 lsb,
             } => {
                 let inner_lv = self.elaborate_lvalue(inner, signal_map, signals)?;
-                let msb_c = const_eval_params(msb, &self.param_vals).map_err(|e| {
-                    let (l, c) = crate::util::generate::expr_location(msb);
-                    self.elab_diag_at(
-                        DiagCode::SimulationError,
-                        format!("cannot evaluate lvalue range bound: {}", e),
-                        l, c,
-                    )
-                })? as usize;
-                let lsb_c = const_eval_params(lsb, &self.param_vals).map_err(|e| {
-                    let (l, c) = crate::util::generate::expr_location(lsb);
-                    self.elab_diag_at(
-                        DiagCode::SimulationError,
-                        format!("cannot evaluate lvalue range bound: {}", e),
-                        l, c,
-                    )
-                })? as usize;
+                // Bound range yang gagal di-const-eval (mis. member access
+                // struct, param hilang) → fallback 0 + warning, bukan error
+                // yang mematikan modul.
+                let msb_c = match const_eval_params(msb, &self.param_vals) {
+                    Ok(v) => v.max(0) as usize,
+                    Err(e) => {
+                        let (l, c) = crate::util::generate::expr_location(msb);
+                        self.elab_warn_at(
+                            DiagCode::SimulationError,
+                            format!("cannot evaluate lvalue range bound ({}), fallback 0", e),
+                            l,
+                            c,
+                        );
+                        0
+                    }
+                };
+                let lsb_c = match const_eval_params(lsb, &self.param_vals) {
+                    Ok(v) => v.max(0) as usize,
+                    Err(e) => {
+                        let (l, c) = crate::util::generate::expr_location(lsb);
+                        self.elab_warn_at(
+                            DiagCode::SimulationError,
+                            format!("cannot evaluate lvalue range bound ({}), fallback 0", e),
+                            l,
+                            c,
+                        );
+                        0
+                    }
+                };
                 match inner_lv {
                     IrLValue::Signal(sid, _) => Ok(IrLValue::RangeSelect(sid, msb_c, lsb_c)),
                     IrLValue::RangeSelect(sid, outer_msb, outer_lsb) => {
@@ -1449,12 +1578,25 @@ impl Elaborator {
                         let end = base_bit + msb_c.max(lsb_c);
                         Ok(IrLValue::RangeSelect(sid, end, start))
                     }
-                    _ => Err(self.elab_diag_at(
-                        DiagCode::NotImplemented,
-                        "nested range select not supported",
-                        expr_location(expr).0,
-                        expr_location(expr).1,
-                    )),
+                    _ => {
+                        // F45: nested range select tak ter-model (hier
+                        // interface / array dinamis) — degrade warning + write
+                        // no-op, bukan hard error yang memblokir modul.
+                        let (l, c) = expr_location(expr);
+                        self.elab_warn_at(
+                            DiagCode::NotImplemented,
+                            format!(
+                                "nested range select lvalue tidak di-resolve statis (obj={:?}) — write diabaikan",
+                                expr
+                            ),
+                            l,
+                            c,
+                        );
+                        Ok(IrLValue::ObjectField {
+                            sig_id: 0,
+                            field: Symbol::intern("__nested_range_ignored"),
+                        })
+                    }
                 }
             }
             Expr::BitSelect {
@@ -1557,6 +1699,25 @@ impl Elaborator {
                             name,
                             index: Box::new(index_expr),
                         })
+                    }
+                    // Bit select di atas field object yang sudah ter-degrade
+                    // (`resets_o.rst_por_io_div2_n[DomainMainSel]` di rstmgr —
+                    // struct port tak ter-resolve → ObjectField no-op). Index
+                    // di atas ObjectField tidak bisa di-offset statis; pertahan-
+                    // kan degrade: warning + ObjectField (write tetap diabaikan
+                    // engine) agar modul TIDAK di-skip oleh "nested bit select".
+                    IrLValue::ObjectField { sig_id, field } => {
+                        let (l, c) = expr_location(expr);
+                        self.elab_warn_at(
+                            DiagCode::NotImplemented,
+                            format!(
+                                "bit select pada field object '{}' yang tidak ter-resolve — write diabaikan",
+                                field.as_str()
+                            ),
+                            l,
+                            c,
+                        );
+                        return Ok(IrLValue::ObjectField { sig_id, field });
                     }
                     // Bit select di atas bit select (`sig[a][b]` — packed
                     // multidimensi setelah unroll, mis. `result[0][0][0]`).
@@ -1715,6 +1876,51 @@ impl Elaborator {
                                     base: Box::new(base_adj),
                                     width: width_c,
                                 })
+                            }
+                            // Lvalue hierarkis / field object yang sudah ter-degrade
+                            // (`key_slots_d[slot].key[j][cnt*W +: W]` di
+                            // keymgr_dpe_ctrl — member chain dinamis tak bisa
+                            // di-offset statis). Pertahankan degrade: warning +
+                            // lvalue asal (write diabaikan engine) agar modul
+                            // tidak di-skip.
+                            IrLValue::HierRef(name) => {
+                                let (l, c) = expr_location(expr);
+                                self.elab_warn_at(
+                                    DiagCode::NotImplemented,
+                                    format!(
+                                        "dynamic part-select pada lvalue hierarkis '{}' — write diabaikan",
+                                        name.as_str()
+                                    ),
+                                    l,
+                                    c,
+                                );
+                                Ok(IrLValue::HierRef(name))
+                            }
+                            IrLValue::HierRefIndex { name, index } => {
+                                let (l, c) = expr_location(expr);
+                                self.elab_warn_at(
+                                    DiagCode::NotImplemented,
+                                    format!(
+                                        "dynamic part-select pada lvalue hierarkis '{}' — write diabaikan",
+                                        name.as_str()
+                                    ),
+                                    l,
+                                    c,
+                                );
+                                Ok(IrLValue::HierRefIndex { name, index })
+                            }
+                            IrLValue::ObjectField { sig_id, field } => {
+                                let (l, c) = expr_location(expr);
+                                self.elab_warn_at(
+                                    DiagCode::NotImplemented,
+                                    format!(
+                                        "dynamic part-select pada field object '{}' — write diabaikan",
+                                        field.as_str()
+                                    ),
+                                    l,
+                                    c,
+                                );
+                                Ok(IrLValue::ObjectField { sig_id, field })
                             }
                             _ => Err(self.elab_diag_at(
                                 DiagCode::NotImplemented,
@@ -1887,7 +2093,30 @@ impl Elaborator {
                                 field: *field,
                             });
                         }
-                        Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!("member access on signal '{:?}' that has no struct fields (cannot use as lvalue)", obj), expr_location(expr).0, expr_location(expr).1))
+                        // Signal NON-struct dijadikan target member access —
+                        // biasanya interface instance (`jtag_mst.tdo`, `tif.miso`)
+                        // atau sinyal testbench yang field-nya tidak ter-model.
+                        // Degrade: warning + HierRef (engine resolve nama saat
+                        // write) bila nama hierarkis tersedia, selain itu
+                        // ObjectField (no-op aman di engine untuk non-object).
+                        self.elab_warn_at(
+                            DiagCode::ModuleNotFound,
+                            format!(
+                                "member access pada signal non-struct '{:?}.{}' — write tidak penuh (interface/hier fallback)",
+                                obj,
+                                field.as_str()
+                            ),
+                            expr_location(expr).0,
+                            expr_location(expr).1,
+                        );
+                        let hn = Self::build_hier_name(obj, field.as_str());
+                        if !hn.is_empty() {
+                            return Ok(IrLValue::HierRef(Symbol::intern(&hn)));
+                        }
+                        return Ok(IrLValue::ObjectField {
+                            sig_id,
+                            field: *field,
+                        });
                     }
                     // obj TIDAK ter-resolve sebagai signal: instance interface
                     // (`sif.csb`) atau path instance (`u_dut.u_padring.cio_*`).
@@ -1907,13 +2136,40 @@ impl Elaborator {
                                 return Ok(IrLValue::HierRef(Symbol::intern(&hier_name)));
                             }
                         }
+                        // Member access lvalue yang TIDAK bisa di-resolve statis
+                        // (base index dinamis — mis. `key_slots_d[slot].key[j]`
+                        // di keymgr_dpe, atau path instance). Degrade: warning +
+                        // HierRef bila nama hierarkis tersedia, selain itu
+                        // ObjectField (no-op aman) agar modul tidak di-skip.
                         let (l, c) = expr_location(expr);
-                        Err(self.elab_diag_at(
+                        self.elab_warn_at(
                             DiagCode::NotImplemented,
-                            "member access cannot be used as lvalues",
+                            format!(
+                                "member access lvalue tidak dapat di-resolve statis (obj={:?}.{}) — write diabaikan",
+                                obj,
+                                field.as_str()
+                            ),
                             l,
                             c,
-                        ))
+                        );
+                        let hn = Self::build_hier_name(obj, field.as_str());
+                        if !hn.is_empty() {
+                            return Ok(IrLValue::HierRef(Symbol::intern(&hn)));
+                        }
+                        if let Some((base_name, _)) =
+                            Self::collect_member_chain(obj, *field, &self.param_vals)
+                        {
+                            if let Some(&base_sid) = signal_map.get(base_name.as_str()) {
+                                return Ok(IrLValue::ObjectField {
+                                    sig_id: base_sid,
+                                    field: *field,
+                                });
+                            }
+                        }
+                        return Ok(IrLValue::ObjectField {
+                            sig_id: 0,
+                            field: *field,
+                        });
                     }
                 }
             }

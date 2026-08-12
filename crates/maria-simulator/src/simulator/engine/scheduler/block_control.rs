@@ -204,8 +204,12 @@ impl SimulationEngine {
                 let eq = match case_type {
                     CaseType::CaseX => case_val.casex_eq(&pat_val),
                     CaseType::CaseZ => case_val.casez_eq(&pat_val),
-                    CaseType::Normal | CaseType::Inside => case_val.eq(&pat_val),
-                    CaseType::Unique | CaseType::Unique0 | CaseType::Priority => case_val.eq(&pat_val),
+                    // LRM: case biasa membandingkan dengan zero-extension ke
+                    // lebar terbesar (bukan PartialEq width-sensitive).
+                    CaseType::Normal | CaseType::Inside => case_val.case_val_eq(&pat_val),
+                    CaseType::Unique | CaseType::Unique0 | CaseType::Priority => {
+                        case_val.case_val_eq(&pat_val)
+                    }
                 };
                 Ok(eq)
             }

@@ -1918,6 +1918,9 @@ dependencies = [
  "maria-mv",
  "maria-parser",
  "maria-simulator",
+ "maria-sir",
+ "maria-synth",
+ "maria-tech",
  "maria-tools",
  "memmap2",
  "mimalloc",
@@ -2072,6 +2075,16 @@ name = "maria-mv"
 version = "0.3.0"
 
 [[package]]
+name = "maria-netlist"
+version = "0.1.0"
+dependencies = [
+ "maria-core",
+ "maria-sir",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "maria-parser"
 version = "0.3.0"
 dependencies = [
@@ -2100,6 +2113,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "maria-sir"
+version = "0.3.0"
+dependencies = [
+ "maria-core",
+ "maria-ir",
+]
+
+[[package]]
+name = "maria-synth"
+version = "0.3.0"
+dependencies = [
+ "maria-core",
+ "maria-ir",
+ "maria-netlist",
+ "maria-sir",
+ "maria-tech",
+]
+
+[[package]]
+name = "maria-tech"
+version = "0.1.0"
+
+[[package]]
 name = "maria-tests"
 version = "0.3.0"
 dependencies = [
@@ -2109,8 +2145,13 @@ dependencies = [
  "maria-elaboration",
  "maria-env",
  "maria-ir",
+ "maria-mv",
+ "maria-netlist",
  "maria-parser",
  "maria-simulator",
+ "maria-sir",
+ "maria-synth",
+ "maria-tech",
 ]
 
 [[package]]
@@ -2123,8 +2164,12 @@ dependencies = [
  "maria-elaboration",
  "maria-ir",
  "maria-mv",
+ "maria-netlist",
  "maria-parser",
  "maria-simulator",
+ "maria-sir",
+ "maria-synth",
+ "maria-tech",
  "serde_json",
 ]
 

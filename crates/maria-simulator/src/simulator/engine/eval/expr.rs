@@ -1414,6 +1414,20 @@ impl SimulationEngine {
                         );
                     }
                 }
+                // F36: method call pada instance interface / hier instance yang
+                // tidak punya method tersimulasi (`clk_if.set_period_ps(...)`,
+                // `sck_clk.set_active()`) — receiver berupa HierRef yang tidak
+                // resolve ke signal → no-op (return 0). Interface method DV
+                // tidak di-model.
+                if let IrExpr::HierRef(name) = obj.as_ref() {
+                    if self.find_signal(name.as_str()).is_none() {
+                        let _: Vec<LogicVec> = args
+                            .iter()
+                            .map(|a| self.evaluate_expr(a))
+                            .collect::<Result<_, _>>()?;
+                        return Ok(LogicVec::from_u64(0, 1));
+                    }
+                }
                 let obj_val = self.evaluate_expr(obj)?;
                 let obj_id = obj_val.to_u64() as ObjId;
                 let arg_vals: Vec<LogicVec> = args
@@ -1904,27 +1918,41 @@ impl SimulationEngine {
         let saved_method = self.current_method.take();
         self.current_method = Some(Symbol::intern("__func_ret"));
 
-        self.evaluate_ast_block_with_delay_fork(&func.stmts, None)?;
+        // F35 review: simpan hasil body — state di-restore di SEMUA jalur
+        // (sukses ATAU error). Sebelumnya `?` mempropagasi error sebelum
+        // truncate/restore → frame method_locals + recursion_depth bocor dan
+        // pemanggilan function berikutnya membaca frame stale (get_local
+        // shadow argumen).
+        let body_result = self.evaluate_ast_block_with_delay_fork(&func.stmts, None);
 
-        // Restore current_method
+        // F35: `return` di body function menandai ast_return_pending utk
+        // stop-blok lintas nested. Clear di sini (wrapper terluar) agar flag
+        // tidak bocor ke evaluasi blok lain setelah function selesai.
+        self.ast_return_pending = false;
         self.current_method = saved_method;
 
         // Read return value from method_locals. `__func_ret` di-set oleh
-        // Stmt::Return; `name` di-set oleh `fact = expr` (non-ANSI). Cek
-        // `name` dulu karena `__func_ret` sudah tidak di-pre-insert (F35) —
-        // untuk non-ANSI get_local("__func_ret") = None → fallback ke name.
+        // Stmt::Return (gaya ANSI `return expr`); `name` di-set oleh LHS
+        // `fact = expr` (gaya non-ANSI). Baca `__func_ret` DULU: `name`
+        // selalu di-pre-insert sebagai 0 (slot return), jadi get_local(name)
+        // short-circuit or_else dan menutupi nilai `__func_ret` yang asli —
+        // itulah kenapa function gaya ANSI selalu return 0 (F35 fix 2).
+        // Untuk non-ANSI `__func_ret` tidak pernah ada → fallback ke name.
+        // PENTING: baca SEBELUM truncate frame (frame masih berisi nilai
+        // return yang ditulis body).
         let return_val = if ret_width > 0 {
-            self.get_local(name.as_str())
-                .or_else(|| self.get_local("__func_ret"))
+            self.get_local("__func_ret")
+                .or_else(|| self.get_local(name.as_str()))
                 .unwrap_or_else(|| LogicVec::new(ret_width))
         } else {
             LogicVec::new(0)
         };
 
-
-        // Restore scope
+        // Restore scope + depth di SEMUA jalur (sukses ATAU error).
         self.method_locals.truncate(depth_idx);
         self.recursion_depth.insert(*name, depth);
+
+        body_result?;
 
         Ok(return_val)
     }

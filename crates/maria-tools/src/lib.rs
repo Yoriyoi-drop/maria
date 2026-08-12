@@ -14,6 +14,7 @@ pub mod inspect;
 pub mod lint;
 pub mod prof;
 pub mod sim;
+pub mod synth;
 pub mod wave;
 
 use std::path::{Path, PathBuf};
@@ -30,7 +31,7 @@ fn diag_io(msg: impl Into<String>) -> SimError {
 
 /// Expand input target menjadi daftar file:
 /// - direktori  → scan recursive (`.sv`/`.svh`/`.v`/`.vh`)
-/// - file `.f`/`.maria` → daftar file (relatif ke direktori file list)
+/// - file `.f` → daftar file (relatif ke direktori file list)
 /// - lainnya → file tunggal
 ///
 /// File di-unique-kan dan diurutkan agar output deterministik.

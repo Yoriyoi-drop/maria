@@ -48,21 +48,63 @@ impl Parser {
                     continue;
                 }
             }
-            // `if (cond) { items } else { items }` (F12)
+            // `if (cond) { items } else { items }` (F12) ATAU
+            // `if (cond) expr;` / `if (cond) expr; else expr;` — constraint
+            // kondisional TANPA braces (legal SV; contoh spid_common line
+            // 1254 `if (wrap_test == 1'b 0) size >= 1 && size <= 256;`).
             if self.peek() == &Token::If {
                 self.advance();
                 self.expect(Token::LParen)?;
                 let cond = self.parse_expr(0)?;
                 self.expect(Token::RParen)?;
-                self.expect(Token::LBrace)?;
-                let then = self.parse_constraint_items()?;
-                self.expect(Token::RBrace)?;
+                let mut then = Vec::new();
                 let mut els = Vec::new();
+                if self.peek() == &Token::LBrace {
+                    self.advance();
+                    then = self.parse_constraint_items()?;
+                    self.expect(Token::RBrace)?;
+                } else {
+                    // Tanpa braces: parse satu ekspresi constraint sebagai
+                    // branch-then.
+                    match self.parse_expr(0) {
+                        Ok(e) => {
+                            self.skip_semi();
+                            then.push(ConstraintItem::Expr(e));
+                        }
+                        Err(_) => {
+                            loop {
+                                match self.peek() {
+                                    Token::Semi => { self.advance(); break; }
+                                    Token::RBrace | Token::Eof => break,
+                                    _ => { self.advance(); }
+                                }
+                            }
+                        }
+                    }
+                }
                 if self.peek() == &Token::Else {
                     self.advance();
-                    self.expect(Token::LBrace)?;
-                    els = self.parse_constraint_items()?;
-                    self.expect(Token::RBrace)?;
+                    if self.peek() == &Token::LBrace {
+                        self.advance();
+                        els = self.parse_constraint_items()?;
+                        self.expect(Token::RBrace)?;
+                    } else {
+                        match self.parse_expr(0) {
+                            Ok(e) => {
+                                self.skip_semi();
+                                els.push(ConstraintItem::Expr(e));
+                            }
+                            Err(_) => {
+                                loop {
+                                    match self.peek() {
+                                        Token::Semi => { self.advance(); break; }
+                                        Token::RBrace | Token::Eof => break,
+                                        _ => { self.advance(); }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 body.push(ConstraintItem::If { cond, then, els });
                 continue;

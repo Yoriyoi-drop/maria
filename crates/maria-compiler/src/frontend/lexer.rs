@@ -283,13 +283,17 @@ impl<'a> FastLexer<'a> {
             return Token::Ident(Symbol::intern(ident));
         }
 
-        // Normal identifier or keyword — `$` TIDAK valid di dalam ident
-        // (kecuali escaped identifier yang ditangani di atas). Membiarkan `$`
-        // masuk ke ident membuat syscall seperti `$time`/`$display` tergabung
-        // dengan sisa ekspresi (mis. `$time)` jadi satu token).
+        // Normal identifier or keyword. `$` SAH sebagai karakter lanjutan di
+        // dalam ident (ident mulai dengan alpha/_/\\ di-dispatch terpisah;
+        // `$` di awal → Token::Dollar). Konsisten dengan lexer legacy
+        // (maria-parser): `$value$plusargs`, `$fwrite`, `name$suffix` di-lex
+        // sebagai Dollar + Ident("value$plusargs"). Tanpa ini, sistem
+        // function yang mengandung `$` di tengah (mis. `$value$plusargs`)
+        // terpecah jadi Dollar Ident(value) Dollar Ident(plusargs) → parse
+        // error berantai yang memotong module (F37/F38 fix opentitan).
         while self.pos < self.input.len() {
             let c = self.input[self.pos];
-            if c.is_ascii_alphanumeric() || c == b'_' {
+            if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' {
                 self.skip_byte();
             } else {
                 break;
@@ -559,10 +563,12 @@ impl<'a> FastLexer<'a> {
             return Token::RealNum(Symbol::intern(s));
         }
 
-        // Plain decimal
+        // Plain decimal — strip underscore digit separator (F38 fix: `10_000_000`
+        // tanpa `'` jatuh ke sini, BUKAN parse_verilog_number; tanpa strip,
+        // const-eval gagal → "signal '10_000_000' not found").
         let s = std::str::from_utf8(&self.input[start..self.pos]).unwrap_or("");
         Token::Number {
-            value: Symbol::intern(s),
+            value: Symbol::intern(&s.replace('_', "")),
             base: None,
             width: None,
             is_signed: false,
@@ -572,8 +578,11 @@ impl<'a> FastLexer<'a> {
     fn parse_verilog_number(&self, s: &str) -> Token {
         let parts: Vec<&str> = s.split('\'').collect();
         if parts.len() != 2 {
+            // Plain decimal (tanpa ukuran): `10_000_000` — strip underscore
+            // digit separator agar const-eval bisa parse i64 (F38 fix: tanpa
+            // ini `int x = 10_000_000;` di interface → "signal not found").
             return Token::Number {
-                value: Symbol::intern(s),
+                value: Symbol::intern(&s.replace('_', "")),
                 base: None,
                 width: None,
                 is_signed: false,

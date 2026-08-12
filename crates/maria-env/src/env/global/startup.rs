@@ -52,8 +52,11 @@ fn build_env(config: ConfigContext, workspace: WorkspaceContext) -> Result<Globa
     // 3. Initialize Runtime (butuh config: jumlah thread).
     let runtime = Arc::new(RuntimeContext::init(&config)?);
 
-    // 4. Open Database (MICD) — scoped per project.
-    let db_root = crate::env::database::default_database_root();
+    // 4. Open Database (MICD) — scoped per project. F37 fix: root dihitung
+    // dari workspace root (CWD-independen) — dulu `default_database_root()`
+    // relatif cwd sehingga saat cwd = direktori crate, database MICD dibuat
+    // di `crates/<crate>/.maria/` (salah tempat).
+    let db_root = crate::env::database::database_root_for(&workspace.root);
     let sources = workspace.discover_sources();
     let pid = crate::env::database::project_id_for(
         &workspace.root,

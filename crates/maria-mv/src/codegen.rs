@@ -705,6 +705,20 @@ fn emit_stmt(out: &mut String, indent: usize, stmt: &Stmt) {
             let op = if *nba { "<=" } else { "=" };
             line(out, indent, &format!("{} {op} {};", emit_expr(lhs), emit_expr(rhs)));
         }
+        // F36/F37: compound assignment `lhs += rhs` / increment `lhs++` / `++lhs`.
+        Stmt::CompoundAssign { lhs, op, rhs, .. } => {
+            line(out, indent, &format!("{} {op} {};", emit_expr(lhs), emit_expr(rhs)));
+        }
+        Stmt::IncDec { lhs, inc, pre, .. } => {
+            let op = if *inc { "++" } else { "--" };
+            if *pre {
+                // F37: prefix `++lhs`
+                line(out, indent, &format!("{}{};", op, emit_expr(lhs)));
+            } else {
+                // F36: postfix `lhs++`
+                line(out, indent, &format!("{}{};", emit_expr(lhs), op));
+            }
+        }
         Stmt::If { cond, then, els } => {
             line(out, indent, &format!("if ({}) begin", emit_expr(cond)));
             emit_body(out, indent + 1, then);
@@ -754,6 +768,33 @@ fn emit_stmt(out: &mut String, indent: usize, stmt: &Stmt) {
             line(out, indent, &format!("while ({}) begin", emit_expr(cond)));
             emit_body(out, indent + 1, body);
             line(out, indent, "end");
+        }
+        // F38: `do { ... } while (cond)` — loop post-test.
+        Stmt::DoWhile { cond, body } => {
+            line(out, indent, "do begin");
+            emit_body(out, indent + 1, body);
+            line(out, indent, &format!("end while ({});", emit_expr(cond)));
+        }
+        // F38: event trigger `->ev` → `-> ev;`
+        Stmt::EventTrigger(ev) => {
+            line(out, indent, &format!("-> {};", emit_expr(ev)));
+        }
+        // F39: `fork { ... } join[_any|_none]` — tiap branch di-emit sebagai
+        // `begin ... end` (parser SV parse_fork_join: tiap `begin/end` = satu
+        // proses). Mode join sesuai aslinya.
+        Stmt::Fork { branches, join } => {
+            line(out, indent, "fork");
+            for b in branches {
+                line(out, indent + 1, "begin");
+                emit_body(out, indent + 2, b);
+                line(out, indent + 1, "end");
+            }
+            let j = match join {
+                ForkJoin::Join => "join",
+                ForkJoin::JoinAny => "join_any",
+                ForkJoin::JoinNone => "join_none",
+            };
+            line(out, indent, j);
         }
         Stmt::Repeat { count, body } => {
             // Body statement tunggal → satu baris (`repeat (300) @(posedge clk)`)
@@ -850,7 +891,22 @@ fn single_line_stmt(stmt: &Stmt) -> Option<String> {
             let op = if *nba { "<=" } else { "=" };
             Some(format!("{} {op} {};", emit_expr(lhs), emit_expr(rhs)))
         }
+        // F36/F37: compound assignment / increment compact (body `@(...)`/`#amt`).
+        Stmt::CompoundAssign { lhs, op, rhs, .. } => {
+            Some(format!("{} {op} {};", emit_expr(lhs), emit_expr(rhs)))
+        }
+        Stmt::IncDec { lhs, inc, pre, .. } => {
+            let op = if *inc { "++" } else { "--" };
+            if *pre {
+                Some(format!("{}{};", op, emit_expr(lhs)))
+            } else {
+                Some(format!("{}{};", emit_expr(lhs), op))
+            }
+        }
         Stmt::ExprStmt(e) => Some(format!("{};", emit_expr(e))),
+        // F38: body `do {...} while`/event trigger compact utk `@(...)`/`#amt`.
+        Stmt::DoWhile { cond, body } => single_line_stmt(body).map(|s| format!("do {s} while ({});", emit_expr(cond))),
+        Stmt::EventTrigger(ev) => Some(format!("-> {};", emit_expr(ev))),
         Stmt::AssertProperty(raw) => Some(format!("assert property {raw};")),
         Stmt::Event { expr, body } => single_line_stmt(body).map(|s| format!("@({}) {s}", emit_expr(expr))),
         Stmt::Delay { amt, body } => single_line_stmt(body).map(|s| format!("#{} {s}", emit_expr(amt))),
@@ -997,6 +1053,16 @@ pub fn emit_expr(e: &Expr) -> String {
             } else {
                 let inner_s = emit_expr(inner);
                 format!("{op}{}", maybe_paren(inner, inner_s))
+            }
+        }
+        // F37: `++x` / `x++` / `--x` / `x--` di level ekspresi (RHS).
+        Expr::IncDec { inc, pre, expr } => {
+            let op = if *inc { "++" } else { "--" };
+            let es = emit_expr(expr);
+            if *pre {
+                format!("{op}{}", maybe_paren(expr, es))
+            } else {
+                format!("{}{op}", maybe_paren(expr, es))
             }
         }
         Expr::Binary(op, l, r) => format!("{} {op} {}", emit_expr(l), emit_expr(r)),

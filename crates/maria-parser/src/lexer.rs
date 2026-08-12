@@ -872,9 +872,11 @@ impl Lexer {
             return Token::RealNum(Symbol::intern(&s));
         }
 
-        // Plain decimal
+        // Plain decimal — strip underscore digit separator (F38 fix: `10_000_000`
+        // tanpa `'` jatuh ke sini, BUKAN parse_verilog_number; tanpa strip,
+        // const-eval gagal → "signal '10_000_000' not found" di elaborator).
         Token::Number {
-            value: Symbol::intern(&s),
+            value: Symbol::intern(&s.replace('_', "")),
             base: None,
             width: None,
             is_signed: false,
@@ -886,8 +888,12 @@ impl Lexer {
         // e.g., 8'b10101010, 32'habcd, '1, '0
         let parts: Vec<&str> = s.split('\'').collect();
         if parts.len() != 2 {
+            // Plain decimal (tanpa ukuran): `10_000_000`, `123_456` — underscore
+            // digit separator HARUS di-strip di sini. Tanpa strip, nilai token
+            // berisi `_` → const-eval gagal parse i64 → elaborator jatuh ke
+            // "signal '10_000_000' not found" (E2001) padahal itu literal.
             return Token::Number {
-                value: Symbol::intern(s),
+                value: Symbol::intern(&s.replace('_', "")),
                 base: None,
                 width: None,
                 is_signed: false,

@@ -903,6 +903,16 @@ let mut _last_pos = self.pos.get();
                 let assign = self.parse_assign()?;
                 Ok(Some(ModuleItem::Assign(assign)))
             }
+            Token::Dollar => {
+                // System task call di level MODULE: `$fatal(...)`, `$error(...)`,
+                // `$warning(...)` dll — body static assertion prim_assert
+                // (`if (!(cond)) $fatal(2, "msg");` di generate-if). Sebelumnya
+                // tidak ada arm Dollar → `$fatal(...)` jatuh ke parsing instance
+                // → "expected instance name" dan modul terpotong. Tidak
+                // dieksekusi engine; parse & buang (Ok(None)).
+                self.parse_syscall()?;
+                Ok(None)
+            }
             Token::Const => {
                 self.advance(); // consume 'const'
                 let mut decl = self.parse_decl()?;
@@ -1561,8 +1571,32 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                 Ok(None)
             }
             Token::Void | Token::Auto | Token::Static => {
-                self.skip_until_semi_or_end()?;
-                Ok(None)
+                // F37: `static task foo(); ...` / `automatic function ...` di
+                // module level — parse sebagai task/function, bukan skip.
+                if matches!(self.peek(), Token::Static | Token::Auto)
+                    && matches!(self.peek_ahead(1), Token::Task | Token::Function)
+                {
+                    self.advance(); // static/automatic
+                    if self.peek() == &Token::Function {
+                        let func = self.parse_function(true)?;
+                        Ok(Some(ModuleItem::Func(func)))
+                    } else {
+                        let task = self.parse_task(true)?;
+                        Ok(Some(ModuleItem::Func(FunctionDecl {
+                            name: task.name,
+                            range: None,
+                            return_type: None,
+                            ports: task.ports,
+                            decls: task.decls,
+                            stmts: task.stmts,
+                            virtual_flag: task.virtual_flag,
+                            is_static: task.is_static,
+                        })))
+                    }
+                } else {
+                    self.skip_until_semi_or_end()?;
+                    Ok(None)
+                }
             }
             Token::Class => {
                 // Class inside module — skip entire class body to endclass

@@ -14,6 +14,14 @@ maria-elaboration = { path = "../maria-elaboration" }
 # Dep langsung utk feature wiring jit/dpi (test memakai simulator::jit + simulator::dpi)
 maria-simulator = { path = "../maria-simulator" }
 maria-env = { path = "../maria-env" }
+maria-mv = { path = "../maria-mv" }
+
+[dev-dependencies]
+# Phase 4 tech mapping e2e: netlist hasil mapping disimulasikan engine Maria.
+maria-sir = { path = "../maria-sir" }
+maria-synth = { path = "../maria-synth" }
+maria-netlist = { path = "../maria-netlist" }
+maria-tech = { path = "../maria-tech" }
 
 [features]
 default = ["jit", "dpi"]

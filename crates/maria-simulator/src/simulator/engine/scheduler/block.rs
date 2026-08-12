@@ -640,6 +640,18 @@ impl SimulationEngine {
                             }
                         }
                     }
+                    // F36: method call pada instance interface / hier instance
+                    // yang tak punya method tersimulasi (receiver HierRef tak
+                    // resolve ke signal) → no-op.
+                    if let IrExpr::HierRef(name) = obj {
+                        if self.find_signal(name.as_str()).is_none() {
+                            let _: Vec<LogicVec> = args
+                                .iter()
+                                .map(|a| self.evaluate_expr(a))
+                                .collect::<Result<_, _>>()?;
+                            continue;
+                        }
+                    }
                     let obj_val = self.evaluate_expr(obj)?;
                     let obj_id = obj_val.to_u64() as ObjId;
                     let arg_vals: Vec<LogicVec> = args
@@ -754,6 +766,11 @@ impl SimulationEngine {
             if self.control_flow.is_some() {
                 return Ok(true);
             }
+            // F35: `return` AST menandai stop-blok lintas nested — iterasi
+            // berikutnya (termasuk blok luar setelah if/case) berhenti.
+            if self.ast_return_pending {
+                return Ok(true);
+            }
             match stmt {
                 maria_ast::Stmt::Block { stmts: inner } => {
                     if !self.evaluate_ast_block_with_delay_fork(inner, fork_id)? {
@@ -824,7 +841,9 @@ impl SimulationEngine {
                         let mut item_matched = false;
                         for pat in &item.labels {
                             let pat_val = self.evaluate_ast_expr(pat)?;
-                            if case_val.eq(&pat_val) {
+                            // LRM: case biasa membandingkan dgn zero-extension
+                            // ke lebar terbesar (bukan PartialEq width-sensitive).
+                            if case_val.case_val_eq(&pat_val) {
                                 if !self.evaluate_ast_block_with_delay_fork(
                                     &[*item.stmt.clone()],
                                     fork_id,
@@ -1719,7 +1738,23 @@ impl SimulationEngine {
                     self.control_flow = Some(FlowControl::Continue);
                     return Ok(true);
                 }
-                maria_ast::Stmt::Return(_) => {
+                maria_ast::Stmt::Return(Some(expr)) => {
+                    // F35: `return expr` menulis nilai ke slot current_method
+                    // (`__func_ret` utk module function, nama method utk task)
+                    // lalu menandai ast_return_pending agar SELURUH blok
+                    // berhenti (bukan cuma blok if — bug: statement setelah
+                    // return tetap jalan → rekursi tak berujung). Sebelumnya
+                    // no-op: ANSI `return n` di body function tak pernah
+                    // menulis `__func_ret` → helper baca slot 0 → return 0.
+                    let val = self.evaluate_ast_expr(expr)?;
+                    if let Some(ref method) = self.current_method {
+                        self.set_local(method.as_str(), val);
+                    }
+                    self.ast_return_pending = true;
+                    return Ok(true);
+                }
+                maria_ast::Stmt::Return(None) => {
+                    self.ast_return_pending = true;
                     return Ok(true);
                 }
                 maria_ast::Stmt::Null => {}
@@ -2225,6 +2260,18 @@ impl SimulationEngine {
                                     }
                                 }
                             }
+                        }
+                    }
+                    // F36: method call pada instance interface / hier instance
+                    // yang tak punya method tersimulasi (receiver HierRef tak
+                    // resolve ke signal) → no-op.
+                    if let IrExpr::HierRef(name) = obj {
+                        if self.find_signal(name.as_str()).is_none() {
+                            let _: Vec<LogicVec> = args
+                                .iter()
+                                .map(|a| self.evaluate_expr(a))
+                                .collect::<Result<_, _>>()?;
+                            continue;
                         }
                     }
                     let obj_val = self.evaluate_expr(obj)?;

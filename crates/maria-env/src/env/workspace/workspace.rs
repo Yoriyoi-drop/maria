@@ -27,10 +27,38 @@ pub struct WorkspaceContext {
 }
 
 impl WorkspaceContext {
-    /// Buka workspace di direktori saat ini (CWD).
+    /// Buka workspace di direktori saat ini (CWD). F37 fix: CWD di-resolve ke
+    /// project root (naik sampai `.git` / `Cargo.toml` ber-`[workspace]`).
+    /// Sebelumnya CWD mentah: saat dijalankan dari dalam direktori crate
+    /// (mis. `cargo test -p maria-env` di `crates/maria-env`), workspace.root
+    /// = direktori crate → `.maria/` (MICD database) dibuat di dalam crate —
+    /// salah tempat. CLI/main memakai `open_in` (root eksplisit) sehingga
+    /// tidak terpengaruh.
     pub fn open(_config: &ConfigContext) -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        Self::open_in(&cwd)
+        let root = Self::find_project_root(&cwd).unwrap_or(cwd);
+        Self::open_in(&root)
+    }
+
+    /// F37: naik dari `start` sampai menemukan marker project root.
+    /// Marker: direktori ber-`.git` (repo) atau `Cargo.toml` berisi
+    /// `[workspace]` (root workspace cargo). Crate tunggal (`Cargo.toml`
+    /// tanpa `[workspace]`) BUKAN root — lanjut naik. Tanpa marker → None
+    /// (caller fallback ke CWD).
+    fn find_project_root(start: &Path) -> Option<PathBuf> {
+        let mut dir = Some(start.to_path_buf());
+        while let Some(d) = dir {
+            if d.join(".git").exists() {
+                return Some(d);
+            }
+            if let Ok(toml) = std::fs::read_to_string(d.join("Cargo.toml")) {
+                if toml.contains("[workspace]") {
+                    return Some(d);
+                }
+            }
+            dir = d.parent().map(|p| p.to_path_buf());
+        }
+        None
     }
 
     /// Buka workspace di root eksplisit. Source dirs `rtl/`, `tb/`, `ip/`,
@@ -176,6 +204,27 @@ impl WorkspaceContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_find_project_root_resolves_workspace_root() {
+        // F37: dari subdir crate (`crates/maria-env`), project root harus
+        // resolve ke root workspace (Cargo.toml ber-[workspace] / .git),
+        // BUKAN direktori crate — agar `.maria/` tak dibuat di dalam crate.
+        let cwd = std::env::current_dir().unwrap();
+        let root = WorkspaceContext::find_project_root(&cwd).expect("harus menemukan project root");
+        assert!(
+            root.join("Cargo.toml").is_file() && root.join("src").is_dir(),
+            "root harus project root maria, dapat: {root:?}"
+        );
+        assert!(
+            !root.ends_with("crates/maria-env") && !root.ends_with("maria-env"),
+            "root tidak boleh direktori crate: {root:?}"
+        );
+        // open() memakai root yang sama → .maria di root project, bukan crate.
+        let cfg = ConfigContext::load_auto(None).expect("load config default");
+        let ws = WorkspaceContext::open(&cfg);
+        assert_eq!(ws.root(), root);
+    }
 
     #[test]
     fn test_open_in_creates_structure() {

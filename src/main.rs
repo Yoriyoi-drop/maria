@@ -388,6 +388,7 @@ fn main() {
             crate::cli::MariaCmd::Prof(a) => dispatch_prof(a),
             crate::cli::MariaCmd::Check(a) => dispatch_check(a),
             crate::cli::MariaCmd::Bench(a) => dispatch_bench(a),
+            crate::cli::MariaCmd::Synth(a) => dispatch_synth(a),
         }
     }
 
@@ -2762,6 +2763,28 @@ fn dispatch_bench(a: &crate::cli::MbenchArgs) -> ! {
         runs: a.runs,
     };
     exit_tool(maria_api::tools::bench::run(&args));
+}
+
+fn dispatch_synth(a: &crate::cli::SynthArgs) -> ! {
+    let args = maria_api::tools::synth::SynthArgs {
+        targets: &a.targets,
+        incdirs: &a.incdirs,
+        defines: &a.defines,
+        top: a.top.as_deref(),
+        output: a.output.clone(),
+        check_only: a.check_only,
+        device: a.device.clone(),
+        preset: a.preset.clone(),
+        emit_mvnet: a.emit_mvnet,
+        dump_sir: a.dump_sir,
+        dump_sir_opt: a.dump_sir_opt,
+        dump_netlist: a.dump_netlist,
+        emit_netlist: a.emit_netlist,
+        tech_map: a.tech_map,
+        report_util: a.report_util.clone(),
+        quiet: a.quiet,
+    };
+    exit_tool(maria_api::tools::synth::run(&args));
 }
 
 /// Jalankan tool, cetak error via TerminalEmitter, exit dengan kode.

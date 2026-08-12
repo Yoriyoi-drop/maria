@@ -1,0 +1,11 @@
+[package]
+name = "maria-netlist"
+version = "0.1.0"
+edition = "2021"
+description = "Netlist gate-level generic Maria — hasil mapping SIR (1 driver / N loads, DAG, traceable)"
+
+[dependencies]
+maria-core = { path = "../maria-core" }
+maria-sir = { path = "../maria-sir" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

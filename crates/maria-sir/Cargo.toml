@@ -1,0 +1,10 @@
+[package]
+name = "maria-sir"
+version = "0.3.0"
+edition = "2021"
+description = "SIR — Synthesis Intermediate Representation (node-based) untuk Maria synthesis"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+maria-core = { path = "../maria-core" }
+maria-ir = { path = "../maria-ir" }

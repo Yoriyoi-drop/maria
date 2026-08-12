@@ -631,13 +631,19 @@ impl Parser {
                     self.expect(Token::RBrack)?;
                     let _init = if self.peek() == &Token::LParen { self.advance(); let val = self.parse_expr(0)?; self.expect(Token::RParen)?; Some(Box::new(val)) } else { None };
                     Ok(Expr::FuncCall { name: Symbol::intern("new"), args: vec![size], line: fl, col: fc })
-                } else {
+                } else if self.peek() == &Token::LParen {
                     let fl = self.peek_line();
                     let fc = self.peek_col();
-                    self.expect(Token::LParen)?;
+                    self.advance();
                     let args = self.parse_call_args()?;
                     self.expect(Token::RParen)?;
                     Ok(Expr::FuncCall { name: Symbol::intern("new"), args, line: fl, col: fc })
+                } else {
+                    // F41: `new` tanpa argumen (mis. `mailbox req_mbx = new;`)
+                    // — representasikan sebagai panggilan new kosong.
+                    let fl = self.peek_line();
+                    let fc = self.peek_col();
+                    Ok(Expr::FuncCall { name: Symbol::intern("new"), args: vec![], line: fl, col: fc })
                 }
             }
             Token::This => {

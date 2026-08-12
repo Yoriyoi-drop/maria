@@ -362,19 +362,28 @@ impl SimulationEngine {
                 self.record_signal_change(*sig_id, &old_val, &existing);
             }
             IrLValue::Concat(parts) => {
-                let mut offset = 0;
+                // LRM 1800-2017 §10.7: assignment ke concat lvalue — RHS
+                // di-zero-extend ke lebar total concat, lalu dibagikan
+                // MSB-first (part PERTAMA = bit paling tinggi). Handler lama
+                // mengiris LSB-first (offset naik dari 0) sehingga
+                // `{co, s} = ci + a + b` membalik bit (co dapat LSB) dan
+                // mengisi X saat RHS lebih sempit dari total concat.
+                let total: usize = parts.iter().map(|p| self.get_lvalue_width(p)).sum();
+                let mut bits = val.bits.clone();
+                if bits.len() < total {
+                    bits.resize(total, LogicVal::Zero);
+                } else if bits.len() > total {
+                    bits.truncate(total);
+                }
+                let mut offset = total;
                 for part in parts {
                     let w = self.get_lvalue_width(part);
-                    let sub_val = if offset + w <= val.width {
-                        LogicVec {
-                            bits: val.bits[offset..offset + w].to_vec(),
-                            width: w,
-                        }
-                    } else {
-                        LogicVec::new(w)
+                    offset -= w;
+                    let sub_val = LogicVec {
+                        bits: bits[offset..offset + w].to_vec(),
+                        width: w,
                     };
                     self.write_lvalue(part, sub_val)?;
-                    offset += w;
                 }
             }
             IrLValue::ObjectField { sig_id, field } => {

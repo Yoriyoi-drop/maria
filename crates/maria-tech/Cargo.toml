@@ -1,0 +1,7 @@
+[package]
+name = "maria-tech"
+version = "0.1.0"
+edition = "2021"
+description = "Maria Technology Library — abstraksi device (generic/fpga/asic) untuk synthesis"
+
+[dependencies]

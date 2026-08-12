@@ -61,6 +61,22 @@ impl Elaborator {
     }
 
     /// Elaborate DPI import declarations from all modules.
+    /// Apakah design mendeklarasikan DPI import (`import "DPI-C" ...`).
+    /// Dipakai untuk memutuskan apakah function tak dikenal di-degrade ke
+    /// stub DPI (konteks C eksternal nyata, mis. OpenTitan) ATAU jadi hard
+    /// error E3001 (design tanpa DPI sama sekali — regresi test
+    /// `test_elab_err_func_not_found_*`).
+    pub(crate) fn design_has_dpi_imports(&self) -> bool {
+        self.design.modules.iter().any(|m| {
+            m.items.iter().any(|item| {
+                matches!(
+                    item,
+                    ModuleItem::DpiImport(_) | ModuleItem::DpiExport(_)
+                )
+            })
+        })
+    }
+
     pub(crate) fn elaborate_dpi_imports(&self) -> Result<Vec<IrDpiImport>, SimError> {
         let mut dpi_imports = Vec::new();
         for module in &self.design.modules {

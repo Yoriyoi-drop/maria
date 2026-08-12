@@ -968,6 +968,75 @@ impl Parser {
                 let body = self.parse_stmt()?;
                 Ok(Stmt::While { cond, body: Box::new(body) })
             }
+            // F38: `do { body } while (cond)` — loop post-test.
+            Tok::Do => {
+                self.advance();
+                let body = self.parse_stmt()?;
+                self.expect(&Tok::While)?;
+                self.expect(&Tok::LParen)?;
+                let cond = self.parse_expr()?;
+                self.expect(&Tok::RParen)?;
+                self.eat(&Tok::Semi);
+                Ok(Stmt::DoWhile { cond, body: Box::new(body) })
+            }
+            // F38: event trigger `->ev` — memicu event named (emisi `-> ev;`).
+            // Target HANYA ident: parser SV `Stmt::EventTrigger` menerima nama
+            // ident saja (`expect_ident`), jadi `-> obj.sig`/`-> q[0]` ditolak
+            // di level .mv dengan error jelas — bukan SV invalid hasil generate.
+            Tok::Arrow => {
+                self.advance();
+                let (l, c) = self.pos_line();
+                let name = self.expect_ident()?;
+                self.eat(&Tok::Semi);
+                Ok(Stmt::EventTrigger(Expr::Ident(name, l, c)))
+            }
+            // F39: `fork { stmt* } { stmt* } ... join / join_any / join_none`
+            // — branch konkurren, masing-masing blok `{ ... }`. Diakhiri salah
+            // satu keyword join (bukan `}` lagi).
+            Tok::Fork => {
+                self.advance();
+                let mut branches = Vec::new();
+                loop {
+                    match self.peek() {
+                        Tok::Join | Tok::JoinAny | Tok::JoinNone => break,
+                        Tok::LBrace => {
+                            let b = self.parse_stmt_block()?;
+                            branches.push(Stmt::Block(b));
+                        }
+                        _ => {
+                            let (l, c) = self.pos_line();
+                            return Err(MvError::new(
+                                l,
+                                c,
+                                "tiap branch fork harus blok '{ ... }' — diakhiri 'join'/'join_any'/'join_none'".to_string(),
+                            ));
+                        }
+                    }
+                }
+                let join = match self.peek() {
+                    Tok::Join => {
+                        self.advance();
+                        ForkJoin::Join
+                    }
+                    Tok::JoinAny => {
+                        self.advance();
+                        ForkJoin::JoinAny
+                    }
+                    Tok::JoinNone => {
+                        self.advance();
+                        ForkJoin::JoinNone
+                    }
+                    _ => {
+                        let (l, c) = self.pos_line();
+                        return Err(MvError::new(
+                            l,
+                            c,
+                            "diharapkan 'join' / 'join_any' / 'join_none' setelah blok fork".to_string(),
+                        ));
+                    }
+                };
+                Ok(Stmt::Fork { branches, join })
+            }
             Tok::Repeat => {
                 self.advance();
                 self.expect(&Tok::LParen)?;
@@ -1093,6 +1162,15 @@ impl Parser {
                 };
                 Ok(Stmt::Assert { cond, pass, fail })
             }
+            // F37: prefix `++lhs` / `--lhs` di level statement. Hasil sama
+            // dengan postfix (`lhs++`); di-emit sesuai aslinya.
+            Tok::PlusPlus | Tok::MinusMinus => {
+                let inc = matches!(self.peek(), Tok::PlusPlus);
+                let (l, c) = self.pos_line();
+                self.advance();
+                let lhs = self.parse_postfix_expr()?;
+                Ok(Stmt::IncDec { lhs, inc, pre: true, line: l, col: c })
+            }
             _ => self.parse_assign_or_expr(),
         }
     }
@@ -1105,7 +1183,9 @@ impl Parser {
             let (l, c) = self.pos_line();
             // Simpan posisi untuk backtrack
             let save = self.pos;
-            let lhs = match self.parse_postfix_expr() {
+            // F37: varian stmt — lhs boleh postfix `i++` (arm F36 di bawah),
+            // ekspresi RHS (`j = i++`) tetap ditolak.
+            let lhs = match self.parse_postfix_expr_stmt() {
                 Ok(e) => e,
                 Err(_) => {
                     self.pos = save;
@@ -1123,6 +1203,49 @@ impl Parser {
                     self.advance();
                     let rhs = self.parse_expr()?;
                     return Ok(Stmt::Assign { lhs, rhs, nba: true, line: l, col: c });
+                }
+                // F36: postfix `lhs++` / `lhs--`
+                Tok::PlusPlus | Tok::MinusMinus => {
+                    // F37 fix: guard baris — `++`/`--` di baris BERBEDA dari
+                    // akhir lhs = statement prefix baru (`--i` setelah
+                    // `$display(...)`), bukan postfix dari statement ini.
+                    let end_line = self.toks[(self.pos.saturating_sub(1)).min(self.toks.len() - 1)].1;
+                    if self.toks[self.pos].1 != end_line {
+                        self.pos = save;
+                        let e = self.parse_expr()?;
+                        return Ok(Stmt::ExprStmt(e));
+                    }
+                    let inc = matches!(self.peek(), Tok::PlusPlus);
+                    self.advance();
+                    return Ok(Stmt::IncDec { lhs, inc, pre: false, line: l, col: c });
+                }
+                // F36: compound `lhs += rhs` dst.
+                Tok::PlusEq
+                | Tok::MinusEq
+                | Tok::StarEq
+                | Tok::SlashEq
+                | Tok::PercentEq
+                | Tok::ShlEq
+                | Tok::SshrEq
+                | Tok::AndEq
+                | Tok::OrEq
+                | Tok::XorEq => {
+                    let op = match self.peek().clone() {
+                        Tok::PlusEq => "+=".to_string(),
+                        Tok::MinusEq => "-=".to_string(),
+                        Tok::StarEq => "*=".to_string(),
+                        Tok::SlashEq => "/=".to_string(),
+                        Tok::PercentEq => "%=".to_string(),
+                        Tok::ShlEq => "<<=".to_string(),
+                        Tok::SshrEq => ">>=".to_string(),
+                        Tok::AndEq => "&=".to_string(),
+                        Tok::OrEq => "|=".to_string(),
+                        Tok::XorEq => "^=".to_string(),
+                        _ => unreachable!(),
+                    };
+                    self.advance();
+                    let rhs = self.parse_expr()?;
+                    return Ok(Stmt::CompoundAssign { lhs, rhs, op, line: l, col: c });
                 }
                 _ => {
                     self.pos = save;
@@ -1450,11 +1573,31 @@ impl Parser {
                 let e = self.parse_binary(11)?;
                 Ok(Expr::Unary("^".into(), Box::new(e)))
             }
+            // F37: prefix `++x` / `--x` di level EKSPRESI (RHS): `j = ++i`.
+            // Operand di-parse postfix (memakan `[i]`/`.f`/`(args)` bila ada).
+            Tok::PlusPlus | Tok::MinusMinus => {
+                let inc = matches!(self.peek(), Tok::PlusPlus);
+                self.advance();
+                let e = self.parse_postfix_expr()?;
+                Ok(Expr::IncDec { inc, pre: true, expr: Box::new(e) })
+            }
             _ => self.parse_postfix_expr(),
         }
     }
 
     fn parse_postfix_expr(&mut self) -> Result<Expr, MvError> {
+        self.parse_postfix_expr_inner(false)
+    }
+
+    /// F37: varian utk lhs statement — postfix `++`/`--` DIPERBOLEHKAN
+    /// (`i++` baris sendiri); ekspresi RHS (`j = i++`) tetap ditolak.
+    /// Postfix di-`break`, pemanggil (parse_assign_or_expr arm F36) yang
+    /// mengubahnya jadi `Stmt::IncDec`.
+    fn parse_postfix_expr_stmt(&mut self) -> Result<Expr, MvError> {
+        self.parse_postfix_expr_inner(true)
+    }
+
+    fn parse_postfix_expr_inner(&mut self, allow_postfix: bool) -> Result<Expr, MvError> {
         let mut e = self.parse_primary()?;
         loop {
             match self.peek().clone() {
@@ -1502,6 +1645,32 @@ impl Parser {
                             return Err(MvError::new(l, c, "hanya fungsi yang bisa dipanggil".to_string()));
                         }
                     }
+                }
+                // F37: postfix `x++`/`x--` di akhir ekspresi.
+                Tok::PlusPlus | Tok::MinusMinus => {
+                    // Guard baris: `++`/`--` di baris BERBEDA dari akhir
+                    // ekspresi = statement prefix baru (`++i` setelah
+                    // `$display(...)`), bukan postfix — break biar statement
+                    // berikutnya yang menanganinya.
+                    let end_line = self.toks[(self.pos.saturating_sub(1)).min(self.toks.len() - 1)].1;
+                    if self.toks[self.pos].1 != end_line {
+                        break;
+                    }
+                    if allow_postfix {
+                        // lhs statement: serahkan ke parse_assign_or_expr
+                        // (arm F36) yang mengubahnya jadi Stmt::IncDec.
+                        break;
+                    }
+                    // RHS ekspresi: postfix TIDAK didukung di .mv (side-effect
+                    // dalam ekspresi tidak bisa diwakili SV) — error jelas di
+                    // level .mv, bukan menghasilkan SV invalid.
+                    let (l, c) = self.pos_line();
+                    let op = if matches!(self.peek(), Tok::PlusPlus) { "++" } else { "--" };
+                    return Err(MvError::new(
+                        l,
+                        c,
+                        format!("postfix {op} hanya didukung sebagai statement (baris sendiri), bukan di dalam ekspresi"),
+                    ));
                 }
                 _ => break,
             }

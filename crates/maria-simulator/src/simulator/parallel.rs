@@ -245,10 +245,10 @@ pub fn evaluate_stmt_block_parallel(
                                     CaseType::CaseX => case_val.casex_eq(&pat_val),
                                     CaseType::CaseZ => case_val.casez_eq(&pat_val),
                                     CaseType::Normal | CaseType::Inside => {
-                                        case_val.eq(&pat_val)
+                                        case_val.case_val_eq(&pat_val)
                                     }
                                     CaseType::Unique | CaseType::Unique0 | CaseType::Priority => {
-                                        case_val.eq(&pat_val)
+                                        case_val.case_val_eq(&pat_val)
                                     }
                                 }
                             }
@@ -516,24 +516,31 @@ fn write_lvalue_simple(
             writes.push((*sig_id, existing));
         }
         IrLValue::Concat(items) => {
-            let mut offset = 0usize;
+            // LRM 1800-2017 §10.7: assignment ke concat lvalue — RHS
+            // di-zero-extend ke lebar total concat, lalu dibagikan MSB-first
+            // (part PERTAMA = bit paling tinggi). Handler lama mengiris
+            // LSB-first (offset naik dari 0) → bit terbalik (`{co, s} = a+b`
+            // menaruh LSB ke co) DAN mengisi X saat RHS lebih sempit dari
+            // total concat (panic logic.rs:97 width=8 bits.len=7).
+            let total: usize = items
+                .iter()
+                .map(|it| get_lvalue_width_simple(it, signals))
+                .sum();
+            let mut bits = val.bits.clone();
+            if bits.len() < total {
+                bits.resize(total, LogicVal::Zero);
+            } else if bits.len() > total {
+                bits.truncate(total);
+            }
+            let mut offset = total;
             for item in items {
                 let item_w = get_lvalue_width_simple(item, signals);
-                let slice_end = (offset + item_w).min(val.width);
-                let slice = if offset < val.width {
-                    let mut bits = Vec::with_capacity(item_w);
-                    for i in offset..slice_end {
-                        bits.push(val.bits.get(i).copied().unwrap_or(LogicVal::X));
-                    }
-                    LogicVec {
-                        width: item_w,
-                        bits,
-                    }
-                } else {
-                    LogicVec::new(item_w)
+                offset -= item_w;
+                let sub_val = LogicVec {
+                    width: item_w,
+                    bits: bits[offset..offset + item_w].to_vec(),
                 };
-                write_lvalue_simple(item, slice, signals, writes)?;
-                offset += item_w;
+                write_lvalue_simple(item, sub_val, signals, writes)?;
             }
         }
         _ => {}

@@ -150,6 +150,7 @@ impl SimulationEngine {
             sequence_attempts: Vec::new(),
             recursion_depth: HashMap::new(),
             max_recursion_depth: 256,
+            ast_return_pending: false,
             objection_count: 0,
             objection_triggered: false,
             jit_evaluator: Some(crate::simulator::JITEvaluator::new()),
@@ -507,6 +508,9 @@ impl SimulationEngine {
             if let Some(ast_cont) = self.ast_fork_cont.remove(&fid) {
                 if !ast_cont.is_empty() {
                     self.evaluate_ast_block_with_delay_fork(&ast_cont, None)?;
+                    // F35 review: return di continuation fork (illegal SV)
+                    // menandai ast_return_pending — clear agar tidak bocor.
+                    self.ast_return_pending = false;
                 }
             } else {
                 let cont = std::mem::take(&mut self.fork_groups[fid].continuation);

@@ -27,6 +27,10 @@
 /openc910/
 *.f
 *.lock
+*.mv 
+*.sv
+*.mvnet
+*.v
 
 # Artifact laporan coverage (mcov/msim) — dihasilkan saat testing
 /covtest.coverage.html

@@ -471,6 +471,8 @@ impl Parser {
             | Token::Shortint
             | Token::Longint
             | Token::Time
+            | Token::String
+            | Token::Real
             | Token::Enum
             | Token::Struct
             | Token::Union
@@ -509,11 +511,33 @@ impl Parser {
                 decls: vec![decl],
             });
         }
-        // Procedural localparam (e.g. `localparam logic [4:0] X = ...;` inside a block).
-        // Parsed and discarded; values are resolved by the elaborator's param context.
+        // Procedural localparam (e.g. `localparam logic [4:0] X = ...;` inside a
+        // block). Disimpan sebagai `Stmt::NamedBlock` dengan `decls` (bukan
+        // dibuang) agar `collect_procedural_decls` di elaborator mendaftarkan
+        // nama tersebut — tanpa ini referensi ke localparam block-scoped
+        // (`NumRounds` di otp_ctrl_scrmbl, pola `localparam` di dalam for-loop
+        // body) menjadi "signal not found" (E2001). Nilai const dievaluasi
+        // elaborator ke param context.
         if matches!(self.peek(), Token::Param | Token::Parameter | Token::LocalParam) {
-            self.parse_procedural_localparam()?;
-            return Ok(Stmt::Null);
+            return self.parse_procedural_localparam();
+        }
+        // Named assertion di level STATEMENT: `label: assert (prop);` —
+        // ASSERT_* macros (prim_assert.sv) memperluas ke bentuk ini di dalam
+        // blok initial/always (mis. `ASSERT_I(accelerate_regulators_power_up_time,
+        // dv_hook inside {[0:3]})` di rglts_pdm_3p3v). Tanpa ini parser error
+        // "expected expression, found Colon" dan file RTL tidak ter-parse.
+        // Label assertion dibuang (nama tidak dipakai engine); isi assertion
+        // di-parse normal sebagai Stmt::Assert/Assume/Cover.
+        if matches!(self.peek(), Token::Ident(_))
+            && self.peek_ahead(1) == &Token::Colon
+            && matches!(
+                self.peek_ahead(2),
+                Token::Assert | Token::Assume | Token::Cover | Token::Expect
+            )
+        {
+            self.advance(); // label
+            self.advance(); // ':'
+            return self.parse_immediate_assertion();
         }
         match self.peek() {
             Token::Assert | Token::Assume | Token::Cover | Token::Expect => self.parse_immediate_assertion(),
@@ -655,6 +679,44 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 self.skip_semi();
                 Ok(Stmt::DoWhile { cond, stmts })
+            }
+            // F37: prefix `++lhs` / `--lhs` di level statement — setara postfix
+            // `lhs++` (arm di bawah): assign `lhs = lhs ± 1`.
+            Token::Increment | Token::Decrement => {
+                let is_inc = matches!(self.peek(), Token::Increment);
+                self.advance();
+                let mut lhs = self.parse_primary_expr()?;
+                // postfix lvalue: `++arr[i]`, `++obj.field`
+                loop {
+                    match self.peek() {
+                        Token::LBrack => {
+                            self.advance();
+                            let first = self.parse_expr(0)?;
+                            if self.peek() == &Token::Colon {
+                                self.advance();
+                                let second = self.parse_expr(0)?;
+                                self.expect(Token::RBrack)?;
+                                lhs = Expr::RangeSelect { expr: Box::new(lhs), msb: Box::new(first), lsb: Box::new(second) };
+                            } else {
+                                self.expect(Token::RBrack)?;
+                                lhs = Expr::BitSelect { expr: Box::new(lhs), index: Box::new(first) };
+                            }
+                        }
+                        Token::Dot => {
+                            self.advance();
+                            let member = self.expect_ident()?;
+                            lhs = Expr::MemberAccess { obj: Box::new(lhs), field: member };
+                        }
+                        _ => break,
+                    }
+                }
+                self.skip_semi();
+                let rhs = Expr::BinaryOp {
+                    op: if is_inc { BinaryOp::Add } else { BinaryOp::Sub },
+                    lhs: Box::new(lhs.clone()),
+                    rhs: Box::new(Expr::Value(Value::Decimal(1))),
+                };
+                Ok(Stmt::BlockingAssign { lhs, rhs, delay: None })
             }
             Token::Semi => { self.advance(); Ok(Stmt::Null) }
             Token::Hash => {
@@ -863,40 +925,90 @@ impl Parser {
 
     /// Parsing deklarasi localparam di dalam procedural block.
     /// Mendukung `localparam <type> [range] name = expr, name2 = expr2;`.
-    fn parse_procedural_localparam(&mut self) -> Result<(), SimError> {
+    fn parse_procedural_localparam(&mut self) -> Result<Stmt, SimError> {
         self.advance(); // consume localparam/parameter/param
+        let mut dtype = DataType::Logic;
+        let mut kind = DeclKind::Logic;
         // Optional type keyword
         match self.peek() {
-            Token::Int
-            | Token::Integer
-            | Token::Logic
-            | Token::Bit
-            | Token::Byte
-            | Token::Shortint
-            | Token::Longint
-            | Token::Time
-            | Token::Reg
-            | Token::Signed
-            | Token::Unsigned => {
+            Token::Int => {
+                self.advance();
+                dtype = DataType::Int;
+                kind = DeclKind::Int;
+            }
+            Token::Integer => {
+                self.advance();
+                dtype = DataType::Integer;
+                kind = DeclKind::Integer;
+            }
+            Token::Logic => {
+                self.advance();
+                dtype = DataType::Logic;
+                kind = DeclKind::Logic;
+            }
+            Token::Bit => {
+                self.advance();
+                dtype = DataType::Bit;
+            }
+            Token::Byte => {
+                self.advance();
+                dtype = DataType::Byte;
+            }
+            Token::Shortint => {
+                self.advance();
+                dtype = DataType::Shortint;
+            }
+            Token::Longint => {
+                self.advance();
+                dtype = DataType::Longint;
+            }
+            Token::Time => {
+                self.advance();
+                dtype = DataType::Time;
+            }
+            Token::Reg => {
+                self.advance();
+                kind = DeclKind::Reg;
+            }
+            Token::Signed | Token::Unsigned => {
                 self.advance();
             }
             _ => {}
         }
         // Optional packed range [msb:lsb]
+        let mut expr_range = None;
         if self.peek() == &Token::LBrack {
             self.advance();
-            self.parse_expr(0)?;
+            let msb = self.parse_expr(0)?;
             self.expect(Token::Colon)?;
-            self.parse_expr(0)?;
+            let lsb = self.parse_expr(0)?;
             self.expect(Token::RBrack)?;
+            expr_range = Some(ExprRange { msb, lsb });
         }
         // Parameter name(s) with optional default
+        let mut names = Vec::new();
         loop {
-            self.expect_ident()?;
+            let name = self.expect_ident()?;
+            let mut expr = None;
             if self.peek() == &Token::BlockingAssign {
                 self.advance();
-                self.parse_expr(0)?;
+                expr = Some(self.parse_expr(0)?);
             }
+            names.push(DeclVar {
+                name,
+                range: None,
+                expr_range: expr_range.clone(),
+                array_range: None,
+                array_size_expr: None,
+                extra_packed_dims: vec![],
+                is_dynamic: false,
+                is_queue: false,
+                is_associative: false,
+                assoc_key_type: None,
+                is_rand: false,
+                is_const: true,
+                expr,
+            });
             if self.peek() == &Token::Comma {
                 self.advance();
             } else {
@@ -904,7 +1016,11 @@ impl Parser {
             }
         }
         self.skip_semi();
-        Ok(())
+        Ok(Stmt::NamedBlock {
+            name: Symbol::EMPTY,
+            stmts: vec![],
+            decls: vec![Decl { dtype, kind, names }],
+        })
     }
 
     pub(crate) fn parse_if_stmt(&mut self) -> Result<Stmt, SimError> {

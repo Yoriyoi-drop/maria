@@ -165,7 +165,8 @@ fn collect_loop_var_names_stmt(stmt: &Stmt, out: &mut Vec<Symbol>) {
         | Stmt::StmtCase { items, default, .. }
         | Stmt::UniqueCase { items, default, .. }
         | Stmt::PriorityCase { items, default, .. }
-        | Stmt::Unique0Case { items, default, .. } => {
+        | Stmt::Unique0Case { items, default, .. }
+        | Stmt::CaseInside { items, default, .. } => {
             for item in items {
                 collect_loop_var_names_stmt(&item.stmt, out);
             }

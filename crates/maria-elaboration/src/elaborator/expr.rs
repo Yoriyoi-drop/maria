@@ -11,6 +11,36 @@ use maria_core::intern::Symbol;
 use maria_ir::*;
 
 impl Elaborator {
+    /// F36: apakah `name` adalah nama instance (module atau interface) di dalam
+    /// module/interface yang sedang di-elaborasi. Dipakai untuk method call /
+    /// referensi receiver yang tidak terdaftar sebagai signal (interface
+    /// instance seperti `clk_if.set_period_ps(...)` atau `sck_clk.set_active()`)
+    /// agar tidak menjadi E2001 "signal not found".
+    pub(crate) fn is_current_module_instance(&self, name: &Symbol) -> bool {
+        let Some(cur) = self.current_module else {
+            return false;
+        };
+        let items = self
+            .design
+            .modules
+            .iter()
+            .find(|m| m.name == cur)
+            .map(|m| m.items.as_slice())
+            .or_else(|| {
+                self.design
+                    .interfaces
+                    .iter()
+                    .find(|i| i.name == cur)
+                    .map(|i| i.items.as_slice())
+            });
+        let Some(items) = items else {
+            return false;
+        };
+        items
+            .iter()
+            .any(|item| matches!(item, ModuleItem::Instance(inst) if inst.instance_name == *name))
+    }
+
     pub(crate) fn build_hier_name(obj: &Expr, field: &str) -> String {
         match obj {
             Expr::Ident { name: prefix, .. } => format!("{}.{}", prefix, field),
@@ -474,21 +504,32 @@ impl Elaborator {
                 }
                 "$clog2" => {
                     if let Some(arg) = args.first() {
-                        let val = const_eval_params(arg, &self.param_vals).map_err(|e| {
-                            let (l, c) = expr_location(arg);
-                            self.elab_diag_at(
-                                DiagCode::SimulationError,
-                                format!("cannot evaluate $clog2 argument: {}", e),
-                                l, c,
-                            )
-                        })?;
-                        if val <= 1 {
-                            return Ok(IrExpr::Const(LogicVec::from_u64(0, 32)));
+                        match const_eval_params(arg, &self.param_vals) {
+                            Ok(val) => {
+                                if val <= 1 {
+                                    return Ok(IrExpr::Const(LogicVec::from_u64(0, 32)));
+                                }
+                                let n = val as u64;
+                                let msb = (64 - n.leading_zeros()) as u64;
+                                let result = if n.is_power_of_two() { msb - 1 } else { msb };
+                                Ok(IrExpr::Const(LogicVec::from_u64(result, 32)))
+                            }
+                            Err(e) => {
+                                // F40: argumen $clog2 runtime (sinyal / ekspresi
+                                // non-konstan seperti `$countones(wstrb)`) — emit
+                                // SysFunc runtime, bukan hard error. Engine
+                                // mengevaluasi $clog2 di runtime.
+                                let (l, c) = expr_location(arg);
+                                let _ = e;
+                                let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
+                                Ok(IrExpr::SysFunc {
+                                    name: Symbol::intern("$clog2"),
+                                    args: vec![ir_arg],
+                                    line: l,
+                                    col: c,
+                                })
+                            }
                         }
-                        let n = val as u64;
-                        let msb = (64 - n.leading_zeros()) as u64;
-                        let result = if n.is_power_of_two() { msb - 1 } else { msb };
-                        Ok(IrExpr::Const(LogicVec::from_u64(result, 32)))
                     } else {
                         Err(self.elab_diag(DiagCode::ParamMismatch, "$clog2 requires one argument"))
                     }
@@ -668,6 +709,29 @@ impl Elaborator {
                 args,
                 with_clause,
             } => {
+                // F36: receiver berupa instance (interface instance seperti
+                // `clk_if.set_period_ps(...)`) — tidak terdaftar sebagai signal
+                // karena instance interface di-flatten sebagai sub-module.
+                // Emit MethodCall dengan obj HierRef(inst); engine resolve dan
+                // no-op bila instance tidak punya method signal.
+                if let Expr::Ident { name, .. } = obj.as_ref() {
+                    if self.is_current_module_instance(name) {
+                        let ir_args: Result<Vec<IrExpr>, SimError> = args
+                            .iter()
+                            .map(|a| self.elaborate_expr(a, signal_map, signals))
+                            .collect();
+                        let ir_with = match with_clause {
+                            Some(wc) => Some(Box::new(self.elaborate_expr(wc, signal_map, signals)?)),
+                            None => None,
+                        };
+                        return Ok(IrExpr::MethodCall {
+                            obj: Box::new(IrExpr::HierRef(*name)),
+                            method: *method,
+                            args: ir_args?,
+                            with_clause: ir_with,
+                        });
+                    }
+                }
                 let ir_obj = self.elaborate_expr(obj, signal_map, signals)?;
                 let ir_args: Result<Vec<IrExpr>, SimError> = args
                     .iter()
@@ -1119,10 +1183,43 @@ impl Elaborator {
                     {
                         return Ok(ir);
                     }
-                    Err(self.elab_diag_at(DiagCode::ModuleNotFound, format!(
-                        "function '{}' not found (not a DPI import)",
-                        name
-                    ), expr_location(expr).0, expr_location(expr).1))
+                    // Fungsi eksternal/DPI yang TIDAK terdaftar (mis.
+                    // `riscv_cosim_step`/`otbn_model_*` dari .svh yang tidak
+                    // ter-include, fungsi UVM helper) → warning + stub
+                    // DpiCall (engine return 0) agar elaborasi tidak gagal.
+                    // Perbaikan global: fungsi C eksternal tidak bisa
+                    // dieksekusi maria — degrade ke stub dengan warning
+                    // eksplisit, bukan hard error yang mematikan modul.
+                    // HANYA bila design mendeklarasikan DPI import (konteks
+                    // C eksternal nyata); tanpa DPI import, function tak
+                    // dikenal tetap hard error (E3001) — regresi test
+                    // `test_elab_err_func_not_found_*`.
+                    if !self.design_has_dpi_imports() {
+                        return Err(self.elab_diag_at(
+                            DiagCode::ModuleNotFound,
+                            format!("function '{}' not found", name),
+                            expr_location(expr).0,
+                            expr_location(expr).1,
+                        ));
+                    }
+                    self.elab_warn_at(
+                        DiagCode::ModuleNotFound,
+                        format!(
+                            "function '{}' not found (not a DPI import) — treated as external DPI stub (returns 0)",
+                            name
+                        ),
+                        expr_location(expr).0,
+                        expr_location(expr).1,
+                    );
+                    let ir_args: Result<Vec<IrExpr>, SimError> = args
+                        .iter()
+                        .map(|a| self.elaborate_expr(a, signal_map, signals))
+                        .collect();
+                    Ok(IrExpr::DpiCall {
+                        name: *name,
+                        args: ir_args?,
+                        return_width: 32,
+                    })
                 }
             }
             // Struct assignment pattern sebagai nilai utuh (inisialisasi var
@@ -1293,7 +1390,7 @@ impl Elaborator {
         line: usize,
         col: usize,
     ) -> Result<IrExpr, SimError> {
-        let func = self
+        let func = match self
             .package_symbols
             .get(pkg_name)
             .and_then(|items| items.get(func_name))
@@ -1303,13 +1400,34 @@ impl Elaborator {
                 } else {
                     None
                 }
-            })
-            .ok_or_else(|| {
-                self.elab_diag_at(DiagCode::ModuleNotFound, format!(
-                    "function '{}' not found in package '{}'",
-                    func_name, pkg_name
-                ), line, col)
-            })?;
+            }) {
+            Some(f) => f,
+            None => {
+                // Fungsi package yang tidak ditemukan (mis.
+                // `cip_base_pkg::get_rand_lc_tx_val` — helper UVM dari package
+                // yang tidak tersedia di design) → warning + stub DpiCall
+                // (engine return 0). Perbaikan global: elaborasi tetap lanjut,
+                // bukan skip modul.
+                self.elab_warn_at(
+                    DiagCode::ModuleNotFound,
+                    format!(
+                        "function '{}' not found in package '{}' — treated as external DPI stub (returns 0)",
+                        func_name, pkg_name
+                    ),
+                    line,
+                    col,
+                );
+                let ir_args: Result<Vec<IrExpr>, SimError> = args
+                    .iter()
+                    .map(|a| self.elaborate_expr(a, signal_map, signals))
+                    .collect();
+                return Ok(IrExpr::DpiCall {
+                    name: Symbol::intern(&format!("{}::{}", pkg_name, func_name)),
+                    args: ir_args?,
+                    return_width: 32,
+                });
+            }
+        };
 
         // Find return expression
         let ret_expr = func
@@ -1818,6 +1936,111 @@ impl Elaborator {
     /// F27: apakah `name` adalah nama instance interface di module yang sedang
     /// dielaborasi (bukan signal). Dipakai koneksi port `.b(b)` agar instance
     /// interface bisa disambungkan ke port interface child module.
+    /// Verilog-2001 implicit net: identifier TAK DIKENAL yang dipakai sebagai
+    /// koneksi port instance otomatis menjadi wire 1-bit (aturan implicit net
+    /// untuk koneksi output/inout). Contoh OpenTitan: `prim_sec_anchor_buf u
+    /// (.out_o({diff_n_buf, diff_p_buf}))` — `diff_n_buf`/`diff_p_buf` tidak
+    /// dideklarasikan di module tapi sah; pola sama untuk `scanmode` di
+    /// chip_earlgrey_cw340 dan `es_rng_fips` di chip_darjeeling_asic. Tidak
+    /// menyentuh: konstanta (param_vals/pkg_param_ctx), system `$`, `this`,
+    /// `uvm_test_top`, nama instance interface (ditangani terpisah), dan
+    /// hier-ref (nama mengandung `.`).
+    pub(crate) fn implicit_declare_port_idents(
+        &self,
+        expr: &Expr,
+        signal_map: &mut HashMap<Symbol, SignalId>,
+        signals: &mut Vec<SignalInfo>,
+        next_id: &mut SignalId,
+    ) {
+        fn walk(e: &Expr, out: &mut Vec<&str>) {
+            match e {
+                Expr::Ident { name, .. } => out.push(name.as_str()),
+                Expr::MemberAccess { obj, .. } => walk(obj, out),
+                Expr::BitSelect { expr, .. }
+                | Expr::RangeSelect { expr, .. }
+                | Expr::PartSelect { expr, .. }
+                | Expr::Paren(expr) => walk(expr, out),
+                Expr::Concat(parts) => {
+                    for p in parts {
+                        walk(p, out);
+                    }
+                }
+                Expr::Replicate { expr, .. } => walk(expr, out),
+                Expr::UnaryOp { expr, .. } => walk(expr, out),
+                Expr::BinaryOp { lhs, rhs, .. } => {
+                    walk(lhs, out);
+                    walk(rhs, out);
+                }
+                Expr::TernaryOp {
+                    cond,
+                    true_expr,
+                    false_expr,
+                    ..
+                } => {
+                    walk(cond, out);
+                    walk(true_expr, out);
+                    walk(false_expr, out);
+                }
+                _ => {}
+            }
+        }
+        let mut names = Vec::new();
+        walk(expr, &mut names);
+        for name in names {
+            if name.starts_with('$')
+                || name == "this"
+                || name == "uvm_test_top"
+                || name.contains('.')
+                || name.contains('[')
+            {
+                continue;
+            }
+            let sym = Symbol::intern(name);
+            if signal_map.contains_key(&sym) {
+                continue;
+            }
+            if self.param_vals.contains_key(&sym) || self.pkg_param_ctx.contains_key(&sym) {
+                continue;
+            }
+            if self.is_interface_instance(name) {
+                continue;
+            }
+            let sid = *next_id;
+            *next_id += 1;
+            signal_map.insert(sym, sid);
+            signals.push(SignalInfo {
+                name: sym,
+                width: 1,
+                kind: SignalKind::Wire,
+                net_type: NetType::Wire,
+                multi_driver: false,
+                init_val: maria_ir::LogicVec::fill(maria_ir::LogicVal::Z, 1),
+                array_depth: 1,
+                elem_width: 1,
+                array_dims: vec![],
+                class_name: None,
+                is_string: false,
+                is_mailbox: false,
+                is_semaphore: false,
+                is_real: false,
+                is_2state: false,
+                is_dynamic: false,
+                is_queue: false,
+                is_associative: false,
+                is_signed: false,
+                is_const: false,
+                msb: 0,
+                lsb: 0,
+                struct_fields: vec![],
+                packed_dims: vec![],
+                delay_rise: None,
+                delay_fall: None,
+                iface_type: None,
+                iface_modport: None,
+            });
+        }
+    }
+
     pub(crate) fn is_interface_instance(&self, name: &str) -> bool {
         let Some(cur) = self.current_module else {
             return false;

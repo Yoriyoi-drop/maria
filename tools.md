@@ -1,4 +1,4 @@
-10 CLI Tools Maria
+11 CLI Tools Maria
 1. minspect
 
 Maria Inspect
@@ -180,6 +180,37 @@ CPU
 Cache hit
 
 Parser throughput
+11. synth
+
+Synthesis Tool (SYNTHESIS.md — flow ala Vivado). Nama lama: `msynth` (alias).
+
+Fungsi
+
+Synthesizability check (SYN-1..9)
+Lowering RTL → SIR (node-based, `maria-sir`)
+Pass manager optimizer (const fold, arith, mux, CSE, DCE)
+SIR → generic netlist (`maria-netlist` — 1-driver/N-load DAG)
+Netlist `.mvnet` / `netlist.v` / `netlist.json`
+Utilization report
+
+Contoh
+
+maria synth rtl/counter.sv --top counter --emit-mvnet
+maria synth rtl/ --check-only
+maria synth rtl/counter.sv --dump-sir
+maria synth rtl/alu.sv --dump-sir-opt --preset generic
+maria synth rtl/counter.sv --top counter --dump-netlist
+maria synth rtl/counter.sv --top counter --emit-netlist
+
+Output
+
+Skor sintesizability
+Dump SIR sebelum & setelah optimasi (--dump-sir / --dump-sir-opt)
+Dump netlist generik (--dump-netlist)
+Emit netlist ke file: `counter.netlist.v` / `.mvnet` / `.json` (--emit-netlist)
+Pass manager: const fold, arith, mux, CSE, DCE (--preset generic|fpga|asic|custom)
+FF / LUT / CARRY4 / BRAM / DSP
+Netlist gate-level — bisa disimulasikan engine Maria (hasil = sim RTL)
 10 GUI Tools Maria
 1. Project Explorer
 

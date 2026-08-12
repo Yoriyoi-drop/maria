@@ -32,3 +32,6 @@ mod edge_tests;
 
 #[cfg(test)]
 mod debug_lexer;
+
+#[cfg(test)]
+mod synth_phase4;

@@ -1,6 +1,72 @@
 use super::*;
 use crate::simulator::logicvec_to_string;
 
+// === 0. Function/task port dengan tipe user-defined packed range ===
+// (regresi: `input w32 [7:0] h_i` di-parse sebagai DUA port `w32` dan `h_i`
+// → formal tidak ter-substitusi saat inline → error E2001 `h_i` di lokasi
+// deklarasi formal. Fix: inner loop parse_function/parse_task break bila
+// ident diikuti `[range]` yang lalu diikuti ident (pola tipe).)
+
+#[test]
+fn test_edge_func_port_typedef_packed_array() {
+    let result = compile_str(
+        r#"
+module top;
+  typedef logic [31:0] w32;
+  function automatic w32 [7:0] f(input w32 w, input w32 k, input w32 [7:0] h_i);
+    w32 sigma_1;
+    sigma_1 = (h_i[4] >> 6) ^ (h_i[4] >> 11);
+    f[7] = sigma_1 + k + w;
+    f[0] = w;
+  endfunction
+  logic [31:0] w256_q, k;
+  logic [31:0] hash256_q [7:0];
+  logic [31:0] d [7:0];
+  always_comb d = f(w256_q, k, hash256_q);
+  initial #1 $finish;
+endmodule"#,
+    );
+    assert!(result.is_ok(), "func typedef packed port: {:?}", result.err());
+}
+
+#[test]
+fn test_edge_func_port_typedef_packed_scalar() {
+    let result = compile_str(
+        r#"
+module top;
+  typedef logic [31:0] w32;
+  function automatic w32 f(input w32 [7:0] h_i);
+    f = h_i[1];
+  endfunction
+  logic [31:0] hash256_q [7:0];
+  logic [31:0] d;
+  always_comb d = f(hash256_q);
+  initial #1 $finish;
+endmodule"#,
+    );
+    assert!(result.is_ok(), "func typedef packed scalar: {:?}", result.err());
+}
+
+#[test]
+fn test_edge_task_port_typedef_packed_array() {
+    let result = compile_str(
+        r#"
+module top;
+  typedef logic [7:0] byte_t;
+  task automatic t(input byte_t [3:0] a, output byte_t [3:0] b);
+    b = a;
+  endtask
+  logic [7:0] x [3:0];
+  logic [7:0] y [3:0];
+  initial begin
+    t(x, y);
+    #1 $finish;
+  end
+endmodule"#,
+    );
+    assert!(result.is_ok(), "task typedef packed port: {:?}", result.err());
+}
+
 // === 1. Zero-width / edge-width vectors ===
 
 #[test]

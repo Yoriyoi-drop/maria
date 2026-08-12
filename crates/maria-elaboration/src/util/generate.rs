@@ -126,13 +126,21 @@ pub fn expand_all_generates(
     source_lines: &[String],
     source_file: &str,
 ) -> Result<(), ElabError> {
+    if std::env::var("DBG_GEN").is_ok() {
+        eprintln!("DBG-GEN: expand_all_generates start '{}' items={}", module.name.as_str(), module.items.len());
+    }
     let mut i = 0;
     let mut total_items = 0usize;
+    let mut expand_count = 0usize;
     while i < module.items.len() {
         if let ModuleItem::Generate(gen) = &module.items[i] {
             match expand_generate_block(gen, param_vals, diag_sink, source_lines, source_file) {
                 Ok(expanded) => {
                     total_items += expanded.len();
+                    expand_count += 1;
+                    if std::env::var("DBG_GEN").is_ok() && expand_count % 100 == 0 {
+                        eprintln!("DBG-GEN: '{}' expands={} total={} items={}", module.name.as_str(), expand_count, total_items, module.items.len());
+                    }
                     if total_items > MAX_GENERATED_ITEMS {
                         return Err(ElabError::new(
                             format!("generate expansion exceeded limit ({} items)", MAX_GENERATED_ITEMS),

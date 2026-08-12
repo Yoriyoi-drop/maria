@@ -122,6 +122,12 @@ pub struct Elaborator {
     /// Konstanta package ter-evaluasi (kualifikasi `pkg::name`): skalar & array.
     pub pkg_const_scalars: HashMap<Symbol, i64>,
     pub pkg_const_arrays: HashMap<Symbol, Vec<i64>>,
+    /// Index konstanta STRUCT package per base name (`name` → fields),
+    /// dibangun SEKALI dari `pkg_const_scalars` (key `pkg::name.<field>`).
+    /// Dipakai body-param loop untuk default param berbentuk ident
+    /// (`Info = PartInfoDefault`) — lookup O(1), bukan scan map per param
+    /// (bottleneck ~30k key × ribuan param di OpenTitan).
+    pub pkg_struct_ref_index: HashMap<Symbol, Vec<SField>>,
     /// Context package global (qualified `pkg::name` + enum members) yang
     /// dihitung SEKALI per compile. Tidak bergantung pada module sehingga bisa
     /// dipakai bersama (clone) oleh semua module — menghindari rescan semua
@@ -152,7 +158,10 @@ pub struct Elaborator {
     pub func_source_pkg: HashMap<Symbol, HashMap<Symbol, Symbol>>,    pub source_lines: Vec<String>,
     pub source_file: String,
     pub current_module: Option<Symbol>,
-    /// Top-level tidak bisa di-resolve secara unik (multiple candidate tops,
+    /// Set module reachable dari top (F38). Error elaborasi di module yang
+    /// TIDAK ada di set ini (TB/DV terpisah, dependensi hilang) di-downgrade
+    /// ke warning agar tidak memblokir cone RTL yang valid.
+    pub reachable: std::collections::HashSet<Symbol>,    /// Top-level tidak bisa di-resolve secara unik (multiple candidate tops,
     /// circular hierarchy, atau root module tidak ada) dan fallback recovery
     /// terpaksa dipakai. Dipakai main.rs untuk menonaktifkan simulasi/VCD:
     /// mode analisis berhasil (diagnostik dilaporkan), tapi desain tidak
@@ -169,6 +178,16 @@ pub struct Elaborator {
 impl Elaborator {
     pub fn new(design: Design) -> Self {
         Self::with_source(design, Vec::new(), String::new())
+    }
+
+    /// F38: apakah module yang sedang di-elaborasi termasuk cone reachable
+    /// dari top. False untuk TB/DV terpisah atau module dgn dependensi hilang
+    /// — error-nya di-downgrade ke warning agar tidak memblokir cone valid.
+    pub(crate) fn is_current_module_reachable(&self) -> bool {
+        match self.current_module {
+            Some(m) => self.reachable.contains(&m),
+            None => true,
+        }
     }
 
     pub fn with_source(design: Design, source_lines: Vec<String>, source_file: String) -> Self {
@@ -191,7 +210,18 @@ impl Elaborator {
                 };
                 items.insert(name, item.clone());
             }
-            package_symbols.insert(pkg.name, items);
+            // Package dengan nama yang SAMA bisa muncul dari beberapa top
+            // (OpenTitan: `tl_main_pkg` ada di top_darjeeling + top_earlgrey +
+            // top_englishbreakfast dengan item yang BERBEDA — mis.
+            // `ADDR_SPACE_ROM_CTRL0__ROM` hanya ada di copy darjeeling).
+            // Overwrite total membuat referensi `tl_main_pkg::X` dari top yang
+            // bukan copy pertama gagal "not found in package". MERGE
+            // first-wins: item yang sudah ada dipertahankan, item baru (unik
+            // per copy) ditambahkan.
+            let pkg_items = package_symbols.entry(pkg.name).or_default();
+            for (k, v) in items {
+                pkg_items.entry(k).or_insert(v);
+            }
         }
         // Second pass: resolve imports within packages
         let imports: Vec<(Symbol, Symbol, Symbol)> = design
@@ -269,6 +299,32 @@ impl Elaborator {
         let (pkg_const_scalars, pkg_const_arrays) =
             maria_ast::const_eval_ext::eval_package_constants(&package_symbols);
 
+        // Index konstanta STRUCT package: key `pkg::name.<field>` di
+        // pkg_const_scalars → `name` → fields. Dibangun sekali agar body-param
+        // loop bisa resolve `Info = PartInfoDefault` via lookup O(1).
+        let mut pkg_struct_ref_index: HashMap<Symbol, Vec<SField>> = HashMap::new();
+        for (k, v) in &pkg_const_scalars {
+            let s = k.as_str();
+            if let Some(idx) = s.rfind("::") {
+                let after = &s[idx + 2..];
+                if let Some(dot) = after.find('.') {
+                    let base = &after[..dot];
+                    let field = &after[dot + 1..];
+                    // Field level-1 saja (key nested `base.sub.field` tidak
+                    // menghasilkan pseudo-field).
+                    if !base.is_empty() && !field.is_empty() && !field.contains('.') {
+                        let entry = pkg_struct_ref_index.entry(Symbol::intern(base)).or_default();
+                        if !entry
+                            .iter()
+                            .any(|f| f.name.map(|n| n.as_str() == field).unwrap_or(false))
+                        {
+                            entry.push(SField::named(Symbol::intern(field), CVal::Scalar(*v)));
+                        }
+                    }
+                }
+            }
+        }
+
         if std::env::var("DBG_ELAB").is_ok() {
             let gp = Symbol::intern("gpio_env_pkg");
             let dv = Symbol::intern("dv_utils_pkg");
@@ -285,6 +341,7 @@ impl Elaborator {
             package_symbols,
             pkg_const_scalars,
             pkg_const_arrays,
+            pkg_struct_ref_index,
             pkg_param_ctx: HashMap::new(),
             unit_import_ctx: HashMap::new(),
             pkg_plain_params: HashMap::new(),
@@ -296,6 +353,7 @@ impl Elaborator {
             source_lines,
             source_file,
             current_module: None,
+            reachable: std::collections::HashSet::new(),
             recovered: false,
 
             module_cache: HashMap::new(),
@@ -465,6 +523,9 @@ _ => {}
         }
         // Inline function calls in all modules
         for module in &mut self.design.modules {
+            if std::env::var("DBG_ELAB").is_ok() {
+                eprintln!("[DBG-ELAB] inline module '{}'", module.name.as_str());
+            }
             let temps = maria_ast::inline::inline_func_calls_in_module(module)?;
             for (name, width, typedef_name, carried_range, arr_range, arr_size) in temps {
                 module.decls.push(Decl {
@@ -590,6 +651,25 @@ _ => {}
                     queue.push_back(*top);
                     reachable.insert(*top);
                 }
+            } else if let Some(cand) = {
+                // Auto-top: module yang TIDAK diinstansiasi module lain
+                // (candidate top pertama — konsisten dgn pemilihan top di
+                // bagian bawah elaborate()). Reachability dihitung dari
+                // kandidat ini agar error di module mati (TB/DV terpisah,
+                // modul dengan dependensi hilang) tidak memblokir simulasi
+                // cone yang valid, sama seperti perilaku `--top`.
+                let mut instantiated: HashSet<Symbol> = HashSet::new();
+                for m in &self.design.modules {
+                    let mut insts = Vec::new();
+                    collect_instance_names(&m.items, &mut insts);
+                    for mn in insts {
+                        instantiated.insert(mn);
+                    }
+                }
+                self.design.modules.iter().find(|m| !instantiated.contains(&m.name))
+            } {
+                queue.push_back(cand.name);
+                reachable.insert(cand.name);
             } else if let Some(first) = self.design.modules.first() {
                 queue.push_back(first.name);
                 reachable.insert(first.name);
@@ -643,6 +723,7 @@ _ => {}
             }
             reachable
         };
+        self.reachable = reachable.clone();
 
         if std::env::var("DBG_ELAB").is_ok() {
             eprintln!("[DBG-ELAB] dead-module detection done in {:?} (reachable={})", elab_t0.elapsed(), reachable.len());
@@ -741,6 +822,19 @@ _ => {}
                             mod_name, diag.message
                         )
                         .into();
+                        // F38: module TIDAK reachable dari top (TB/DV terpisah,
+                        // dependensi hilang) — downgrade ke warning agar error
+                        // di module mati tidak memblokir cone RTL yang valid
+                        // (semantik Verilator; konsisten dgn pruning `--top`).
+                        if !reachable.contains(&mod_name) && !prune_unreachable {
+                            diag.level = DiagLevel::Warning;
+                            diag.code = DiagCode::UnusedSignal;
+                            diag.message = format!(
+                                "module '{}' is unreachable from top — elaboration issue treated as warning: {}",
+                                mod_name, e
+                            )
+                            .into();
+                        }
                         self.diag_sink.push(diag);
                     }
                 }
@@ -806,6 +900,17 @@ _ => {}
                         iface.name, diag.message
                     )
                     .into();
+                    // F38: interface TIDAK dipakai oleh cone reachable —
+                    // downgrade ke warning (sama seperti module unreachable).
+                    if !reachable.contains(&iface.name) && !prune_unreachable {
+                        diag.level = DiagLevel::Warning;
+                        diag.code = DiagCode::UnusedSignal;
+                        diag.message = format!(
+                            "interface '{}' is unreachable from top — elaboration issue treated as warning: {}",
+                            iface.name, e
+                        )
+                        .into();
+                    }
                     self.diag_sink.push(diag);
                     self.modules.insert(
                         iface.name,
@@ -2383,6 +2488,7 @@ impl Elaborator {
         param_vals: &HashMap<Symbol, i64>,
         type_param_overrides: &HashMap<Symbol, usize>,
     ) -> Result<IrModule, SimError> {
+        use std::collections::HashSet;
         let dbg_step = std::env::var("DBG_ELAB_STEP").is_ok();
         let step_t0 = std::time::Instant::now();
         let step_ck = |name: &str, t0: &std::time::Instant| {
@@ -2806,13 +2912,39 @@ impl Elaborator {
             // col & line (find_name_in_source mencari nama port di source).
             let port_name = port.name;
             let pwa = |port: &Port, ep: &HashMap<Symbol, i64>, sm: &HashMap<Symbol, SignalId>, sg: &[SignalInfo]| {
-                self.port_width_aware(port, ep, sm, sg).map_err(|e| {
-                    self.elab_diag_at(
-                        DiagCode::SimulationError,
-                        format!("width of port '{}' cannot be resolved: {}", port_name.as_str(), e),
-                        0, 0,
-                    )
-                })
+                self.port_width_aware(port, ep, sm, sg)
+                    .or_else(|e| {
+                        // Width port gagal di-resolve (mis. member access struct
+                        // `otp_lc_data_i.secrets_valid`, param package hilang,
+                        // virtual interface) → fallback lebar 1 + warning agar
+                        // modul tetap elaborate (bukan skip berantai). Port
+                        // bertipe interface tetap 64 (handle).
+                        let fb = if port.dtype_name.is_some() {
+                            let base = port
+                                .dtype_name
+                                .map(|tn| tn.as_str().split('.').next().unwrap_or(""))
+                                .unwrap_or("");
+                            if self.design.interfaces.iter().any(|i| i.name.as_str() == base) {
+                                64
+                            } else {
+                                1
+                            }
+                        } else {
+                            1
+                        };
+                        self.elab_warn_at(
+                            DiagCode::SimulationError,
+                            format!(
+                                "width of port '{}' cannot be resolved ({}) — fallback lebar {}",
+                                port_name.as_str(),
+                                e,
+                                fb
+                            ),
+                            0,
+                            0,
+                        );
+                        Ok::<usize, String>(fb)
+                    })
             };
             // F27: port bertipe interface (`bus_if b` / `bus_if.m b`) — port
             // handle 64-bit (pola virtual interface). Field interface diakses
@@ -2999,6 +3131,12 @@ impl Elaborator {
         // `name.field` bisa di-const-eval. `merged` = konstanta package
         // (qualified) + effective_params (plain, module menang).
         let mut struct_vals: HashMap<Symbol, Vec<SField>> = HashMap::new();
+        let mut struct_lit_done: HashSet<Symbol> = HashSet::new();
+        // Struct literal yang SUDAH berhasil diproses (masuk struct_vals ATAU
+        // effective_params) — mencegah loop tak berujung: tanpa penanda ini,
+        // struct literal selalu memenuhi kondisi proses tiap iterasi (skip
+        // condition di-skip untuk struct) sehingga `changed` selalu true dan
+        // `loop` tidak pernah break (timeout 600s pada full run).
         let mut merged: Scalars = self.pkg_const_scalars.clone();
         for (&k, &v) in &effective_params {
             merged.insert(k, v);
@@ -3006,8 +3144,45 @@ impl Elaborator {
         loop {
             let mut changed = false;
             for (pname, expr) in &body_param_defaults {
-                if effective_params.contains_key(pname) || struct_vals.contains_key(pname) {
+                // Struct literal TETAP diproses meski sudah ada di
+                // effective_params sebagai skalar fallback 0 (hasil
+                // resolve_param_values yang tak paham struct) — kalau di-skip,
+                // struct_vals tidak pernah terisi dan `Info.size`/
+                // `Info.zeroizable` gagal const-eval (otp_ctrl_part_buf).
+                // Namun jika sudah berhasil diproses (struct_lit_done /
+                // struct_vals), jangan proses ulang agar loop berhenti.
+                let is_struct_lit = matches!(expr, Expr::StructLit { .. });
+                // Default berbentuk ident yang mereferensikan konstanta struct
+                // package (`parameter part_info_t Info = PartInfoDefault`,
+                // `PartInfoDefault` = parameter struct di otp_ctrl_part_pkg
+                // dengan fields ter-flatten di pkg_const_scalars sbg key
+                // `pkg::PartInfoDefault.<field>`). resolve_param_values
+                // menjadikannya skalar 0 (struct tak paham skalar) sehingga
+                // `Info.size`/`Info.zeroizable` gagal — perlakukan seperti
+                // struct literal agar struct_vals terisi.
+                let is_struct_ref = !is_struct_lit
+                    && matches!(expr, Expr::Ident { .. } | Expr::ScopedIdent { .. })
+                    && ident_refs_pkg_struct(expr, &self.pkg_struct_ref_index);
+                let is_struct_like = is_struct_lit || is_struct_ref;
+                let already_done = if is_struct_like {
+                    struct_lit_done.contains(pname) || struct_vals.contains_key(pname)
+                } else {
+                    effective_params.contains_key(pname) || struct_vals.contains_key(pname)
+                };
+                if already_done {
                     continue;
+                }
+                // 0.5) Struct via referensi konstanta struct package
+                //     (`Info = PartInfoDefault`) — fields dari index package.
+                if is_struct_ref {
+                    if let Some(fields) =
+                        pkg_struct_fields_for_ref(expr, &self.pkg_struct_ref_index)
+                    {
+                        struct_vals.insert(*pname, fields);
+                        struct_lit_done.insert(*pname);
+                        changed = true;
+                        continue;
+                    }
                 }
                 // 1) Skalar via evaluator penuh ($bits(typedef), fungsi package,
                 //    member access struct package).
@@ -3020,6 +3195,9 @@ impl Elaborator {
                 ) {
                     effective_params.insert(*pname, val);
                     merged.insert(*pname, val);
+                    if is_struct_lit {
+                        struct_lit_done.insert(*pname);
+                    }
                     changed = true;
                     continue;
                 }
@@ -3032,6 +3210,7 @@ impl Elaborator {
                     &struct_vals,
                 ) {
                     struct_vals.insert(*pname, fields);
+                    struct_lit_done.insert(*pname);
                     changed = true;
                     continue;
                 }
@@ -3039,6 +3218,9 @@ impl Elaborator {
                 if let Ok(val) = const_eval_with_params(expr, &effective_params) {
                     effective_params.insert(*pname, val);
                     merged.insert(*pname, val);
+                    if is_struct_lit {
+                        struct_lit_done.insert(*pname);
+                    }
                     changed = true;
                     continue;
                 }
@@ -3052,12 +3234,87 @@ impl Elaborator {
                 ) {
                     effective_params.insert(*pname, val);
                     merged.insert(*pname, val);
+                    if is_struct_lit {
+                        struct_lit_done.insert(*pname);
+                    }
                     changed = true;
                 }
             }
             if !changed {
                 break;
             }
+        }
+        // Flatten struct localparam/parameter (`struct_vals`) ke key `name.field`
+        // di effective_params — agar member access struct dalam konteks konstanta
+        // (`Info.size*8-1:0` di lebar port, `Info.offset` di localparam, kondisi
+        // generate-if `Info.zeroizable` — pola otp_ctrl_part_buf/
+        // otp_ctrl_part_unbuf) bisa di-const-eval oleh const_eval_with_params,
+        // bukan hanya evaluator penuh yang membawa struct_vals.
+        for (base, fields) in &struct_vals {
+            let mut stack: Vec<(String, &CVal)> = Vec::new();
+            for f in fields {
+                if let Some(fname) = f.name {
+                    stack.push((
+                        format!("{}.{}", base.as_str(), fname.as_str()),
+                        &f.val,
+                    ));
+                }
+            }
+            while let Some((path, val)) = stack.pop() {
+                match val {
+                    CVal::Scalar(v) => {
+                        let key = Symbol::intern(&path);
+                        if !effective_params.contains_key(&key) {
+                            effective_params.insert(key, *v);
+                            merged.insert(key, *v);
+                        }
+                    }
+                    CVal::Array(elems) => {
+                        for (i, e) in elems.iter().enumerate() {
+                            stack.push((format!("{}[{}]", path, i), e));
+                        }
+                    }
+                    CVal::Struct(fs) => {
+                        for f in fs {
+                            if let Some(fname) = f.name {
+                                stack.push((
+                                    format!("{}.{}", path, fname.as_str()),
+                                    &f.val,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Fallback global: localparam/parameter body yang GAGAL dievaluasi
+        // (default `'x`, `$bits(member)` tak ter-resolve, referensi package
+        // DPI yang tidak ada — mis. `CYCLES_PER_SYMBOL = FREQ/BAUD` di uartdpi
+        // dengan FREQ/BAUD = 'x) tetap didaftarkan dengan nilai 1 agar
+        // referensi nama TIDAK menjadi "signal not found" (E2001). Array
+        // (Concat multi-elemen) dan struct literal dikecualikan — keduanya
+        // didaftarkan lewat jalur array/struct di atas.
+        for (pname, expr) in &body_param_defaults {
+            if effective_params.contains_key(pname) || struct_vals.contains_key(pname) {
+                continue;
+            }
+            if matches!(expr, Expr::Concat(parts) if parts.len() > 1) {
+                continue;
+            }
+            if matches!(expr, Expr::StructLit { .. }) {
+                continue;
+            }
+            self.elab_warn_at(
+                DiagCode::ModuleNotFound,
+                format!(
+                    "localparam '{}' gagal dievaluasi — fallback nilai 1 (referensi tidak dapat di-const-eval)",
+                    pname.as_str()
+                ),
+                0,
+                0,
+            );
+            effective_params.insert(*pname, 1);
+            merged.insert(*pname, 1);
         }
         // Daftarkan nama struct localparam/parameter (yang tersimpan di
         // `struct_vals`) ke `effective_params` dengan nilai placeholder 0.
@@ -3080,8 +3337,31 @@ impl Elaborator {
             for item in &module.items {
                 match item {
                     ModuleItem::Generate(gen) => {
-                        let expanded = expand_generate_block(gen, &effective_params, &self.diag_sink, &self.source_lines, &self.source_file)
-                            .map_err(|e| self.elab_diag_at(DiagCode::InvalidSyntax, format!("generate block expansion failed: {}", e.msg), e.line, e.col))?;
+                        let expanded =
+                            match expand_generate_block(gen, &effective_params, &self.diag_sink, &self.source_lines, &self.source_file)
+                            {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    // Sama seperti design-level pass
+                                    // (expand_all_generates): blok generate yang
+                                    // gagal diekspansi (limit for merujuk param
+                                    // yang tak bisa di-const-eval) dilewati
+                                    // dengan warning, bukan mematikan seluruh
+                                    // modul. Modul tetap elaborate tanpa blok
+                                    // ini — perilaku degrade konsisten global.
+                                    self.elab_warn_at(
+                                        DiagCode::InvalidSyntax,
+                                        format!(
+                                            "generate block expansion skipped in '{}': {}",
+                                            module.name.as_str(),
+                                            e.msg
+                                        ),
+                                        e.line,
+                                        e.col,
+                                    );
+                                    Vec::new()
+                                }
+                            };
                         // Collect params from expanded generate items too
                         for ei in &expanded {
                             if let ModuleItem::Param(p) = ei {
@@ -3117,21 +3397,30 @@ impl Elaborator {
         // (bisa saling referensi + referensi param lain).
         for _ in 0..64 {
             let mut changed = false;
-            let typedefs = module
-                .items
-                .iter()
-                .chain(expanded_items.iter())
-                .filter_map(|item| {
-                    if let ModuleItem::Typedef(td) = item {
-                        if let DataType::EnumType { members, .. } = &td.dtype {
-                            Some(members.clone())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
+            // Enum member dari: (1) typedef di items (+ hasil generate),
+            // (2) enum INLINE di deklarasi signal (`enum logic [2:0]{RAM,
+            // DEBUG, ROM, UNMAP, IDLE_READ} select_rdata_d;` — mm_ram.sv).
+            // Parser menaruh deklarasi signal di `module.decls` DAN
+            // `module.items`, jadi dua-duanya di-scan. Member dipakai sebagai
+            // nilai di statement (`select_rdata_d = IDLE_READ`) dan range;
+            // tanpa registrasi → "signal 'IDLE_READ' not found".
+            let mut typedefs: Vec<Vec<(Symbol, Option<Expr>)>> = Vec::new();
+            for item in module.items.iter().chain(expanded_items.iter()) {
+                if let ModuleItem::Typedef(td) = item {
+                    if let DataType::EnumType { members, .. } = &td.dtype {
+                        typedefs.push(members.clone());
                     }
-                });
+                } else if let ModuleItem::Decl(d) = item {
+                    if let DataType::EnumType { members, .. } = &d.dtype {
+                        typedefs.push(members.clone());
+                    }
+                }
+            }
+            for d in &module.decls {
+                if let DataType::EnumType { members, .. } = &d.dtype {
+                    typedefs.push(members.clone());
+                }
+            }
             for members in typedefs {
                 let mut last = 0i64;
                 for (member_name, member_expr) in members {
@@ -3221,6 +3510,32 @@ impl Elaborator {
                     kind: d.kind.clone(),
                     names: new_vars,
                 });
+            }
+        }
+        // Procedural LOCALPARAM block-scoped (`localparam logic [4:0] X =
+        // const_expr;` di dalam for/begin block — otp_ctrl_scrmbl) didaftarkan
+        // sebagai signal oleh loop di atas, TAPI nilainya juga wajib masuk
+        // param context agar referensi `X` di statement ter-fold jadi
+        // konstanta (elaborator/expr.rs fold ident yang ada di param_vals) —
+        // kalau hanya signal, nilai tetap X. Const-eval fixed-point agar
+        // localparam bisa saling mereferensikan.
+        for _ in 0..32 {
+            let mut changed = false;
+            for d in &all_decls {
+                for var in &d.names {
+                    if effective_params.contains_key(&var.name) {
+                        continue;
+                    }
+                    if let Some(expr) = &var.expr {
+                        if let Ok(v) = const_eval_with_params(expr, &effective_params) {
+                            effective_params.insert(var.name, v);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
             }
         }
 
@@ -3762,6 +4077,64 @@ impl Elaborator {
                 }
             }
         }
+        // PRE-PASS implicit net: Verilog-2001 mengizinkan ident TAK dikenal
+        // dalam koneksi port OUTPUT/INOUT instance menjadi implicit wire.
+        // Koneksi input yang MENGONSUMSI ident tersebut boleh muncul LEBIH
+        // DULU di source (chip_earlgrey `scanmode`, chip_darjeeling
+        // `es_rng_fips`): `.scanmode_i(scanmode)` di baris 421 sebelum
+        // `.dft_scan_md_o(scanmode)` di baris 1014). Tanpa pre-pass, konsumsi
+        // input gagal resolve → E2001. Scan SEMUA instance dulu (lebar 1-bit,
+        // di-upgrade di `implicit_declare_port_idents` saat koneksi output
+        // diproses) — helper idempoten, jadi tidak dobel.
+        for pre_item in &expanded_items {
+            let ModuleItem::Instance(pre_inst) = pre_item else {
+                continue;
+            };
+            let pre_target = module_idx
+                .get(&pre_inst.module_name)
+                .and_then(|&i| self.design.modules.get(i));
+            let Some(pre_tm) = pre_target else {
+                continue;
+            };
+            for (i, conn) in pre_inst.port_conns.iter().enumerate() {
+                let out_like: Option<(bool, &Expr)> = match conn {
+                    PortConnection::Positional(expr) => pre_tm
+                        .ports
+                        .get(i)
+                        .map(|p| {
+                            (
+                                matches!(
+                                    p.direction,
+                                    PortDirection::Output | PortDirection::Inout
+                                ),
+                                expr,
+                            )
+                        }),
+                    PortConnection::Named { port, expr } => pre_tm
+                        .ports
+                        .iter()
+                        .find(|p| p.name == *port)
+                        .map(|p| {
+                            (
+                                matches!(
+                                    p.direction,
+                                    PortDirection::Output | PortDirection::Inout
+                                ),
+                                expr,
+                            )
+                        }),
+                };
+                if let Some((true, e)) = out_like {
+                    self.implicit_declare_port_idents(
+                        e,
+                        &mut signal_map,
+                        &mut signals,
+                        &mut next_id,
+                    );
+                }
+            }
+        }
+
         for item in &expanded_items {
             match item {
                 ModuleItem::Always(always) => {
@@ -3774,7 +4147,11 @@ impl Elaborator {
                             // signal-nya, TAPI error dipertahankan level aslinya
                             // (Error). Error di satu tempat bersifat GLOBAL: gate di
                             // main.rs memblokir simulasi & VCD sampai semua bersih.
-                            let diag = e.to_diagnostic();
+                            // F38: module unreachable → downgrade ke warning.
+                            let mut diag = e.to_diagnostic();
+                            if !self.is_current_module_reachable() {
+                                diag.level = DiagLevel::Warning;
+                            }
                             self.diag_sink.push(diag);
                         }
                     }
@@ -3793,7 +4170,10 @@ impl Elaborator {
                         }
                         Err(e) => {
                             // Error GLOBAL (lihat komentar di Always).
-                            let diag = e.to_diagnostic();
+                            let mut diag = e.to_diagnostic();
+                            if !self.is_current_module_reachable() {
+                                diag.level = DiagLevel::Warning;
+                            }
                             self.diag_sink.push(diag);
                         }
                     }
@@ -3812,7 +4192,10 @@ impl Elaborator {
                         }
                         Err(e) => {
                             // Error GLOBAL (lihat komentar di Always).
-                            let diag = e.to_diagnostic();
+                            let mut diag = e.to_diagnostic();
+                            if !self.is_current_module_reachable() {
+                                diag.level = DiagLevel::Warning;
+                            }
                             self.diag_sink.push(diag);
                         }
                     }
@@ -4059,6 +4442,23 @@ impl Elaborator {
                                 PortConnection::Positional(expr) => {
                                     if let Some(tm) = target_module {
                                         if let Some(port) = tm.ports.get(i) {
+                                            // Verilog-2001 implicit net: ident tak
+                                            // dikenal dalam koneksi OUTPUT/INOUT port
+                                            // jadi wire 1-bit (prim_diff_encode
+                                            // `diff_n_buf`, chip_* `scanmode`/
+                                            // `es_rng_fips`). Input port TETAP error
+                                            // (sesuai LRM & test regresi).
+                                            if matches!(
+                                                port.direction,
+                                                PortDirection::Output | PortDirection::Inout
+                                            ) {
+                                                self.implicit_declare_port_idents(
+                                                    expr,
+                                                    &mut signal_map,
+                                                    &mut signals,
+                                                    &mut next_id,
+                                                );
+                                            }
                                             let sig_id = self.instance_port_expr_to_signal(
                                                 expr,
                                                 &signal_map,
@@ -4072,6 +4472,29 @@ impl Elaborator {
                                     }
                                 }
                                 PortConnection::Named { port, expr } => {
+                                    // Implicit net hanya untuk output/inout port
+                                    // (aturan Verilog-2001).
+                                    let is_output_like = target_module
+                                        .and_then(|tm| {
+                                            tm.ports
+                                                .iter()
+                                                .find(|p| p.name == *port)
+                                        })
+                                        .map(|p| {
+                                            matches!(
+                                                p.direction,
+                                                PortDirection::Output | PortDirection::Inout
+                                            )
+                                        })
+                                        .unwrap_or(false);
+                                    if is_output_like {
+                                        self.implicit_declare_port_idents(
+                                            expr,
+                                            &mut signal_map,
+                                            &mut signals,
+                                            &mut next_id,
+                                        );
+                                    }
                                     let sig_id = self.instance_port_expr_to_signal(
                                         expr,
                                         &signal_map,
@@ -4653,4 +5076,32 @@ pub(crate) fn collect_procedural_decls(stmts: &[Stmt], out: &mut Vec<Decl>) {
             _ => {}
         }
     }
+}
+
+/// Cek apakah default param berbentuk ident yang mereferensikan konstanta
+/// STRUCT package — ada di index `pkg_struct_ref_index` (base name → fields,
+/// dibangun sekali dari key `pkg::name.<field>` di pkg_const_scalars).
+/// Contoh: `parameter part_info_t Info = PartInfoDefault;` — `PartInfoDefault`
+/// adalah parameter struct di `otp_ctrl_part_pkg`.
+fn ident_refs_pkg_struct(expr: &Expr, index: &HashMap<Symbol, Vec<SField>>) -> bool {
+    let base = match expr {
+        Expr::Ident { name, .. } => name.as_str(),
+        Expr::ScopedIdent { item, .. } => item.as_str(),
+        _ => return false,
+    };
+    index.contains_key(&Symbol::intern(base))
+}
+
+/// Ambil fields struct untuk default param berbentuk ident yang
+/// mereferensikan konstanta struct package — dari index package (O(1)).
+fn pkg_struct_fields_for_ref(
+    expr: &Expr,
+    index: &HashMap<Symbol, Vec<SField>>,
+) -> Option<Vec<SField>> {
+    let base = match expr {
+        Expr::Ident { name, .. } => name.as_str(),
+        Expr::ScopedIdent { item, .. } => item.as_str(),
+        _ => return None,
+    };
+    index.get(&Symbol::intern(base)).cloned()
 }

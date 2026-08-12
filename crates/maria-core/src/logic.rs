@@ -235,6 +235,22 @@ impl LogicVec {
         true
     }
 
+    /// LRM 1800-2017 §12.5.1: operands case `case` dibandingkan dengan lebar
+    /// operand TERLEBAR — yang lebih sempit di-zero-extend dulu. `PartialEq`
+    /// (derived) membandingkan `bits` DAN `width` sehingga `6'd1` (width 32
+    /// bila lebar literal hilang) tidak pernah cocok dengan signal 6-bit.
+    /// Method ini membandingkan NILAI dengan zero-extension ke max width.
+    pub fn case_val_eq(&self, other: &LogicVec) -> bool {
+        for i in 0..self.width.max(other.width) {
+            let val = self.bits.get(i).copied().unwrap_or(LogicVal::Zero);
+            let pat = other.bits.get(i).copied().unwrap_or(LogicVal::Zero);
+            if val != pat {
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn case_eq(&self, other: &LogicVec) -> LogicVec {
         let eq = self.bits == other.bits;
         LogicVec::from_u64(if eq { 1 } else { 0 }, 1)

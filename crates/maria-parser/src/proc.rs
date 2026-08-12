@@ -83,6 +83,14 @@ impl Parser {
             _ => unreachable!(),
         };
 
+        // Skip attribute annotations after the keyword, e.g.
+        // `always_ff (* xprop_off *) @(posedge clk)` (OpenTitan AST/SVA).
+        // Tanpa ini, `(*` dianggap awal blok statement → sensitivity list
+        // hilang → "always_ff requires sensitivity list".
+        if self.peek() == &Token::LParen && self.peek_ahead(1) == &Token::Star {
+            self.skip_attribute();
+        }
+
         let sensitivity = if self.peek() == &Token::At {
             self.advance();
             Some(self.parse_sensitivity_list()?)
@@ -444,7 +452,7 @@ impl Parser {
                     // dan ident setelah `]` adalah nama port. Tanpa break di
                     // sini, `foo_t` dimakan sebagai nama port pertama & `name`
                     // sebagai port kedua → formal bergeser → error E2001.
-                    if matches!(self.peek_ahead(1), Token::Ident(_))
+                    if matches!(self.peek_ahead(1), Token::Ident(_) | Token::Scope)
                         || (self.peek_ahead(1) == &Token::LBrack
                             && self.peek_packed_range_followed_by_ident())
                     {
@@ -453,11 +461,21 @@ impl Parser {
                     let pn = *pname;
                     self.advance();
                     self.skip_unpacked_dims()?;
+                    // F43: default port (`task f(int x = 5, bit r = 1'b1)`) —
+                    // tangkap ekspresi default agar inline bisa memberi nilai
+                    // saat call tidak me-pass port ini.
+                    let default = if self.peek() == &Token::BlockingAssign {
+                        self.advance();
+                        Some(self.parse_expr(0)?)
+                    } else {
+                        None
+                    };
                     ports.push(FunctionPort {
                         name: pn,
                         range: range.clone(),
                         expr_range: expr_range.clone(),
                         direction: last_direction,
+                        default,
                     });
                     if self.peek() == &Token::Comma {
                         self.advance();
@@ -526,7 +544,7 @@ impl Parser {
                         }
                         self.advance();
                     }
-                    let port_range = if self.peek() == &Token::LBrack {
+                    let mut port_range = if self.peek() == &Token::LBrack {
                         let er = self.parse_port_dims()?; // `[msb:lsb]` atau skip unpacked
                         er.as_ref().and_then(|er| {
                             if let (Ok(m), Ok(l)) =
@@ -545,24 +563,54 @@ impl Parser {
                     } else {
                         None
                     };
-                    while let Token::Ident(pname) = self.peek() {
-                        // Pola `foo_t [7:0] name` — ident pertama adalah TIPE
-                        // user-defined (bukan nama port); loop luar yang
-                        // menangani tipe/range berikutnya. Sama seperti jalur
-                        // ANSI (lihat komentar panjang di parse_function).
-                        if self.peek_ahead(1) == &Token::LBrack
-                            && self.peek_packed_range_followed_by_ident()
-                        {
-                            break;
+                    // Tipe user-defined non-ANSI: `input foo_t a;` atau
+                    // `input foo_t [7:0] a;` — `foo_t` bukan keyword dasar,
+                    // jadi loop keyword di atas tidak mengkonsumsinya. Konsumsi
+                    // tipe (dan packed range) DI SINI agar inner loop hanya
+                    // melihat nama port. Catatan: break di inner loop saja
+                    // TIDAK cukup — `foo_t` yang tersisa membuat loop luar
+                    // `Token::Ident` dengan peek_ahead(1)=LBrack jatuh ke
+                    // `_ => break` → seluruh port list berhenti & sisa
+                    // deklarasi masuk body → error E1005/E2001.
+                    if matches!(self.peek(), Token::Ident(_))
+                        && (matches!(self.peek_ahead(1), Token::Ident(_))
+                            || (self.peek_ahead(1) == &Token::LBrack
+                                && self.peek_packed_range_followed_by_ident()))
+                    {
+                        self.advance(); // konsumsi tipe `foo_t`
+                        if self.peek() == &Token::LBrack {
+                            if let Some(er) = self.parse_port_dims()? {
+                                // `er` sudah ExprRange (bukan Option) — langsung
+                                // pakai msb/lsb, jangan `.as_ref()` (E0599).
+                                port_range = if let (Ok(m), Ok(l)) =
+                                    (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
+                                {
+                                    Some(Range {
+                                        msb: m as usize,
+                                        lsb: l as usize,
+                                    })
+                                } else {
+                                    None
+                                };
+                            }
                         }
+                    }
+                    while let Token::Ident(pname) = self.peek() {
                         let pn = *pname;
                         self.advance();
                         self.skip_unpacked_dims()?;
+                        let default = if self.peek() == &Token::BlockingAssign {
+                            self.advance();
+                            Some(self.parse_expr(0)?)
+                        } else {
+                            None
+                        };
                         ports.push(FunctionPort {
                             name: pn,
                             range: port_range.clone(),
                             expr_range: None,
                             direction: Some(direction),
+                            default,
                         });
                         if self.peek() == &Token::Comma {
                             self.advance();
@@ -591,6 +639,11 @@ impl Parser {
                     // koma pertama → parse_function Err → method class tidak
                     // terdaftar → build_phase (berisi uvm_config_db::set)
                     // hilang diam-diam. Sama seperti is_decl_stmt_start.
+                    // F35: pola `sp2v_e [NumSlicesCtr-1:0] out;` — tipe
+                    // user-defined dengan packed range diikuti nama variabel
+                    // (`peek_packed_range_followed_by_ident`). Sebelumnya
+                    // jatuh ke `_ => break` → deklarasi masuk body statement
+                    // → inliner tidak rename → E2001 'out' not found.
                     match self.peek_ahead(1) {
                         Token::Ident(_) | Token::Scope => {
                             let is_scoped_call = matches!(self.peek_ahead(1), Token::Scope)
@@ -598,6 +651,10 @@ impl Parser {
                             if is_scoped_call {
                                 break;
                             }
+                            let decl = self.parse_decl()?;
+                            decls.push(decl);
+                        }
+                        Token::LBrack if self.peek_packed_range_followed_by_ident() => {
                             let decl = self.parse_decl()?;
                             decls.push(decl);
                         }
@@ -793,13 +850,38 @@ impl Parser {
                     None
                 };
                 while let Token::Ident(pname) = self.peek() {
+                    // Pola `foo_t [7:0] name` — ident pertama adalah TIPE
+                    // user-defined (bukan nama port); loop luar yang menangani
+                    // tipe/range berikutnya. Tanpa break, `foo_t` dimakan
+                    // sebagai nama port & `name` sebagai port kedua → formal
+                    // bergeser → error E2001 (sama seperti parse_function).
+                    // `Ident Ident` juga break: `(foo_t a, foo_t b)` — setelah
+                    // koma, `foo_t` adalah tipe port baru, bukan nama.
+                    // F39: `pkg::type name` — ident pertama (`pkg`) diikuti
+                    // Scope (`::`) juga break; loop luar yang mengkonsumsi
+                    // `pkg :: type`. Tanpa ini `pkg_t::t_t x` salah jadi
+                    // dua port (`pkg_t`, `x`) → inline tak rename formal
+                    // berikutnya → E2001 'wdata' not found.
+                    if matches!(self.peek_ahead(1), Token::Ident(_) | Token::Scope)
+                        || (self.peek_ahead(1) == &Token::LBrack
+                            && self.peek_packed_range_followed_by_ident())
+                    {
+                        break;
+                    }
                     let pn = *pname;
                     self.advance();
+                    let default = if self.peek() == &Token::BlockingAssign {
+                        self.advance();
+                        Some(self.parse_expr(0)?)
+                    } else {
+                        None
+                    };
                     ports.push(FunctionPort {
                         name: pn,
                         range: range.clone(),
                         expr_range: None,
                         direction: last_direction,
+                        default,
                     });
                     if self.peek() == &Token::Comma {
                         self.advance();
@@ -869,7 +951,7 @@ impl Parser {
                         }
                         self.advance();
                     }
-                    let port_range = if self.peek() == &Token::LBrack {
+                    let mut port_range = if self.peek() == &Token::LBrack {
                         let er = self.parse_port_dims()?; // `[msb:lsb]` atau skip unpacked
                         er.as_ref().and_then(|er| {
                             if let (Ok(m), Ok(l)) =
@@ -888,24 +970,54 @@ impl Parser {
                     } else {
                         None
                     };
-                    while let Token::Ident(pname) = self.peek() {
-                        // Pola `foo_t [7:0] name` — ident pertama adalah TIPE
-                        // user-defined (bukan nama port); loop luar yang
-                        // menangani tipe/range berikutnya. Sama seperti jalur
-                        // ANSI (lihat komentar panjang di parse_function).
-                        if self.peek_ahead(1) == &Token::LBrack
-                            && self.peek_packed_range_followed_by_ident()
-                        {
-                            break;
+                    // Tipe user-defined non-ANSI: `input foo_t a;` atau
+                    // `input foo_t [7:0] a;` — `foo_t` bukan keyword dasar,
+                    // jadi loop keyword di atas tidak mengkonsumsinya. Konsumsi
+                    // tipe (dan packed range) DI SINI agar inner loop hanya
+                    // melihat nama port. Catatan: break di inner loop saja
+                    // TIDAK cukup — `foo_t` yang tersisa membuat loop luar
+                    // `Token::Ident` dengan peek_ahead(1)=LBrack jatuh ke
+                    // `_ => break` → seluruh port list berhenti & sisa
+                    // deklarasi masuk body → error E1005/E2001.
+                    if matches!(self.peek(), Token::Ident(_))
+                        && (matches!(self.peek_ahead(1), Token::Ident(_))
+                            || (self.peek_ahead(1) == &Token::LBrack
+                                && self.peek_packed_range_followed_by_ident()))
+                    {
+                        self.advance(); // konsumsi tipe `foo_t`
+                        if self.peek() == &Token::LBrack {
+                            if let Some(er) = self.parse_port_dims()? {
+                                // `er` sudah ExprRange (bukan Option) — langsung
+                                // pakai msb/lsb, jangan `.as_ref()` (E0599).
+                                port_range = if let (Ok(m), Ok(l)) =
+                                    (const_eval_simple(&er.msb), const_eval_simple(&er.lsb))
+                                {
+                                    Some(Range {
+                                        msb: m as usize,
+                                        lsb: l as usize,
+                                    })
+                                } else {
+                                    None
+                                };
+                            }
                         }
+                    }
+                    while let Token::Ident(pname) = self.peek() {
                         let pn = *pname;
                         self.advance();
                         self.skip_unpacked_dims()?;
+                        let default = if self.peek() == &Token::BlockingAssign {
+                            self.advance();
+                            Some(self.parse_expr(0)?)
+                        } else {
+                            None
+                        };
                         ports.push(FunctionPort {
                             name: pn,
                             range: port_range.clone(),
                             expr_range: None,
                             direction: Some(direction),
+                            default,
                         });
                         if self.peek() == &Token::Comma {
                             self.advance();
@@ -928,6 +1040,8 @@ impl Parser {
                     // tak punya tipe class (F17).
                     // KECUALI `pkg::func(...)` — ini statement call, bukan
                     // deklarasi (lihat komentar panjang di parse_function).
+                    // F35: pola `foo_t [7:0] name;` — tipe user-defined dgn
+                    // packed range (sama seperti parse_function).
                     match self.peek_ahead(1) {
                         Token::Ident(_) | Token::Scope => {
                             let is_scoped_call = matches!(self.peek_ahead(1), Token::Scope)
@@ -937,7 +1051,19 @@ impl Parser {
                             }
                             decls.push(self.parse_decl()?);
                         }
+                        Token::LBrack if self.peek_packed_range_followed_by_ident() => {
+                            decls.push(self.parse_decl()?);
+                        }
                         _ => break,
+                    }
+                }
+                Token::Auto | Token::Static => {
+                    // static/automatic variable declaration in task body
+                    self.advance();
+                    if let Ok(decl) = self.parse_decl() {
+                        decls.push(decl);
+                    } else {
+                        return Err(self.err("expected declaration after automatic/static"));
                     }
                 }
                 Token::Begin => {

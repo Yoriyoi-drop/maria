@@ -509,7 +509,9 @@ pub(crate) fn rename_in_stmt(stmt: &Stmt, rename_map: &HashMap<Symbol, Symbol>) 
             index_vars,
             stmts,
         } => Stmt::ForeachLoop {
-            array_var,
+            // F44: array formal task/function (`ref queue d_in [$]`) — nama
+            // array di-rename saat inline agar foreach tetap ter-resolve.
+            array_var: rename_map.get(&array_var).copied().unwrap_or(array_var),
             index_vars,
             stmts: stmts
                 .into_iter()

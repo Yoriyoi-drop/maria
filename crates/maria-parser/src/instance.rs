@@ -109,6 +109,16 @@ impl Parser {
             }
             match self.peek() {
                 Token::Endmodule | Token::EndInterface | Token::EndProgram | Token::Eof => break,
+                Token::Input | Token::Output | Token::Inout => {
+                    // Port deklarasi non-ANSI di body (lihat
+                    // `parse_body_port_decls`). Direktur parse ke ports dan
+                    // di-merge dgn header.
+                    _mod_tokens += 1;
+                    if let Err(e) = self.parse_body_port_decls(&mut ports) {
+                        self.errors.push(e.to_diagnostic());
+                        self.skip_until_semi_or_end()?;
+                    }
+                }
                 _ => {
                     let before = self.pos.get();
                     let result = self.parse_module_item();
@@ -454,6 +464,14 @@ impl Parser {
                     Token::LParen if self.peek_ahead(1) == &Token::Star => {
                         self.skip_attribute();
                     }
+                    Token::Input | Token::Output | Token::Inout => {
+                        // Port deklarasi non-ANSI di body interface — simetris
+                        // dengan parse_module (lihat parse_body_port_decls).
+                        if let Err(e) = self.parse_body_port_decls(&mut ports) {
+                            self.errors.push(e.to_diagnostic());
+                            self.skip_until_semi_or_end()?;
+                        }
+                    }
                     _ => {
                         let before = self.pos.get();
                         match self.parse_module_item() {
@@ -577,6 +595,44 @@ impl Parser {
         }
         self.skip_semi();
         Ok(Modport { name, items })
+    }
+
+    /// Port deklarasi gaya NON-ANSI di body module/interface:
+    /// `input [7:0] a;` / `output logic y;` / `inout wire [3:0] z;`.
+    /// Sebelumnya token `input/output/inout` tidak punya arm di
+    /// `parse_module_item_body` → token di-skip satu per satu → range
+    /// `[7:0]` DIBUANG dan port jatuh ke lebar default 1-bit (mis. `b` di
+    /// netlist alu_opt jadi 1 bit → hasil sim salah). Sintaks body identik
+    /// dengan header (`parse_port_list`), lalu hasilnya di-MERGE ke daftar
+    /// ports: body MELENGKAPI/MENIMPA port yang sudah dideklarasi di header
+    /// non-ANSI (`module m(a, b, y); input [7:0] a; ...`).
+    fn parse_body_port_decls(&mut self, ports: &mut Vec<Port>) -> Result<(), SimError> {
+        let mut body_ports = Vec::new();
+        self.parse_port_list(&mut body_ports)?;
+        self.skip_semi();
+        for np in body_ports {
+            match ports.iter_mut().find(|p| p.name == np.name) {
+                Some(existing) => {
+                    existing.direction = np.direction;
+                    // Body yang punya range/dtype MENIMPA header yang kosong
+                    // (header non-ANSI cuma nama). Jangan menimpa dengan None.
+                    if np.range.is_some()
+                        || np.expr_range.is_some()
+                        || np.array_range.is_some()
+                    {
+                        existing.range = np.range;
+                        existing.expr_range = np.expr_range;
+                        existing.array_range = np.array_range;
+                        existing.extra_packed_dims = np.extra_packed_dims;
+                    }
+                    if np.dtype_name.is_some() {
+                        existing.dtype_name = np.dtype_name;
+                    }
+                }
+                None => ports.push(np),
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn parse_port_list(&mut self, ports: &mut Vec<Port>) -> Result<(), SimError> {
@@ -959,6 +1015,50 @@ impl Parser {
                 }
             }
             self.expect(Token::RParen)?;
+        } else if self.peek() == &Token::Dot {
+            // SV juga mengizinkan koneksi port TANPA kurung & koma:
+            //   `mod u .a(x) .b(y);`   (space-separated named connections)
+            // Sebelumnya bentuk ini TIDAK pernah di-parse — instance jadi tanpa
+            // koneksi port → port instance tidak ter-resolve → proses always_ff
+            // di module sel tak pernah ter-trigger (FF tidak berdetak, output
+            // menggantung z). Ditemukan fase 3 (netlist) saat men-simulasi
+            // netlist.v yang di-emit dgn gaya space-separated.
+            // Loop di-guard `while Dot` agar `.*` wildcard tidak menelan token
+            // setelahnya (mis. `;` penutup) saat `continue`.
+            while self.peek() == &Token::Dot {
+                self.advance(); // '.'
+                if self.peek() == &Token::Star {
+                    self.advance(); // '.*' wildcard — skip, while re-checks Dot
+                    continue;
+                }
+                let port_name = match self.peek() {
+                    Token::Ident(s) => {
+                        let n = *s;
+                        self.advance();
+                        n
+                    }
+                    _ => {
+                        return Err(self.err("expected port name after '.' in instance connection"))
+                    }
+                };
+                let expr = if self.peek() == &Token::LParen {
+                    self.advance();
+                    let e = if self.peek() != &Token::RParen {
+                        self.parse_expr(0)?
+                    } else {
+                        Expr::Value(Value::Decimal(0))
+                    };
+                    self.expect(Token::RParen)?;
+                    e
+                } else {
+                    // `.port` tanpa `(expr)` = koneksi ke signal senama.
+                    Expr::Ident { name: port_name, line: 0, col: 0 }
+                };
+                port_conns.push(PortConnection::Named {
+                    port: port_name,
+                    expr,
+                });
+            }
         }
 
         if self.peek() != &Token::Semi {

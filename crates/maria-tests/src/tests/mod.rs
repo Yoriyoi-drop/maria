@@ -500,6 +500,378 @@ endmodule
     );
 }
 
+// Helper: jalankan body test rekursif dalam thread ber-stack besar. Rekursi
+// function memakai beberapa frame Rust per level (helper + evaluator blok +
+// evaluator ekspresi) — stack thread test default 2MB kurang untuk fib(15)
+// (main thread CLI 8MB cukup, tapi test thread overflow). 64MB aman.
+fn run_with_big_stack(f: impl FnOnce() -> u64 + Send + 'static) -> u64 {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(f)
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+#[test]
+fn test_recursive_fibonacci_ansi() {
+    // F35: function REKURSIF (gaya ANSI `return n`) dieksekusi via runtime
+    // helper execute_module_function_call, bukan inline. Dua bug siluman
+    // yang diperbaiki: (1) `Stmt::Return` no-op di evaluator AST-with-delay
+    // → __func_ret tak pernah ditulis → return 0; (2) `return n` hanya
+    // menghentikan blok if, statement berikutnya tetap jalan → rekursi tak
+    // berujung (stack overflow). Kini ast_return_pending menghentikan
+    // SELURUH blok.
+    let source = r#"
+module tb;
+    function int fib(input int n);
+        if (n <= 1) return n;
+        return fib(n - 1) + fib(n - 2);
+    endfunction
+    reg [31:0] o;
+    initial begin
+        o = fib(15);
+        #1;
+        if (o != 610) $display("FAILED fib: %0d", o);
+        $finish;
+    end
+endmodule
+"#;
+    let got = run_with_big_stack(move || {
+        let sigs = simulate_signals(source, 5).unwrap();
+        let (_, v) = sigs.iter().find(|(n, _)| n == "o").unwrap();
+        v.to_u64()
+    });
+    assert_eq!(
+        got,
+        610,
+        "fib(15) = 610 (recursive ANSI return must terminate and compute correctly)"
+    );
+}
+
+#[test]
+fn test_recursive_factorial_nonansi() {
+    // F35: function REKURSIF gaya non-ANSI (`fact = expr`) + if-else —
+    // nama function di-pre-insert sebagai slot return agar LHS non-ANSI
+    // menulis tanpa RT0001; `__func_ret` TIDAK di-pre-insert agar fallback
+    // ke nama function untuk gaya non-ANSI tetap benar.
+    let source = r#"
+module tb;
+    function int fact;
+        input int n;
+        if (n <= 1) fact = 1;
+        else fact = n * fact(n - 1);
+    endfunction
+    reg [31:0] o;
+    initial begin
+        o = fact(5);
+        #1;
+        if (o != 120) $display("FAILED fact: %0d", o);
+        $finish;
+    end
+endmodule
+"#;
+    let got = run_with_big_stack(move || {
+        let sigs = simulate_signals(source, 5).unwrap();
+        let (_, v) = sigs.iter().find(|(n, _)| n == "o").unwrap();
+        v.to_u64()
+    });
+    assert_eq!(
+        got,
+        120,
+        "fact(5) = 120 (recursive non-ANSI assignment-to-name return)"
+    );
+}
+
+#[test]
+fn test_mv_compound_assignment() {
+    // F36: compound assignment (`+=` `<<=` `&=`) + increment (`++`) di .mv
+    // di-transpile ke SV compound assignment lalu disimulasikan.
+    let src = r#"
+module tb_ca {
+    sig a : logic[7:0]
+    sig b : logic[7:0]
+    sig c : logic[7:0]
+    sig i : logic[7:0]
+    initial {
+        a = 10
+        a += 5
+        b = 2
+        b <<= 3
+        c = 8'hFF
+        c &= 8'h0F
+        i = 0
+        i++
+        $display("TB_CA a=%0d b=%0d c=%0d i=%0d", a, b, c, i)
+    }
+}
+"#;
+    let r = maria_mv::transpile(src, "compound").expect("transpile .mv OK");
+    assert!(r.sv.contains("a += 5;"), "codegen harus emit compound: {}", r.sv);
+    assert!(r.sv.contains("b <<= 3;"), "codegen harus emit shl compound: {}", r.sv);
+    assert!(r.sv.contains("i++;"), "codegen harus emit increment: {}", r.sv);
+    let sigs = simulate_signals(&r.sv, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    assert_eq!(get("a"), 15, "a = 10+5");
+    assert_eq!(get("b"), 16, "b = 2<<3");
+    assert_eq!(get("c"), 15, "c = 0xFF & 0x0F");
+    assert_eq!(get("i"), 1, "i++");
+}
+
+#[test]
+fn test_mv_prefix_incdec() {
+    // F37: prefix `++i`/`--i` dan postfix `i--` di level statement — engine
+    // mendukung statement prefix penuh (assign ±1). `j = ++i` di RHS: nilai
+    // benar (i+1) — side-effect increment di RHS adalah batasan engine
+    // pre-existing (sama di SV murni), bukan regresi F37.
+    let src = r#"
+module tb_pp {
+    sig i : logic[7:0]
+    sig j : logic[7:0]
+    sig k : logic[7:0]
+    initial {
+        i = 0
+        ++i
+        $display("PP_A %0d", i)
+        j = ++i
+        $display("PP_B %0d %0d", i, j)
+        --i
+        $display("PP_C %0d", i)
+        i--
+        $display("PP_D %0d", i)
+        k = 5
+        j = ++k
+        $display("PP_E %0d %0d", k, j)
+    }
+}
+"#;
+    let r = maria_mv::transpile(src, "prefix").expect("transpile .mv OK");
+    // statement prefix di-emit apa adanya; postfix statement juga
+    assert!(r.sv.contains("++i;"), "codegen harus emit prefix: {}", r.sv);
+    assert!(r.sv.contains("--i;"), "codegen harus emit prefix dec: {}", r.sv);
+    assert!(r.sv.contains("i--;"), "codegen harus emit postfix: {}", r.sv);
+    assert!(!r.sv.contains("$display(\"PP_B %0d %0d\", i, j)--;"), "postfix tidak boleh menempel ke statement lain: {}", r.sv);
+    let sigs = simulate_signals(&r.sv, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    // statement prefix bekerja penuh: ++i(1), lalu j=++i tidak mengubah i
+    // (batasan engine), lalu --i(0), lalu i--(255 wrap).
+    assert_eq!(get("i"), 255, "i: ++i(1) -> --i(0) -> i--(255)");
+    assert_eq!(get("j"), 6, "j = ++k (nilai k+1 = 6)");
+}
+
+#[test]
+fn test_mv_dowhile_event_trigger() {
+    // F38: `do { ... } while (cond)` loop post-test + event trigger `->ev`
+    // di-transpile ke `do begin ... end while (cond);` dan `-> ev;` lalu
+    // disimulasikan (body do jalan minimal sekali, event memicu @(posedge)).
+    let src = r#"
+module tb_dw {
+    sig i : logic[7:0]
+    sig ev : bit
+    sig got : logic[7:0]
+    initial {
+        i = 0
+        do {
+            i = i + 1
+        } while (i < 3)
+        $display("DW i=%0d", i)
+    }
+    initial {
+        @(posedge ev)
+        got = 99
+    }
+    initial {
+        #5
+        ->ev
+        #5
+        $display("EV got=%0d", got)
+    }
+}
+"#;
+    let r = maria_mv::transpile(src, "dowhile").expect("transpile .mv OK");
+    assert!(r.sv.contains("do begin"), "codegen harus emit do begin: {}", r.sv);
+    assert!(r.sv.contains("end while (i < 3);"), "codegen harus emit end while: {}", r.sv);
+    assert!(r.sv.contains("-> ev;"), "codegen harus emit event trigger: {}", r.sv);
+    let sigs = simulate_signals(&r.sv, 20).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    assert_eq!(get("i"), 3, "do while: body jalan 3x");
+    assert_eq!(get("got"), 99, "event trigger membangunkan @(posedge ev)");
+}
+
+#[test]
+fn test_mv_dowhile_while_never_runs_twice() {
+    // F38: do...while TIDAK sama dengan while — body jalan minimal sekali
+    // bahkan saat kond awal false (`do { x = 1 } while (0)` → x = 1).
+    let src = r#"
+module tb_dz {
+    sig x : logic[7:0]
+    initial {
+        x = 0
+        do {
+            x = 1
+        } while (0)
+    }
+}
+"#;
+    let r = maria_mv::transpile(src, "dz").expect("transpile .mv OK");
+    assert!(r.sv.contains("do begin"), "sv: {}", r.sv);
+    assert!(r.sv.contains("end while (0);"), "sv: {}", r.sv);
+    let sigs = simulate_signals(&r.sv, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    assert_eq!(get("x"), 1, "body do jalan minimal sekali walau cond false");
+}
+
+#[test]
+fn test_mv_fork_join_modes() {
+    // F39: `fork { ... } { ... } join / join_any / join_none` di-transpile
+    // ke SV `fork begin ... end begin ... end join[_any|_none]` lalu
+    // disimulasikan: join menunggu semua, join_any lanjut saat pertama
+    // selesai, join_none lanjut segera (background jalan).
+    let src = r#"
+module tb_fj {
+    sig a : logic[7:0]
+    sig b : logic[7:0]
+    sig reached : bit
+    initial {
+        fork {
+            #10
+            a = 1
+        } {
+            #5
+            b = 2
+        } join
+        $display("FJ_JOIN a=%0d b=%0d", a, b)
+    }
+    initial {
+        fork {
+            #10
+            a = 11
+        } {
+            #5
+            b = 12
+        } join_any
+        reached = 1
+        #20
+        $display("FJ_ANY a=%0d b=%0d reached=%0d", a, b, reached)
+    }
+    initial {
+        fork {
+            #10
+            b = 22
+        } join_none
+        #15
+        $display("FJ_NONE b=%0d", b)
+    }
+}
+"#;
+    let r = maria_mv::transpile(src, "forkjoin").expect("transpile .mv OK");
+    assert!(r.sv.contains("fork\n"), "codegen harus emit fork: {}", r.sv);
+    assert!(r.sv.contains("join"), "codegen harus emit join: {}", r.sv);
+    assert!(r.sv.contains("join_any"), "codegen harus emit join_any: {}", r.sv);
+    assert!(r.sv.contains("join_none"), "codegen harus emit join_none: {}", r.sv);
+    let sigs = simulate_signals(&r.sv, 30).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    assert_eq!(get("a"), 11, "branch #10 selesai (join + join_any lanjut)");
+    assert_eq!(get("b"), 22, "branch terakhir join_none menimpa b");
+    assert_eq!(get("reached"), 1, "join_any lanjut setelah branch pertama (#5)");
+}
+
+#[test]
+fn test_mv_fork_join_missing_join_rejected() {
+    // F39: fork tanpa keyword join di akhir → error jelas di level .mv.
+    let src = r#"
+module tb_bad {
+    sig a : logic[7:0]
+    initial {
+        fork {
+            a = 1
+        }
+    }
+}
+"#;
+    let e = maria_mv::transpile(src, "bad").unwrap_err();
+    assert!(e.to_string().contains("join"), "pesan harus sebut join: {e}");
+}
+
+#[test]
+fn test_mv_postfix_rhs_rejected() {
+    // F37: postfix di RHS ekspresi (`j = i--`) ditolak di level .mv dengan
+    // error jelas (side-effect postfix tak bisa diwakili SV) — bukan SV invalid.
+    let src = r#"
+module tb_bad {
+    sig i : logic[7:0]
+    sig j : logic[7:0]
+    initial {
+        j = i--
+    }
+}
+"#;
+    let e = maria_mv::transpile(src, "bad").unwrap_err();
+    assert!(e.to_string().contains("postfix"), "pesan harus sebut postfix: {e}");
+}
+
+#[test]
+fn test_mv_compound_more_ops() {
+    // F36 coverage: operator compound lain (`%=` `>>=` `|=` `^=`) + decrement
+    // (`--`) — memastikan semua token compound ter-lex & ter-emit benar.
+    let src = r#"
+module tb_cm {
+    sig d : logic[7:0]
+    sig e : logic[7:0]
+    sig f : logic[7:0]
+    sig g : logic[7:0]
+    sig j : logic[7:0]
+    initial {
+        d = 100
+        d %= 7
+        e = 8'h80
+        e >>= 2
+        f = 8'h0F
+        f |= 8'hF0
+        g = 8'hFF
+        g ^= 8'h0F
+        j = 5
+        j--
+        $display("TB_CM d=%0d e=%0d f=%0d g=%0d j=%0d", d, e, f, g, j)
+    }
+}
+"#;
+    let r = maria_mv::transpile(src, "compound_more").expect("transpile OK");
+    assert!(r.sv.contains("d %= 7;"), "codegen: {}", r.sv);
+    assert!(r.sv.contains("e >>= 2;"), "codegen: {}", r.sv);
+    assert!(r.sv.contains("f |= 8'hF0;"), "codegen: {}", r.sv);
+    assert!(r.sv.contains("g ^= 8'h0F;"), "codegen: {}", r.sv);
+    assert!(r.sv.contains("j--;"), "codegen: {}", r.sv);
+    let sigs = simulate_signals(&r.sv, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).unwrap().1.to_u64();
+    assert_eq!(get("d"), 2, "d = 100 % 7");
+    assert_eq!(get("e"), 32, "e = 0x80 >> 2");
+    assert_eq!(get("f"), 255, "f = 0x0F | 0xF0");
+    assert_eq!(get("g"), 240, "g = 0xFF ^ 0x0F");
+    assert_eq!(get("j"), 4, "j = 5--");
+}
+
+#[test]
+fn test_mv_compound_seq_rejected() {
+    // F36: compound assignment bersifat blocking — di dalam `seq` harus
+    // ditolak E2004 (sama seperti `=`), error di level .mv bukan SV hasil.
+    let src = r#"
+module bad_seq {
+    in clk : bit
+    sig a : logic[7:0]
+    seq(clk) {
+        a += 1
+    }
+}
+"#;
+    let err = maria_mv::transpile(src, "bad_seq").expect_err("compound di seq harus error E2004");
+    assert!(
+        err.format().contains("E2004"),
+        "error harus E2004 (blocking di seq): {}",
+        err.format()
+    );
+}
+
 #[test]
 fn test_counter_simulation() {
     let source = r#"
@@ -1030,6 +1402,44 @@ endmodule
         .map(|(_, v)| v.to_u64())
         .unwrap();
     assert_eq!(sum_val, 300, "16-bit adder: 100 + 200 = 300");
+}
+
+#[test]
+fn test_space_separated_instance_connections() {
+    // Regresi fase 3 (netlist): koneksi port space-separated `.c(clk) .r(rst_n)`
+    // tanpa kurung & koma legal di SV tapi TIDAK pernah di-parse oleh
+    // `parse_instance` → instance jadi tanpa koneksi port → always_ff di
+    // module sel tak ter-resolve → FF tidak pernah berdetak (output menggantung
+    // z). Fix di maria-parser/src/instance.rs (branch `.name(expr)` setelah
+    // nama instance).
+    let source = r#"
+module tb;
+    reg clk = 0, rst_n = 0;
+    reg [7:0] d = 8'h05;
+    wire [7:0] q;
+    always #5 clk = ~clk;
+    initial begin
+        #3 rst_n = 1;
+        #25 $finish;
+    end
+    top dut(.clk(clk), .rst_n(rst_n), .d(d), .q(q));
+endmodule
+
+module DFFR #(parameter W = 1, parameter RST = 0)(input c, input r, input [W-1:0] d, output reg [W-1:0] q);
+    always_ff @(posedge c or negedge r) if (!r) q <= RST; else q <= d;
+endmodule
+
+module top(input clk, input rst_n, input [7:0] d, output [7:0] q);
+    DFFR ff0 #(.W(8), .RST(0)) .c(clk) .r(rst_n) .d(d) .q(q);
+endmodule
+"#;
+    let sigs = simulate_signals(source, 30).unwrap();
+    let q = sigs
+        .iter()
+        .find(|(n, _)| n == "q")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    assert_eq!(q, 5, "koneksi space-separated: FF harus clock d=5 (bukan z)");
 }
 
 #[test]

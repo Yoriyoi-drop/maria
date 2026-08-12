@@ -3,6 +3,7 @@
 ## Aturan 
 1 file = 1 tanggung jawab tidak boleh lebih dari 1
 Rust-based SystemVerilog simulator. Pipeline: preprocessor → lexer → parser → AST → elaborator → IR → simulation engine → VCD output.
+semua perbaikan masalah pada maria wajib bersifat global
 
 ### 🚫 LARANGAN TOTAL: SCRIPT UNTUK MEMODIFIKASI PROJECT
 **DILARANG TOTAL, TANPA TOLERANSI** — dilarang menggunakan script apa pun (Python, Perl, Ruby, Bash/sed/awk mass-edit, `python -c` one-liner, dan sejenisnya) untuk mengubah/memodifikasi file di project ini.
@@ -29,11 +30,11 @@ No CI, no lint, no typecheck shortcuts. Just `cargo test`. 1634 tests pass.
 
 ## CLI Tools (`crates/maria-tools/`, subcommand `maria <tool>`)
 
-10 tool terminal dari tools.md — satu file per tool (aturan 1 file = 1 tanggung
+11 tool terminal dari tools.md — satu file per tool (aturan 1 file = 1 tanggung
 jawab). Pindah dari `src/tools/` ke crate `maria-tools` (migrasi monorepo crate
 11); `maria::tools` re-export via lib.rs.
 
-10 tool terminal dari tools.md — satu file per tool (aturan 1 file = 1 tanggung jawab):
+11 tool terminal dari tools.md — satu file per tool (aturan 1 file = 1 tanggung jawab):
 
 | Tool | File | Fungsi |
 |------|------|--------|
@@ -47,6 +48,7 @@ jawab). Pindah dari `src/tools/` ke crate `maria-tools` (migrasi monorepo crate
 | `mprof` | `prof.rs` | Profiler pipeline: timing per fase + bottleneck + hint |
 | `mcheck` | `check.rs` | Health check: missing `include, circular include, unresolved deps, cycle module, timescale |
 | `mbench` | `bench.rs` | Benchmark: compile speed, throughput, peak RSS (VmHWM), cache hit |
+| `synth` | `synth.rs` | Synthesis (SYNTHESIS.md): SYN check (SYN-1..9), lowering RTL→SIR (`maria-sir`, `--dump-sir`), inferensi FF, netlist `.mvnet`, report utilisasi. Nama lama `msynth` = alias |
 
 Shared infra di `crates/maria-tools/src/lib.rs` (ex `src/tools/mod.rs`):
 - `collect_targets()` — expand file/direktori/file list
@@ -136,8 +138,7 @@ File proyek mendaftar file `.sv` (satu per baris, `#` untuk komentar). Dibaca vi
 
 ## Run
 ```shell
-cargo run -- test/counter.sv              # single file
-cargo run -- -f .maria                    # project file
+cargo run -- test/counter.sv              # single file              
 cargo run -- test/tb_counter.sv -T 200    # max time
 cargo run -- file.sv --ast                # print AST
 cargo run -- file.sv --tokens             # print tokens

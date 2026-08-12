@@ -67,6 +67,10 @@ pub enum Expr {
     },
     /// Unary `-x`, `~x`, `!x`, `&x`, `|x`, `^x`
     Unary(String, Box<Expr>),
+    /// F37: `++x` / `x++` / `--x` / `x--` di level EKSPRESI (RHS).
+    /// inc = true utk `++`, false utk `--`; pre = true utk prefix `++x`,
+    /// false utk postfix `x++`.
+    IncDec { inc: bool, pre: bool, expr: Box<Expr> },
     /// Binary `a + b`, `a && b`, `a == b`, `a <= b` ...
     Binary(String, Box<Expr>, Box<Expr>),
     /// Ternary `c ? a : b`
@@ -131,6 +135,25 @@ pub enum Stmt {
         line: usize,
         col: usize,
     },
+    /// F36: `lhs += rhs` — compound assignment (blocking). op salah satu dari
+    /// "+=" "-=" "*=" "/=" "%=" "<<=" ">>=" "&=" "|=" "^="".
+    CompoundAssign {
+        lhs: Expr,
+        op: String,
+        rhs: Expr,
+        line: usize,
+        col: usize,
+    },
+    /// F36/F37: `lhs++` / `++lhs` — increment/decrement (blocking).
+    /// inc = true utk `++`, false utk `--`; pre = true utk prefix `++lhs`
+    /// (F37), false utk postfix `lhs++` (F36). Hasil statement-level identik.
+    IncDec {
+        lhs: Expr,
+        inc: bool,
+        pre: bool,
+        line: usize,
+        col: usize,
+    },
     /// `if (cond) then else`
     If {
         cond: Expr,
@@ -159,6 +182,14 @@ pub enum Stmt {
         cond: Expr,
         body: Box<Stmt>,
     },
+    /// F38: `do { body } while (cond)` — loop post-test (body dijalankan
+    /// minimal sekali).
+    DoWhile {
+        cond: Expr,
+        body: Box<Stmt>,
+    },
+    /// F38: event trigger `->ev` — memicu event named (emisi `-> ev;`).
+    EventTrigger(Expr),
     /// `repeat (count) { body }`
     Repeat {
         count: Expr,
@@ -193,6 +224,12 @@ pub enum Stmt {
     Return(Option<Expr>),
     Break,
     Continue,
+    /// F39: `fork { ... } join / join_any / join_none` — branch berjalan
+    /// konkurren (masing-masing independen, delay sendiri).
+    Fork {
+        branches: Vec<Stmt>,
+        join: ForkJoin,
+    },
     /// `assert (cond) pass [else fail]`
     Assert {
         cond: Expr,
@@ -203,6 +240,17 @@ pub enum Stmt {
     /// Body dipertahankan RAW (teks persis di antara `(` dan `)`) karena
     /// berisi operator SVA (`|->`, `##`) yang bukan token `.mv` — emisi 1:1.
     AssertProperty(String),
+}
+
+/// F39: mode sinkronisasi fork/join (MARIA-HDL.md §6.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForkJoin {
+    /// `join` — tunggu SEMUA branch selesai
+    Join,
+    /// `join_any` — lanjut saat branch PERTAMA selesai
+    JoinAny,
+    /// `join_none` — lanjut segera, branch berjalan di background
+    JoinNone,
 }
 
 /// Field struct/union: `valid : bit, addr : Addr`. Posisi (line, col) untuk

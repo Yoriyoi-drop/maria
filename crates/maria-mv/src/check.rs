@@ -1236,6 +1236,67 @@ fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind:
             }
             Ok(())
         }
+        // F36: `lhs += rhs` — compound assignment (blocking, seperti `=`).
+        Stmt::CompoundAssign {
+            lhs, op, rhs, line, col,
+        } => {
+            if kind == BlockKind::Seq {
+                return Err(err_at(
+                    *line, *col,
+                    "E2004",
+                    format!("compound assign '{op}' tidak boleh di dalam seq (pakai '<=') — di '{}'", scope.env.mname),
+                ));
+            }
+            if kind != BlockKind::Tb {
+                if let Some(base) = base_ident(lhs) {
+                    if let Some(Dir::In) = scope.env.ports.get(base) {
+                        return Err(err_at(
+                            *line, *col,
+                            "E2003",
+                            format!("cannot drive input port '{base}' — di '{}'", scope.env.mname),
+                        ));
+                    }
+                }
+            }
+            check_expr(lhs, ctx, scope, 0)?;
+            check_expr(rhs, ctx, scope, 0)?;
+            // E2002: RHS lebih lebar dari LHS → truncation
+            let wl = expr_width(lhs, ctx, scope, 0);
+            let wr = expr_width(rhs, ctx, scope, 0);
+            if let (Some(l), Some(r)) = (wl, wr) {
+                if r > l {
+                    return Err(err_at(
+                        *line, *col,
+                        "E2002",
+                        format!("lebar {r} bit ke sinyal {l}-bit '{}' — di '{}'", describe_lhs(lhs), scope.env.mname),
+                    ));
+                }
+            }
+            Ok(())
+        }
+        // F36: `lhs++` / `lhs--` — increment (blocking, seperti `=`).
+        Stmt::IncDec { lhs, line, col, .. } => {
+            if kind == BlockKind::Seq {
+                return Err(err_at(
+                    *line, *col,
+                    "E2004",
+                    format!("increment/decrement tidak boleh di dalam seq (pakai '<=') — di '{}'", scope.env.mname),
+                ));
+            }
+            if kind != BlockKind::Tb {
+                if let Some(base) = base_ident(lhs) {
+                    if let Some(Dir::In) = scope.env.ports.get(base) {
+                        return Err(err_at(
+                            *line, *col,
+                            "E2003",
+                            format!("cannot drive input port '{base}' — di '{}'", scope.env.mname),
+                        ));
+                    }
+                }
+            }
+            check_expr(lhs, ctx, scope, 0)?;
+            Ok(())
+        }
         Stmt::If { cond, then, els } => {
             check_expr(cond, ctx, scope, 0)?;
             check_stmt(then, ctx, scope, kind)?;
@@ -1278,6 +1339,25 @@ fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind:
         Stmt::While { cond, body } => {
             check_expr(cond, ctx, scope, 0)?;
             check_stmt(body, ctx, scope, kind)
+        }
+        // F38: `do { body } while (cond)` — post-test, validasi body+cond biasa.
+        Stmt::DoWhile { cond, body } => {
+            check_stmt(body, ctx, scope, kind)?;
+            check_expr(cond, ctx, scope, 0)
+        }
+        // F38: event trigger `->ev` — target harus signal/event yang dikenal.
+        Stmt::EventTrigger(ev) => {
+            // Event bisa berupa signal biasa (`->ev`) — E2001 sudah ditangani
+            // check_expr (Ident tak dikenal).
+            check_expr(ev, ctx, scope, 0)
+        }
+        // F39: fork/join — tiap branch divalidasi di scope yang sama (konteks
+        // blok sama dengan induknya; E2004 seq dst. diterapkan per branch).
+        Stmt::Fork { branches, .. } => {
+            for b in branches {
+                check_stmt(b, ctx, scope, kind)?;
+            }
+            Ok(())
         }
         Stmt::Repeat { count, body } => {
             check_expr(count, ctx, scope, 0)?;
@@ -1450,6 +1530,9 @@ fn check_expr<'a>(e: &'a Expr, ctx: &'a Ctx<'a>, scope: &Scope<'a>, depth: usize
             check_expr(expr, ctx, scope, depth + 1)?;
         }
         Expr::Unary(_, inner) => check_expr(inner, ctx, scope, depth + 1)?,
+        // F37: `++x` / `x++` / `--x` / `x--` di level ekspresi (RHS) —
+        // operand harus lvalue yang dikenal (validasi rekursif biasa).
+        Expr::IncDec { expr, .. } => check_expr(expr, ctx, scope, depth + 1)?,
         Expr::Binary(_, l, r) => {
             check_expr(l, ctx, scope, depth + 1)?;
             check_expr(r, ctx, scope, depth + 1)?;
@@ -1720,6 +1803,8 @@ fn expr_width(e: &Expr, ctx: &Ctx, scope: &Scope, depth: usize) -> Option<i64> {
             "~" | "-" | "+" => expr_width(inner, ctx, scope, depth + 1),
             _ => None,
         },
+        // F37: `++x`/`x++`/`--x`/`x--` — lebar mengikuti operand.
+        Expr::IncDec { expr, .. } => expr_width(expr, ctx, scope, depth + 1),
         Expr::Binary(op, l, r) => {
             let wl = expr_width(l, ctx, scope, depth + 1);
             let wr = expr_width(r, ctx, scope, depth + 1);

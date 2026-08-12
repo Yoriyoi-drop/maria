@@ -1,0 +1,12 @@
+[package]
+name = "maria-synth"
+version = "0.3.0"
+edition = "2021"
+description = "Maria synthesis — RTL → netlist gate-level (fase S1: SYN check, netlist, inferensi FF, emit .mvnet, report utilisasi)"
+
+[dependencies]
+maria-core = { path = "../maria-core" }
+maria-ir = { path = "../maria-ir" }
+maria-sir = { path = "../maria-sir" }
+maria-netlist = { path = "../maria-netlist" }
+maria-tech = { path = "../maria-tech" }

@@ -876,6 +876,7 @@ fn inline_funcs_in_stmt(
                                 range: None,
                                 expr_range: None,
                                 direction: None,
+                                default: None,
                             }
                         });
                         if let Expr::Ident { name: arg_name, .. } = &arg {
@@ -1836,6 +1837,9 @@ fn replace_func_calls_in_expr(
                 };
             }
             if let Some(func) = funcs.get(&name) {
+                if std::env::var("DBG_INLINE").is_ok() {
+                    eprintln!("[DBG-INLINE] inline call to '{}'", name.as_str());
+                }
                 let c = *counter;
                 *counter += 1;
 
@@ -1880,6 +1884,7 @@ fn replace_func_calls_in_expr(
                 }
 
                 let orig_args: Vec<Expr> = new_args.clone();
+                let new_args_len = new_args.len();
                 let mut direct_ports: HashSet<usize> = HashSet::new();
 
                 for (i, arg) in new_args.into_iter().enumerate() {
@@ -1892,6 +1897,7 @@ fn replace_func_calls_in_expr(
                                 range: None,
                                 expr_range: None,
                                 direction: None,
+                                default: None,
                             });
                     if let Expr::Ident { name: arg_name, .. } = &arg {
                         // Argumen berupa signal → rename langsung ke argumen
@@ -1910,6 +1916,29 @@ fn replace_func_calls_in_expr(
                         preamble.push(Stmt::BlockingAssign {
                             lhs: Expr::Ident { name: temp_arg_name, line: 0, col: 0 },
                             rhs: arg,
+                            delay: None,
+                        });
+                    }
+                }
+                // F43: port yang TIDAK di-pass saat call (`init_dpsram()` saat
+                // formal `bit randomness = 1'b1`) — rename formal ke temp signal
+                // (nilai default bila tersedia, selain itu 0). Tanpa ini body
+                // meninggalkan nama formal → E2001 'randomness' not found.
+                for (i, port) in func.ports.iter().enumerate().skip(new_args_len) {
+                    if rename_map.contains_key(&port.name) {
+                        continue;
+                    }
+                    let temp_arg_name =
+                        Symbol::intern(&format!("__func_{}_{}_{}_{}", prefix, name, c, port.name));
+                    let port_width = func_port_width(func, port.name);
+                    let port_range = port.expr_range.clone();
+                    let port_arr = port.range.clone();
+                    temp_signals.push((temp_arg_name, port_width, None, port_range, port_arr, None));
+                    rename_map.insert(port.name, temp_arg_name);
+                    if let Some(default_expr) = &port.default {
+                        preamble.push(Stmt::BlockingAssign {
+                            lhs: Expr::Ident { name: temp_arg_name, line: 0, col: 0 },
+                            rhs: default_expr.clone(),
                             delay: None,
                         });
                     }
@@ -2066,6 +2095,7 @@ fn replace_func_calls_in_expr(
                                 range: None,
                                 expr_range: None,
                                 direction: None,
+                                default: None,
                             });
                     let temp_arg_sym = Symbol::intern(&format!("__func_{}_{}_{}_{}", prefix, name, c, port.name));
                     if let Expr::Ident { .. } = &orig_arg {

@@ -1072,6 +1072,21 @@ impl Parser {
                 if let Token::Ident(name) = self.peek() {
                     let name = *name;
                     self.advance();
+                    // Queue typedef: `name [$]` / `name [$:N]` (unbounded /
+                    // bounded queue). maria tidak memodelkan queue sebagai
+                    // tipe, tapi JANGAN error — pola umum DV OpenTitan
+                    // (`typedef spi_data_t spi_queue_t [$];` di spid_common).
+                    while self.peek() == &Token::LBrack
+                        && matches!(self.peek_ahead(1), Token::Dollar)
+                    {
+                        self.advance(); // [
+                        self.advance(); // $
+                        if self.peek() == &Token::Colon {
+                            self.advance();
+                            let _ = self.parse_expr(0);
+                        }
+                        self.expect(Token::RBrack)?;
+                    }
                     (name, dtype, range, extra_packed_dims)
                 } else {
                     return Err(self.err("expected name after typedef type"));

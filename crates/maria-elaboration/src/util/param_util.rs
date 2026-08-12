@@ -40,6 +40,15 @@ pub fn collect_body_params(module: &Module) -> Vec<ParamDecl> {
     params
 }
 
+/// Apakah default param berupa koleksi (array literal Concat multi-elemen /
+/// struct literal) yang TIDAK boleh didaftarkan sebagai skalar fallback.
+/// `eval_param_default` mengembalikan None untuk keduanya; guard ini
+/// mencegah fallback 1 meng-klaim nama yang sebenarnya array/struct (yang
+/// didaftarkan lewat jalur flatten array / evaluator struct terpisah).
+fn param_default_is_collection(e: &Expr) -> bool {
+    matches!(e, Expr::Concat(parts) if parts.len() > 1) || matches!(e, Expr::StructLit { .. })
+}
+
 /// Konteks package untuk evaluasi PENUH default param: konstanta package
 /// ter-evaluasi (qualified `pkg::name` — skalar & array, hasil
 /// `eval_package_constants`) dan `package_symbols` (typedef/fungsi package).
@@ -159,6 +168,16 @@ pub fn resolve_param_values_with_ctx(
                 Some(e) => {
                     if let Some(v) = eval_param_default(e, &vals, &merged, pkg) {
                         insert_val!(param.name, v);
+                    } else if !param_default_is_collection(e) {
+                        // Fallback global: param gagal dievaluasi (default
+                        // `'x`, `$bits(member)` tak ter-resolve, referensi
+                        // package DPI tak ada — mis. `VccPokStrNum` di dalam
+                        // generate, `TRANSFER_BYTES_WIDTH = $bits(...)`) tetap
+                        // didaftarkan dengan nilai 1 agar generate for-limit /
+                        // width resolution tidak gagal "not found in parameter
+                        // context". Array/struct literal dikecualikan (jalur
+                        // array di bawah / evaluator struct yang menangani).
+                        insert_val!(param.name, 1);
                     }
                 }
                 None => {
@@ -173,6 +192,9 @@ pub fn resolve_param_values_with_ctx(
             if let Some(e) = &param.default {
                 if let Some(v) = eval_param_default(e, &vals, &merged, pkg) {
                     insert_val!(param.name, v);
+                } else if !param_default_is_collection(e) {
+                    // Fallback global sama seperti body params di atas.
+                    insert_val!(param.name, 1);
                 }
             } else {
                 insert_val!(param.name, 0);

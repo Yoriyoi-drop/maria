@@ -34,12 +34,16 @@ pub enum MariaCmd {
     Check(McheckArgs),
     /// mbench — benchmark tool (compile speed, memori, CPU, throughput)
     Bench(MbenchArgs),
+    /// synth — Maria synthesis (RTL → SIR → netlist gate-level, SYNTHESIS.md)
+    /// Nama lama: `msynth` (alias)
+    #[command(name = "synth", alias = "msynth")]
+    Synth(SynthArgs),
 }
 
 /// minspect — Maria Inspect.
 #[derive(clap::Args, Clone)]
 pub struct MinspectArgs {
-    /// Target input: file .sv, direktori, atau file list (.f/.maria).
+    /// Target input: file .sv, direktori, atau file list .f
     /// Subcommand output (stats/modules/hierarchy/...) boleh diletakkan
     /// di posisi pertama (mis. `minspect stats rtl/`).
     #[arg(required = true)]
@@ -65,7 +69,7 @@ pub struct MinspectArgs {
 /// mlint — Static RTL Linter.
 #[derive(clap::Args, Clone)]
 pub struct MlintArgs {
-    /// Target input: file .sv, direktori, atau file list (.f/.maria)
+    /// Target input: file .sv, direktori, atau file list .f
     #[arg(required = true)]
     pub targets: Vec<String>,
 
@@ -327,7 +331,7 @@ pub struct MgenArgs {
 /// mprof — Performance Profiler.
 #[derive(clap::Args, Clone)]
 pub struct MprofArgs {
-    /// Target input: file .sv, direktori, atau file list (.f/.maria)
+    /// Target input: file .sv, direktori, atau file list .f
     #[arg(required = true)]
     pub targets: Vec<String>,
 
@@ -356,7 +360,7 @@ pub struct MprofArgs {
 /// mcheck — Project Health Checker.
 #[derive(clap::Args, Clone)]
 pub struct McheckArgs {
-    /// Target input: file .sv, direktori, atau file list (.f/.maria)
+    /// Target input: file .sv, direktori, atau file list .f
     #[arg(required = true)]
     pub targets: Vec<String>,
 
@@ -388,7 +392,7 @@ pub struct McheckArgs {
 /// mbench — Benchmark Tool.
 #[derive(clap::Args, Clone)]
 pub struct MbenchArgs {
-    /// Target input: file .sv, direktori, atau file list (.f/.maria)
+    /// Target input: file .sv, direktori, atau file list .f
     #[arg(required = true)]
     pub targets: Vec<String>,
 
@@ -403,6 +407,79 @@ pub struct MbenchArgs {
     /// Define preprocessor macro
     #[arg(short = 'D', long = "define", num_args = 1)]
     pub defines: Vec<String>,
+}
+
+/// synth — Maria Synthesis.
+#[derive(clap::Args, Clone)]
+pub struct SynthArgs {
+    /// Target input: file .sv, direktori, atau file list (.f/.maria)
+    #[arg(required = true)]
+    pub targets: Vec<String>,
+
+    /// Top module name
+    #[arg(short = 't', long = "top")]
+    pub top: Option<String>,
+
+    /// Prefix output (default: nama top) → <prefix>.mvnet dst.
+    #[arg(short = 'o', long = "output")]
+    pub output: Option<String>,
+
+    /// Hanya analisis sintesizability (SYN-1..9), tanpa netlist.
+    #[arg(long = "check-only")]
+    pub check_only: bool,
+
+    /// Device target: fpga-x7 (default) | generic
+    #[arg(long, default_value = "fpga-x7")]
+    pub device: String,
+
+    /// Preset pipeline synthesis: generic | fpga (default) | asic | custom.
+    /// Phase 2: memilih pipeline pass optimizer (mapping menyusul).
+    #[arg(long, default_value = "fpga")]
+    pub preset: String,
+
+    /// Tulis netlist `.mvnet`
+    #[arg(long = "emit-mvnet")]
+    pub emit_mvnet: bool,
+
+    /// Tulis dump SIR (Synthesis Intermediate Representation, node-based)
+    /// ke stdout — debugging fase RTL→SIR (SYNTHESIS.md §3).
+    #[arg(long = "dump-sir")]
+    pub dump_sir: bool,
+
+    /// Tulis dump SIR SETELAH pass optimizer (const fold/DCE/CSE/mux/arith)
+    #[arg(long = "dump-sir-opt")]
+    pub dump_sir_opt: bool,
+
+    /// Dump netlist generik hasil mapping SIR (netlist.v + .mvnet) ke stdout
+    /// — debugging fase SIR→netlist (SYNTHESIS.md §13, phase 3).
+    #[arg(long = "dump-netlist")]
+    pub dump_netlist: bool,
+
+    /// Emisi netlist ke file: <prefix>.netlist.v + <prefix>.netlist.json +
+    /// <prefix>.netlist.mvnet (prefix default: nama top).
+    #[arg(long = "emit-netlist")]
+    pub emit_netlist: bool,
+
+    /// Tech mapping (phase 4): LUT cut + AIG dekomposisi + carry chain →
+    /// <prefix>.tech.v/.json/.mvnet + report LUT/CARRY4/FF.
+    #[arg(long = "tech-map")]
+    pub tech_map: bool,
+
+    /// Tulis report utilisasi ke file (tanpa ini: ke stdout)
+    #[arg(long = "report-util")]
+    pub report_util: Option<String>,
+
+    /// Tambahkan include search path
+    #[arg(short = 'I', long = "incdir", num_args = 1)]
+    pub incdirs: Vec<String>,
+
+    /// Define preprocessor macro
+    #[arg(short = 'D', long = "define", num_args = 1)]
+    pub defines: Vec<String>,
+
+    /// Suppress output
+    #[arg(short = 'q', long)]
+    pub quiet: bool,
 }
 
 #[derive(ClapParser, Clone)]

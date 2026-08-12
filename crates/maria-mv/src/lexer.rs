@@ -59,6 +59,8 @@ pub enum Tok {
     Unique0,
     Default,
     For,
+    /// F38: `do { ... } while (cond)` — loop post-test
+    Do,
     While,
     Repeat,
     Forever,
@@ -74,6 +76,11 @@ pub enum Tok {
     PosEdge,
     NegEdge,
     Dollar,
+    // F39: fork/join — konkurrensi branch (SV `fork ... join[_any|_none]`)
+    Fork,
+    Join,
+    JoinAny,
+    JoinNone,
 
     // ── Constraint lanjutan (F12) ──
     Inside,
@@ -129,6 +136,20 @@ pub enum Tok {
     Shr,
     Sshl,
     Sshr,
+    // F36: increment/decrement `++` / `--`
+    PlusPlus,
+    MinusMinus,
+    // F36: compound assignment `+=` `-=` `*=` `/=` `%=` `<<=` `>>=` `&=` `|=` `^=`
+    PlusEq,
+    MinusEq,
+    StarEq,
+    SlashEq,
+    PercentEq,
+    ShlEq,
+    SshrEq,
+    AndEq,
+    OrEq,
+    XorEq,
     /// `=` blocking assignment
     BlockingAssign,
     /// `<=` non-blocking assignment (juga Le di konteks ekspresi)
@@ -174,6 +195,7 @@ fn keyword(s: &str) -> Option<Tok> {
         "default" => Tok::Default,
         "for" => Tok::For,
         "in" => Tok::In,
+        "do" => Tok::Do,
         "while" => Tok::While,
         "repeat" => Tok::Repeat,
         "forever" => Tok::Forever,
@@ -188,6 +210,10 @@ fn keyword(s: &str) -> Option<Tok> {
         "assert" => Tok::Assert,
         "posedge" => Tok::PosEdge,
         "negedge" => Tok::NegEdge,
+        "fork" => Tok::Fork,
+        "join" => Tok::Join,
+        "join_any" => Tok::JoinAny,
+        "join_none" => Tok::JoinNone,
         "inside" => Tok::Inside,
         "dist" => Tok::Dist,
         "solve" => Tok::Solve,
@@ -458,20 +484,53 @@ pub fn tokenize(src: &str) -> Result<Vec<(Tok, usize, usize)>, MvError> {
             '-' => {
                 if peek(&chars, i, '>') {
                     (Tok::Arrow, 2)
+                } else if peek(&chars, i, '-') {
+                    // F36: `--` decrement
+                    (Tok::MinusMinus, 2)
+                } else if peek(&chars, i, '=') {
+                    // F36: `-=` compound
+                    (Tok::MinusEq, 2)
                 } else {
                     (Tok::Minus, 1)
                 }
             }
-            '+' => (Tok::Plus, 1),
+            '+' => {
+                if peek(&chars, i, '+') {
+                    // F36: `++` increment
+                    (Tok::PlusPlus, 2)
+                } else if peek(&chars, i, '=') {
+                    // F36: `+=` compound
+                    (Tok::PlusEq, 2)
+                } else {
+                    (Tok::Plus, 1)
+                }
+            }
             '*' => {
                 if peek(&chars, i, '*') {
                     (Tok::Power, 2)
+                } else if peek(&chars, i, '=') {
+                    // F36: `*=` compound
+                    (Tok::StarEq, 2)
                 } else {
                     (Tok::Star, 1)
                 }
             }
-            '/' => (Tok::Slash, 1),
-            '%' => (Tok::Percent, 1),
+            '/' => {
+                if peek(&chars, i, '=') {
+                    // F36: `/=` compound
+                    (Tok::SlashEq, 2)
+                } else {
+                    (Tok::Slash, 1)
+                }
+            }
+            '%' => {
+                if peek(&chars, i, '=') {
+                    // F36: `%=` compound
+                    (Tok::PercentEq, 2)
+                } else {
+                    (Tok::Percent, 1)
+                }
+            }
             '=' => {
                 if peek(&chars, i, '=') {
                     if peek2(&chars, i, '=') {
@@ -495,27 +554,33 @@ pub fn tokenize(src: &str) -> Result<Vec<(Tok, usize, usize)>, MvError> {
                 }
             }
             '<' => {
-                if peek(&chars, i, '=') {
-                    (Tok::NonBlockingAssign, 2)
-                } else if peek(&chars, i, '<') {
+                if peek(&chars, i, '<') {
+                    // `<<<` (Sshl) / `<<=` (ShlEq F36) / `<<`
                     if peek2(&chars, i, '<') {
                         (Tok::Sshl, 3)
+                    } else if peek2(&chars, i, '=') {
+                        (Tok::ShlEq, 3)
                     } else {
                         (Tok::Shl, 2)
                     }
+                } else if peek(&chars, i, '=') {
+                    (Tok::NonBlockingAssign, 2)
                 } else {
                     (Tok::Lt, 1)
                 }
             }
             '>' => {
-                if peek(&chars, i, '=') {
-                    (Tok::Ge, 2)
-                } else if peek(&chars, i, '>') {
+                if peek(&chars, i, '>') {
+                    // `>>>` (Sshr) / `>>=` (SshrEq F36) / `>>`
                     if peek2(&chars, i, '>') {
                         (Tok::Sshr, 3)
+                    } else if peek2(&chars, i, '=') {
+                        (Tok::SshrEq, 3)
                     } else {
                         (Tok::Shr, 2)
                     }
+                } else if peek(&chars, i, '=') {
+                    (Tok::Ge, 2)
                 } else {
                     (Tok::Gt, 1)
                 }
@@ -523,6 +588,9 @@ pub fn tokenize(src: &str) -> Result<Vec<(Tok, usize, usize)>, MvError> {
             '&' => {
                 if peek(&chars, i, '&') {
                     (Tok::AmpAmp, 2)
+                } else if peek(&chars, i, '=') {
+                    // F36: `&=` compound
+                    (Tok::AndEq, 2)
                 } else {
                     (Tok::Amp, 1)
                 }
@@ -530,11 +598,21 @@ pub fn tokenize(src: &str) -> Result<Vec<(Tok, usize, usize)>, MvError> {
             '|' => {
                 if peek(&chars, i, '|') {
                     (Tok::PipePipe, 2)
+                } else if peek(&chars, i, '=') {
+                    // F36: `|=` compound
+                    (Tok::OrEq, 2)
                 } else {
                     (Tok::Pipe, 1)
                 }
             }
-            '^' => (Tok::Caret, 1),
+            '^' => {
+                if peek(&chars, i, '=') {
+                    // F36: `^=` compound
+                    (Tok::XorEq, 2)
+                } else {
+                    (Tok::Caret, 1)
+                }
+            }
             _ => {
                 return Err(err(tok_line, tok_col, format!("karakter tidak dikenal: '{}'", c)));
             }

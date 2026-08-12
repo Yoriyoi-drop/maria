@@ -136,6 +136,10 @@ impl SimulationEngine {
                     eprintln!("[DBG-F26] resume ContinueAstBlock fid={:?} nstmts={}", fork_id, stmts.len());
                 }
                 let all_consumed = self.evaluate_ast_block_with_delay_fork(&stmts, fork_id)?;
+                // F35 review: return di branch fork (illegal SV tapi parseable)
+                // menandai ast_return_pending — clear di sini agar tidak bocor
+                // ke evaluasi blok lain.
+                self.ast_return_pending = false;
                 if std::env::var("DBG_UVM").is_ok() {
                     eprintln!("[DBG-F26] resume done fid={:?} consumed={}", fork_id, all_consumed);
                 }
@@ -378,6 +382,9 @@ impl SimulationEngine {
             self.current_method = pe.method;
             matched = true;
             let completed = self.evaluate_ast_block_with_delay_fork(&pe.continuation, None)?;
+            // F35 review: return di continuation (illegal SV) menandai
+            // ast_return_pending — clear di sini agar tidak bocor.
+            self.ast_return_pending = false;
             if completed {
                 // Task selesai — truncate frame locals task; kembalikan konteks.
                 let keep = pe.base_len.saturating_sub(1).min(self.method_locals.len());

@@ -88,6 +88,11 @@ impl SimulationEngine {
             }
         }
 
+        // F35: `return` di body method menandai ast_return_pending (stop-blok
+        // lintas nested). Clear di sini (wrapper method terluar) agar flag
+        // tidak bocor ke evaluasi blok lain setelah method selesai.
+        self.ast_return_pending = false;
+
         let return_val = if method_def.is_task {
             LogicVec::new(0) // tasks return void
         } else {

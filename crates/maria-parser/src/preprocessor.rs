@@ -585,6 +585,42 @@ impl Preprocessor {
                         let mut pos = 0;
                         while pos < val_bytes.len() {
                             let mut matched = false;
+                            // Stringify operator `` `"param`" `` (IEEE 1800) di dalam
+                            // body macro → `"arg"`. Tanpa ini ASSERT_ERROR prim_assert
+                            // (`PRIM_STRINGIFY(__name)` = `` `"__name`" ``) meninggalkan
+                            // backtick literal di output → "expected expression, found
+                            // End" saat parse blok `else begin ... end` dari ASSERT_I.
+                            if val_bytes[pos] == b'`' && pos + 1 < val_bytes.len() && val_bytes[pos + 1] == b'"' {
+                                let qpos = pos + 2;
+                                for (param, arg) in mdef.params.iter().zip(expanded_args.iter()) {
+                                    if !param.is_empty()
+                                        && qpos + param.len() <= val_bytes.len()
+                                        && &val_bytes[qpos..qpos + param.len()] == param.as_bytes()
+                                    {
+                                        let after = qpos + param.len();
+                                        if after + 1 < val_bytes.len()
+                                            && val_bytes[after] == b'`'
+                                            && val_bytes[after + 1] == b'"'
+                                        {
+                                            // Arg di-quote; ` dan " di dalam arg di-strip
+                                            // agar string literal selalu valid.
+                                            let cleaned: String = arg
+                                                .chars()
+                                                .filter(|c| *c != '`' && *c != '"')
+                                                .collect();
+                                            expanded.push('"');
+                                            expanded.push_str(&cleaned);
+                                            expanded.push('"');
+                                            pos = after + 2;
+                                            matched = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if matched {
+                                    continue;
+                                }
+                            }
                             for (param, arg) in mdef.params.iter().zip(expanded_args.iter()) {
                                 if !param.is_empty() && pos + param.len() <= val_bytes.len()
                                     && &val_bytes[pos..pos + param.len()] == param.as_bytes()
@@ -603,6 +639,11 @@ impl Preprocessor {
                         let expanded = self.expand_inline_macros_depth(&expanded, depth + 1);
                         result.push_str(&expanded);
                     }
+                } else if name == "__FILE__" || name == "__LINE__" {
+                    // Token predefined `` `__FILE__ `` / `` `__LINE__ `` (dipakai
+                    // ASSERT_ERROR prim_assert di arg $error) — substitusi
+                    // placeholder string agar output preprocessed valid.
+                    result.push_str("\"<preprocessed>\"");
                 } else {
                     result.push('`');
                     result.push_str(name);
