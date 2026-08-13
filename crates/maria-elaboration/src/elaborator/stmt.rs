@@ -138,7 +138,17 @@ fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
                 | BinaryIrOp::Ge
                 | BinaryIrOp::LogicalAnd
                 | BinaryIrOp::LogicalOr => 1,
-                BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl | BinaryIrOp::Sshr => wa,
+                // Shift: runtime `eval_binary` menghasilkan lebar max operan
+                // (`max_width = lhs.width.max(rhs.width)`) — mis. `1'b1 << x`
+                // (x 6-bit) → hasil 6-bit. Pakai aturan yang sama agar cek
+                // width konsisten dengan runtime dan tidak memicu false-positive
+                // untuk idiom RTL `thresh = 1'b1 << level`.
+                BinaryIrOp::Shl
+                | BinaryIrOp::Shr
+                | BinaryIrOp::Sshl
+                | BinaryIrOp::Sshr => {
+                    context_width(a, wa, wb).max(context_width(b, wb, wa))
+                }
                 _ => context_width(a, wa, wb).max(context_width(b, wb, wa)),
             }
         }
@@ -316,7 +326,13 @@ impl Elaborator {
         known_modules: &[Symbol],
         signals: &[SignalInfo],
     ) -> Result<IrStmt, SimError> {
-        match stmt {
+        // ── Instrumentasi DBG_STMT (profiling, non-persistent): hitung total
+        // statement node + waktu per konstruk. Dipakai untuk menemukan
+        // bottleneck statement elaboration (bukan bagian dari build). ──
+        let dbg_stmt = std::env::var("DBG_STMT").is_ok();
+        let stmt_t0 = if dbg_stmt { Some(std::time::Instant::now()) } else { None };
+        let stmt_kind = stmt_kind_name(stmt);
+        let out = match stmt {
             Stmt::Block { stmts } => {
                 let body = self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
                 Ok(IrStmt::Block { stmts: body })
@@ -1497,7 +1513,23 @@ impl Elaborator {
                     productions: ir_productions,
                 })
             }
+        };
+        // ── Akhir instrumentasi DBG_STMT: catat waktu per konstruk. ──
+        if let Some(t0) = stmt_t0 {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            thread_local! {
+                static DBG_STMT_TIME: std::cell::RefCell<std::collections::HashMap<&'static str, (u64, u64)>> =
+                    std::cell::RefCell::new(std::collections::HashMap::new());
+            }
+            let dt = t0.elapsed().as_nanos() as u64;
+            DBG_STMT_TIME.with(|cell| {
+                let mut m = cell.borrow_mut();
+                let e = m.entry(stmt_kind).or_insert((0, 0));
+                e.0 += 1;
+                e.1 += dt;
+            });
         }
+        out
     }
 
     pub(crate) fn elaborate_lvalue(
@@ -2324,6 +2356,88 @@ fn value_to_i64(v: &Value) -> i64 {
         )
         .unwrap_or(0),
         Value::Real(_) => 0,
+    }
+}
+
+/// Nama statis konstruk Stmt untuk instrumentasi DBG_STMT.
+fn stmt_kind_name(s: &Stmt) -> &'static str {
+    match s {
+        Stmt::Block { .. } => "block",
+        Stmt::NamedBlock { .. } => "named_block",
+        Stmt::BlockingAssign { .. } => "blocking_assign",
+        Stmt::NonBlockingAssign { .. } => "nonblocking_assign",
+        Stmt::StmtAssign { .. } => "stmt_assign",
+        Stmt::IfElse { .. } => "if",
+        Stmt::Case { .. } => "case",
+        Stmt::CaseX { .. } => "casex",
+        Stmt::CaseZ { .. } => "casez",
+        Stmt::UniqueCase { .. } => "unique_case",
+        Stmt::PriorityCase { .. } => "priority_case",
+        Stmt::Unique0Case { .. } => "unique0_case",
+        Stmt::CaseInside { .. } => "case_inside",
+        Stmt::Assert { .. } => "assert",
+        Stmt::Assume { .. } => "assume",
+        Stmt::Cover { .. } => "cover",
+        Stmt::Expect { .. } => "expect",
+        Stmt::WaitOrder { .. } => "wait_order",
+        Stmt::UniqueIf { .. } => "unique_if",
+        Stmt::PriorityIf { .. } => "priority_if",
+        Stmt::Delay { .. } => "delay",
+        Stmt::EventControl { .. } => "event_control",
+        Stmt::EventTrigger { .. } => "event_trigger",
+        Stmt::Wait { .. } => "wait",
+        Stmt::LoopForever { .. } => "forever",
+        Stmt::LoopFor { .. } => "for",
+        Stmt::LoopWhile { .. } => "while",
+        Stmt::DoWhile { .. } => "do_while",
+        Stmt::Repeat { .. } => "repeat",
+        Stmt::ForeachLoop { .. } => "foreach",
+        Stmt::Fork { .. } => "fork",
+        Stmt::SysCall { .. } => "syscall",
+        Stmt::SysFinish => "sys_finish",
+        Stmt::Disable { .. } => "disable",
+        Stmt::Force { .. } => "force",
+        Stmt::Release { .. } => "release",
+        Stmt::Deassign { .. } => "deassign",
+        Stmt::Return { .. } => "return",
+        Stmt::Null => "null",
+        Stmt::Expr { .. } => "expr",
+        Stmt::StmtCase { .. } => "stmt_case",
+        Stmt::RandCase { .. } => "randcase",
+        Stmt::RandSequence { .. } => "randsequence",
+        Stmt::Break => "break",
+        Stmt::Continue => "continue",
+    }
+}
+
+/// Dump + reset agregat waktu per konstruk Stmt (DBG_STMT). Dipanggil per
+/// module oleh elaborator setelah items loop.
+pub(crate) fn stmt_dbg_dump(module: &str) {
+    thread_local! {
+        static DBG_STMT_TIME: std::cell::RefCell<std::collections::HashMap<&'static str, (u64, u64)>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    let total = DBG_STMT_TIME.with(|cell| {
+        let mut m = cell.borrow_mut();
+        let items: Vec<_> = m.drain().collect();
+        items
+    });
+    if total.is_empty() {
+        return;
+    }
+    let sum_ns: u64 = total.iter().map(|(_, (_, t))| *t).sum();
+    let sum_n: u64 = total.iter().map(|(_, (n, _))| *n).sum();
+    eprintln!("[DBG-STMT] {}: {} stmts in {:.2}s", module, sum_n, sum_ns as f64 / 1e9);
+    let mut sorted: Vec<_> = total.into_iter().collect();
+    sorted.sort_by_key(|(_, (_, t))| std::cmp::Reverse(*t));
+    for (k, (n, t)) in sorted.iter().take(10) {
+        eprintln!(
+            "  {:<18} {:>8} stmts  {:>8.2}s  ({:>5.1}%)",
+            k,
+            n,
+            *t as f64 / 1e9,
+            (*t as f64 / sum_ns as f64) * 100.0
+        );
     }
 }
 

@@ -169,6 +169,9 @@ pub fn eval_expr(
                 if let Some(a) = ctx.arrays.get(&q) {
                     return Ok(CVal::Array(a.iter().map(|&x| CVal::Scalar(x)).collect()));
                 }
+                if let Some(s) = ctx.structs.get(&q) {
+                    return Ok(CVal::Struct(s.clone()));
+                }
             }
             if let Some(&v) = ctx.scalars.get(name) {
                 Ok(CVal::Scalar(v))
@@ -188,6 +191,8 @@ pub fn eval_expr(
                 Ok(CVal::Scalar(v))
             } else if let Some(a) = ctx.arrays.get(&qname) {
                 Ok(CVal::Array(a.iter().map(|&x| CVal::Scalar(x)).collect()))
+            } else if let Some(s) = ctx.structs.get(&qname) {
+                Ok(CVal::Struct(s.clone()))
             } else {
                 Err(format!("'{}' not found", qname.as_str()))
             }
@@ -560,7 +565,33 @@ fn find_package_func<'a>(
     None
 }
 
+thread_local! {
+    static FUNC_EVAL_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn eval_function_body(
+    func: &FunctionDecl,
+    args: &[Expr],
+    ctx: &PkgCtx,
+    cur_pkg: Option<&str>,
+) -> Result<CVal, String> {
+    // Guard rekursi: fungsi package yang memanggil dirinya sendiri / saling
+    // memanggil tanpa basis (mis. error resolusi di tubuh) tidak boleh
+    // membuat stack overflow. Batas kedalaman inlining fungsi package.
+    let depth = FUNC_EVAL_DEPTH.with(|c| c.get());
+    if depth > 128 {
+        return Err(format!(
+            "package function recursion too deep in '{}'",
+            func.name.as_str()
+        ));
+    }
+    FUNC_EVAL_DEPTH.with(|c| c.set(depth + 1));
+    let result = eval_function_body_inner(func, args, ctx, cur_pkg);
+    FUNC_EVAL_DEPTH.with(|c| c.set(depth));
+    result
+}
+
+fn eval_function_body_inner(
     func: &FunctionDecl,
     args: &[Expr],
     ctx: &PkgCtx,
@@ -763,6 +794,11 @@ pub fn eval_package_constants(
 ) -> (Scalars, Arrays) {
     let mut scalars: Scalars = HashMap::new();
     let mut arrays: Arrays = HashMap::new();
+    // Nilai struct param package yang sudah dievaluasi (key qualified
+    // `pkg::name`), agar param LAIN bisa mereferensikannya sebagai struct
+    // (`TL_H2D_DEFAULT = '{... TL_A_USER_DEFAULT ...}`), bukan hanya member
+    // key skalar `pkg::name.field` di scalars.
+    let mut structs: HashMap<Symbol, Vec<SField>> = HashMap::new();
     for _ in 0..256 {
         let mut changed = false;
         for (pkg_name, items) in package_symbols {
@@ -773,21 +809,34 @@ pub fn eval_package_constants(
                 }
                 let Some(default) = &p.default else { continue };
                 let qname = Symbol::intern(&format!("{}::{}", pkg_name.as_str(), name.as_str()));
-                if scalars.contains_key(&qname) || arrays.contains_key(&qname) {
+                if scalars.contains_key(&qname)
+                    || arrays.contains_key(&qname)
+                    || structs.contains_key(&qname)
+                {
                     continue;
                 }
-                let ctx = PkgCtx {
-                    scalars: &scalars,
-                    arrays: &arrays,
-                    package_symbols,
-                    structs: no_structs(),
+                let eval_debug = std::env::var("DBG_PKG_EVAL").is_ok();
+                let eval_result = {
+                    let ctx = PkgCtx {
+                        scalars: &scalars,
+                        arrays: &arrays,
+                        package_symbols,
+                        structs: &structs,
+                    };
+                    eval_expr(default, &ctx, Some(pkg_name.as_str()))
                 };
-                match eval_expr(default, &ctx, Some(pkg_name.as_str())) {
+                match eval_result {
                     Ok(CVal::Scalar(v)) => {
+                        if eval_debug {
+                            eprintln!("[DBG-PKG] {} = scalar {}", qname.as_str(), v);
+                        }
                         scalars.insert(qname, v);
                         changed = true;
                     }
                     Ok(CVal::Array(a)) => {
+                        if eval_debug {
+                            eprintln!("[DBG-PKG] {} = array len {}", qname.as_str(), a.len());
+                        }
                         arrays.insert(qname, flatten(&a));
                         // Struct member keys utk array-of-struct: `pkg::name[i].field`
                         // → nilai field skalar. Ini yang membuat `PartInfo[k].offset`
@@ -795,6 +844,9 @@ pub fn eval_package_constants(
                         // key `base.field` di param_vals).
                         for (i, elem) in a.iter().enumerate() {
                             if let CVal::Struct(fields) = elem {
+                                if eval_debug {
+                                    eprintln!("[DBG-PKG]   elem[{}] = struct len {}", i, fields.len());
+                                }
                                 for f in fields {
                                     if let Some(fname) = f.name {
                                         if let CVal::Scalar(v) = &f.val {
@@ -812,11 +864,20 @@ pub fn eval_package_constants(
                                         }
                                     }
                                 }
+                            } else {
+                                if eval_debug {
+                                    eprintln!("[DBG-PKG]   elem[{}] = NON-STRUCT {:?}", i, elem);
+                                }
                             }
                         }
                         changed = true;
                     }
                     Ok(CVal::Struct(fields)) => {
+                        if eval_debug {
+                            eprintln!("[DBG-PKG] {} = struct len {}", qname.as_str(), fields.len());
+                        }
+                        // Simpan struct utk referensi silang param package lain.
+                        structs.insert(qname, fields.clone());
                         // Single struct param: `pkg::name.field` → nilai field skalar.
                         for f in &fields {
                             if let Some(fname) = f.name {
@@ -834,8 +895,13 @@ pub fn eval_package_constants(
                                 }
                             }
                         }
+                        changed = true;
                     }
-                    Err(_) => {}
+                    Err(e) => {
+                        if eval_debug {
+                            eprintln!("[DBG-PKG] {} = ERROR: {}", qname.as_str(), e);
+                        }
+                    }
                 }
             }
             // Enum member constants package → scalar (qualified + plain-by-context).

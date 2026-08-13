@@ -421,6 +421,17 @@ pub fn const_eval_with_params(
                 if let Some(&v) = param_vals.get(key.as_str()) {
                     return Ok(v);
                 }
+                if std::env::var("DBG_MEMBER").is_ok() {
+                    eprintln!(
+                        "[DBG-MEMBER] key '{}' NOT FOUND (obj={:?} field={} bk={})",
+                        key, obj, field.as_str(), bk
+                    );
+                }
+            } else if std::env::var("DBG_MEMBER").is_ok() {
+                eprintln!(
+                    "[DBG-MEMBER-NO-BASE] obj={:?} field={}",
+                    obj, field.as_str()
+                );
             }
             Err("member access not allowed in constant expression".to_string())
         }

@@ -48,6 +48,7 @@ pub const ELAB_ERRORS: &[(DiagCode, &str)] = &[
     (DiagCode::UnresolvedInstantiation, "unresolved instantiation"),
     (DiagCode::CircularHierarchy, "circular hierarchy"),
     (DiagCode::ExcludedByFilelist, "excluded by filelist"),
+    (DiagCode::DuplicateDeclaration, "duplicate definition"),
 ];
 
 /// All runtime memory error codes (RT0xxx)

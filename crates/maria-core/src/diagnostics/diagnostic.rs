@@ -145,6 +145,8 @@ pub enum DiagCode {
     CircularHierarchy,
     /// Module excluded by filelist (E3010)
     ExcludedByFilelist,
+    /// Module/interface/package defined more than once (E3011)
+    DuplicateDeclaration,
 
     // ── Runtime Memory: RT0xxx ──
     /// Null handle access (RT0001)
@@ -301,6 +303,7 @@ impl DiagCode {
             DiagCode::UnresolvedInstantiation => "E3008",
             DiagCode::CircularHierarchy => "E3009",
             DiagCode::ExcludedByFilelist => "E3010",
+            DiagCode::DuplicateDeclaration => "E3011",
             // Runtime Memory
             DiagCode::NullHandle => "RT0001",
             DiagCode::InvalidReference => "RT0002",
@@ -393,6 +396,7 @@ impl DiagCode {
             DiagCode::UnresolvedInstantiation => "unresolved instantiation",
             DiagCode::CircularHierarchy => "circular hierarchy",
             DiagCode::ExcludedByFilelist => "excluded by filelist",
+            DiagCode::DuplicateDeclaration => "duplicate definition",
             // Runtime Memory
             DiagCode::NullHandle => "null handle access",
             DiagCode::InvalidReference => "invalid object reference",
@@ -501,6 +505,8 @@ impl DiagCode {
                 "A circular hierarchy was detected — module A instantiates module B which (directly or indirectly) instantiates module A.",
             DiagCode::ExcludedByFilelist =>
                 "A required module was excluded by the filelist, so the design hierarchy is incomplete.",
+            DiagCode::DuplicateDeclaration =>
+                "A module, interface, or package is defined more than once across the source files — the LAST definition from the file list is used (Verilator semantics).",
             DiagCode::NullHandle =>
                 "An object handle was used (method call or member access) but the handle is null.",
             DiagCode::InvalidReference =>
@@ -645,6 +651,8 @@ impl DiagCode {
                 "Restructure the design to remove recursive instantiation between modules.",
             DiagCode::ExcludedByFilelist =>
                 "Add the missing source file to the filelist, or remove the exclusion directive that dropped the module.",
+            DiagCode::DuplicateDeclaration =>
+                "Remove the duplicate definition, or reorder the file list so the intended definition comes last.",
             DiagCode::NullHandle =>
                 "Initialize the object handle with 'new()' before accessing its members.",
             DiagCode::InvalidReference =>
@@ -769,7 +777,8 @@ impl DiagCode {
             | DiagCode::MissingRootModule
             | DiagCode::UnresolvedInstantiation
             | DiagCode::CircularHierarchy
-            | DiagCode::ExcludedByFilelist => "Elaboration",
+            | DiagCode::ExcludedByFilelist
+            | DiagCode::DuplicateDeclaration => "Elaboration",
             DiagCode::NullHandle
             | DiagCode::InvalidReference
             | DiagCode::NullInterface

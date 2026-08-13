@@ -408,6 +408,33 @@ fn inline_funcs_in_stmt(
     temp_signals: &mut Vec<TempSignal>,
     recursive_funcs: &HashSet<Symbol>,
 ) -> Stmt {
+    // Guard kedalaman untuk statement bersarang sangat dalam (nested block /
+    // if/case ribuan level hasil generate/inline) agar tidak stack overflow.
+    let depth = INLINE_DEPTH.with(|c| c.get());
+    if depth > 256 {
+        return stmt;
+    }
+    INLINE_DEPTH.with(|c| c.set(depth + 1));
+    let result = inline_funcs_in_stmt_inner(
+        stmt,
+        funcs,
+        prefix,
+        counter,
+        temp_signals,
+        recursive_funcs,
+    );
+    INLINE_DEPTH.with(|c| c.set(depth));
+    result
+}
+
+fn inline_funcs_in_stmt_inner(
+    stmt: Stmt,
+    funcs: &HashMap<Symbol, FunctionDecl>,
+    prefix: Symbol,
+    counter: &mut usize,
+    temp_signals: &mut Vec<TempSignal>,
+    recursive_funcs: &HashSet<Symbol>,
+) -> Stmt {
     match stmt {
         Stmt::Block { stmts } => {
             let new_stmts = stmts
@@ -1802,7 +1829,43 @@ fn inline_funcs_in_stmt(
     }
 }
 
+thread_local! {
+    static INLINE_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn replace_func_calls_in_expr(
+    expr: Expr,
+    funcs: &HashMap<Symbol, FunctionDecl>,
+    prefix: Symbol,
+    counter: &mut usize,
+    preamble: &mut Vec<Stmt>,
+    temp_signals: &mut Vec<TempSignal>,
+    recursive_funcs: &HashSet<Symbol>,
+) -> Expr {
+    // Guard global kedalaman traversal AST (bukan hanya inline FuncCall):
+    // ekspresi BinaryOp/Concat bersarang sangat dalam (ratusan ribu level,
+    // mis. hasil inline/rename yang membengkak) tidak boleh membuat stack
+    // overflow. Frame debug besar (~8KB) → stack 8MB habis di ~1000 frame,
+    // jadi batas dijaga rendah (256) agar tetap di bawah ambang overflow.
+    let depth = INLINE_DEPTH.with(|c| c.get());
+    if depth > 256 {
+        return expr;
+    }
+    INLINE_DEPTH.with(|c| c.set(depth + 1));
+    let result = replace_func_calls_in_expr_inner(
+        expr,
+        funcs,
+        prefix,
+        counter,
+        preamble,
+        temp_signals,
+        recursive_funcs,
+    );
+    INLINE_DEPTH.with(|c| c.set(depth));
+    result
+}
+
+fn replace_func_calls_in_expr_inner(
     expr: Expr,
     funcs: &HashMap<Symbol, FunctionDecl>,
     prefix: Symbol,
@@ -1832,6 +1895,17 @@ fn replace_func_calls_in_expr(
                 return Expr::FuncCall {
                     name,
                     args: new_args,
+                    line,
+                    col,
+                };
+            }
+            // Jaring pengaman rekursi (selain `recursive_funcs`): jika
+            // kedalaman traversal sudah sangat dalam, berhenti inline di sini
+            // (panggilan tersisa tetap FuncCall) daripada stack overflow.
+            if INLINE_DEPTH.with(|c| c.get()) > 200 {
+                return Expr::FuncCall {
+                    name,
+                    args,
                     line,
                     col,
                 };

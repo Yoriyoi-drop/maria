@@ -265,6 +265,23 @@ impl Elaborator {
                     return Ok(folded);
                 }
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
+                // Array param package dengan index dinamis/konstan yang tidak
+                // ter-fold: `pkg::ARR[idx]` harus memilih ELEMEN (lebar elem_w),
+                // bukan bit tunggal. Tanpa ini `PRESENT_SBOX4[x[k*4 +: 4]]`
+                // menjadi part-select lebar 1 → nilai sbox salah + WR0102 palsu.
+                if let Some((arr_const, elem_w)) = self.pkg_array_param_element(inner, &inner_expr) {
+                    let index_expr = self.elaborate_expr(index, signal_map, signals)?;
+                    let base_expr = IrExpr::BinaryOp(
+                        BinaryIrOp::Mul,
+                        Box::new(index_expr),
+                        Box::new(IrExpr::Const(LogicVec::from_u64(elem_w as u64, 32))),
+                    );
+                    return Ok(IrExpr::ExprPartSelect(
+                        Box::new(arr_const),
+                        Box::new(base_expr),
+                        Box::new(IrExpr::Const(LogicVec::from_u64(elem_w as u64, 32))),
+                    ));
+                }
                 if let IrExpr::Signal(sid, _) = &inner_expr {
                     let sig = &signals[*sid];
                     // Check for multi-dim packed array: packed_dims.len() > 1
@@ -2110,6 +2127,60 @@ impl Elaborator {
             DataType::Signed(inner) => self.resolve_typedef_width(inner, None),
             _ => dtype.width(),
         }
+    }
+
+    /// Untuk `pkg::ARR[idx]` dengan `ARR` array param package (tersimpan di
+    /// `pkg_const_arrays`) dan index dinamis/konstan yang tidak ter-fold:
+    /// bangun ulang konstanta array penuh dari elemen-elemennya + lebar
+    /// elemen (`total_width / jumlah_elemen`). Mengembalikan None bila bukan
+    /// array param package atau lebarnya tidak bisa ditentukan → fallback ke
+    /// bit-select biasa.
+    ///
+    /// Konteks bug: `parameter logic [15:0][3:0] PRESENT_SBOX4 = {...}` di
+    /// prim_cipher_pkg dipakai `PRESENT_SBOX4[x[k*4 +: 4]]`. `pkg::SBOX`
+    /// ter-flatten ke ELEMEN PERTAMA di param context, sehingga bit-select
+    /// dinamis menghasilkan part-select lebar 1 pada nilai yang salah — sbox
+    /// bernilai salah + WR0102 `lhs=4, rhs=1` (496x per desain).
+    pub(crate) fn pkg_array_param_element(
+        &self,
+        inner_ast: &Expr,
+        _inner_ir: &IrExpr,
+    ) -> Option<(IrExpr, usize)> {
+        let Expr::ScopedIdent { package, item, .. } = inner_ast else {
+            return None;
+        };
+        let qualified = Symbol::intern(&format!("{}::{}", package.as_str(), item.as_str()));
+        let elems = self.pkg_const_arrays.get(&qualified)?;
+        if elems.is_empty() {
+            return None;
+        }
+        // Total width dari default expression param (struktur AST): untuk
+        // `{4'h2, 4'h1, ...}` → 64. Nilai hasil eval tidak bisa dipakai
+        // (i64 tanpa info lebar; `pkg::name` malah berisi elemen pertama).
+        let total_w = (|| {
+            let pkg_items = self.package_symbols.get(package)?;
+            let maria_ast::types::PackageItem::Param(p) = pkg_items.get(item)? else {
+                return None;
+            };
+            let default = p.default.as_ref()?;
+            const_fold_width(default, &self.param_vals)
+        })()?;
+        if total_w == 0 || total_w > 64 || total_w % elems.len() != 0 {
+            return None;
+        }
+        let elem_w = total_w / elems.len();
+        if elem_w == 0 {
+            return None;
+        }
+        let mask = if elem_w >= 64 { u64::MAX } else { (1u64 << elem_w) - 1 };
+        let mut acc: u64 = 0;
+        for (i, v) in elems.iter().enumerate() {
+            acc |= (*v as u64 & mask) << (i * elem_w);
+        }
+        Some((
+            IrExpr::Const(LogicVec::from_u64(acc, total_w)),
+            elem_w,
+        ))
     }
 }
 

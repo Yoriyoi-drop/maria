@@ -22,6 +22,93 @@ pub fn const_eval_params(expr: &Expr, params: &HashMap<Symbol, i64>) -> Result<i
     const_eval_with_params(expr, params)
 }
 
+/// Perkiraan lebar sebenarnya dari ekspresi konstanta murni (tanpa signal),
+/// dihitung dari struktur AST — bukan dari nilai hasil eval.
+///
+/// Latar belakang: `try_fold_const` mengevaluasi nilai lalu memakai lebar
+/// minimal `min_width.max(32)`. Untuk konstanta yang nilainya kecil/0 tapi
+/// lebar aslinya lebar (mis. `{384{1'b0}}` → 0, atau `512'h0 ^ 512'h36`),
+/// lebar itu salah menjadi 32 — memicu WR0102 palsu seperti
+/// `i_pad_256 = {secret_key_i[1023:896], {(BlockSizeSHA256-128){1'b0}}}`
+/// (rhs dihitung 160 = 128+32, harusnya 512). Dengan lebar dari AST, hasil
+/// fold mempertahankan lebar sebenarnya.
+pub(crate) fn const_fold_width(expr: &Expr, params: &HashMap<Symbol, i64>) -> Option<usize> {
+    match expr {
+        Expr::Value(v) => Some(match v {
+            Value::Binary { bits, width, .. } => width.unwrap_or_else(|| bits.len()),
+            Value::Hex { bits, width, .. } => width.unwrap_or_else(|| bits.len() * 4),
+            Value::Octal { bits, width, .. } => width.unwrap_or_else(|| bits.len() * 3),
+            Value::Decimal(n) => {
+                let abs = n.unsigned_abs();
+                let w = if *n == 0 { 1 } else { 64 - abs.leading_zeros() as usize };
+                w.max(32)
+            }
+            Value::Real(_) => 64,
+        }),
+        Expr::FillLit(_) => Some(1),
+        Expr::Replicate { count, expr: inner } => {
+            let c = const_eval_with_params(count, params).ok()? as usize;
+            Some(c.saturating_mul(const_fold_width(inner, params)?))
+        }
+        Expr::Concat(exprs) => {
+            let mut total = 0usize;
+            for e in exprs {
+                total = total.saturating_add(const_fold_width(e, params)?);
+            }
+            Some(total)
+        }
+        Expr::Paren(inner) => const_fold_width(inner, params),
+        Expr::CastWidth { width, expr: _ } => {
+            let w = const_eval_with_params(width, params).ok()?;
+            Some(w.max(1) as usize)
+        }
+        Expr::String(s) => Some(s.len() * 8),
+        Expr::UnaryOp { op, expr: inner } => {
+            let w = const_fold_width(inner, params)?;
+            Some(match op {
+                UnaryOp::Not
+                | UnaryOp::ReductionAnd
+                | UnaryOp::ReductionNand
+                | UnaryOp::ReductionOr
+                | UnaryOp::ReductionNor
+                | UnaryOp::ReductionXor
+                | UnaryOp::ReductionXnor => 1,
+                _ => w,
+            })
+        }
+        Expr::BinaryOp { op, lhs, rhs } => {
+            let lw = const_fold_width(lhs, params)?;
+            let rw = const_fold_width(rhs, params)?;
+            let m = lw.max(rw);
+            Some(match op {
+                BinaryOp::Eq
+                | BinaryOp::Neq
+                | BinaryOp::CaseEq
+                | BinaryOp::CaseNeq
+                | BinaryOp::EqWild
+                | BinaryOp::NeqWild
+                | BinaryOp::Lt
+                | BinaryOp::Le
+                | BinaryOp::Gt
+                | BinaryOp::Ge
+                | BinaryOp::LogicalAnd
+                | BinaryOp::LogicalOr => 1,
+                _ => m,
+            })
+        }
+        Expr::TernaryOp {
+            cond: _,
+            true_expr,
+            false_expr,
+        } => {
+            let tw = const_fold_width(true_expr, params)?;
+            let fw = const_fold_width(false_expr, params)?;
+            Some(tw.max(fw))
+        }
+        _ => None,
+    }
+}
+
 /// Coba fold expression konstanta menjadi IrExpr::Const.
 /// Mengembalikan Some(Const) jika konstanta bisa dievaluasi, None jika tidak.
 pub fn try_fold_const(
@@ -30,17 +117,19 @@ pub fn try_fold_const(
 ) -> Result<Option<IrExpr>, String> {
     match const_eval_with_params(expr, params) {
         Ok(val) => {
-            let abs = val.unsigned_abs();
-            let min_width = if val >= 0 {
-                if val == 0 {
-                    1
+            let width = const_fold_width(expr, params).unwrap_or_else(|| {
+                let abs = val.unsigned_abs();
+                let min_width = if val >= 0 {
+                    if val == 0 {
+                        1
+                    } else {
+                        64 - (abs.leading_zeros() as usize)
+                    }
                 } else {
-                    64 - (abs.leading_zeros() as usize)
-                }
-            } else {
-                64 - (abs.leading_zeros() as usize) + 1
-            };
-            let width = min_width.max(32);
+                    64 - (abs.leading_zeros() as usize) + 1
+                };
+                min_width.max(32)
+            });
             Ok(Some(IrExpr::Const(LogicVec::from_u64(val as u64, width))))
         }
         Err(_) => Ok(None),

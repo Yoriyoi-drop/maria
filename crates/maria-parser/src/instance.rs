@@ -747,6 +747,35 @@ impl Parser {
                         }
                     });
 
+                    // Port bertipe typedef/interface (dtype_name non-None):
+                    // dimensi `[a:b]` SEBELUM nama port adalah dimensi UNPACKED
+                    // array, bukan packed range vector. Contoh OpenTitan:
+                    // `input cmd_info_t [NumTotalCmdInfo-1:0] cmd_info_i` atau
+                    // `output mp_region_cfg_t region_cfgs_o[TotalMpRegions]` —
+                    // elemen array = seluruh typedef (struct 23-bit), bukan
+                    // bit-vector selebar dimensi. Tanpa ini parser menaruh
+                    // `[3:0]` sebagai packed range → port 4-bit + elem select
+                    // `cmd_info_i[i]` = bit tunggal (WR0102 rhs=1).
+                    let (range, expr_range, extra_packed_dims, array_range_pre) =
+                        if dtype_name.is_some() {
+                            let ar = expr_range.as_ref().and_then(|er| {
+                                if let (Ok(m), Ok(l)) = (
+                                    const_eval_simple(&er.msb),
+                                    const_eval_simple(&er.lsb),
+                                ) {
+                                    Some(Range {
+                                        msb: m as usize,
+                                        lsb: l as usize,
+                                    })
+                                } else {
+                                    None
+                                }
+                            });
+                            (None, None, Vec::new(), ar)
+                        } else {
+                            (range, expr_range, extra_packed_dims, None)
+                        };
+
                     loop {
                         let name_tok = self.peek().clone();
                         match &name_tok {
@@ -808,7 +837,7 @@ impl Parser {
                                     range: range.clone(),
                                     expr_range: expr_range.clone(),
                                     dtype_name: dtype_name.as_ref().map(|s| Symbol::intern(s)),
-                                    array_range,
+                                    array_range: array_range_pre.clone().or(array_range),
                                     extra_packed_dims: extra_packed_dims.clone(),
                                 });
                             }
@@ -817,11 +846,31 @@ impl Parser {
 
                         if self.peek() == &Token::Comma {
                             let ahead = self.peek_ahead(1).clone();
-                            let is_new_port = ahead == Token::Input
-                                || ahead == Token::Output
-                                || ahead == Token::Inout
-                                || (matches!(&ahead, Token::Ident(_))
-                                    && matches!(self.peek_ahead(2), Token::Scope));
+                            // Port baru dimulai dengan direction (input/output/
+                            // inout), tipe data (logic/wire/reg/bit/byte/int/…
+                            // — port ANSI dengan direction implicit, umum di
+                            // OpenTitan: `logic clk_edn_i,`), atau ident yang
+                            // diikuti `::` (pkg::type). Tanpa guard ini, comma
+                            // setelah port `logic x` di-consume lalu token
+                            // `logic` berikutnya membuat parse_port_list berhenti
+                            // → `expected RParen, found logic` (E1002 palsu).
+                            let is_new_port = matches!(
+                                ahead,
+                                Token::Input
+                                    | Token::Output
+                                    | Token::Inout
+                                    | Token::Wire
+                                    | Token::Reg
+                                    | Token::Logic
+                                    | Token::Bit
+                                    | Token::Byte
+                                    | Token::Shortint
+                                    | Token::Longint
+                                    | Token::Time
+                                    | Token::Int
+                                    | Token::Integer
+                            ) || (matches!(&ahead, Token::Ident(_))
+                                && matches!(self.peek_ahead(2), Token::Scope));
                             if !is_new_port {
                                 self.advance();
                             } else {

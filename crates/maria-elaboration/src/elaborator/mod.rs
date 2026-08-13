@@ -173,6 +173,15 @@ pub struct Elaborator {
     /// Stats for profiling
     pub cache_hits: usize,
     pub cache_misses: usize,
+    // ── Instance param-IR cache (flatten) ──
+    /// Cache IR hasil `elaborate_module_with_params_and_type` per
+    /// (module_name, param override signature). OpenTitan punya ribuan
+    /// instance dengan override IDENTIK (mis. `prim_buf #(.W(8))` dipakai
+    /// puluhan kali) — tanpa cache, setiap instance meng-clone AST + resolve
+    /// 62k-ctx + elaborasi penuh ulang. Dengan cache, pekerjaan berat hanya
+    /// dilakukan SEKALI per signature unik. Dibatasi (bounded) agar memori
+    /// tidak membengkak pada desain dengan ribuan signature berbeda.
+    pub param_ir_cache: HashMap<(Symbol, u64), IrModule>,
 }
 
 impl Elaborator {
@@ -330,6 +339,16 @@ impl Elaborator {
             let dv = Symbol::intern("dv_utils_pkg");
             eprintln!("[DBG-ELAB] with_source: design.packages={} package_symbols={} gpio_env_pkg={} dv_utils_pkg={}", design.packages.len(), package_symbols.len(), package_symbols.contains_key(&gp), package_symbols.contains_key(&dv));
         }
+        if std::env::var("DBG_ELAB").is_ok() {
+            let mut pi_keys: Vec<&str> = pkg_const_scalars
+                .keys()
+                .filter(|k| k.as_str().contains("PartInfo") || k.as_str().contains("PartInfoDefault"))
+                .map(|k| k.as_str())
+                .collect();
+            pi_keys.sort();
+            eprintln!("[DBG-ELAB] pkg_const_scalars keys with PartInfo ({}): {:?}", pi_keys.len(), &pi_keys[..pi_keys.len().min(12)]);
+            eprintln!("[DBG-ELAB] pkg_struct_ref_index len={} has PartInfo[0]={} has PartInfoDefault={}", pkg_struct_ref_index.len(), pkg_struct_ref_index.contains_key(&Symbol::intern("PartInfo[0]")), pkg_struct_ref_index.contains_key(&Symbol::intern("PartInfoDefault")));
+        }
 
         Elaborator {
             design,
@@ -359,6 +378,7 @@ impl Elaborator {
             module_cache: HashMap::new(),
             cache_hits: 0,
             cache_misses: 0,
+            param_ir_cache: HashMap::new(),
         }
     }
 
@@ -371,6 +391,75 @@ impl Elaborator {
         // module. Sebelumnya dihitung ulang per-modul (rescan semua package +
         // fixed-point 64 iterasi) yang menjadi bottleneck di desain besar.
         self.build_pkg_param_ctx();
+
+        // ── Deduplicate module definitions (pilih yang self-contained) ──
+        // Filelist project besar (OpenTitan) sering memuat BEBERAPA varian
+        // teknologi dari module yang sama (mis. `prim_buf`: asap7 / generic /
+        // xilinx). Tanpa dedup, definisi mana yang dipakai TIDAK deterministik
+        // dan bisa jatuh ke varian yang menginstansiasi modul library yang
+        // tidak tersedia (mis. sel stdcell `BUFx2_ASAP7_75t_R` / `BUFGCTRL`)
+        // → error E3001 palsu yang memblokir simulasi. Pilih definisi yang
+        // PALING self-contained: jumlah instance yang tidak tersolve paling
+        // kecil (0 = semua instance ter-resolve — umumnya implementasi generik/
+        // simulasi); tie → definisi terakhir (deterministik, urutan filelist).
+        {
+            use std::collections::{HashMap as HMap, HashSet as HSet};
+            let before = self.design.modules.len();
+            let all_names: HSet<Symbol> = self
+                .design
+                .modules
+                .iter()
+                .map(|m| m.name)
+                .chain(self.design.interfaces.iter().map(|i| i.name))
+                .chain(self.design.packages.iter().map(|p| p.name))
+                .collect();
+            let mut groups: HMap<Symbol, Vec<usize>> = HMap::new();
+            for (idx, m) in self.design.modules.iter().enumerate() {
+                groups.entry(m.name).or_default().push(idx);
+            }
+            let mut keep = vec![true; self.design.modules.len()];
+            for (_name, idxs) in &groups {
+                if idxs.len() <= 1 {
+                    continue;
+                }
+                let mut best = *idxs.last().unwrap();
+                let mut best_missing = usize::MAX;
+                for &idx in idxs {
+                    let mut insts: Vec<Symbol> = Vec::new();
+                    collect_instance_names(&self.design.modules[idx].items, &mut insts);
+                    let missing = insts
+                        .iter()
+                        .filter(|n| !all_names.contains(*n))
+                        .count();
+                    // missing lebih kecil menang; tie (<=) → definisi terakhir
+                    // (deterministik, konsisten urutan filelist).
+                    if missing <= best_missing {
+                        best_missing = missing;
+                        best = idx;
+                    }
+                }
+                for &idx in idxs {
+                    if idx != best {
+                        keep[idx] = false;
+                    }
+                }
+            }
+            let removed = keep.iter().filter(|k| !**k).count();
+            if removed > 0 {
+                let mut iter = keep.into_iter();
+                self.design
+                    .modules
+                    .retain(|_| iter.next().unwrap());
+                self.diag_sink.push(Diagnostic::new(
+                    DiagLevel::Warning,
+                    DiagCode::DuplicateDeclaration,
+                    format!(
+                        "{} module definition(s) dengan nama yang sama di-deduplikasi — memakai definisi yang paling self-contained (instance ter-resolve; tie → terakhir)",
+                        removed
+                    ),
+                ));
+            }
+        }
         if std::env::var("DBG_ELAB").is_ok() {
             let n_arr_elems: usize = self.pkg_const_arrays.values().map(|v| v.len()).sum();
             eprintln!("[DBG-ELAB] global package param ctx built in {:?} ({} entries; scalars={} arrays={} array_elems={})", elab_t0.elapsed(), self.pkg_param_ctx.len(), self.pkg_const_scalars.len(), self.pkg_const_arrays.len(), n_arr_elems);
@@ -582,12 +671,17 @@ _ => {}
             let ctx_ms = mod_t0.elapsed().as_millis();
             // Konteks package untuk evaluasi PENUH default param ($bits(typedef),
             // inlining fungsi package) pada jalur resolusi localparam header.
-            let empty_structs: HashMap<Symbol, Vec<SField>> = HashMap::new();
+            // `structs` = index struct package GLOBAL (base name → fields,
+            // dibangun sekali di build_pkg_param_ctx) — tanpa ini, default
+            // `Info = PartInfoDefault` di generate expansion phase TIDAK
+            // mendapat member keys `Info.size`/`Info.integrity`, sehingga
+            // generate if / port width member access di otp_ctrl_part_buf
+            // gagal const-eval (error E3001/E3003 "member access not allowed").
             let pkg_full = PkgFullCtx {
                 scalars: &self.pkg_const_scalars,
                 arrays: &self.pkg_const_arrays,
                 package_symbols: &self.package_symbols,
-                structs: &empty_structs,
+                structs: &self.pkg_struct_ref_index,
             };
             let param_vals = resolve_param_values_with_ctx(
                 &self.design.modules[i],
@@ -1629,12 +1723,14 @@ let mut top = match self.modules.remove(&top_name) {
         let ctx = self.collect_package_param_ctx(module);
         // Evaluasi penuh: $bits(typedef) & inlining fungsi package untuk default
         // param — evaluator skalar sederhana tidak punya akses package_symbols.
-        let empty_structs: HashMap<Symbol, Vec<SField>> = HashMap::new();
+        // `structs` = index struct package GLOBAL (lihat komentar di jalur
+        // generate expansion) agar default `Info = PartInfoDefault` membawa
+        // member keys `Info.size` dst. ke param_vals.
         let pkg_full = PkgFullCtx {
             scalars: &self.pkg_const_scalars,
             arrays: &self.pkg_const_arrays,
             package_symbols: &self.package_symbols,
-            structs: &empty_structs,
+            structs: &self.pkg_struct_ref_index,
         };
         resolve_param_values_with_ctx(module, instance_overrides, &ctx, Some(&pkg_full))
             .map_err(|e| self.elab_diag(DiagCode::ParamMismatch, e))
@@ -1808,6 +1904,23 @@ let mut top = match self.modules.remove(&top_name) {
                 let PackageItem::Param(p) = item else { continue };
                 if let Some(&v) = pctx.get(&p.name) {
                     plain.insert(*name, v);
+                }
+            }
+            // Member keys struct / array-of-struct package juga harus terlihat
+            // sebagai PLAIN name (`PartInfo[0].offset`, `Info.size`) untuk
+            // `import pkg::*` — bukan hanya qualified `pkg::PartInfo[0].offset`.
+            // Tanpa ini, generate if `PartInfo[k].offset == 0` di module yang
+            // meng-import package gagal const-eval (member access not allowed
+            // in constant expression) → error E3001/E3003 palsu di OpenTitan
+            // (otp_ctrl / otp_ctrl_part_buf / otp_ctrl_part_unbuf).
+            let pkg_prefix = format!("{}::", pkg_name.as_str());
+            for (qname, v) in &self.pkg_const_scalars {
+                if let Some(rest) = qname.as_str().strip_prefix(&pkg_prefix) {
+                    // Hanya member keys (mengandung `.`) — param skalar & enum
+                    // member sudah masuk via loop di atas / pkg_param_ctx.
+                    if rest.contains('.') {
+                        plain.entry(Symbol::intern(rest)).or_insert(*v);
+                    }
                 }
             }
             plain_map.insert(*pkg_name, plain);
@@ -2061,7 +2174,7 @@ let mut top = match self.modules.remove(&top_name) {
     }
 
     fn store_typedef_fields(&mut self, name: Symbol, dtype: &DataType) {
-        let fields = Self::compute_struct_fields(dtype);
+        let fields = self.compute_struct_fields(dtype);
         if !fields.is_empty() {
             self.typedef_field_map.insert(name, fields);
         }
@@ -2084,7 +2197,7 @@ let mut top = match self.modules.remove(&top_name) {
                 if let Some(PackageItem::Typedef(td)) = items.get(t) {
                     if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. })
                     {
-                        let fields = Self::compute_struct_fields(&td.dtype);
+                        let fields = self.compute_struct_fields(&td.dtype);
                         if !fields.is_empty() {
                             return Some(fields);
                         }
@@ -2105,7 +2218,7 @@ let mut top = match self.modules.remove(&top_name) {
             if let Some(PackageItem::Typedef(td)) = items.get(type_name) {
                 if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. })
                 {
-                    let fields = Self::compute_struct_fields(&td.dtype);
+                    let fields = self.compute_struct_fields(&td.dtype);
                     if !fields.is_empty() {
                         return Some(fields);
                     }
@@ -2188,7 +2301,26 @@ let mut top = match self.modules.remove(&top_name) {
         signals: &[SignalInfo],
     ) -> Result<usize, String> {
         match port.resolved_width(effective_params) {
-            Ok(w) => Ok(w),
+            Ok(w) => {
+                // Port bertipe UserDefined / base type lain TANPA range eksplisit:
+                // `Port::resolved_width` hanya menghitung dimensi range (default 1)
+                // dan mengabaikan `dtype_name`. Akibatnya port enum (`state_e`,
+                // `enum logic [1:0]` → 2 bit), struct (`pair_t`), atau `int`
+                // semuanya jadi 1-bit → WR0102 palsu & data truncation. Ambil
+                // lebar dari tipe saat tidak ada range yang di-deklarasikan.
+                if w == 1
+                    && port.range.is_none()
+                    && port.expr_range.is_none()
+                    && port.extra_packed_dims.is_empty()
+                {
+                    if let Some(tn) = &port.dtype_name {
+                        if let Some(dw) = self.port_base_type_width(tn.as_str()) {
+                            return Ok(dw);
+                        }
+                    }
+                }
+                Ok(w)
+            }
             Err(e) => {
                 let mut total: usize = 1;
                 if let Some(r) = &port.range {
@@ -2302,6 +2434,22 @@ let mut top = match self.modules.remove(&top_name) {
         }
     }
 
+    /// Lebar base type port tanpa range eksplisit. `Port::resolved_width`
+    /// mengabaikan `dtype_name`, jadi port bertipe enum/struct/`int`/dst
+    /// selalu 1-bit. Base type builtin di-map langsung; selain itu delegasi ke
+    /// `resolve_cast_name_width` (typedef/param package tanpa warning).
+    pub(crate) fn port_base_type_width(&self, name: &str) -> Option<usize> {
+        Some(match name {
+            "logic" | "wire" | "reg" | "tri" | "tri0" | "tri1" | "wand" | "wor"
+            | "triand" | "trior" | "supply0" | "supply1" | "bit" => 1,
+            "byte" => 8,
+            "shortint" => 16,
+            "int" | "integer" => 32,
+            "longint" | "time" | "real" | "realtime" => 64,
+            _ => return self.resolve_cast_name_width(name),
+        })
+    }
+
     /// Resolve lebar cast type berupa identifier yang tidak dikenali
     /// `parse_type_spec_str` (hanya base types): parameter modul/package
     /// (mis. `MuBi4Width'(x)` dari `import prim_mubi_pkg::*`) atau typedef
@@ -2389,19 +2537,20 @@ let mut top = match self.modules.remove(&top_name) {
         None
     }
 
-    fn compute_struct_fields(dtype: &DataType) -> Vec<StructFieldInfo> {
+    fn compute_struct_fields(&self, dtype: &DataType) -> Vec<StructFieldInfo> {
         match dtype {
             DataType::UnionType { members } => members
                 .iter()
-                .map(|m| Self::struct_field_from_member(m, 0))
+                .map(|m| self.struct_field_from_member(m, 0))
                 .collect(),
             DataType::StructType { members } => {
                 let mut fields = Vec::new();
                 let mut offset = 0usize;
                 let members_rev: Vec<_> = members.iter().rev().collect();
                 for m in &members_rev {
-                    fields.push(Self::struct_field_from_member(m, offset));
-                    offset += m.range.as_ref().map(|r| r.width()).unwrap_or(1);
+                    let f = self.struct_field_from_member(m, offset);
+                    offset += f.width.max(1);
+                    fields.push(f);
                 }
                 fields.reverse();
                 fields
@@ -2415,8 +2564,17 @@ let mut top = match self.modules.remove(&top_name) {
     /// resolve lewat typedef_field_map; untuk anonymous struct/union inline
     /// simpan `sub_fields` (dari compute_struct_fields) agar `a.b.c` tetap
     /// bisa di-resolve berjenjang tanpa nama tipe.
-    fn struct_field_from_member(m: &StructMember, offset: usize) -> StructFieldInfo {
-        let w = m.range.as_ref().map(|r| r.width()).unwrap_or(1);
+    fn struct_field_from_member(&self, m: &StructMember, offset: usize) -> StructFieldInfo {
+        // Lebar member: range eksplisit menang; tanpanya resolve lebar typedef
+        // (enum 2-bit, mubi4_t 4-bit, struct nested) — bukan 1-bit default.
+        // Tanpa ini `phase_e phase` (enum) jadi 1-bit dan offset struct salah.
+        let w = if let Some(r) = &m.range {
+            r.width()
+        } else if let DataType::UserDefined(t) = m.dtype.as_ref() {
+            self.resolve_cast_name_width(t.as_str()).unwrap_or(1)
+        } else {
+            1
+        };
         match m.dtype.as_ref() {
             DataType::UserDefined(t) => StructFieldInfo {
                 name: m.name,
@@ -2432,7 +2590,7 @@ let mut top = match self.modules.remove(&top_name) {
                 // Anonymous struct/union inline — tidak ada nama tipe untuk
                 // lookup typedef_field_map; simpan fields langsung.
                 type_name: None,
-                sub_fields: Self::compute_struct_fields(m.dtype.as_ref()),
+                sub_fields: self.compute_struct_fields(m.dtype.as_ref()),
             },
             _ => StructFieldInfo {
                 name: m.name,
@@ -2511,23 +2669,25 @@ impl Elaborator {
             }
         }
 
-        // Process $unit imports
+        // Process $unit imports (params) — iterasi langsung tanpa `collect`
+        // (project besar: package bisa punya puluhan ribu item; mengumpulkan
+        // Vec<&str> lalu get-per-key = alokasi + hash lookup berlebih per module).
         for (package, import_item) in &self.design.unit_imports {
             if let Some(pkg_items) = self.package_symbols.get(package) {
-                let names: Vec<&str> = if import_item.as_str() == "*" {
-                    pkg_items.keys().map(|s| s.as_str()).collect()
+                let items: Box<dyn Iterator<Item = &PackageItem> + '_> = if import_item.as_str() == "*" {
+                    Box::new(pkg_items.values())
                 } else {
-                    vec![import_item.as_str()]
+                    match pkg_items.get(import_item) {
+                        Some(i) => Box::new(std::iter::once(i)),
+                        None => Box::new(std::iter::empty()),
+                    }
                 };
-                for name in names {
-                    if let Some(pkg_item) = pkg_items.get(name) {
-                        if let PackageItem::Param(p) = pkg_item {
-                            if !effective_params.contains_key(&p.name) {
-                                if let Some(expr) = &p.default {
-                                    if let Ok(val) = const_eval_with_params(expr, &effective_params)
-                                    {
-                                        effective_params.insert(p.name, val);
-                                    }
+                for pkg_item in items {
+                    if let PackageItem::Param(p) = pkg_item {
+                        if !effective_params.contains_key(&p.name) {
+                            if let Some(expr) = &p.default {
+                                if let Ok(val) = const_eval_with_params(expr, &effective_params) {
+                                    effective_params.insert(p.name, val);
                                 }
                             }
                         }
@@ -2544,14 +2704,19 @@ impl Elaborator {
                     item: import_item,
                 } => {
                     if let Some(pkg_items) = self.package_symbols.get(package) {
-                        let names: Vec<&str> = if import_item.as_str() == "*" {
-                            pkg_items.keys().map(|s| s.as_str()).collect()
-                        } else {
-                            vec![import_item.as_str()]
-                        };
+                        // Iterasi langsung tanpa `collect` (lihat komentar di atas).
+                        let items: Box<dyn Iterator<Item = &PackageItem> + '_> =
+                            if import_item.as_str() == "*" {
+                                Box::new(pkg_items.values())
+                            } else {
+                                match pkg_items.get(import_item) {
+                                    Some(i) => Box::new(std::iter::once(i)),
+                                    None => Box::new(std::iter::empty()),
+                                }
+                            };
                         let mut struct_imports: Vec<(Symbol, DataType)> = Vec::new();
-                        for name in names {
-                            if let Some(pkg_item) = pkg_items.get(name) {
+                        for pkg_item in items {
+                            {
                                 match pkg_item {
                                     PackageItem::Param(p) => {
                                         if !effective_params.contains_key(&p.name) {
@@ -2669,17 +2834,24 @@ impl Elaborator {
                 self.store_typedef_fields(td.name, &td.dtype);
             }
         }
-        // Pre-pass: process $unit imports for typedefs
+        // Pre-pass: process $unit imports for typedefs.
+        // `typedef_map` adalah cache GLOBAL (keyed by nama typedef) — typedef
+        // package tidak bergantung pada param module, jadi cukup di-resolve
+        // SEKALI. Guard cache mencegah resolve-ulang ribuan typedef untuk tiap
+        // module (sebelumnya O(modules × typedef_package) di project besar).
         for (package, import_item) in &self.design.unit_imports {
             if let Some(pkg_items) = self.package_symbols.get(package) {
-                let names: Vec<&str> = if import_item.as_str() == "*" {
-                    pkg_items.keys().map(|s| s.as_str()).collect()
+                let items: Box<dyn Iterator<Item = &PackageItem> + '_> = if import_item.as_str() == "*" {
+                    Box::new(pkg_items.values())
                 } else {
-                    vec![import_item.as_str()]
+                    match pkg_items.get(import_item) {
+                        Some(i) => Box::new(std::iter::once(i)),
+                        None => Box::new(std::iter::empty()),
+                    }
                 };
-                for name in names {
-                    if let Some(pkg_item) = pkg_items.get(name) {
-                        if let PackageItem::Typedef(td) = pkg_item {
+                for pkg_item in items {
+                    if let PackageItem::Typedef(td) = pkg_item {
+                        if !self.typedef_map.contains_key(&td.name) {
                             let width = self.resolve_typedef_width_dims(
                                 &td.dtype,
                                 td.range.as_ref(),
@@ -2766,7 +2938,7 @@ impl Elaborator {
             })
             .collect();
         for (name, dtype) in &import_typedefs {
-            let fields = Self::compute_struct_fields(dtype);
+            let fields = self.compute_struct_fields(dtype);
             if !fields.is_empty() {
                 self.typedef_field_map.entry(*name).or_insert(fields);
             }
@@ -3833,7 +4005,7 @@ impl Elaborator {
                                 DataType::UnionType { members } => {
                                     for m in members {
                                         sig.struct_fields
-                                            .push(Self::struct_field_from_member(m, 0));
+                                            .push(self.struct_field_from_member(m, 0));
                                     }
                                 }
                                 _ => {
@@ -3841,7 +4013,7 @@ impl Elaborator {
                                     let members_rev: Vec<_> = members.iter().rev().collect();
                                     for m in &members_rev {
                                         sig.struct_fields
-                                            .push(Self::struct_field_from_member(m, offset));
+                                            .push(self.struct_field_from_member(m, offset));
                                         offset += m.range.as_ref().map(|r| r.width()).unwrap_or(1);
                                     }
                                     sig.struct_fields.reverse();
@@ -4136,6 +4308,24 @@ impl Elaborator {
         }
 
         for item in &expanded_items {
+            let item_kind = match item {
+                ModuleItem::Always(_) => "always",
+                ModuleItem::Initial(_) => "initial",
+                ModuleItem::Final(_) => "final",
+                ModuleItem::Assign(_) => "assign",
+                ModuleItem::Instance(_) => "instance",
+                ModuleItem::Func(_) => "func",
+                ModuleItem::Typedef(_) => "typedef",
+                ModuleItem::Decl(_) => "decl",
+                _ => "other",
+            };
+            let item_t0 = std::time::Instant::now();
+            let item_ck = |kind: &str, t0: &std::time::Instant| {
+                let e = t0.elapsed();
+                if dbg_step && e.as_millis() > 200 {
+                    eprintln!("[DBG-STEP] {}: item<{}> in {:?}", module.name.as_str(), kind, e);
+                }
+            };
             match item {
                 ModuleItem::Always(always) => {
                     match self.elaborate_always(always, &signal_map, &signals) {
@@ -4155,6 +4345,7 @@ impl Elaborator {
                             self.diag_sink.push(diag);
                         }
                     }
+                    item_ck(item_kind, &item_t0);
                 }
                 ModuleItem::Initial(initial) => {
                     match self.elaborate_stmt_block(
@@ -4177,6 +4368,7 @@ impl Elaborator {
                             self.diag_sink.push(diag);
                         }
                     }
+                    item_ck(item_kind, &item_t0);
                 }
                 ModuleItem::Final(final_block) => {
                     match self.elaborate_stmt_block(
@@ -4199,6 +4391,7 @@ impl Elaborator {
                             self.diag_sink.push(diag);
                         }
                     }
+                    item_ck(item_kind, &item_t0);
                 }
                 ModuleItem::Assign(assign) => {
                     // Undeclared identifier (LHS atau RHS) → implicit net
@@ -4310,6 +4503,7 @@ impl Elaborator {
                             self.diag_sink.push(diag);
                         }
                     }
+                    item_ck(item_kind, &item_t0);
                 }
                 ModuleItem::Typedef(td) => {
                     // Already collected in pre-pass; register for UserDefined resolution
@@ -4333,14 +4527,14 @@ impl Elaborator {
                             match &td.dtype {
                                 DataType::UnionType { members } => {
                                     for m in members {
-                                        fields.push(Self::struct_field_from_member(m, 0));
+                                        fields.push(self.struct_field_from_member(m, 0));
                                     }
                                 }
                                 _ => {
                                     let mut offset = 0usize;
                                     let members_rev: Vec<_> = members.iter().rev().collect();
                                     for m in &members_rev {
-                                        fields.push(Self::struct_field_from_member(m, offset));
+                                        fields.push(self.struct_field_from_member(m, offset));
                                         offset += m.range.as_ref().map(|r| r.width()).unwrap_or(1);
                                     }
                                     fields.reverse();
@@ -4512,6 +4706,34 @@ impl Elaborator {
                         for (pname, pexpr) in &inst.param_assigns {
                             let val = const_eval_with_params(pexpr, &effective_params).unwrap_or(0);
                             param_map.insert(*pname, val);
+                            // Override STRUCT package (`Info = PartInfoDefault`,
+                            // `Info = PartInfo[k]`): `const_eval_with_params`
+                            // mengubah override struct menjadi skalar 0 (flatten
+                            // struct→0) sehingga member keys `Info.<field>`
+                            // HILANG dan generate if `Info.integrity` di child
+                            // gagal const-eval (error E3001/E3003 "member access
+                            // not allowed" — pola otp_ctrl_part_buf/unbuf).
+                            // Salin member keys dari index struct package
+                            // (pkg_struct_ref_index) ke param_map agar child
+                            // menerima `Info.integrity` dst. sebagai skalar.
+                            if let Some(fields) =
+                                self.struct_override_fields(pexpr, &effective_params)
+                            {
+                                for f in &fields {
+                                    if let Some(fname) = f.name {
+                                        if let CVal::Scalar(v) = f.val {
+                                            param_map.insert(
+                                                Symbol::intern(&format!(
+                                                    "{}.{}",
+                                                    pname.as_str(),
+                                                    fname.as_str()
+                                                )),
+                                                v,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
                         }
                         let mut type_param_map: HashMap<Symbol, usize> = HashMap::new();
                         for (pname, dt) in &inst.type_param_assigns {
@@ -4564,6 +4786,7 @@ impl Elaborator {
                             });
                         }
                     }
+                    item_ck(item_kind, &item_t0);
                 }
                 ModuleItem::VirtualInterface {
                     iface_type,
@@ -4762,6 +4985,10 @@ impl Elaborator {
         }
 
         step_ck("after items loop", &step_t0);
+
+        if std::env::var("DBG_STMT").is_ok() {
+            stmt::stmt_dbg_dump(module.name.as_str());
+        }
 
         Ok(IrModule {
             name: module.name,
@@ -5104,4 +5331,36 @@ fn pkg_struct_fields_for_ref(
         _ => return None,
     };
     index.get(&Symbol::intern(base)).cloned()
+}
+
+impl Elaborator {
+    /// Ekstrak fields struct package untuk ekspresi override param instance:
+    /// ident (`Info = PartInfoDefault`), scoped ident (`pkg::PartInfoDefault`),
+    /// atau array-element (`Info = PartInfo[k]` — BitSelect dengan index
+    /// konstanta, mis. `.Info(PartInfo[0])` di generate for otp_ctrl.sv).
+    /// Mencari base key (`PartInfoDefault` / `PartInfo[0]`) di
+    /// `pkg_struct_ref_index` (dibangun sekali dari `pkg::name.<field>` keys).
+    fn struct_override_fields(
+        &self,
+        expr: &Expr,
+        effective_params: &HashMap<Symbol, i64>,
+    ) -> Option<Vec<SField>> {
+        let base: Option<Symbol> = match expr {
+            Expr::Ident { name, .. } => Some(*name),
+            Expr::ScopedIdent { item, .. } => Some(*item),
+            Expr::BitSelect { expr: inner, index } => {
+                if let Expr::Ident { name, .. } = inner.as_ref() {
+                    match const_eval_with_params(index, effective_params) {
+                        Ok(idx) => Some(Symbol::intern(&format!("{}[{}]", name.as_str(), idx))),
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        let base = base?;
+        self.pkg_struct_ref_index.get(&base).cloned()
+    }
 }

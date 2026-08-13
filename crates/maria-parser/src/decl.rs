@@ -798,15 +798,24 @@ impl Parser {
                     _ => None,
                 };
                 if base.is_some() && self.peek() == &Token::LBrack {
-                    self.parse_range()?;
-                }
-                let members = self.parse_enum_members()?;
-                if let Token::Ident(name) = self.peek() {
-                    let name = *name;
-                    self.advance();
-                    (name, DataType::EnumType { base, members }, None, Vec::new())
+                    let er = self.parse_range()?;
+                    let members = self.parse_enum_members()?;
+                    if let Token::Ident(name) = self.peek() {
+                        let name = *name;
+                        self.advance();
+                        (name, DataType::EnumType { base, members }, er, Vec::new())
+                    } else {
+                        return Err(self.err("expected name after typedef enum"));
+                    }
                 } else {
-                    return Err(self.err("expected name after typedef enum"));
+                    let members = self.parse_enum_members()?;
+                    if let Token::Ident(name) = self.peek() {
+                        let name = *name;
+                        self.advance();
+                        (name, DataType::EnumType { base, members }, None, Vec::new())
+                    } else {
+                        return Err(self.err("expected name after typedef enum"));
+                    }
                 }
             }
             Token::Bit => {

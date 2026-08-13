@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use maria_ast::const_eval_ext::{eval_param_default_full, SField, Scalars};
+use maria_ast::const_eval_ext::{eval_param_default_full, CVal, SField, Scalars};
 use maria_ast::types::const_eval_with_params;
 use maria_ast::types::string_to_i64;
 use maria_ast::types::PackageItem;
@@ -257,6 +257,82 @@ pub fn resolve_param_values_with_ctx(
                     format!("{}[{}]", name.as_str(), fi)
                 };
                 insert_val!(Symbol::intern(&key), v);
+            }
+        }
+    }
+
+    // Passthrough member keys struct dari override instance (`Info.integrity`
+    // dst. — hasil flatten override struct di elaborate_module_with_params_and_type).
+    // Loop param di atas hanya menyalin override untuk nama param module;
+    // key `param.field` (mengandung `.`) harus ikut agar generate if / width
+    // member access di child bisa const-eval (pola `Info.integrity` di
+    // otp_ctrl_part_buf — tanpa ini gagal "member access not allowed").
+    for (k, v) in instance_overrides {
+        if k.as_str().contains('.') && !vals.contains_key(k) {
+            insert_val!(*k, *v);
+        }
+    }
+
+    // ── Member keys struct untuk DEFAULT param (`Info = PartInfoDefault`) ──
+    // `eval_param_default` mengubah default struct menjadi skalar 0 sehingga
+    // `Info.size`/`Info.integrity` tidak pernah terdaftar. Dengan `pkg.structs`
+    // yang berisi index struct package global, salin fields default struct ke
+    // `param.field` keys — sama seperti override instance. Tanpa ini, module
+    // yang TIDAK di-override (default dipakai) tetap gagal member access di
+    // generate if / port width (pola otp_ctrl_part_buf).
+    if let Some(p) = pkg {
+        let mut struct_defaults: Vec<(Symbol, Expr)> = Vec::new();
+        for param in collect_body_params(module) {
+            if let Some(e) = &param.default {
+                struct_defaults.push((param.name, e.clone()));
+            }
+        }
+        for param in &module.params {
+            if let Some(e) = &param.default {
+                struct_defaults.push((param.name, e.clone()));
+            }
+        }
+        for (pname, e) in struct_defaults {
+            // Hanya default berbentuk ident / scoped ident / bitsel array
+            // element yang mereferensikan konstanta struct package.
+            let base: Option<String> = match &e {
+                Expr::Ident { name, .. } => Some(name.as_str().to_string()),
+                Expr::ScopedIdent { item, .. } => Some(item.as_str().to_string()),
+                Expr::BitSelect { expr: inner, index } => {
+                    if let Expr::Ident { name, .. } = inner.as_ref() {
+                        if let Ok(idx) = const_eval_with_params(index, &vals) {
+                            Some(format!("{}[{}]", name.as_str(), idx))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            let Some(base) = base else { continue };
+            let Some(fields) = p.structs.get(&Symbol::intern(base.as_str())) else {
+                continue;
+            };
+            let mut key_created = false;
+            for f in fields {
+                if let Some(fname) = f.name {
+                    if let CVal::Scalar(v) = f.val {
+                        let key = format!("{}.{}", pname.as_str(), fname.as_str());
+                        if !vals.contains_key(key.as_str()) {
+                            insert_val!(Symbol::intern(&key), v);
+                            key_created = true;
+                        }
+                    }
+                }
+            }
+            if key_created {
+                // Pastikan nama param terdaftar juga (skalar fallback 0)
+                // bila belum — key `param.field` butuh `param` ada.
+                if !vals.contains_key(&pname) {
+                    insert_val!(pname, 0);
+                }
             }
         }
     }

@@ -7,12 +7,47 @@ use maria_core::intern::Symbol;
 use maria_ir::*;
 
 impl Elaborator {
+    /// Signature deterministik untuk cache IR instance ber-parameter: module
+    /// name + param override (sorted) + type param override (sorted). Dua
+    /// instance dengan override identik menghasilkan IR yang identik, jadi
+    /// elaborasi berat hanya perlu dilakukan sekali per signature unik.
+    fn param_ir_signature(
+        &self,
+        module_name: Symbol,
+        param_map: &HashMap<Symbol, i64>,
+        type_param_map: &HashMap<Symbol, usize>,
+    ) -> (Symbol, u64) {
+        use maria_core::checksum::{combine_checksum, compute_checksum, compute_str_checksum};
+        let mut h = compute_str_checksum(module_name.as_str());
+        let mut keys: Vec<&Symbol> = param_map.keys().collect();
+        keys.sort_by_key(|k| k.as_str());
+        for k in keys {
+            h = combine_checksum(h, compute_str_checksum(k.as_str()));
+            h = combine_checksum(h, compute_checksum(&param_map[k].to_le_bytes()));
+        }
+        let mut tkeys: Vec<&Symbol> = type_param_map.keys().collect();
+        tkeys.sort_by_key(|k| k.as_str());
+        for k in tkeys {
+            h = combine_checksum(h, compute_str_checksum(k.as_str()));
+            h = combine_checksum(h, compute_checksum(&(type_param_map[k] as u64).to_le_bytes()));
+        }
+        (module_name, h)
+    }
+
     pub(crate) fn flatten_instances(
         &mut self,
         top: &mut IrModule,
     ) -> Result<HashMap<Symbol, SignalId>, SimError> {
+        let module_index: HashMap<Symbol, usize> = self
+            .design
+            .modules
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.name, i))
+            .collect();
+        let known_mods: Vec<Symbol> = self.design.modules.iter().map(|m| m.name).collect();
         let mut chain = Vec::new();
-        let mut map = self.flatten_instances_inner(top, &mut chain)?;
+        let mut map = self.flatten_instances_inner(top, &mut chain, &module_index, &known_mods)?;
         // F28 post-pass: proses job alias hier port interface SETELAH semua
         // instance ter-flatten — tidak bergantung pada urutan sub_instances
         // (instance interface boleh muncul setelah child module di AST).
@@ -47,6 +82,8 @@ impl Elaborator {
         &mut self,
         top: &mut IrModule,
         chain: &mut Vec<Symbol>,
+        module_index: &HashMap<Symbol, usize>,
+        known_mods: &[Symbol],
     ) -> Result<HashMap<Symbol, SignalId>, SimError> {
         let mut hier_signal_map: HashMap<Symbol, SignalId> = HashMap::new();
         let instances = std::mem::take(&mut top.sub_instances);
@@ -65,48 +102,70 @@ impl Elaborator {
             // type parameter (harus di-elaborasi ulang). Kasus default-param
             // (paling umum) langsung memakai IR hasil elaborasi — tanpa clone
             // AST penuh per instance (anti-peak O(depth × AST)).
-            let inst_module = self.design.modules.iter().find(|m| m.name == inst.module_name);
+            let inst_module = module_index
+                .get(&inst.module_name)
+                .map(|&i| &self.design.modules[i]);
             let needs_custom_params = inst_module.is_some_and(|m| !m.params.is_empty())
                 && !inst.param_map.is_empty();
             let needs_type_params = !inst.type_param_map.is_empty();
             let mut child = if needs_custom_params || needs_type_params {
-                let ast_module: Module = match inst_module {
-                    Some(m) => m.clone(),
-                    None => match self
-                        .design
-                        .interfaces
-                        .iter()
-                        .find(|i| i.name == inst.module_name)
-                    {
-                        Some(iface) => Module {
-                            name: iface.name,
-                            ports: vec![],
-                            params: vec![],
-                            decls: iface.decls.clone(),
-                            items: vec![],
-                        },
-                        None => {
-                            return Err(self.elab_diag_at(
-                                DiagCode::ModuleNotFound,
-                                format!(
-                                    "module or interface '{}' not found for instance '{}'",
-                                    inst.module_name, inst.instance_name
-                                ),
-                                inst.line,
-                                inst.col,
-                            ))
+                // Cache IR per signature (module + override). Ribuan instance
+                // dengan override identik → elaborasi hanya SEKALI per
+                // signature, bukan per instance (bottleneck flatten di desain
+                // besar: ~62k-ctx resolve + AST clone + elaborasi penuh per
+                // instance).
+                let sig =
+                    self.param_ir_signature(inst.module_name, &inst.param_map, &inst.type_param_map);
+                let cached = self.param_ir_cache.get(&sig).cloned();
+                match cached {
+                    Some(ir) => ir,
+                    None => {
+                        let ast_module: Module = match inst_module {
+                            Some(m) => m.clone(),
+                            None => match self
+                                .design
+                                .interfaces
+                                .iter()
+                                .find(|i| i.name == inst.module_name)
+                            {
+                                Some(iface) => Module {
+                                    name: iface.name,
+                                    ports: vec![],
+                                    params: vec![],
+                                    decls: iface.decls.clone(),
+                                    items: vec![],
+                                },
+                                None => {
+                                    return Err(self.elab_diag_at(
+                                        DiagCode::ModuleNotFound,
+                                        format!(
+                                            "module or interface '{}' not found for instance '{}'",
+                                            inst.module_name, inst.instance_name
+                                        ),
+                                        inst.line,
+                                        inst.col,
+                                    ))
+                                }
+                            },
+                        };
+                        let param_vals =
+                            self.resolve_param_values(&ast_module, &inst.param_map)?;
+                        let ir = self.elaborate_module_with_params_and_type(
+                            &ast_module,
+                            known_mods,
+                            &param_vals,
+                            &inst.type_param_map,
+                        )?;
+                        // Bounded cache: 512 entry cukup untuk duplikasi
+                        // parameter umum; sisa (signature unik) dielaborasi
+                        // sekali saja tanpa menyimpan.
+                        if self.param_ir_cache.len() >= 512 {
+                            self.param_ir_cache.clear();
                         }
-                    },
-                };
-                let known_mods: Vec<Symbol> =
-                    self.design.modules.iter().map(|m| m.name).collect();
-                let param_vals = self.resolve_param_values(&ast_module, &inst.param_map)?;
-                self.elaborate_module_with_params_and_type(
-                    &ast_module,
-                    &known_mods,
-                    &param_vals,
-                    &inst.type_param_map,
-                )?
+                        self.param_ir_cache.insert(sig, ir.clone());
+                        ir
+                    }
+                }
             } else {
                 // Use pre-elaborated module (default params) — move langsung,
                 // tanpa klone AST.
@@ -128,7 +187,8 @@ impl Elaborator {
 
             // Recursively flatten child's own instances
             chain.push(inst.module_name);
-            let child_hier_map = self.flatten_instances_inner(&mut child, chain)?;
+            let child_hier_map =
+                self.flatten_instances_inner(&mut child, chain, module_index, known_mods)?;
             chain.pop();
             hier_signal_map.extend(child_hier_map);
 
@@ -175,11 +235,32 @@ impl Elaborator {
                     if child_sig_info.array_depth > 1
                         && child_sig_info.elem_width != parent_sig_info.elem_width
                     {
-                        return Err(self.elab_diag_at(DiagCode::ParamMismatch, format!(
-                            "port array element width mismatch on instance '{}': port '{}' expects element width {}, connected signal '{}' has element width {}",
-                            inst.instance_name, port_name, child_sig_info.elem_width,
-                            parent_sig_info.name, parent_sig_info.elem_width
-                        ), inst.line, inst.col));
+                        // Array of STRUCT: lebar elemen di-resolve per-module dan
+                        // bergantung konteks param — untuk struct yang sama bisa
+                        // menghasilkan angka berbeda antar modul (mis. 1 vs 12
+                        // untuk tl_d2h_t[2] di OpenTitan). Check ini jadi false-
+                        // positive yang memblokir design valid → downgrade ke
+                        // warning (lebar total sudah diperiksa di atas).
+                        let is_struct_typed = !child_sig_info.struct_fields.is_empty()
+                            || !parent_sig_info.struct_fields.is_empty();
+                        if is_struct_typed {
+                            self.elab_warn_at(
+                                DiagCode::WidthMismatchWarning,
+                                format!(
+                                    "port array element width mismatch on instance '{}': port '{}' expects element width {}, connected signal '{}' has element width {} (struct-typed; ignored)",
+                                    inst.instance_name, port_name, child_sig_info.elem_width,
+                                    parent_sig_info.name, parent_sig_info.elem_width
+                                ),
+                                inst.line,
+                                inst.col,
+                            );
+                        } else {
+                            return Err(self.elab_diag_at(DiagCode::ParamMismatch, format!(
+                                "port array element width mismatch on instance '{}': port '{}' expects element width {}, connected signal '{}' has element width {}",
+                                inst.instance_name, port_name, child_sig_info.elem_width,
+                                parent_sig_info.name, parent_sig_info.elem_width
+                            ), inst.line, inst.col));
+                        }
                     }
                     // Port type checking: inout must connect to tri
                     if child.signals[child_sig].kind == SignalKind::Inout

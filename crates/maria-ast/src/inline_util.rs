@@ -4,15 +4,63 @@ use super::expr::Expr;
 use super::stmt::Stmt;
 use super::types::{DataType, Decl, FunctionDecl};
 use maria_core::intern::Symbol;
+/// Deteksi SEMUA fungsi rekursif — termasuk rekursi TIDAK LANGSUNG
+/// (mutual recursion: `a()` memanggil `b()`, `b()` memanggil `a()`, atau
+/// siklus 3+ fungsi). Hanya mendeteksi direct recursion membuat inlining
+/// `a → b → a → b → …` berjalan tanpa batas → stack overflow saat
+/// `replace_func_calls_in_expr` pada project besar (OpenTitan: paket fungsi
+/// `tlul_*`, `aes_*` saling memanggil).
+///
+/// Call graph = fungsi → semua fungsi yang dipanggil di body-nya (langsung
+/// ataupun nested dalam statement/ekspresi). Fungsi dianggap rekursif bila ia
+/// bisa mencapai dirinya sendiri melalui closure graf (DFS dari nama ke nama
+/// itu sendiri) — mencakup direct self-call DAN mutual recursion.
 pub(crate) fn detect_recursive_functions(funcs: &HashMap<Symbol, FunctionDecl>) -> HashSet<Symbol> {
     let mut recursive = HashSet::new();
-    // First pass: detect direct recursion
+    // Bangun call graph: nama → daftar fungsi yang dipanggil (incl. dirinya
+    // sendiri untuk direct self-call). `stmt_has_func_call` sudah menelusuri
+    // statement & ekspresi secara lengkap.
+    let mut calls: HashMap<Symbol, Vec<Symbol>> = HashMap::new();
     for (name, func) in funcs {
-        if stmt_has_func_call(name, &func.stmts) {
-            recursive.insert(*name);
+        let mut called = Vec::new();
+        for (other, _) in funcs {
+            if stmt_has_func_call(other, &func.stmts) {
+                called.push(*other);
+            }
+        }
+        calls.insert(*name, called);
+    }
+    // DFS dari setiap fungsi: apakah bisa kembali ke dirinya sendiri?
+    for (&start, _) in funcs.iter() {
+        let mut visited: HashSet<Symbol> = HashSet::new();
+        if dfs_reaches_self(start, start, &calls, &mut visited) {
+            recursive.insert(start);
         }
     }
     recursive
+}
+
+/// DFS: apakah `cur` bisa mencapai `start` (dirinya sendiri) melalui call graph?
+fn dfs_reaches_self(
+    start: Symbol,
+    cur: Symbol,
+    calls: &HashMap<Symbol, Vec<Symbol>>,
+    visited: &mut HashSet<Symbol>,
+) -> bool {
+    if !visited.insert(cur) {
+        return false;
+    }
+    if let Some(nexts) = calls.get(&cur) {
+        for &next in nexts {
+            if next == start {
+                return true;
+            }
+            if dfs_reaches_self(start, next, calls, visited) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Check if a function body contains calls to a specific function.
