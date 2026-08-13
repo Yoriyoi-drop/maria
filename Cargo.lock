@@ -2158,6 +2158,7 @@ dependencies = [
 name = "maria-tools"
 version = "0.3.0"
 dependencies = [
+ "bincode",
  "maria-ast",
  "maria-compiler",
  "maria-core",

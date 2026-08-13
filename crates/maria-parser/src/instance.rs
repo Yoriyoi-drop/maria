@@ -747,17 +747,23 @@ impl Parser {
                         }
                     });
 
-                    // Port bertipe typedef/interface (dtype_name non-None):
-                    // dimensi `[a:b]` SEBELUM nama port adalah dimensi UNPACKED
-                    // array, bukan packed range vector. Contoh OpenTitan:
-                    // `input cmd_info_t [NumTotalCmdInfo-1:0] cmd_info_i` atau
-                    // `output mp_region_cfg_t region_cfgs_o[TotalMpRegions]` —
-                    // elemen array = seluruh typedef (struct 23-bit), bukan
-                    // bit-vector selebar dimensi. Tanpa ini parser menaruh
-                    // `[3:0]` sebagai packed range → port 4-bit + elem select
-                    // `cmd_info_i[i]` = bit tunggal (WR0102 rhs=1).
+                    // Port bertipe typedef/interface (dtype_name non-None) dan
+                    // BUKAN type parameter: dimensi `[a:b]` SEBELUM nama port
+                    // adalah dimensi UNPACKED array, bukan packed range vector.
+                    // Contoh OpenTitan: `input cmd_info_t [NumTotalCmdInfo-1:0]
+                    // cmd_info_i` — elemen array = seluruh typedef (struct
+                    // 23-bit), bukan bit-vector selebar dimensi. Tanpa ini
+                    // parser menaruh `[3:0]` sebagai packed range → port 4-bit
+                    // + elem select `cmd_info_i[i]` = bit tunggal (WR0102
+                    // rhs=1). Type parameter DIKECUALIKAN — `T [7:0]` di mana
+                    // T = logic/bit adalah packed range vector (test
+                    // `parameter type T = logic`), bukan array.
                     let (range, expr_range, extra_packed_dims, array_range_pre) =
-                        if dtype_name.is_some() {
+                        if dtype_name.is_some()
+                            && !self
+                                .module_type_params
+                                .contains(&Symbol::intern(dtype_name.as_deref().unwrap_or("")))
+                        {
                             let ar = expr_range.as_ref().and_then(|er| {
                                 if let (Ok(m), Ok(l)) = (
                                     const_eval_simple(&er.msb),

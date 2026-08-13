@@ -206,10 +206,10 @@ mod tests {
     #[test]
     fn test_all_codes_count() {
         let codes = all_codes();
-        // Parse: 5, Semantic: 4, Elab: 10, Memory: 5, Signal: 5, Scheduler: 5,
+        // Parse: 5, Semantic: 4, Elab: 11, Memory: 5, Signal: 5, Scheduler: 5,
         // Event: 3, Module: 2, Interface: 2, Clock: 2, Assertion: 4, DPI: 3,
-        // Internal: 3, Other: 1, Legacy: 3, Warnings: 9 = 63 total
-        assert_eq!(codes.len(), 69);
+        // Internal: 3, Infrastructure: 3, Legacy: 3, Other: 1, Warnings: 9 = 70 total
+        assert_eq!(codes.len(), 70);
     }
 
     #[test]

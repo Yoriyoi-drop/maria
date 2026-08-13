@@ -2,7 +2,7 @@
 //!
 //! X-ray cepat struktur project tanpa compile penuh (hanya parse paralel +
 //! index). Subcommand: `stats`, `modules`, `hierarchy`, `packages`, `classes`,
-//! `interfaces`, `parameters`, `deps`.
+//! `interfaces`, `parameters`, `deps`, `cache` (laporan lapisan cache MICD).
 
 use std::collections::{HashMap, HashSet};
 
@@ -24,9 +24,15 @@ pub struct InspectArgs<'a> {
 
 /// Jalankan minspect sesuai subcommand.
 pub fn run(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
+    let cmd = args.command.as_deref().unwrap_or("stats");
+    // `cache` membaca lapisan `cache/<pid>/` (db.md) TANPA compile — cukup
+    // buka database MICD project dan lapor statistik per kategori.
+    if cmd == "cache" {
+        return cache_stats(args);
+    }
+
     let (design, session) = open_project(args.targets, args.incdirs, args.defines, args.top)?;
 
-    let cmd = args.command.as_deref().unwrap_or("stats");
     let json = args.json;
     match cmd {
         "stats" => stats(&design, &session, json),
@@ -40,11 +46,52 @@ pub fn run(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
         other => Err(maria_core::error::SimError::with_diag(
             maria_core::diagnostics::DiagCode::InvalidSyntax,
             format!(
-                "subcommand minspect tidak dikenal: '{}' (pilih: stats, modules, hierarchy, packages, classes, interfaces, parameters, deps)",
+                "subcommand minspect tidak dikenal: '{}' (pilih: stats, modules, hierarchy, packages, classes, interfaces, parameters, deps, cache)",
                 other
             ),
         )),
     }
+}
+
+/// Laporan lapisan cache pipeline per kategori (db.md "Saran arsitektur
+/// cache" + Kritik 14: statistik hit/miss/ukuran/umur per kategori).
+/// Membuka database MICD project (tanpa compile) dan membaca `cache/<pid>/`.
+/// ProjectID dihitung dari target yang sama seperti `run`/`run_fast`, jadi
+/// laporan menunjuk lapisan cache project yang sedang dikerjakan.
+fn cache_stats(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
+    let files = crate::collect_targets(args.targets)?;
+    let (layer, pid) = crate::open_cache_layer(args.targets, args.incdirs, args.defines)?;
+
+    section("Pipeline Cache");
+    kv("root", maria_compiler::micd::MicdDatabase::default_root().display());
+    kv("project id", &pid);
+    kv("files", files.len());
+
+    let st = layer.stats();
+    println!();
+    println!(
+        "  {:<12} {:>8} {:>12} {:>7} {:>7} {:>7}",
+        "Category", "Entries", "Bytes", "Hits", "Misses", "Hit%"
+    );
+    for cs in &st.per_category {
+        println!(
+            "  {:<12} {:>8} {:>12} {:>7} {:>7} {:>6}%",
+            format!("{}/", cs.category.name()),
+            cs.entries,
+            crate::human_bytes(cs.bytes),
+            cs.hits,
+            cs.misses,
+            cs.hit_rate_pct(),
+        );
+    }
+
+    section("Cache Summary");
+    kv("categories", st.stores);
+    kv("entries", st.total_entries);
+    kv("bytes", crate::human_bytes(st.total_bytes));
+    kv("hit rate", format!("{}%", st.hit_rate_pct()));
+    kv("rebuilt", st.rebuilt);
+    Ok(())
 }
 
 /// Kumpulkan module + metadata ringkas dari design.

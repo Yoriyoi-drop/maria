@@ -64,7 +64,15 @@ impl SimulationEngine {
                     Process::AlwaysWithDelay { delay, body, .. } => {
                         self.ensure_events(t);
                         self.disable_pending = None;
-                        self.evaluate_block_with_delay(body)?;
+                        // IEEE 1800: `always #N stmt;` menunda N unit SEBELUM
+                        // eksekusi pertama — body TIDAK dijalankan di t=0
+                        // (hanya menjadwalkan evaluasi pertama di t=N). Tanpa
+                        // ini `always #5 clk = ~clk;` meng-toggle clk di t=0
+                        // (fase bergeser → hitungan salah). Evaluasi berikutnya
+                        // (t>0) menjalankan body lalu menjadwalkan t+N.
+                        if t > 0 {
+                            self.evaluate_block_with_delay(body)?;
+                        }
                         let next_t = t + *delay as usize;
                         self.ensure_events(next_t);
                         self.push_event(next_t, RegionEvent {

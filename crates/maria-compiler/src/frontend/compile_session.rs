@@ -108,6 +108,9 @@ pub struct CompileSession {
     micd_restored_paths: HashSet<PathBuf>,
     /// Include deps per file (dari preprocessor) untuk verifikasi header.
     micd_include_deps: HashMap<PathBuf, Vec<PathBuf>>,
+    /// Payload lexer per file yang di-lex sesi ini: summary + token stream
+    /// (db.md "2. lexer/") untuk cache lexer/.
+    lexer_payloads: std::sync::Mutex<Vec<(PathBuf, crate::micd::cache::pipeline::LexerPayload)>>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -191,6 +194,7 @@ impl CompileSession {
             micd_restored: 0,
             micd_restored_paths: HashSet::new(),
             micd_include_deps: HashMap::new(),
+            lexer_payloads: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -331,6 +335,7 @@ impl CompileSession {
         }
 
         // ── Phase 5: Parallel lexing + parsing dengan posisi global ──
+        let lexer_payloads = &self.lexer_payloads;
         let results: Vec<Result<(PathBuf, Design, u64), SimError>> = prepared
             .into_par_iter()
             .enumerate()
@@ -375,6 +380,35 @@ impl CompileSession {
                     tokens_lexed.fetch_add(toks.len() as u64, std::sync::atomic::Ordering::Relaxed);
                     toks
                 };
+
+                // Cache lexer/ (db.md "2. lexer/"): simpan summary + token
+                // stream asli (TokenID/Kind + Location) agar tool dapat
+                // membaca token tanpa menjalankan lexer ulang.
+                let mut summary = crate::micd::cache::pipeline::LexerSummary {
+                    token_count: 0,
+                    identifiers: 0,
+                    numbers: 0,
+                    strings: 0,
+                    errors: 0,
+                    source_bytes: combined.len() as u64,
+                };
+                let mut records =
+                    Vec::with_capacity(tokens.len());
+                for (tok, line, col) in &tokens {
+                    summary.observe(tok);
+                    records.push(crate::micd::cache::pipeline::TokenRecord {
+                        kind: crate::micd::cache::pipeline::token_family(tok),
+                        line: *line as u32,
+                        col: *col as u32,
+                    });
+                }
+                lexer_payloads.lock().unwrap().push((
+                    path.clone(),
+                    crate::micd::cache::pipeline::LexerPayload {
+                        summary,
+                        tokens: records,
+                    },
+                ));
 
                 let mut parser = Parser::new(tokens, &path_str)
                     .with_global_type_names(&global_classes, &global_typedefs);
@@ -809,6 +843,7 @@ impl CompileSession {
             let _ = db.clear();
         }
         self.micd_restored = 0;
+        self.lexer_payloads.lock().unwrap().clear();
         self.prev_checksums.clear();
         self.prev_designs.clear();
         self.prev_combined_sources.clear();
@@ -1196,6 +1231,51 @@ impl CompileSession {
             }
         }
 
+        // ── Fase 2b: lapisan cache pipeline (db.md cache/, baris 1141-1605) ──
+        // Isi kategori cache (preprocess/lexer/parser/semantic/type/constant/
+        // hierarchy/resolve/macro/include/dependency/verify) dari data compile.
+        // Hanya saat ada perubahan (full_write) — warm run melewati (entry lama
+        // tetap valid). Save store-nya ikut `db.save()` di Fase 3.
+        if full_write {
+            let prev_profile = self.micd.as_ref().and_then(|d| d.stats_db.last()).cloned();
+            let module_file: HashMap<String, PathBuf> = self
+                .module_index
+                .iter()
+                .map(|(name, _kind, meta)| (name.to_string(), meta.file.clone()))
+                .collect();
+            let lexer_payloads = std::mem::take(&mut self.lexer_payloads)
+                .into_inner()
+                .unwrap_or_default();
+            let input = crate::micd::cache::pipeline::CachePopulateInput {
+                designs: self.prev_designs.iter().map(|(p, d)| (p, d)).collect(),
+                combined: &self.prev_combined_sources,
+                defines: &self.config.defines,
+                include_deps: &self.micd_include_deps,
+                lexer_payloads,
+                symbols: symbols.clone(),
+                type_entries: type_entries.clone(),
+                verify: verify_results.clone(),
+                module_file,
+                profile: prev_profile,
+                // IR hanya tersedia bila save_micd dipanggil SETELAH
+                // compile_and_elaborate (jalur tool). Jalur run_fast memanggil
+                // save_micd sebelum elaborate — kategori elaborate/generate
+                // diisi belakangan via save_elaborate_cache().
+                ir_design: self.cached_ir_design.as_ref(),
+                // Jalur tool (compile_and_elaborate) tidak membawa design
+                // post-expansion elaborator; fallback elaborate/ memakai
+                // designs (pre-expansion).
+                expanded_design: None,
+            };
+            let mut layer = self.micd.as_mut().and_then(|d| d.cache_layer.take());
+            if let Some(layer) = layer.as_mut() {
+                crate::micd::cache::pipeline::CachePopulator::populate(layer, &input);
+            }
+            if let Some(db) = self.micd.as_mut() {
+                db.cache_layer = layer;
+            }
+        }
+
         // ── Fase 3: terapkan ke db + simpan (hanya store yang dirty). ──
         let db = self.micd.as_mut().expect("checked above");
         if std::env::var("MARIA_DEBUG_MICD").is_ok() {
@@ -1286,10 +1366,20 @@ impl CompileSession {
         prof.cache_misses = db.files.len().saturating_sub(self.micd_restored);
         prof.peak_mem_kb = micd::peak_rss_kb();
         prof.snapshot_id = stats.snapshot_id;
+        // Serialize SEBELUM dipindah ke stats_db (dipakai cache profile/).
+        let prof_bytes = bincode::serialize(&prof).ok();
         db.set_stats(prof);
         let _ = db.save().map_err(|e| e.to_string())?;
         if std::env::var("MARIA_DEBUG_MICD").is_ok() {
             eprintln!("[MICD-DBG] stats save = {:?}", t_stats.elapsed());
+        }
+
+        // profile cache (db.md cache/ "20. profile/"): profil build terakhir.
+        if let Some(prof_bytes) = prof_bytes {
+            if let Some(layer) = self.micd.as_mut().and_then(|d| d.cache_layer.as_mut()) {
+                layer.put(crate::micd::CacheCategory::Profile, "last", &prof_bytes);
+                let _ = layer.save();
+            }
         }
 
         self.micd_restored = 0;
@@ -1301,6 +1391,48 @@ impl CompileSession {
     pub fn micd_mark_elaborated(&mut self) {
         if let Some(db) = self.micd.as_mut() {
             let _ = db.mark_elaborated();
+        }
+    }
+
+    /// Isi kategori cache elaborate/ + generate/ dari IR hasil elaborasi
+    /// (db.md "5. elaborate/", "16. generate/"). Dipanggil SETELAH elaborasi
+    /// sukses — save_micd (sebelum elaborate) tidak punya IR, jadi kategori
+    /// ini diisi di sini agar warm run berikutnya dapat membacanya tanpa
+    /// menjalankan elaborator ulang. Best-effort: kegagalan tidak fatal.
+    ///
+    /// `expanded_design` adalah design SETELAH generate expansion (milik
+    /// elaborator, `elab.design`) — dipakai fallback elaborate/ untuk module
+    /// top yang IR-nya di-flatten. Boleh `None` (fallback memakai
+    /// `prev_designs` yang pre-expansion).
+    pub fn save_elaborate_cache(
+        &mut self,
+        ir: &maria_ir::IrDesign,
+        expanded_design: Option<&maria_ast::types::Design>,
+    ) {
+        let Some(db) = self.micd.as_mut() else { return };
+        let Some(layer) = db.cache_layer.as_mut() else { return };
+        let module_file: HashMap<String, PathBuf> = self
+            .module_index
+            .iter()
+            .map(|(name, _kind, meta)| (name.to_string(), meta.file.clone()))
+            .collect();
+        let input = crate::micd::cache::pipeline::CachePopulateInput {
+            designs: self.prev_designs.iter().map(|(p, d)| (p, d)).collect(),
+            combined: &self.prev_combined_sources,
+            defines: &self.config.defines,
+            include_deps: &self.micd_include_deps,
+            lexer_payloads: vec![],
+            symbols: vec![],
+            type_entries: vec![],
+            verify: vec![],
+            module_file,
+            profile: None,
+            ir_design: Some(ir),
+            expanded_design,
+        };
+        crate::micd::cache::pipeline::CachePopulator::populate_elab(layer, &input);
+        if let Err(e) = layer.save() {
+            eprintln!("[MICD] elaborate/generate cache save warning: {}", e);
         }
     }
 

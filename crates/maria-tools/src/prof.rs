@@ -17,6 +17,8 @@ pub struct ProfArgs<'a> {
     pub defines: &'a [String],
     pub top: Option<&'a str>,
     pub max_time: u64,
+    /// Baca profil build terakhir dari cache pipeline (tanpa compile).
+    pub cached: bool,
 }
 
 /// Satu baris timing fase.
@@ -27,6 +29,9 @@ struct PhaseTime {
 
 /// Jalankan mprof.
 pub fn run(args: &ProfArgs) -> Result<(), SimError> {
+    if args.cached {
+        return run_cached(args);
+    }
     let files = collect_targets(args.targets)?;
     // F10: `.mv` di-transpile ke buffer inline (svh+sv) agar mprof bisa
     // memprofil pipeline Maria HDL tanpa menulis file ke disk.
@@ -105,6 +110,74 @@ fn bottleneck_hint(name: &str) -> &'static str {
         "Index" => "index module — umumnya cepat",
         "Elaboration" => "generate/parameter expansion berat; pakai --lazy",
         "Simulation" => "kecilkan max_time atau pakai --packed / --jit-body",
+        "Save (MICD)" => "penulisan store MICD lambat — cache banyak file; pakai MARIA_DEBUG_MICD untuk detail",
+        "Verify" => "verifikasi per file berat; kecilkan --checks atau pakai cache verify",
+        "Optimize" => "constant folding / loop unroll; sesuaikan --opt-level",
+        "Lexer" => "tokenisasi berat; aktifkan FastLexer (--fast)",
         _ => "—",
     }
+}
+
+/// Baca profil build terakhir dari cache pipeline (db.md "20. profile/" —
+/// "Dari sini Maria bisa mengetahui sendiri bottleneck dan bahkan memberikan
+/// rekomendasi optimasi") tanpa menjalankan compile/simulasi. Membaca entry
+/// `profile/"last"` yang ditulis `save_micd` pada build sebelumnya.
+pub fn run_cached(args: &ProfArgs) -> Result<(), SimError> {
+    use maria_compiler::micd::cache::CacheCategory;
+    use maria_compiler::micd::BuildProfile;
+
+    let (mut layer, pid) = crate::open_cache_layer(args.targets, args.incdirs, args.defines)?;
+    let bytes = layer
+        .get(CacheCategory::Profile, "last")
+        .ok_or_else(|| {
+            SimError::runtime("tidak ada profil cache — jalankan `mprof` (tanpa --cached) sekali dulu")
+        })?;
+    let prof: BuildProfile = bincode::deserialize(&bytes).map_err(|e| {
+        SimError::runtime(format!("profil cache korup (versi skema berubah?): {}", e))
+    })?;
+
+    let mut phases: Vec<PhaseTime> = vec![
+        PhaseTime { name: "Preprocess", ms: prof.preprocess_ms },
+        PhaseTime { name: "Lexer", ms: prof.lex_ms },
+        PhaseTime { name: "Parse", ms: prof.parse_ms },
+        PhaseTime { name: "Elaboration", ms: prof.elaborate_ms },
+        PhaseTime { name: "Optimize", ms: prof.optimize_ms },
+        PhaseTime { name: "Verify", ms: prof.verify_ms },
+        PhaseTime { name: "Save (MICD)", ms: prof.save_ms },
+    ];
+    phases.retain(|p| p.ms > 0);
+    let total: u64 = phases.iter().map(|p| p.ms).sum::<u64>().max(1);
+
+    section("Cached Build Profile");
+    kv("project id", &pid);
+    kv("build", prof.build_id);
+    kv("files", prof.files);
+    kv("changed", prof.changed_files);
+    kv("restored (MICD)", prof.restored_designs);
+    kv("peak mem", crate::human_bytes(prof.peak_mem_kb.saturating_mul(1024)));
+    println!();
+    println!("  {:<14} {:>10} {:>8}", "Phase", "Time (ms)", "%");
+    println!("  {}────────────{}──────────{}────────", "─", "─", "─");
+    for p in &phases {
+        let bar_len = ((p.ms as f64 / total as f64) * 40.0) as usize;
+        let bar = "█".repeat(bar_len);
+        println!(
+            "  {:<14} {:>10} {:>7.1}%  {}",
+            p.name,
+            p.ms,
+            (p.ms as f64 / total as f64) * 100.0,
+            bar
+        );
+    }
+    println!("  {}────────────{}──────────{}────────", "─", "─", "─");
+    println!("  {:<14} {:>10}", "Total", total);
+
+    if let Some(bn) = phases.iter().max_by_key(|p| p.ms) {
+        section("Bottleneck (dari build terakhir)");
+        kv("phase", bn.name);
+        kv("time", format!("{} ms ({:.1}%)", bn.ms, (bn.ms as f64 / total as f64) * 100.0));
+        kv("hint", bottleneck_hint(bn.name));
+    }
+
+    Ok(())
 }

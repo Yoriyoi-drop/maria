@@ -20,3 +20,5 @@ maria-tech = { path = "../maria-tech" }
 
 # mcov/bench: export coverage/benchmark report sebagai JSON
 serde_json = "1"
+# mprof --cached / melab --from-cache: baca payload bincode dari cache pipeline
+bincode = "1"

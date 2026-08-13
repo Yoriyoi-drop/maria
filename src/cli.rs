@@ -12,27 +12,37 @@ pub enum MariaCmd {
 
     // ── Tools terminal (tools.md) ──
     /// minspect — inspeksi struktur project (stats/modules/hierarchy/...)
+    #[command(alias = "minspect")]
     Inspect(MinspectArgs),
     /// mlint — static RTL linter (unused signal, width, latch, loop, FSM)
+    #[command(alias = "mlint")]
     Lint(MlintArgs),
     /// melab — standalone elaborator (parameter resolve, generate, hierarchy)
+    #[command(alias = "melab")]
     Elab(MelabArgs),
     /// msim — simulator (VCD/FST/wave/assertion/coverage)
+    #[command(alias = "msim")]
     Sim(MsimArgs),
     /// mcov — coverage analyzer → coverage.json / coverage.html
+    #[command(alias = "mcov")]
     Cov(McovArgs),
     /// mwave — wave utility (merge/export/filter VCD)
+    #[command(alias = "mwave")]
     Wave(MwaveArgs),
     /// mfmt — formatter Verilog/SystemVerilog
+    #[command(alias = "mfmt")]
     Fmt(MfmtArgs),
     /// mgen — generate SystemVerilog (.sv/.svh) dari Maria HDL (.mv)
     #[command(alias = "mgen")]
     Gen(MgenArgs),
     /// mprof — performance profiler pipeline (lexer→parser→elab→sim)
+    #[command(alias = "mprof")]
     Prof(MprofArgs),
     /// mcheck — project health checker (missing file, circular include, deps)
+    #[command(alias = "mcheck")]
     Check(McheckArgs),
     /// mbench — benchmark tool (compile speed, memori, CPU, throughput)
+    #[command(alias = "mbench")]
     Bench(MbenchArgs),
     /// synth — Maria synthesis (RTL → SIR → netlist gate-level, SYNTHESIS.md)
     /// Nama lama: `msynth` (alias)
@@ -132,6 +142,20 @@ pub struct MelabArgs {
     /// Cetak sinyal per module
     #[arg(long)]
     pub signals: bool,
+
+    /// Baca hasil elaborasi dari cache pipeline (db.md "5. elaborate/",
+    /// "16. generate/") tanpa menjalankan elaborator — instance + port
+    /// binding + parameter override + proses + net resolution + blok generate.
+    #[arg(long = "from-cache")]
+    pub from_cache: bool,
+
+    /// Tambahkan include search path (identitas project cache)
+    #[arg(short = 'I', long = "incdir", num_args = 1)]
+    pub incdirs: Vec<String>,
+
+    /// Define preprocessor macro (identitas project cache)
+    #[arg(short = 'D', long = "define", num_args = 1)]
+    pub defines: Vec<String>,
 }
 
 /// msim — Simulator.
@@ -347,6 +371,11 @@ pub struct MprofArgs {
     /// Top module name
     #[arg(short = 't', long = "top")]
     pub top: Option<String>,
+
+    /// Baca profil build terakhir dari cache pipeline (db.md "20. profile/") —
+    /// tanpa compile/simulasi. Menampilkan bottleneck + rekomendasi.
+    #[arg(long = "cached")]
+    pub cached: bool,
 
     /// Tambahkan include search path
     #[arg(short = 'I', long = "incdir", num_args = 1)]

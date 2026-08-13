@@ -195,6 +195,36 @@ pub fn open_elaborated(
     Ok((session, design, ir))
 }
 
+/// Buka lapisan cache pipeline (`cache/<pid>/`) untuk project yang sama dengan
+/// targets/incdirs/defines — tanpa compile. Dipakai tool read-back
+/// (mprof --cached, melab --from-cache, minspect cache): membaca hasil build
+/// sebelumnya (db.md cache/ "tidak perlu dielaborasi ulang").
+///
+/// Mengembalikan (CacheLayer, project id). Gagal bila targets tidak ada atau
+/// database root tidak bisa dibuka.
+pub fn open_cache_layer(
+    targets: &[String],
+    incdirs: &[String],
+    defines: &[String],
+) -> Result<(maria_compiler::micd::CacheLayer, String), SimError> {
+    use maria_compiler::micd::MicdDatabase;
+    let files = collect_targets(targets)?;
+    let root = MicdDatabase::default_root();
+    let proot = std::env::current_dir().unwrap_or_default();
+    let inc: Vec<PathBuf> = incdirs.iter().map(PathBuf::from).collect();
+    let defs: Vec<(String, String)> = defines
+        .iter()
+        .filter_map(|d| d.split_once('='))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let pid = MicdDatabase::project_id(&proot, &files, &inc, &defs);
+    let db = MicdDatabase::open_project_with_context(&root, &pid, &proot, &files);
+    let layer = db
+        .cache_layer
+        .ok_or_else(|| diag_io("lapisan cache pipeline tidak tersedia (database root tak bisa ditulis)"))?;
+    Ok((layer, pid))
+}
+
 /// Format jumlah byte menjadi string yang mudah dibaca.
 pub fn human_bytes(n: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];

@@ -16,10 +16,15 @@ pub struct ElabArgs<'a> {
     pub tree: bool,
     pub params: bool,
     pub signals: bool,
+    /// Baca hasil elaborasi dari cache pipeline (tanpa menjalankan elaborator).
+    pub from_cache: bool,
 }
 
 /// Jalankan melab.
 pub fn run(args: &ElabArgs) -> Result<(), SimError> {
+    if args.from_cache {
+        return run_from_cache(args);
+    }
     // Use AnalysisRecovery mode for analysis tools (Rule 10)
     let (session, design, ir) = open_elaborated(args.files, args.incdirs, args.defines, args.top, ElaborateMode::AnalysisRecovery)?;
     let top_name = ir.top.name.as_str();
@@ -122,4 +127,121 @@ fn print_inst(
         }
         visited.remove(&inst.module_name);
     }
+}
+
+/// Baca hasil elaborasi dari cache pipeline (db.md "5. elaborate/",
+/// "16. generate/") tanpa menjalankan elaborator — hierarki, instance, port
+/// binding, parameter override, proses, net resolution, dan blok generate
+/// yang disimpan pada build sebelumnya ("1000 instance generate tidak perlu
+/// dielaborasi ulang").
+pub fn run_from_cache(args: &ElabArgs) -> Result<(), SimError> {
+    use maria_compiler::micd::cache::pipeline::{ElaboratePayload, GeneratePayload};
+    use maria_compiler::micd::cache::CacheCategory;
+
+    let (mut layer, pid) = crate::open_cache_layer(args.files, args.incdirs, args.defines)?;
+
+    let keys = layer
+        .store(CacheCategory::Elaborate)
+        .map(|s| s.keys())
+        .unwrap_or_default();
+    if keys.is_empty() {
+        return Err(SimError::runtime(
+            "cache elaborate/ kosong — jalankan `melab` (tanpa --from-cache) atau `maria --fast` sekali dulu",
+        ));
+    }
+    let mut keys = keys;
+    keys.sort();
+
+    section("Elaboration Result (dari cache)");
+    kv("project id", &pid);
+    kv("modules (cache)", keys.len());
+    kv("sumber", "cache pipeline (tanpa elaborasi)");
+
+    for name in &keys {
+        let Some(bytes) = layer.get(CacheCategory::Elaborate, name) else {
+            continue;
+        };
+        let Ok(elab) = bincode::deserialize::<ElaboratePayload>(&bytes) else {
+            continue;
+        };
+        let gen = layer
+            .get(CacheCategory::Generate, name)
+            .and_then(|b| bincode::deserialize::<GeneratePayload>(&b).ok())
+            .unwrap_or_default();
+
+        println!();
+        println!("  {}", name);
+        kv("  instances", elab.instance_count);
+        if gen.if_blocks > 0 || gen.for_blocks > 0 || gen.case_blocks > 0 {
+            kv(
+                "  generate",
+                format!(
+                    "if={} for={} case={} (expanded {})",
+                    gen.if_blocks, gen.for_blocks, gen.case_blocks, gen.expanded_instances
+                ),
+            );
+        }
+        if elab.processes.combinational + elab.processes.sequential + elab.processes.initial > 0 {
+            kv(
+                "  processes",
+                format!(
+                    "comb={} seq={} initial={} final={} delay={}",
+                    elab.processes.combinational,
+                    elab.processes.sequential,
+                    elab.processes.initial,
+                    elab.processes.final_,
+                    elab.processes.always_with_delay
+                ),
+            );
+        }
+        if args.signals {
+            kv(
+                "  net",
+                format!(
+                    "wire={} tri={} wor={} supply={}",
+                    elab.net_counts.wire,
+                    elab.net_counts.tri,
+                    elab.net_counts.wor,
+                    elab.net_counts.supply0 + elab.net_counts.supply1
+                ),
+            );
+        }
+        for inst in &elab.instances {
+            let ov: Vec<String> = inst
+                .param_overrides
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect();
+            println!(
+                "    {} {} ({} ports{}",
+                inst.module,
+                inst.instance,
+                inst.port_bindings,
+                if ov.is_empty() {
+                    ")".to_string()
+                } else {
+                    format!(", param {})", ov.join(", "))
+                }
+            );
+        }
+    }
+
+    if args.tree {
+        section("Hierarchy (dari cache)");
+        for name in &keys {
+            if let Some(bytes) = layer.get(CacheCategory::Elaborate, name) {
+                if let Ok(elab) = bincode::deserialize::<ElaboratePayload>(&bytes) {
+                    if elab.instance_count == 0 {
+                        continue;
+                    }
+                    println!("  {}", name);
+                    for inst in &elab.instances {
+                        println!("    └── {} ({})", inst.instance, inst.module);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }

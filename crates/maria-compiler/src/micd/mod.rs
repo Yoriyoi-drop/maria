@@ -32,6 +32,7 @@
 //! types/diag) adalah state mutable yang ditulis transaksional via journal.
 
 pub mod ast;
+pub mod cache;
 pub mod diag;
 pub mod format;
 pub mod gc;
@@ -52,6 +53,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub use ast::{deserialize_design, serialize_design, AST_FORMAT_VERSION};
+pub use cache::{CacheCategory, CacheLayer, CacheLayerStats};
 pub use diag::{DiagEntry, DiagSeverity, FileDiags};
 pub use format::{MdbReader, MdbWriter};
 pub use gc::{run_gc, GcConfig, GcStats};
@@ -217,6 +219,9 @@ pub struct MicdDatabase {
     pub changed: usize,
     /// Jumlah file berubah pada snapshot terakhir (dedup snapshot).
     pub last_snapshotted_changed: usize,
+    /// Lapisan cache pipeline per kategori (`cache/<pid>/`, db.md 1141-1605).
+    /// Best-effort: `None` bila database root tidak bisa menulis.
+    pub cache_layer: Option<CacheLayer>,
 }
 
 impl MicdDatabase {
@@ -406,9 +411,15 @@ impl MicdDatabase {
             restored: 0,
             changed: 0,
             last_snapshotted_changed: 0,
+            cache_layer: None,
         };
 
         db.snapshots = list_snapshots(&st);
+
+        // Lapisan cache pipeline per kategori (db.md cache/, baris 1141-1605):
+        // 21 store seragam di `cache/<pid>/`. Dibuka sekali saat open; `None`
+        // bila database root tak bisa ditulis (best-effort — non-kritis).
+        db.cache_layer = CacheLayer::open(&root, &db.pid, db.flags_hash).ok();
 
         // metadata.mdb — pintu schema (Kritik 3 db.md). Bila schema version
         // tidak cocok, SELURUH store dianggap tidak kompatibel → bangun ulang
@@ -939,6 +950,13 @@ impl MicdDatabase {
             || self.dirty_graph
             || self.dirty_stats;
         if !any_dirty {
+            // State tidak berubah, tapi lapisan cache pipeline bisa saja dirty
+            // (mis. tool menulis cache saja). Simpan cache, state dilewati.
+            if let Some(layer) = self.cache_layer.as_mut() {
+                if layer.is_dirty() {
+                    let _ = layer.save();
+                }
+            }
             let stats = MicdStats {
                 files: self.files.len(),
                 restored_designs: self.restored,
@@ -1091,6 +1109,15 @@ impl MicdDatabase {
             bytes_written += data.len() as u64;
         }
         let _ = std::fs::remove_file(st.join(DB_JOURNAL));
+
+        // Lapisan cache pipeline (db.md cache/): simpan store kategori yang
+        // berubah. Best-effort — kegagalan cache tidak menggagalkan save
+        // state utama (cache non-kritis, dibangun ulang otomatis).
+        if let Some(layer) = self.cache_layer.as_mut() {
+            if layer.is_dirty() {
+                let _ = layer.save();
+            }
+        }
 
         let stats = MicdStats {
             files: self.files.len(),
@@ -1303,6 +1330,9 @@ impl MicdDatabase {
         let mut map = read_registry(&self.root);
         map.remove(&self.pid);
         write_registry(&self.root, &map);
+        // Lapisan cache pipeline dihapus + dibuka ulang (kosong).
+        let _ = CacheLayer::remove_all(&self.root, &self.pid);
+        self.cache_layer = CacheLayer::open(&self.root, &self.pid, 0).ok();
         self.files.clear();
         self.graph = FileGraph::new();
         self.verify.clear();
@@ -1563,6 +1593,70 @@ mod tests {
         let db = MicdDatabase::open(&root);
         assert!(db.files.is_empty());
         assert!(db.graph.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── Lapisan cache pipeline (db.md cache/, baris 1141-1605) ──
+
+    #[test]
+    fn test_open_creates_cache_layer_and_saves() {
+        let root = test_root("cache_layer");
+        let path = PathBuf::from("a.sv");
+        {
+            let mut db = MicdDatabase::open(&root);
+            assert!(db.cache_layer.is_some(), "lapisan cache dibuka saat open");
+            if let Some(layer) = db.cache_layer.as_mut() {
+                layer
+                    .put(CacheCategory::Parser, "a.sv", b"parse-summary")
+                    .unwrap();
+            }
+            db.record_file(path.clone(), 1, vec![], FileStatus::New, 0, 3, vec![]);
+            db.save().unwrap();
+        }
+        {
+            let mut db = MicdDatabase::open(&root);
+            assert!(db.cache_layer.is_some());
+            let got = db
+                .cache_layer
+                .as_mut()
+                .and_then(|l| l.get(CacheCategory::Parser, "a.sv"));
+            assert_eq!(got, Some(b"parse-summary".to_vec()), "cache persist lintas open");
+            // Struktur `cache/<pid>/<category>/` sesuai db.md.
+            let pid = db.pid.clone();
+            assert!(db.root.join("cache").join(&pid).join("parser").is_dir());
+            // Semua 21 kategori terstruktur seragam.
+            assert_eq!(
+                db.cache_layer.as_ref().unwrap().stats().stores,
+                CacheCategory::ALL.len()
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_clear_removes_cache_layer() {
+        let root = test_root("clear_cache");
+        {
+            let mut db = MicdDatabase::open(&root);
+            db.cache_layer
+                .as_mut()
+                .unwrap()
+                .put(CacheCategory::Type, "m", b"sig")
+                .unwrap();
+            db.save().unwrap();
+            db.clear().unwrap();
+        }
+        {
+            let db = MicdDatabase::open(&root);
+            assert!(!db.cache_layer.as_ref().unwrap().contains(CacheCategory::Type, "m"));
+            // clear() membuka ulang lapisan kosong (fungsi tetap), isi bersih.
+            assert_eq!(db.cache_layer.as_ref().unwrap().stats().total_entries, 0);
+            let objs = db.root.join("cache").join(&db.pid).join("type").join("objects");
+            assert!(
+                objs.read_dir().map(|mut d| d.next().is_none()).unwrap_or(false),
+                "objek cache dibersihkan"
+            );
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -1149,6 +1149,82 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                 micd.set_file_deps(file, deps);
             }
         }
+
+        // ── Lapisan cache pipeline (db.md cache/, baris 1141-1605) — jalur
+        // legacy (tanpa --fast). Isi kategori dari design merged + state MICD
+        // hanya saat ada file fresh (changed); store disimpan micd.save() di
+        // bawah. ──
+        if micd.cache_layer.is_some() && !fresh_results.is_empty() {
+            use maria_compiler::micd::cache::pipeline::{CachePopulateInput, CachePopulator};
+            let cli_defines: Vec<(String, String)> = cli
+                .defines
+                .iter()
+                .map(|d| {
+                    if let Some((k, v)) = d.split_once('=') {
+                        (k.to_string(), v.to_string())
+                    } else {
+                        (d.clone(), String::new())
+                    }
+                })
+                .collect();
+            let mut combined_map = std::collections::HashMap::new();
+            for (i, src) in sources.iter().enumerate() {
+                if let Some(Ok((combined_str, _))) = &pp_combined[i] {
+                    combined_map
+                        .insert(std::path::PathBuf::from(src), combined_str.clone());
+                }
+            }
+            let include_deps = micd
+                .files
+                .iter()
+                .filter(|(_, m)| !m.include_hashes.is_empty())
+                .map(|(p, m)| {
+                    (
+                        p.clone(),
+                        m.include_hashes.iter().map(|(d, _)| d.clone()).collect(),
+                    )
+                })
+                .collect();
+            let symbols: Vec<(String, String, std::path::PathBuf)> = syms
+                .iter()
+                .map(|(name, kind)| {
+                    let file = def_file
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| fallback.clone());
+                    (name.clone(), kind.clone(), file)
+                })
+                .collect();
+            let type_entries: Vec<(String, u64)> = micd
+                .type_index
+                .iter()
+                .map(|(k, v)| (k.clone(), *v))
+                .collect();
+            let verify: Vec<maria_compiler::micd::VerifyResult> =
+                micd.verify.values().cloned().collect();
+            let input = CachePopulateInput {
+                designs: vec![(&fallback, &design)],
+                combined: &combined_map,
+                defines: &cli_defines,
+                include_deps: &include_deps,
+                lexer_payloads: vec![],
+                symbols,
+                type_entries,
+                verify,
+                module_file: def_file.clone(),
+                profile: micd.stats_db.last().cloned(),
+                // Jalur legacy tidak punya IR di titik ini (elaborasi belum
+                // jalan) — elaborate/ terisi fallback AST, generate/ dari AST.
+                ir_design: None,
+                expanded_design: None,
+            };
+            let mut layer = micd.cache_layer.take();
+            if let Some(layer) = layer.as_mut() {
+                CachePopulator::populate(layer, &input);
+            }
+            micd.cache_layer = layer;
+        }
+
         if let Err(e) = micd.save() {
             eprintln!("[MICD] symbol/type/graph save warning: {}", e);
         }
@@ -1296,6 +1372,44 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     }
 
     ir_design.timescale = ts_for_ir;
+
+    // ── Lapisan cache pipeline: isi kategori elaborate/ + generate/ dari IR
+    // hasil elaborasi (db.md "5. elaborate/", "16. generate/") — dipanggil
+    // di sini (setelah elaborasi sukses) karena populate di atas belum punya
+    // IR. Design diambil dari elaborator (design asli sudah dipindah saat
+    // konstruksi). Best-effort; store disimpan via layer.save(). ──
+    if micd.cache_layer.is_some() {
+        use maria_compiler::micd::cache::pipeline::{CachePopulateInput, CachePopulator};
+        let empty_combined: std::collections::HashMap<PathBuf, String> =
+            std::collections::HashMap::new();
+        let empty_deps: std::collections::HashMap<PathBuf, Vec<PathBuf>> =
+            std::collections::HashMap::new();
+        let fb = sources.first().map(PathBuf::from).unwrap_or_default();
+        let input = CachePopulateInput {
+            designs: vec![(&fb, &elaborator.design)],
+            combined: &empty_combined,
+            defines: &[],
+            include_deps: &empty_deps,
+            lexer_payloads: vec![],
+            symbols: vec![],
+            type_entries: vec![],
+            verify: vec![],
+            module_file: std::collections::HashMap::new(),
+            profile: None,
+            ir_design: Some(&ir_design),
+            // designs sudah post-expansion (elaborator.design) — fallback
+            // elaborate/ memakai designs itu sendiri.
+            expanded_design: None,
+        };
+        let mut layer = micd.cache_layer.take();
+        if let Some(layer) = layer.as_mut() {
+            CachePopulator::populate_elab(layer, &input);
+        }
+        micd.cache_layer = layer;
+        if let Err(e) = micd.save() {
+            eprintln!("[MICD] elaborate/generate cache save warning: {}", e);
+        }
+    }
 
     if !cli.quiet {
         println!(
@@ -2135,6 +2249,12 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
 
     // ── MICD: tandai elaborasi sukses (verify-only save, ringan) ──
     session.micd_mark_elaborated();
+    // Isi kategori elaborate/ + generate/ dari IR (db.md "5. elaborate/",
+    // "16. generate/") — save_micd di atas dipanggil sebelum elaborate, jadi
+    // kategori ini baru bisa diisi setelah IR tersedia. Design post-expansion
+    // (elab.design) dipakai fallback elaborate/ untuk module top yang
+    // sub-instance-nya dikonsumsi flatten IR.
+    session.save_elaborate_cache(&ir_design, Some(&elab.design));
 
     if !cli.quiet {
         println!("Modules indexed: {}", index_len);
@@ -2596,8 +2716,8 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
 
 fn dispatch_inspect(a: &crate::cli::MinspectArgs) -> ! {
     // Subcommand output bisa di posisi pertama (tools.md: `minspect stats`)
-    const CMDS: [&str; 8] = [
-        "stats", "modules", "hierarchy", "packages", "classes", "interfaces", "parameters", "deps",
+    const CMDS: [&str; 9] = [
+        "stats", "modules", "hierarchy", "packages", "classes", "interfaces", "parameters", "deps", "cache",
     ];
     let (command, targets): (Option<String>, Vec<String>) =
         match (a.targets.first().map(|s| s.as_str()), a.targets.last().map(|s| s.as_str())) {
@@ -2643,12 +2763,13 @@ fn dispatch_lint(a: &crate::cli::MlintArgs) -> ! {
 fn dispatch_elab(a: &crate::cli::MelabArgs) -> ! {
     let args = maria_api::tools::elab::ElabArgs {
         files: &a.files,
-        incdirs: &[],
-        defines: &[],
+        incdirs: &a.incdirs,
+        defines: &a.defines,
         top: a.top.as_deref(),
         tree: a.tree,
         params: a.params,
         signals: a.signals,
+        from_cache: a.from_cache,
     };
     exit_tool(maria_api::tools::elab::run(&args));
 }
@@ -2738,6 +2859,7 @@ fn dispatch_prof(a: &crate::cli::MprofArgs) -> ! {
         defines: &a.defines,
         top: a.top.as_deref(),
         max_time: a.max_time.unwrap_or(u64::MAX),
+        cached: a.cached,
     };
     exit_tool(maria_api::tools::prof::run(&args));
 }

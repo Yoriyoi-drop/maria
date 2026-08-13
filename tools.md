@@ -56,6 +56,51 @@ maria minspect classes
 maria minspect interfaces
 maria minspect parameters
 maria minspect deps
+maria minspect cache
+
+Subcommand `cache` membaca lapisan `cache/<pid>/` (db.md) tanpa compile —
+menampilkan statistik per kategori (entries, bytes, hits, misses, hit-rate,
+rebuilt) beserta ringkasan lapisan. Berguna untuk memeriksa apakah pipeline
+cache (lexer/parser/semantic/type/dst.) benar-benar terisi dan di-reuse.
+
+Kategori yang diisi otomatis saat compile: preprocess/, lexer/ (token
+stream), parser/, macro/, include/, dependency/, resolve/, semantic/, type/,
+constant/, hierarchy/, verify/, profile/. Setelah elaborasi, elaborate/
+(instance + port binding + parameter override + proses + net resolution dari
+IR) dan generate/ (blok if/for/case + instance hasil ekspansi) ikut terisi
+(db.md "5. elaborate/", "16. generate/").
+
+Cache yang sudah terisi dapat DIBACA ulang tanpa compile ulang:
+
+- `maria melab file.sv --from-cache` — hierarki/instance/port binding/
+  parameter override/proses/net dari cache elaborate/ + generate/, tanpa
+  menjalankan elaborator (db.md "1000 instance generate tidak perlu
+  dielaborasi ulang").
+- `maria mprof file.sv --cached` — profil + bottleneck + rekomendasi dari
+  build terakhir (db.md "20. profile/" — Maria mengetahui bottleneck sendiri),
+  tanpa menjalankan pipeline.
+
+Kategori yang belum diisi otomatis (optimize/expression/simulation/waveform/
+coverage/lint) dapat dipopulasi tool via cache layer API.
+
+Contoh output `maria minspect cache test/counter.sv`:
+
+── Pipeline Cache ──
+  root                       .maria/database
+  project id                 029877faa3cede04
+  files                      1
+
+  Category      Entries        Bytes    Hits  Misses    Hit%
+  lexer/              1        479 B       0       0      0%
+  parser/             1         40 B       0       0      0%
+  semantic/           1        117 B       0       0      0%
+  ...
+
+── Cache Summary ──
+  categories                 21
+  entries                    12
+  hit rate                   0%
+
 Kenapa lebih berguna?
 
 Saat menghadapi proyek besar seperti OpenTitan, sering kali Anda hanya ingin mengetahui struktur proyek atau memastikan modul tertentu memang terdeteksi, tanpa membuang waktu menjalankan elaboration atau simulation. minspect memberikan "X-ray" terhadap proyek dengan cepat, memanfaatkan indeks internal Maria yang sudah ada.
