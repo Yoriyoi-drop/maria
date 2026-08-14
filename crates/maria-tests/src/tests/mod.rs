@@ -1443,6 +1443,83 @@ endmodule
 }
 
 #[test]
+fn test_async_reset_edge_triggers_sequential() {
+    // F40 regresi: `always_ff @(posedge clk or negedge rst_n)` harus fire
+    // SAAT negedge rst_n (async reset), bukan hanya saat clock edge. Dulu
+    // `trigger_sensitive_processes` mengabaikan reset (`reset: _reset`) →
+    // reset yang terjadi ANTARA dua clock edge tidak pernah diterapkan;
+    // FF tanpa init tetap z, dan `count + 1` di posedge berikutnya (setelah
+    // reset dideassert) menghasilkan X → count stuck 0.
+    //
+    // Di sini rst_n di-deassert di t=4 — SEBELUM posedge clk pertama (t=5).
+    // Tanpa fix: posedge t=5 melihat rst_n=1 → count <= count+1 (count=z → X).
+    // Dengan fix: negedge t=2 men-set count=0 → t=5 count=1 → t=15 count=2.
+    let source = r#"
+module tb;
+    reg clk = 0, rst_n = 1;
+    wire [7:0] count;
+    always #5 clk = ~clk;
+    initial begin
+        #2 rst_n = 0;   // negedge reset t=2
+        #2 rst_n = 1;   // deassert t=4 (sebelum posedge clk t=5)
+        #11 $finish;    // t=15
+    end
+    counter dut(.clk(clk), .rst_n(rst_n), .count(count));
+endmodule
+
+module counter(input clk, input rst_n, output reg [7:0] count);
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) count <= 8'h0;
+        else count <= count + 1;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 15).unwrap();
+    let count_val = sigs
+        .iter()
+        .find(|(n, _)| n == "count")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    assert_eq!(count_val, 2, "reset async diterapkan di t=2 → posedge t=5 count=1, t=15 count=2");
+}
+
+#[test]
+fn test_port_ansi_initializer() {
+    // F40 regresi: initializer di deklarasi port ANSI (`output reg [7:0] b
+    // = 8'h2A`) legal di SV tapi dulu TIDAK di-parse — token `=` tersisa
+    // → `expected RParen` → seluruh module gagal parse (E3001 module not
+    // found). Fix di maria-parser/src/instance.rs (parse `= expr` setelah
+    // nama port) + elaborator (Process::Initial seperti `reg b = 8'h2A;`).
+    let source = r#"
+module tb;
+    wire [7:0] b;
+    wire [3:0] c;
+    initial begin
+        #1 $display("PORT b=%0d c=%0d", b, c);
+        #1 $finish;
+    end
+    m dut(.b(b), .c(c));
+endmodule
+
+module m(output reg [7:0] b = 8'h2A, output reg [3:0] c = 4'd7);
+endmodule
+"#;
+    let sigs = simulate_signals(source, 3).unwrap();
+    let b_val = sigs
+        .iter()
+        .find(|(n, _)| n == "b")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    let c_val = sigs
+        .iter()
+        .find(|(n, _)| n == "c")
+        .map(|(_, v)| v.to_u64())
+        .unwrap();
+    assert_eq!(b_val, 0x2A, "port init b = 8'h2A");
+    assert_eq!(c_val, 7, "port init c = 4'd7");
+}
+
+#[test]
 fn test_arrayed_instances() {
     let source = r#"
 module tb;
@@ -1815,10 +1892,10 @@ endmodule
 "#;
     let design = compile_str(source).unwrap();
     assert!(
-        design.classes.contains_key("driver"),
+        design.classes.contains_key(&Symbol::intern("driver")),
         "class 'driver' should be registered"
     );
-    let cls = &design.classes["driver"];
+    let cls = &design.classes[&Symbol::intern("driver")];
     assert_eq!(cls.name, "driver");
     assert!(cls.extends.is_none());
     assert_eq!(cls.fields.len(), 1, "driver has 1 field");
@@ -1853,9 +1930,9 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source).unwrap();
-    assert!(design.classes.contains_key("my_base"));
-    assert!(design.classes.contains_key("driver"));
-    assert_eq!(design.classes["driver"].extends, Some(Symbol::intern("my_base")));
+    assert!(design.classes.contains_key(&Symbol::intern("my_base")));
+    assert!(design.classes.contains_key(&Symbol::intern("driver")));
+    assert_eq!(design.classes[&Symbol::intern("driver")].extends, Some(Symbol::intern("my_base")));
 }
 
 #[test]
@@ -1918,8 +1995,8 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source).unwrap();
-    assert!(design.classes.contains_key("cfg"));
-    let cls = &design.classes["cfg"];
+    assert!(design.classes.contains_key(&Symbol::intern("cfg")));
+    let cls = &design.classes[&Symbol::intern("cfg")];
     assert!(cls.fields.iter().any(|f| f.name == "timeout"));
     assert!(cls.methods.iter().any(|m| m.name == "new"));
 }
@@ -1960,16 +2037,16 @@ module tb;
 endmodule
 "#;
     let design = compile_str(source).unwrap();
-    assert!(design.classes.contains_key("base"));
-    assert!(design.classes.contains_key("extended"));
-    assert_eq!(design.classes["extended"].extends, Some(Symbol::intern("base")));
-    let base_show = design.classes["base"]
+    assert!(design.classes.contains_key(&Symbol::intern("base")));
+    assert!(design.classes.contains_key(&Symbol::intern("extended")));
+    assert_eq!(design.classes[&Symbol::intern("extended")].extends, Some(Symbol::intern("base")));
+    let base_show = design.classes[&Symbol::intern("base")]
         .methods
         .iter()
         .find(|m| m.name == "show")
         .unwrap();
     assert!(base_show.virtual_flag);
-    let ext_show = design.classes["extended"]
+    let ext_show = design.classes[&Symbol::intern("extended")]
         .methods
         .iter()
         .find(|m| m.name == "show")
@@ -2393,6 +2470,237 @@ endmodule
     let sigs = simulate_signals(source, 5).unwrap();
     let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
     assert_eq!(val.to_u64(), 1, "randomize should succeed");
+}
+
+#[test]
+fn test_randomize_soft_constraint_satisfied() {
+    // LANG-31: `soft` constraint — best-effort. Soft yang TIDAK bertentangan
+    // dengan hard constraint: randomize harus sukses (soft boleh terpenuhi
+    // atau dilanggar, tidak pernah membuat randomize gagal).
+    let source = r#"
+class Packet;
+    rand logic [7:0] addr;
+    constraint soft_range {
+        soft addr == 100;
+        addr inside {[1:200]};
+    }
+endclass
+
+module tb;
+    Packet p;
+    int result;
+    initial begin
+        p = new();
+        if (p.randomize()) begin
+            result = 1;
+        end else begin
+            result = 0;
+        end
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
+    assert_eq!(val.to_u64(), 1, "randomize with soft constraint should succeed");
+}
+
+#[test]
+fn test_randomize_soft_constraint_yields_to_hard() {
+    // LANG-31: soft yang BERTENTANGAN dengan hard constraint HARUS dikalahkan
+    // (IEEE 1800-2017 §18.5.14) — randomize tetap sukses dengan nilai
+    // memenuhi hard (`addr < 10`), soft `addr == 100` dilanggar.
+    let source = r#"
+class Packet;
+    rand logic [7:0] addr;
+    constraint c {
+        soft addr == 100;
+        addr < 10;
+    }
+endclass
+
+module tb;
+    Packet p;
+    int result;
+    int addr_out;
+    initial begin
+        p = new();
+        if (p.randomize()) begin
+            result = 1;
+            addr_out = p.addr;
+        end else begin
+            result = 0;
+            addr_out = -1;
+        end
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
+    assert_eq!(val.to_u64(), 1, "soft must yield to hard: randomize should succeed");
+    let (_, addr) = sigs.iter().find(|(n, _)| n == "addr_out").unwrap();
+    assert!(
+        addr.to_u64() < 10,
+        "addr must satisfy hard constraint addr < 10, got {}",
+        addr.to_u64()
+    );
+}
+
+#[test]
+fn test_constraint_mode_disable_enables_randomize() {
+    // LANG-33: `constraint_mode(0)` me-nonaktifkan constraint block —
+    // randomize yang tadinya gagal (c1 addr<100 && c2 addr>200 tidak
+    // mungkin) jadi sukses setelah c2 di-disable (hanya c1 aktif).
+    let source = r#"
+class Packet;
+    rand logic [7:0] addr;
+    constraint c1 { addr < 100; }
+    constraint c2 { addr > 200; }
+endclass
+
+module tb;
+    Packet p;
+    int result;
+    int addr_out;
+    initial begin
+        p = new();
+        p.c2.constraint_mode(0);
+        if (p.randomize()) begin
+            result = 1;
+            addr_out = p.addr;
+        end else begin
+            result = 0;
+            addr_out = -1;
+        end
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, val) = sigs.iter().find(|(n, _)| n == "result").unwrap();
+    assert_eq!(
+        val.to_u64(),
+        1,
+        "constraint_mode(0) harus mengaktifkan randomize (c2 di-skip)"
+    );
+    let (_, addr) = sigs.iter().find(|(n, _)| n == "addr_out").unwrap();
+    assert!(
+        addr.to_u64() < 100,
+        "addr harus memenuhi c1 (addr < 100), got {}",
+        addr.to_u64()
+    );
+}
+
+#[test]
+fn test_constraint_mode_query_and_reenable() {
+    // LANG-33: query `constraint_mode()` mengembalikan mode (0/1); re-enable
+    // via `constraint_mode(1)` membuat block aktif kembali.
+    let source = r#"
+class Packet;
+    rand logic [7:0] addr;
+    constraint c1 { addr < 100; }
+    constraint c2 { addr > 200; }
+endclass
+
+module tb;
+    Packet p;
+    int mode_off, mode_on;
+    int result_disabled, result_enabled;
+    initial begin
+        p = new();
+        p.c2.constraint_mode(0);
+        mode_off = p.c2.constraint_mode();
+        result_disabled = p.randomize() ? 1 : 0;
+        p.c2.constraint_mode(1);
+        mode_on = p.c2.constraint_mode();
+        result_enabled = p.randomize() ? 1 : 0;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let mode_off = sigs
+        .iter()
+        .find(|(n, _)| n == "mode_off")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(99);
+    let mode_on = sigs
+        .iter()
+        .find(|(n, _)| n == "mode_on")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(99);
+    assert_eq!(mode_off, 0, "mode setelah constraint_mode(0) harus 0");
+    assert_eq!(mode_on, 1, "mode setelah constraint_mode(1) harus 1");
+    let r_disabled = sigs
+        .iter()
+        .find(|(n, _)| n == "result_disabled")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(99);
+    let r_enabled = sigs
+        .iter()
+        .find(|(n, _)| n == "result_enabled")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(99);
+    assert_eq!(r_disabled, 1, "c2 nonaktif → randomize sukses");
+    assert_eq!(r_enabled, 0, "c2 aktif kembali → randomize gagal (konflik)");
+}
+
+#[test]
+fn test_static_constraint_global_constraint_mode() {
+    // LANG-32: `static constraint` dibagi antar SEMUA instance class
+    // (IEEE 1800-2017 §18.5.10) — `constraint_mode(0/1)` pada satu instance
+    // berlaku global: query via instance lain mengembalikan mode yang sama.
+    let source = r#"
+class Packet;
+    rand bit [3:0] addr;
+    static constraint c_static { addr == 5; }
+    constraint c_inst { addr > 0; }
+endclass
+
+module tb;
+    Packet p1;
+    Packet p2;
+    int r1;
+    int r2;
+    int m_p1;
+    int m_p2;
+    initial begin
+        p1 = new();
+        p2 = new();
+        if (p1.randomize()) r1 = p1.addr;
+        p1.c_static.constraint_mode(0);
+        m_p1 = p1.c_static.constraint_mode();
+        m_p2 = p2.c_static.constraint_mode();
+        p2.c_static.constraint_mode(1);
+        if (p2.randomize()) r2 = p2.addr;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_u64())
+            .unwrap_or(99)
+    };
+    assert_eq!(get("r1"), 5, "static constraint aktif: addr harus 5");
+    assert_eq!(
+        get("m_p1"),
+        0,
+        "constraint_mode(0) via p1 harus terlihat via p1"
+    );
+    assert_eq!(
+        get("m_p2"),
+        0,
+        "static constraint_mode GLOBAL: query via p2 juga 0"
+    );
+    assert_eq!(
+        get("r2"),
+        5,
+        "re-enable via p2 global → randomize p2 memenuhi addr==5 lagi"
+    );
 }
 
 #[test]
@@ -5020,6 +5328,67 @@ endmodule
 }
 
 #[test]
+fn test_package_enum_sequence_resets_per_typedef() {
+    // Dua typedef enum dalam satu package: member enum tanpa nilai eksplisit
+    // melanjutkan counter HANYA dalam typedef yang sama (standar SV). Sebelum
+    // fix, `pkg_enums` di-flatten jadi satu list per package sehingga counter
+    // `last` bocor lintas enum — mis. enum kedua dapat nilai 3+ (harusnya 0..)
+    // persis seperti `alu_op_base_e` di otbn_pkg (OpenTitan) yang mendapat
+    // 256+ padahal harusnya 0..8.
+    let source = r#"
+package p;
+    typedef enum { A, B, C } e1_t;   // A=0, B=1, C=2
+    typedef enum { X, Y, Z } e2_t;   // X=0, Y=1, Z=2 (BUKAN 3,4,5)
+endpackage
+
+module tb;
+    import p::*;
+    logic [3:0] x, y, z;
+    initial begin
+        x = X;
+        y = Y;
+        z = Z;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).map(|(_, v)| v.to_u64()).unwrap();
+    assert_eq!(get("x"), 0, "X harus 0 (enum kedua mulai dari 0)");
+    assert_eq!(get("y"), 1, "Y harus 1");
+    assert_eq!(get("z"), 2, "Z harus 2");
+}
+
+#[test]
+fn test_package_enum_sequence_reset_multiple_pkgs() {
+    // Dua package berbeda — masing-masing enum independent (counter reset
+    // antar package DAN antar typedef).
+    let source = r#"
+package p1;
+    typedef enum { A, B, C, D, E } e1_t;
+endpackage
+package p2;
+    typedef enum { Q, R } e2_t;
+endpackage
+
+module tb;
+    import p1::*;
+    import p2::*;
+    logic [3:0] q, r;
+    initial begin
+        q = Q;
+        r = R;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let get = |n: &str| sigs.iter().find(|(s, _)| s == n).map(|(_, v)| v.to_u64()).unwrap();
+    assert_eq!(get("q"), 0, "Q harus 0 (pkg p2 enum mulai dari 0)");
+    assert_eq!(get("r"), 1, "R harus 1");
+}
+
+#[test]
 fn test_package_import_param() {
     let source = r#"
 package my_pkg;
@@ -5401,13 +5770,156 @@ endmodule
         1,
         "expected exactly 1 width mismatch warning (only d), got: {:?}",
         warn_msgs
-    );
-    assert!(
+    );    assert!(
         warn_msgs.iter().any(|m| m.contains("assignment to 'd'")),
         "d=-200 should still warn, got: {:?}",
         warn_msgs
     );
 }
+
+#[test]
+fn test_auto_top_resolution_picks_largest_cone() {
+    // Design dengan BANYAK candidate top (SoC chip + testbench kecil + bind
+    // assertion). Mode AnalysisRecovery dulu menyerah (recovered=true, top
+    // pertama) — sekarang auto top resolution memilih kandidat dengan skor
+    // cone transitif tertinggi secara deterministik: chip_earlgrey-style SoC
+    // yang menginstansiasi ratusan modul menang atas tb/bind kecil.
+    let source = r#"
+module add8(input [7:0] a, input [7:0] b, output [7:0] y);
+    assign y = a + b;
+endmodule
+
+module mul4(input [7:0] a, input [7:0] b, output [7:0] y);
+    assign y = a * b;
+endmodule
+
+module alu(input [7:0] a, input [7:0] b, input op, output [7:0] y);
+    wire [7:0] add_y, mul_y;
+    add8 u_add(.a(a), .b(b), .y(add_y));
+    mul4 u_mul(.a(a), .b(b), .y(mul_y));
+    assign y = op ? add_y : mul_y;
+endmodule
+
+// Peripheral kecil dengan sub-blok — cone chip membesar signifikan.
+module uart(input clk, input [7:0] d, output [7:0] q);
+    add8 u(.a(d), .b(8'h1), .y(q));
+endmodule
+module timer(input clk, input [7:0] d, output [7:0] q);
+    mul4 u(.a(d), .b(8'h2), .y(q));
+endmodule
+module gpio(input clk, input [7:0] d, output [7:0] q);
+    add8 u(.a(d), .b(8'h3), .y(q));
+endmodule
+
+// SoC chip: menginstansiasi alu + tiga peripheral → cone terbesar.
+module chip_soc(input clk, input [7:0] a, input [7:0] b, input op, output [7:0] y);
+    alu u_alu(.a(a), .b(b), .op(op), .y(y));
+    uart u_uart(.clk(clk), .d(a), .q());
+    timer u_timer(.clk(clk), .d(b), .q());
+    gpio u_gpio(.clk(clk), .d(a), .q());
+endmodule
+
+// Testbench kecil — candidate top juga, tapi cone jauh lebih kecil.
+module tb_alu;
+    reg [7:0] a, b, y;
+    reg op;
+    alu u(.a(a), .b(b), .op(op), .y(y));
+    initial #1 $finish;
+endmodule
+
+// Bind assertion — bukan top fungsional (diberi penalti nama).
+module tb_alu_bind;
+    wire [7:0] y;
+    alu u(.a(8'h0), .b(8'h0), .op(1'b0), .y(y));
+    initial #1 $finish;
+endmodule
+"#;
+
+    let mut pp = maria_parser::preprocessor::Preprocessor::new();
+    let preprocessed = pp.preprocess(source, None).unwrap();
+    let mut lexer = maria_parser::lexer::Lexer::new(&preprocessed);
+    let mut tokens = Vec::new();
+    loop {
+        let (tok, line, col) = lexer.next_token();
+        if tok == maria_parser::lexer::Token::Eof {
+            break;
+        }
+        tokens.push((tok, line, col));
+    }
+    let mut parser = maria_parser::Parser::new(tokens, "<string>").with_source_lines(&preprocessed);
+    let design = parser.parse_design().unwrap();
+    let source_lines: Vec<String> = preprocessed.lines().map(|s| s.to_string()).collect();
+    let mut elaborator =
+        maria_elaboration::Elaborator::with_source(design, source_lines, "<string>".to_string());
+    // AnalysisRecovery: tanpa --top, top tidak unik TIDAK menggagalkan analisis.
+    let ir = elaborator
+        .elaborate(None, maria_elaboration::elaborator::ElaborateMode::AnalysisRecovery)
+        .expect("elaborate");
+    // Auto top resolution memilih cone terbesar (chip_soc menginstansiasi
+    // add8+mul4+alu = 4 module) — bukan tb kecil (cone 2).
+    assert_eq!(
+        ir.top.name.as_str(),
+        "chip_soc",
+        "auto top resolution should pick the SoC chip with largest cone"
+    );
+    assert!(
+        !elaborator.recovered,
+        "auto top resolution unique winner → analysis NOT recovered"
+    );
+}
+
+#[test]
+fn test_auto_top_resolution_sim_preference() {
+    // Tie cone (kedua wrapper menginstansiasi SoC yang sama) → sinyal nama
+    // memutus: preferensi simulasi (`verilator`/`_sim`) menang.
+    let source = r#"
+module leaf;
+endmodule
+
+module soc_top(input clk);
+    leaf u();
+endmodule
+
+module chip_earlgrey_verilator(input clk);
+    soc_top u();
+endmodule
+
+module chip_earlgrey_asic(input clk);
+    soc_top u();
+endmodule
+"#;
+
+    let mut pp = maria_parser::preprocessor::Preprocessor::new();
+    let preprocessed = pp.preprocess(source, None).unwrap();
+    let mut lexer = maria_parser::lexer::Lexer::new(&preprocessed);
+    let mut tokens = Vec::new();
+    loop {
+        let (tok, line, col) = lexer.next_token();
+        if tok == maria_parser::lexer::Token::Eof {
+            break;
+        }
+        tokens.push((tok, line, col));
+    }
+    let mut parser = maria_parser::Parser::new(tokens, "<string>").with_source_lines(&preprocessed);
+    let design = parser.parse_design().unwrap();
+    let source_lines: Vec<String> = preprocessed.lines().map(|s| s.to_string()).collect();
+    let mut elaborator =
+        maria_elaboration::Elaborator::with_source(design, source_lines, "<string>".to_string());
+    let ir = elaborator
+        .elaborate(None, maria_elaboration::elaborator::ElaborateMode::AnalysisRecovery)
+        .expect("elaborate");
+    assert_eq!(
+        ir.top.name.as_str(),
+        "chip_earlgrey_verilator",
+        "sim-prefixed chip wrapper should win the tie via name score"
+    );
+    assert!(
+        !elaborator.recovered,
+        "unique winner → analysis NOT recovered"
+    );
+}
+
+
 
 #[test]
 fn test_bits_package_array_param() {
@@ -5486,6 +5998,123 @@ endmodule
     assert_eq!(s1, 4, "$size(arr) should return first-dimension size (4)");
     // Packed multi-dimensi [3:0][7:0]: $size = packed_dims[0] = 4 (bukan 32).
     assert_eq!(s2, 4, "$size(p) on packed [3:0][7:0] should be 4");
+}
+
+#[test]
+fn test_qualified_package_function_call() {
+    // LANG-43: panggilan function/task qualified `pkg::func(...)` —
+    // elaborator resolve via elaborate_package_func_call (elaborator/expr.rs)
+    // + func_source_pkg; plain name via `import pkg::*` lewat
+    // elaborate_imported_package_func_call. Keduanya harus memanggil body
+    // function di package dengan benar.
+    let source = r#"
+package math_pkg;
+    function int add3(int a, int b, int c);
+        return a + b + c;
+    endfunction
+    function int mul2(int a);
+        return a * 2;
+    endfunction
+endpackage
+
+module tb;
+    import math_pkg::*;
+    int r1;
+    int r2;
+    int r3;
+    initial begin
+        r1 = math_pkg::add3(1, 2, 4);  // qualified call pkg::func
+        r2 = add3(10, 20, 0);          // plain name via import pkg::*
+        r3 = math_pkg::mul2(add3(1, 1, 1));  // nested: qualified wraps plain
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_u64())
+            .unwrap_or(0)
+    };
+    assert_eq!(get("r1"), 7, "qualified math_pkg::add3(1,2,4) = 7");
+    assert_eq!(get("r2"), 30, "plain add3(10,20,0) via import pkg::* = 30");
+    assert_eq!(get("r3"), 6, "nested math_pkg::mul2(add3(1,1,1)) = 2*3 = 6");
+}
+
+#[test]
+fn test_let_declaration_module() {
+    // LANG-40: `let` declaration di module (IEEE 1800-2017 §11.12.2) —
+    // tanpa parameter (`let W = 8;` dipakai sebagai ident) dan berparameter
+    // (`let double(x) = x * 2;` dipakai sebagai panggilan). Substitusi
+    // dilakukan di elaborator (elaborate_expr → let_decls).
+    let source = r#"
+module tb;
+    let W = 8;
+    let double(x) = x * 2;
+    let add3(a, b, c) = a + b + c;
+
+    int r1;
+    int r2;
+    int r3;
+    initial begin
+        r1 = W;
+        r2 = double(21);
+        r3 = add3(1, 2, 4);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_u64())
+            .unwrap_or(0)
+    };
+    assert_eq!(get("r1"), 8, "let tanpa parameter: W = 8");
+    assert_eq!(get("r2"), 42, "let berparameter: double(21) = 42");
+    assert_eq!(get("r3"), 7, "let berparameter 3 arg: add3(1,2,4) = 7");
+}
+
+#[test]
+fn test_let_declaration_class() {
+    // LANG-40: `let` di dalam class — dipakai di body method (jalur AST):
+    // let tanpa parameter (`MAX`) dan berparameter (`clamp(v,lo,hi)` dengan
+    // nested ternary).
+    let source = r#"
+class Cfg;
+    let MAX = 100;
+    let clamp(v, lo, hi) = (v < lo) ? lo : (v > hi) ? hi : v;
+    function int compute(int v);
+        return clamp(v, 0, MAX);
+    endfunction
+endclass
+
+module tb;
+    Cfg c;
+    int r1;
+    int r2;
+    int r3;
+    initial begin
+        c = new();
+        r1 = c.compute(250);
+        r2 = c.compute(50);
+        r3 = c.compute(0);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_u64())
+            .unwrap_or(0)
+    };
+    assert_eq!(get("r1"), 100, "clamp(250,0,100) = 100");
+    assert_eq!(get("r2"), 50, "clamp(50,0,100) = 50");
+    assert_eq!(get("r3"), 0, "clamp(0,0,100) = 0");
 }
 
 #[test]
@@ -5786,6 +6415,171 @@ endmodule
     assert_eq!(a_val, 42, "a should be 42 after join_none");
     assert_eq!(b_val, 99, "b should be 99 after join_none");
     assert_eq!(r, 1, "result should be 1 (set immediately after join_none)");
+}
+
+#[test]
+fn test_wait_fork_waits_for_join_none() {
+    // LANG-29: `wait fork;` memblokir sampai SEMUA fork process milik proses
+    // ini selesai. Snapshot diambil SETELAH wait fork — bila wait fork tidak
+    // memblokir (bug lama: `wait(0)` yang tak pernah true / lanjut segera),
+    // snapshot membaca done1/done2 sebelum branch selesai → 0.
+    let source = r#"
+module tb;
+    int done1;
+    int done2;
+    int snapshot;
+    initial begin
+        done1 = 0; done2 = 0; snapshot = 0;
+        fork
+            #5 done1 = 1;
+            #10 done2 = 1;
+        join_none
+        #2
+        wait fork;
+        snapshot = done1 * 10 + done2;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 20).unwrap();
+    let snap = sigs
+        .iter()
+        .find(|(n, _)| n == "snapshot")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    assert_eq!(snap, 11, "wait fork harus menunggu kedua branch (done1=1, done2=1)");
+}
+
+#[test]
+fn test_wait_fork_no_active_fork_continues() {
+    // LANG-29: tanpa fork proses aktif, `wait fork` lanjut segera (t=0).
+    let source = r#"
+module tb;
+    int ok;
+    initial begin
+        ok = 0;
+        wait fork;
+        ok = 1;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 10).unwrap();
+    let ok = sigs
+        .iter()
+        .find(|(n, _)| n == "ok")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    assert_eq!(ok, 1, "tanpa fork aktif, wait fork lanjut segera");
+}
+
+#[test]
+fn test_wait_fork_nested_in_fork_branch() {
+    // LANG-29: `wait fork` di dalam branch fork menunggu child process dari
+    // branch itu sendiri; `join` luar tetap menunggu semua branch.
+    let source = r#"
+module tb;
+    int nested_done;
+    int outer_ok;
+    initial begin
+        nested_done = 0; outer_ok = 0;
+        fork
+            begin
+                fork
+                    #4 nested_done = 1;
+                join_none
+                #2
+                wait fork;
+                if (nested_done != 1) $display("FAIL nested");
+            end
+            #10 outer_ok = 1;
+        join
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 20).unwrap();
+    let nd = sigs
+        .iter()
+        .find(|(n, _)| n == "nested_done")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    let oo = sigs
+        .iter()
+        .find(|(n, _)| n == "outer_ok")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    assert_eq!(nd, 1, "nested wait fork harus menunggu child branch");
+    assert_eq!(oo, 1, "outer join harus menunggu semua branch");
+}
+
+#[test]
+fn test_disable_fork_kills_branches() {
+    // LANG-30: `disable fork;` men-terminate SEMUA child process milik proses
+    // pemanggil (IEEE 1800-2017 §9.6.4). Branch yang tertunda (`#10`/`#20`)
+    // tidak pernah dieksekusi (a/b tetap 0) dan proses pemanggil LANJUT —
+    // `wait fork` setelah disable langsung selesai (tidak hang).
+    let source = r#"
+module tb;
+    int a;
+    int b;
+    int after;
+    initial begin
+        a = 0; b = 0; after = 0;
+        fork
+            #10 a = 1;
+            #20 b = 1;
+        join_none
+        disable fork;
+        after = 1;
+        wait fork;
+        after = 2;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 30).unwrap();
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_u64())
+            .unwrap_or(99)
+    };
+    assert_eq!(get("a"), 0, "branch #10 harus dibunuh (a tetap 0)");
+    assert_eq!(get("b"), 0, "branch #20 harus dibunuh (b tetap 0)");
+    assert_eq!(
+        get("after"),
+        2,
+        "proses lanjut setelah disable fork; wait fork selesai tanpa hang"
+    );
+}
+
+#[test]
+fn test_disable_fork_process_isolation() {
+    // LANG-30: `disable fork` hanya membunuh child process MILIK PROSES
+    // pemanggil — branch proses lain tetap berjalan.
+    let source = r#"
+module tb;
+    int a;
+    int b;
+    initial begin  // proses A: fork join_none
+        a = 0; b = 0;
+        fork
+            #5 a = 1;
+            #10 b = 1;
+        join_none
+    end
+    initial begin  // proses B: disable fork (tidak punya child)
+        #2
+        disable fork;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 20).unwrap();
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_u64())
+            .unwrap_or(99)
+    };
+    assert_eq!(get("a"), 1, "branch proses A tetap jalan (a=1 di #5)");
+    assert_eq!(get("b"), 1, "branch proses A tetap jalan (b=1 di #10)");
 }
 
 #[test]
@@ -8990,29 +9784,29 @@ endmodule
     let mut engine = crate::simulator::SimulationEngine::new(design, 10);
     engine.run().unwrap();
     // Check cross coverage: 2 samples, 2 unique cross bins
-    let cross_key = "cg.cross_a_b";
+    let cross_key = Symbol::intern("cg.cross_a_b");
     assert_eq!(
-        engine.cover_total.get(cross_key).copied().unwrap_or(0),
+        engine.cover_total.get(&cross_key).copied().unwrap_or(0),
         2,
         "cross total should be 2"
     );
     assert_eq!(
-        engine.cover_hits.get(cross_key).copied().unwrap_or(0),
+        engine.cover_hits.get(&cross_key).copied().unwrap_or(0),
         2,
         "cross hits should be 2"
     );
-    let cross_bins = engine.cover_bins.get(cross_key).unwrap();
+    let cross_bins = engine.cover_bins.get(&cross_key).unwrap();
     assert_eq!(cross_bins.len(), 2, "should have 2 unique cross bins");
     assert!(
-        cross_bins.contains_key("cp_a=1 x cp_b=2"),
+        cross_bins.contains_key(&Symbol::intern("cp_a=1 x cp_b=2")),
         "missing cross bin for a=1,b=2"
     );
     assert!(
-        cross_bins.contains_key("cp_a=3 x cp_b=4"),
+        cross_bins.contains_key(&Symbol::intern("cp_a=3 x cp_b=4")),
         "missing cross bin for a=3,b=4"
     );
-    assert_eq!(cross_bins["cp_a=1 x cp_b=2"], 1);
-    assert_eq!(cross_bins["cp_a=3 x cp_b=4"], 1);
+    assert_eq!(cross_bins[&Symbol::intern("cp_a=1 x cp_b=2")], 1);
+    assert_eq!(cross_bins[&Symbol::intern("cp_a=3 x cp_b=4")], 1);
 }
 
 #[test]

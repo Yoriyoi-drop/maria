@@ -16,6 +16,18 @@ impl Elaborator {
     /// referensi receiver yang tidak terdaftar sebagai signal (interface
     /// instance seperti `clk_if.set_period_ps(...)` atau `sck_clk.set_active()`)
     /// agar tidak menjadi E2001 "signal not found".
+    /// Coba fold konstanta + catat statistik optimasi (db.md "6. optimize/",
+    /// "10. expression/"). Wrapper `try_fold_const` yang menambah sampel
+    /// (teks ekspresi, nilai) ke `opt_stats` bila berhasil.
+    fn try_fold_const(&self, expr: &Expr) -> Result<Option<IrExpr>, String> {
+        let folded = super::super::util::try_fold_const(expr, &self.param_vals)?;
+        if let Some(IrExpr::Const(lv)) = &folded {
+            self.opt_stats
+                .record_const_fold(format!("{:?}", expr), lv.to_u64() as i64);
+        }
+        Ok(folded)
+    }
+
     pub(crate) fn is_current_module_instance(&self, name: &Symbol) -> bool {
         let Some(cur) = self.current_module else {
             return false;
@@ -60,6 +72,10 @@ impl Elaborator {
         signal_map: &HashMap<Symbol, SignalId>,
         signals: &[SignalInfo],
     ) -> Result<IrExpr, SimError> {
+        // Statistik cache pipeline (db.md "10. expression/"): jumlah evaluasi
+        // ekspresi. Dipanggil untuk setiap sub-ekspresi — di-akumulasi di
+        // `opt_stats` (Cell) dan di-snapshot ke cache setelah elaborasi.
+        self.opt_stats.record_expr_eval();
         match expr {
             Expr::Ident { name, .. } if name == "this" => Ok(IrExpr::This),
             Expr::Value(v) => {
@@ -103,6 +119,13 @@ impl Elaborator {
                         line: *line,
                         col: *col,
                     });
+                }
+                // LANG-40: ident yang merupakan `let` tanpa parameter —
+                // elaborate body let (alias ekspresi, IEEE 1800-2017 §11.12.2).
+                if let Some(ld) = self.let_decls.get(name) {
+                    if ld.params.is_empty() {
+                        return self.elaborate_expr(&ld.expr, signal_map, signals);
+                    }
                 }
                 // Check if this ident is a parameter (from param_vals or effective_params)
                 if let Some(&val) = self.param_vals.get(name) {
@@ -165,7 +188,7 @@ impl Elaborator {
                                     &td.dtype,
                                     td.range.as_ref(),
                                     &td.extra_packed_dims,
-                                    &self.param_vals.clone(),
+                                    &self.param_vals,
                                 );
                                 return Ok(IrExpr::Const(LogicVec::from_u64(w as u64, 32)));
                             }
@@ -208,7 +231,7 @@ impl Elaborator {
                 lsb,
             } => {
                 // Const-fold array/param range select (e.g. `pkg::ARR[3:0]`)
-                if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
+                if let Some(folded) = self.try_fold_const(expr)? {
                     return Ok(folded);
                 }
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
@@ -261,7 +284,7 @@ impl Elaborator {
             Expr::BitSelect { expr: inner, index } => {
                 // Const-fold array/param element select (e.g. `pkg::ARR[2]` via
                 // flattened param_vals key `ARR[2]`). Falls through if not constant.
-                if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
+                if let Some(folded) = self.try_fold_const(expr)? {
                     return Ok(folded);
                 }
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
@@ -388,7 +411,7 @@ impl Elaborator {
                 }
             }
             Expr::Concat(exprs) => {
-                if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
+                if let Some(folded) = self.try_fold_const(expr)? {
                     return Ok(folded);
                 }
                 let parts: Result<Vec<IrExpr>, SimError> = exprs
@@ -398,7 +421,7 @@ impl Elaborator {
                 Ok(IrExpr::Concat(parts?))
             }
             Expr::Replicate { count, expr: inner } => {
-                if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
+                if let Some(folded) = self.try_fold_const(expr)? {
                     return Ok(folded);
                 }
                 let c = const_eval_params(count, &self.param_vals).map_err(|e| {
@@ -413,7 +436,7 @@ impl Elaborator {
                 Ok(IrExpr::Replicate(c, Box::new(inner_expr)))
             }
             Expr::UnaryOp { op, expr: inner } => {
-                if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
+                if let Some(folded) = self.try_fold_const(expr)? {
                     return Ok(folded);
                 }
                 let inner_expr = self.elaborate_expr(inner, signal_map, signals)?;
@@ -421,7 +444,7 @@ impl Elaborator {
                 Ok(IrExpr::UnaryOp(ir_op, Box::new(inner_expr)))
             }
             Expr::BinaryOp { op, lhs, rhs } => {
-                if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
+                if let Some(folded) = self.try_fold_const(expr)? {
                     return Ok(folded);
                 }
                 let lhs_expr = self.elaborate_expr(lhs, signal_map, signals)?;
@@ -438,7 +461,7 @@ impl Elaborator {
                 true_expr,
                 false_expr,
             } => {
-                if let Some(folded) = try_fold_const(expr, &self.param_vals)? {
+                if let Some(folded) = self.try_fold_const(expr)? {
                     return Ok(folded);
                 }
                 let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
@@ -769,7 +792,7 @@ impl Elaborator {
                 // Try to resolve as hierarchical signal reference first
                 let hier_name = Self::build_hier_name(obj, field.as_str());
                 if !hier_name.is_empty() {
-                    if let Some(&sig_id) = signal_map.get(hier_name.as_str()) {
+                    if let Some(&sig_id) = signal_map.get(&Symbol::intern(&hier_name)) {
                         return Ok(IrExpr::Signal(sig_id, 0));
                     }
                 }
@@ -1136,6 +1159,20 @@ impl Elaborator {
                 })
             }
             Expr::FuncCall { name, args, .. } if name != "new" => {
+                // LANG-40: panggilan `let name(args)` — substitusi parameter
+                // formal dengan argumen, lalu elaborate body.
+                if let Some(ld) = self.let_decls.get(name) {
+                    if !ld.params.is_empty() && ld.params.len() == args.len() {
+                        let map: HashMap<Symbol, &Expr> = ld
+                            .params
+                            .iter()
+                            .zip(args.iter())
+                            .map(|(p, a)| (*p, a))
+                            .collect();
+                        let body = maria_ast::inline_util::substitute_let_args(ld.expr.clone(), &map);
+                        return self.elaborate_expr(&body, signal_map, signals);
+                    }
+                }
                 if std::env::var("DBG_PKG").is_ok() && name.as_str() == "aes_circ_byte_shift" {
                     let func_exists = self.design.modules.iter().any(|m| {
                         m.items
@@ -1293,15 +1330,16 @@ impl Elaborator {
         col: usize,
     ) -> Result<Option<IrExpr>, SimError> {
         let import_sets = self.collect_import_sets();
+        let name_sym = Symbol::intern(name);
         for (package, import_item) in import_sets {
             let Some(pkg_items) = self.package_symbols.get(&package) else {
                 continue;
             };
             let matched = if import_item.as_str() == "*" {
-                matches!(pkg_items.get(name), Some(PackageItem::Function(_)))
+                matches!(pkg_items.get(&name_sym), Some(PackageItem::Function(_)))
             } else {
                 import_item == name
-                    && matches!(pkg_items.get(name), Some(PackageItem::Function(_)))
+                    && matches!(pkg_items.get(&name_sym), Some(PackageItem::Function(_)))
             };
             if matched {
                 let ir = self.elaborate_package_func(package.as_str(), name, args, signal_map, signals, line, col)?;
@@ -1313,7 +1351,7 @@ impl Elaborator {
         // package asal, bukan hanya dari import module.
         if let Some(inline_pkg) = self.inline_func_pkg.get() {
             if let Some(pkg_items) = self.package_symbols.get(&inline_pkg) {
-                if matches!(pkg_items.get(name), Some(PackageItem::Function(_))) {
+                if matches!(pkg_items.get(&name_sym), Some(PackageItem::Function(_))) {
                     let ir = self.elaborate_package_func(inline_pkg.as_str(), name, args, signal_map, signals, line, col)?;
                     return Ok(Some(ir));
                 }
@@ -1331,7 +1369,7 @@ impl Elaborator {
                     }
                     seen.push(pkg);
                     if let Some(pkg_items) = self.package_symbols.get(&pkg) {
-                        if matches!(pkg_items.get(name), Some(PackageItem::Function(_))) {
+                        if matches!(pkg_items.get(&name_sym), Some(PackageItem::Function(_))) {
                             let ir = self.elaborate_package_func(pkg.as_str(), name, args, signal_map, signals, line, col)?;
                             return Ok(Some(ir));
                         }
@@ -1409,8 +1447,8 @@ impl Elaborator {
     ) -> Result<IrExpr, SimError> {
         let func = match self
             .package_symbols
-            .get(pkg_name)
-            .and_then(|items| items.get(func_name))
+            .get(&Symbol::intern(pkg_name))
+            .and_then(|items| items.get(&Symbol::intern(func_name)))
             .and_then(|item| {
                 if let PackageItem::Function(f) = item {
                     Some(f)
@@ -1482,7 +1520,7 @@ impl Elaborator {
         let mut result = *ret_expr;
 
         // First: resolve package-scoped identifiers (e.g. MuBi4True → constant value)
-        let pkg_symbols = self.package_symbols.get(pkg_name);
+        let pkg_symbols = self.package_symbols.get(&Symbol::intern(pkg_name));
         if let Some(items) = pkg_symbols {
             // Collect all enum member names and their values from typedefs
             let mut enum_member_values: HashMap<Symbol, Expr> = HashMap::new();
@@ -2222,8 +2260,6 @@ fn sub_elem_width_from_packed(
 //
 // CATATAN: parse_type_spec_str() sudah dipindahkan ke src/elaboration/util/type_util.rs
 // dan di-re-export via util/mod.rs.
-
-
 
 
 

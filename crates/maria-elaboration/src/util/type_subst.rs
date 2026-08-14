@@ -34,7 +34,7 @@ pub fn substitute_class_types(
             ClassMember::Task(td) => {
                 new_members.push(ClassMember::Task(td));
             }
-            ClassMember::Constraint { name, body } => {
+            ClassMember::Constraint { name, body, is_static } => {
                 let new_body = body
                     .into_iter()
                     .map(|ci| substitute_constraint_item(ci, param_name, replacement))
@@ -42,7 +42,13 @@ pub fn substitute_class_types(
                 new_members.push(ClassMember::Constraint {
                     name,
                     body: new_body,
+                    is_static,
                 });
+            }
+            ClassMember::Let(mut ld) => {
+                // LANG-40: substitusi type param di body let (class generic).
+                ld.expr = substitute_expr_types(ld.expr, param_name, replacement);
+                new_members.push(ClassMember::Let(ld));
             }
         }
     }
@@ -149,6 +155,8 @@ fn substitute_constraint_item(
     match ci {
         ConstraintItem::Expr(e) => ConstraintItem::Expr(substitute_expr_types(e, param_name, replacement)),
         ConstraintItem::SolveBefore { vars } => ConstraintItem::SolveBefore { vars },
+        // LANG-31: `soft expr` — substitusi ekspresi di dalam soft constraint.
+        ConstraintItem::Soft(e) => ConstraintItem::Soft(substitute_expr_types(e, param_name, replacement)),
         ConstraintItem::If { cond, then, els } => ConstraintItem::If {
             cond: substitute_expr_types(cond, param_name, replacement),
             then: then

@@ -6,7 +6,7 @@ pub type SignalId = usize;
 pub type ClassId = usize;
 pub type ObjId = usize;
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct IrDesign {
     pub top: IrModule,
     pub modules: HashMap<Symbol, IrModule>,
@@ -33,7 +33,7 @@ pub struct IrDesign {
     pub coverage_exclusions: Vec<(usize, usize)>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct IrDpiImport {
     pub name: Symbol,
     pub return_width: usize,
@@ -41,49 +41,54 @@ pub struct IrDpiImport {
     pub is_task: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct IrCovergroup {
     pub name: Symbol,
     pub coverpoints: Vec<IrCoverpoint>,
     pub crosses: Vec<IrCross>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct IrCoverpoint {
     pub name: Symbol,
     pub expr: IrExpr,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct IrCross {
     pub name: Symbol,
     pub coverpoints: Vec<Symbol>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct IrTypeParam {
     pub name: Symbol,
     pub default_type: Option<maria_ast::types::DataType>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct IrClassDef {
     pub name: Symbol,
     pub extends: Option<Symbol>,
     pub type_params: Vec<IrTypeParam>,
     pub fields: Vec<IrClassField>,
     pub methods: Vec<IrClassMethod>,
-    pub constraints: Vec<(Symbol, Vec<maria_ast::types::ConstraintItem>)>,
+    /// (block_name, is_static, items) — LANG-32: `is_static=true` berarti
+    /// block constraint dibagi antar semua instance (constraint_mode()-nya
+    /// berlaku global per-class, IEEE 1800-2017 §18.5.10).
+    pub constraints: Vec<(Symbol, bool, Vec<maria_ast::types::ConstraintItem>)>,
     pub rand_fields: Vec<Symbol>,
+    /// LANG-40: `let` declaration di dalam class (IEEE 1800-2017 §11.12.2).
+    pub lets: Vec<maria_ast::types::LetDecl>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct ObjectData {
     pub class_name: Symbol,
     pub fields: HashMap<Symbol, LogicVec>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct IrClassField {
     pub name: Symbol,
     pub width: usize,
@@ -96,7 +101,7 @@ pub struct IrClassField {
     pub dtype: Option<maria_ast::DataType>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct IrClassMethod {
     pub name: Symbol,
     pub is_task: bool,
@@ -107,7 +112,7 @@ pub struct IrClassMethod {
     pub stmts: Vec<maria_ast::Stmt>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct IrModule {
     pub name: Symbol,
     pub signals: Vec<SignalInfo>,
@@ -118,7 +123,7 @@ pub struct IrModule {
     pub sub_instances: Vec<IrInstance>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub enum NetType {
     #[default]
     Wire,
@@ -172,7 +177,7 @@ impl NetType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct StructFieldInfo {
     pub name: Symbol,
     pub offset: usize,
@@ -188,7 +193,7 @@ pub struct StructFieldInfo {
     pub sub_fields: Vec<StructFieldInfo>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct SignalInfo {
     pub name: Symbol,
     pub width: usize,
@@ -220,7 +225,7 @@ pub struct SignalInfo {
     pub iface_modport: Option<Symbol>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub enum SignalKind {
     #[default]
     Wire,
@@ -231,7 +236,7 @@ pub enum SignalKind {
     Inout,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct IrInstance {
     pub module_name: Symbol,
     pub instance_name: Symbol,
@@ -243,7 +248,7 @@ pub struct IrInstance {
     pub col: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SignalSensitivity {
     pub sig_id: SignalId,
     /// None = seluruh signal memicu; Some(msb,lsb) = hanya bila RANGE tsb berubah.
@@ -257,7 +262,7 @@ impl SignalSensitivity {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Process {
     Combinational {
         name: Symbol,
@@ -293,7 +298,7 @@ pub enum Process {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ClockEdge {
     PosEdge(SignalId),
     NegEdge(SignalId),
@@ -305,7 +310,7 @@ pub enum ClockEdge {
     NegEdgeHier(Symbol),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ResetInfo {
     pub signal: SignalId,
     pub polarity: bool,
@@ -313,7 +318,7 @@ pub struct ResetInfo {
     pub value: LogicVec,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum CaseType {
     Normal,
     CaseX,
@@ -331,7 +336,7 @@ pub enum CaseType {
     Priority,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum IrStmt {
     Block {
         stmts: Vec<IrStmt>,
@@ -472,6 +477,9 @@ pub enum IrStmt {
         events: Vec<SignalId>,
         failure_stmts: Vec<IrStmt>,
     },
+    /// LANG-29: `wait fork;` — blokir sampai semua fork process milik proses
+    /// ini selesai (IR dari `Stmt::WaitFork`).
+    WaitFork,
     RandCase {
         items: Vec<(IrExpr, Vec<IrStmt>)>,
     },
@@ -480,20 +488,20 @@ pub enum IrStmt {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum IrJoinType {
     Join,
     JoinAny,
     JoinNone,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct IrCaseItem {
     pub labels: Vec<IrExpr>,
     pub body: Vec<IrStmt>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum IrLValue {
     Signal(SignalId, usize),
     RangeSelect(SignalId, usize, usize),
@@ -549,7 +557,7 @@ pub enum IrLValue {
     Concat(Vec<IrLValue>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum IrExpr {
     Const(LogicVec),
     FillLit(LogicVal),
@@ -645,7 +653,7 @@ pub enum IrExpr {
 }
 
 /// Temporal sequence expression for property evaluation
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum IrSequence {
     /// Immediate Boolean expression (evaluated each cycle)
     Expr(IrExpr),
@@ -696,7 +704,7 @@ impl IrSequence {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct IrDistItem {
     pub range_lo: Option<i64>,
     pub range_hi: Option<i64>,
@@ -704,13 +712,13 @@ pub struct IrDistItem {
     pub weight: i64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DistWeightType {
     Item,
     Range,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum UnaryIrOp {
     Plus,
     Minus,
@@ -724,7 +732,7 @@ pub enum UnaryIrOp {
     RedXnor,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BinaryIrOp {
     Add,
     Sub,

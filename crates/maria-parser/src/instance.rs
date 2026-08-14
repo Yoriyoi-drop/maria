@@ -837,6 +837,17 @@ impl Parser {
                                         self.expect(Token::RBrack)?;
                                     }
                                 }
+                                // Initializer port ANSI: `output reg [7:0] b
+                                // = 8'h2A;` — SV legal (default value saat
+                                // sim). Sebelumnya `=` tidak di-parse → token
+                                // tersisa → `expected )` → module gagal parse
+                                // (E3001 module not found).
+                                let init_expr = if self.peek() == &Token::BlockingAssign {
+                                    self.advance();
+                                    Some(self.parse_expr(0)?)
+                                } else {
+                                    None
+                                };
                                 ports.push(Port {
                                     name: *name,
                                     direction: dir,
@@ -845,6 +856,7 @@ impl Parser {
                                     dtype_name: dtype_name.as_ref().map(|s| Symbol::intern(s)),
                                     array_range: array_range_pre.clone().or(array_range),
                                     extra_packed_dims: extra_packed_dims.clone(),
+                                    init_expr,
                                 });
                             }
                             _ => break,

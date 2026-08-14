@@ -37,6 +37,10 @@ pub fn run(args: &CovArgs) -> Result<(), SimError> {
 
     let stats = engine.coverage_stats();
 
+    // Simpan ringkasan ke cache pipeline (db.md "19. coverage/") agar
+    // `minspect cache` membaca hasil tanpa simulasi ulang.
+    save_coverage_cache(args, &stats);
+
     let prefix = args
         .output
         .map(|o| o.trim_end_matches(".coverage.json").trim_end_matches(".coverage.html").to_string())
@@ -104,4 +108,31 @@ pub fn run(args: &CovArgs) -> Result<(), SimError> {
     }
 
     Ok(())
+}
+
+/// Simpan ringkasan coverage ke cache pipeline (`coverage/"last"`, db.md
+/// "19. coverage/"). Best-effort — kegagalan cache tidak menggagalkan mcov.
+fn save_coverage_cache(args: &CovArgs, stats: &std::collections::HashMap<String, f64>) {
+    use maria_compiler::micd::cache::pipeline::CoveragePayload;
+    use maria_compiler::micd::cache::CacheCategory;
+
+    let Ok((mut layer, _pid)) = crate::open_cache_layer(args.files, args.incdirs, args.defines)
+    else {
+        return;
+    };
+    let get = |k: &str| stats.get(k).copied().unwrap_or(0.0) as u64;
+    let payload = CoveragePayload {
+        line_items: get("line_items"),
+        line_hits: get("line_total_hits"),
+        branch_total: get("branch_total"),
+        branch_covered: get("branch_covered"),
+        toggle_signals: get("toggle_signals"),
+        toggle_transitions: get("toggle_transitions"),
+        fsm_signals: get("fsm_signals"),
+        fsm_states: get("fsm_states"),
+    };
+    if let Ok(bytes) = bincode::serialize(&payload) {
+        let _ = layer.put(CacheCategory::Coverage, "last", &bytes);
+        let _ = layer.save();
+    }
 }

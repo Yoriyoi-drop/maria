@@ -15,6 +15,7 @@ maria-simulator = { path = "../maria-simulator" }
 maria-mv = { path = "../maria-mv" }
 maria-sir = { path = "../maria-sir" }
 maria-netlist = { path = "../maria-netlist" }
+maria-timing = { path = "../maria-timing" }
 maria-synth = { path = "../maria-synth" }
 maria-tech = { path = "../maria-tech" }
 

@@ -129,6 +129,11 @@ pub enum Stmt {
         cond: Expr,
         stmt: Option<Box<Stmt>>,
     },
+    /// LANG-29: `wait fork;` — blokir sampai SEMUA fork process milik proses
+    /// ini selesai (IEEE 1800-2017 9.7.2). Fieldless: parser memproduksi
+    /// varian ini untuk `wait fork` (berbeda dari `wait (expr)` yang
+    /// menggunakan `Wait { cond, stmt }`).
+    WaitFork,
     Disable {
         name: Symbol,
     },

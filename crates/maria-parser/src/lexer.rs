@@ -52,6 +52,9 @@ pub enum Token {
     Param,
     Parameter,
     LocalParam,
+    /// LANG-40: `let name[(params)] = expr;` — deklarasi let (IEEE 1800-2017
+    /// §11.12.2), scoped macro-like expression alias.
+    Let,
     GenVar,
     Generate,
     EndGenerate,
@@ -208,6 +211,9 @@ pub enum Token {
     Rand,
     RandC,
     Constraint,
+    /// LANG-31: `soft` modifier pada constraint expression — `soft a == 5;`
+    /// dilanggar bila bertentangan dengan constraint hard (solver toleran).
+    Soft,
     Const,
     Var,
     Solve,
@@ -322,6 +328,7 @@ impl fmt::Display for Token {
             Token::Param => write!(f, "param"),
             Token::Parameter => write!(f, "parameter"),
             Token::LocalParam => write!(f, "localparam"),
+            Token::Let => write!(f, "let"),
             Token::GenVar => write!(f, "genvar"),
             Token::Generate => write!(f, "generate"),
             Token::EndGenerate => write!(f, "endgenerate"),
@@ -340,6 +347,7 @@ impl fmt::Display for Token {
             Token::Rand => write!(f, "rand"),
             Token::RandC => write!(f, "randc"),
             Token::Constraint => write!(f, "constraint"),
+            Token::Soft => write!(f, "soft"),
             Token::Const => write!(f, "const"),
             Token::Var => write!(f, "var"),
             Token::Solve => write!(f, "solve"),
@@ -682,6 +690,7 @@ impl Lexer {
             "param" => Token::Param,
             "parameter" => Token::Parameter,
             "localparam" => Token::LocalParam,
+            "let" => Token::Let,
             "genvar" => Token::GenVar,
             "generate" => Token::Generate,
             "endgenerate" => Token::EndGenerate,
@@ -742,6 +751,7 @@ impl Lexer {
             "rand" => Token::Rand,
             "randc" => Token::RandC,
             "constraint" => Token::Constraint,
+            "soft" => Token::Soft,
             "const" => Token::Const,
             "var" => Token::Var,
             "solve" => Token::Solve,

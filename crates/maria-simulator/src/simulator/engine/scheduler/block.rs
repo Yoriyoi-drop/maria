@@ -179,6 +179,7 @@ impl SimulationEngine {
                                     stmts_remaining: vec![],
                                     fork_id,
                                     process_id: pid,
+                                    process_name: self.current_process_name.clone(),
                                 }),
                             });
                         }
@@ -216,8 +217,22 @@ impl SimulationEngine {
                     self.state.write_signal(*sig_id, toggled);
                 }
                 IrStmt::Disable { name } => {
-                    self.disable_pending = Some(*name);
-                    return Ok(true);
+                    // LANG-30: `disable fork` men-terminate SEMUA child process
+                    // milik proses ini (IEEE 1800-2017 §9.6.4) — group di-tandai
+                    // disabled, branch tertunda di-skip saat resume. Proses
+                    // pemanggil LANJUT. `disable <label>` membunuh blok bernama
+                    // (disable_pending → hentikan blok saat ini).
+                    if name.as_str() == "fork" {
+                        let fids = self.active_fork_groups_for_current_process();
+                        for fid in fids {
+                            if let Some(g) = self.fork_groups.get_mut(fid) {
+                                g.disabled = true;
+                            }
+                        }
+                    } else {
+                        self.disable_pending = Some(*name);
+                        return Ok(true);
+                    }
                 }
                 IrStmt::Release { lvalue } => {
                     if let Some(id) = self.signal_id_from_lvalue(lvalue) {
@@ -245,6 +260,33 @@ impl SimulationEngine {
                             }
                         }
                     }
+                    return Ok(true);
+                }
+                IrStmt::WaitFork => {
+                    // LANG-29: blokir sampai semua fork process milik proses ini
+                    // selesai. Tanpa group aktif → lanjut segera.
+                    let fids = self.active_fork_groups_for_current_process();
+                    if fids.is_empty() {
+                        if i + 1 < stmts.len() {
+                            self.evaluate_block_with_delay_fork(&stmts[i + 1..], fork_id)?;
+                        }
+                        return Ok(true);
+                    }
+                    let later: Vec<IrStmt> = if i + 1 < stmts.len() {
+                        stmts[i + 1..].to_vec()
+                    } else {
+                        Vec::new()
+                    };
+                    self.pending_wait_forks.push(WaitForkState {
+                        fids,
+                        continuation: later,
+                        ast_continuation: Vec::new(),
+                        this: None,
+                        method: None,
+                        locals: Vec::new(),
+                        base_len: 0,
+                        process_name: self.current_process_name.clone(),
+                    });
                     return Ok(true);
                 }
                 IrStmt::WaitOrder {
@@ -596,6 +638,44 @@ impl SimulationEngine {
                     args,
                     with_clause,
                 } => {
+                    // LANG-33: `obj.<constraint_block>.constraint_mode(0/1)`
+                    // sebagai statement — set mode constraint block. Di-
+                    // intercept SEBELUM evaluasi obj (field block bukan data
+                    // field, evaluasi MemberAccess akan error/no-op).
+                    if method.as_str() == "constraint_mode" {
+                        if let IrExpr::MemberAccess { obj: inner, field } = obj {
+                            let obj_val = self.evaluate_expr(inner)?;
+                            let obj_id = obj_val.to_u64() as ObjId;
+                            if let Some(arg) = args.first() {
+                                let mode = self.evaluate_expr(arg)?.to_u64() != 0;
+                                // LANG-32: block STATIC — mode global per-class
+                                // (berlaku semua instance, §18.5.10).
+                                let class_sym = self
+                                    .state
+                                    .objects
+                                    .get(obj_id)
+                                    .map(|o| o.class_name)
+                                    .unwrap_or(Symbol::EMPTY);
+                                let is_static = self
+                                    .design
+                                    .classes
+                                    .get(&class_sym)
+                                    .map(|cd| {
+                                        cd.constraints
+                                            .iter()
+                                            .any(|(bn, st, _)| bn == field && *st)
+                                    })
+                                    .unwrap_or(false);
+                                if is_static {
+                                    self.static_constraint_modes
+                                        .insert((class_sym, *field), mode);
+                                } else {
+                                    self.constraint_modes.insert((obj_id, *field), mode);
+                                }
+                            }
+                            continue;
+                        }
+                    }
                     if let IrExpr::Signal(id, _) = obj {
                         let sig_info = self.design.top.signals.get(*id).cloned();
                         if let Some(ref sig) = sig_info {
@@ -1310,6 +1390,38 @@ impl SimulationEngine {
                         return Ok(true);
                     }
                 }
+                maria_ast::Stmt::WaitFork => {
+                    // LANG-29 (jalur AST task/method): sama dengan jalur IR —
+                    // tunggu group fork milik proses ini, resume via
+                    // check_wait_forks dengan konteks method yang disimpan.
+                    let fids = self.active_fork_groups_for_current_process();
+                    if fids.is_empty() {
+                        if i + 1 < stmts.len() {
+                            self.evaluate_ast_block_with_delay_fork(&stmts[i + 1..], fork_id)?;
+                        }
+                        return Ok(true);
+                    }
+                    let mut later: Vec<maria_ast::Stmt> = if i + 1 < stmts.len() {
+                        stmts[i + 1..].to_vec()
+                    } else {
+                        Vec::new()
+                    };
+                    if let Some(lc) = &self.ast_loop_continuation {
+                        later.extend(lc.clone());
+                    }
+                    let base_len = self.method_locals.len();
+                    self.pending_wait_forks.push(WaitForkState {
+                        fids,
+                        continuation: Vec::new(),
+                        ast_continuation: later,
+                        this: self.current_this,
+                        method: self.current_method,
+                        locals: self.method_locals.clone(),
+                        base_len,
+                        process_name: self.current_process_name.clone(),
+                    });
+                    return Ok(true);
+                }
                 maria_ast::Stmt::SysCall {
                     name,
                     args,
@@ -1405,7 +1517,7 @@ impl SimulationEngine {
                                     let seqr = self
                                         .state
                                         .get_object(obj_id)
-                                        .and_then(|o| o.fields.get("__sequencer"))
+                                        .and_then(|o| o.fields.get(&Symbol::intern("__sequencer")))
                                         .map(|v| v.to_u64() as ObjId)
                                         .unwrap_or(0);
                                     let item_id = args
@@ -1663,7 +1775,7 @@ impl SimulationEngine {
                                 let seqr = self
                                     .state
                                     .get_object(eid)
-                                    .and_then(|o| o.fields.get("__sequencer"))
+                                    .and_then(|o| o.fields.get(&Symbol::intern("__sequencer")))
                                     .map(|v| v.to_u64() as ObjId)
                                     .unwrap_or(0);
                                 let item_id = args
@@ -1778,8 +1890,19 @@ impl SimulationEngine {
                     }
                 }
                 maria_ast::Stmt::Disable { name } => {
-                    self.disable_pending = Some(*name);
-                    return Ok(true);
+                    // LANG-30: `disable fork` (jalur AST task/method) —
+                    // terminate child processes milik proses ini, lanjut.
+                    if name.as_str() == "fork" {
+                        let fids = self.active_fork_groups_for_current_process();
+                        for fid in fids {
+                            if let Some(g) = self.fork_groups.get_mut(fid) {
+                                g.disabled = true;
+                            }
+                        }
+                    } else {
+                        self.disable_pending = Some(*name);
+                        return Ok(true);
+                    }
                 }
                 maria_ast::Stmt::Fork {
                     processes,
@@ -2219,6 +2342,44 @@ impl SimulationEngine {
                     args,
                     with_clause,
                 } => {
+                    // LANG-33: `obj.<constraint_block>.constraint_mode(0/1)`
+                    // sebagai statement — set mode constraint block. Di-
+                    // intercept SEBELUM evaluasi obj (field block bukan data
+                    // field, evaluasi MemberAccess akan error/no-op).
+                    if method.as_str() == "constraint_mode" {
+                        if let IrExpr::MemberAccess { obj: inner, field } = obj {
+                            let obj_val = self.evaluate_expr(inner)?;
+                            let obj_id = obj_val.to_u64() as ObjId;
+                            if let Some(arg) = args.first() {
+                                let mode = self.evaluate_expr(arg)?.to_u64() != 0;
+                                // LANG-32: block STATIC — mode global per-class
+                                // (berlaku semua instance, §18.5.10).
+                                let class_sym = self
+                                    .state
+                                    .objects
+                                    .get(obj_id)
+                                    .map(|o| o.class_name)
+                                    .unwrap_or(Symbol::EMPTY);
+                                let is_static = self
+                                    .design
+                                    .classes
+                                    .get(&class_sym)
+                                    .map(|cd| {
+                                        cd.constraints
+                                            .iter()
+                                            .any(|(bn, st, _)| bn == field && *st)
+                                    })
+                                    .unwrap_or(false);
+                                if is_static {
+                                    self.static_constraint_modes
+                                        .insert((class_sym, *field), mode);
+                                } else {
+                                    self.constraint_modes.insert((obj_id, *field), mode);
+                                }
+                            }
+                            continue;
+                        }
+                    }
                     if let IrExpr::Signal(id, _) = obj {
                         let sig_info = self.design.top.signals.get(*id).cloned();
                         if let Some(ref sig) = sig_info {
@@ -2303,6 +2464,7 @@ impl SimulationEngine {
                                     stmts_remaining: vec![],
                                     fork_id: None,
                                     process_id: pid,
+                                    process_name: self.current_process_name.clone(),
                                 }),
                             });
                         }
@@ -2343,6 +2505,33 @@ impl SimulationEngine {
                         self.evaluate_stmt_block(body)?;
                     }
                 }
+                IrStmt::WaitFork => {
+                    // LANG-29 (konteks evaluate_stmt_block): tanpa group aktif
+                    // milik proses ini → lanjut; ada → suspend via wait_forks.
+                    let fids = self.active_fork_groups_for_current_process();
+                    if fids.is_empty() {
+                        if i + 1 < stmts.len() {
+                            self.evaluate_stmt_block(&stmts[i + 1..])?;
+                        }
+                        return Ok(());
+                    }
+                    let later: Vec<IrStmt> = if i + 1 < stmts.len() {
+                        stmts[i + 1..].to_vec()
+                    } else {
+                        Vec::new()
+                    };
+                    self.pending_wait_forks.push(WaitForkState {
+                        fids,
+                        continuation: later,
+                        ast_continuation: Vec::new(),
+                        this: None,
+                        method: None,
+                        locals: Vec::new(),
+                        base_len: 0,
+                        process_name: self.current_process_name.clone(),
+                    });
+                    return Ok(());
+                }
                 IrStmt::WaitOrder {
                     events,
                     failure_stmts,
@@ -2357,8 +2546,19 @@ impl SimulationEngine {
                     return Ok(());
                 }
                 IrStmt::Disable { name } => {
-                    self.disable_pending = Some(*name);
-                    return Ok(());
+                    // LANG-30: `disable fork` (jalur evaluate_stmt_block) —
+                    // terminate child processes milik proses ini, lanjut.
+                    if name.as_str() == "fork" {
+                        let fids = self.active_fork_groups_for_current_process();
+                        for fid in fids {
+                            if let Some(g) = self.fork_groups.get_mut(fid) {
+                                g.disabled = true;
+                            }
+                        }
+                    } else {
+                        self.disable_pending = Some(*name);
+                        return Ok(());
+                    }
                 }
                 IrStmt::Release { lvalue } => {
                     if let Some(id) = self.signal_id_from_lvalue(lvalue) {

@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use maria_ast::const_eval_ext::{eval_param_default_full, CVal, SField, Scalars};
+use maria_ast::const_eval_ext::{eval_param_default_full, CVal, SField};
 use maria_ast::types::const_eval_with_params;
 use maria_ast::types::string_to_i64;
 use maria_ast::types::PackageItem;
@@ -77,10 +77,16 @@ pub struct PkgFullCtx<'a> {
 /// Jalur cepat `const_eval_with_params` (skalar + $clog2 + vbits + operator),
 /// lalu fallback ke evaluator penuh (`$bits(typedef)`, fungsi package, scoped
 /// ident) bila konteks package tersedia.
+///
+/// `existing_vals` berisi konteks skalar penuh: pemanggil menjamin
+/// `base_ctx ⊇ pkg_param_ctx ⊇ pkg_const_scalars` (collect_package_param_ctx
+/// meng-clone pkg_param_ctx yang sudah meng-flatten konstanta package), jadi
+/// `existing_vals` bisa dipakai langsung sebagai `merged` untuk evaluator
+/// penuh — TIDAK perlu meng-clone ulang `pkg.scalars` + merge base_ctx per
+/// module (bottleneck ~40k+63k insert per module di OpenTitan).
 fn eval_param_default(
     e: &Expr,
     existing_vals: &HashMap<Symbol, i64>,
-    merged: &Option<Scalars>,
     pkg: Option<&PkgFullCtx>,
 ) -> Option<i64> {
     match e {
@@ -99,8 +105,14 @@ fn eval_param_default(
             if let Ok(v) = const_eval_with_params(e, existing_vals) {
                 return Some(v);
             }
-            if let (Some(m), Some(p)) = (merged, pkg) {
-                return eval_param_default_full(e, m, p.arrays, p.package_symbols, p.structs);
+            if let Some(p) = pkg {
+                return eval_param_default_full(
+                    e,
+                    existing_vals,
+                    p.arrays,
+                    p.package_symbols,
+                    p.structs,
+                );
             }
             None
         }
@@ -131,24 +143,18 @@ pub fn resolve_param_values_with_ctx(
     base_ctx: &HashMap<Symbol, i64>,
     pkg: Option<&PkgFullCtx>,
 ) -> Result<HashMap<Symbol, i64>, String> {
+    let _t0 = std::time::Instant::now();
     let mut vals = base_ctx.clone();
-    // Konteks evaluasi penuh: konstanta package (qualified) + module ctx
-    // (plain — module menang). Dijaga sinkron dengan `vals` pada setiap insert
-    // (module param bisa direferensikan oleh localparam berikutnya).
-    let mut merged: Option<Scalars> = pkg.map(|p| {
-        let mut m: Scalars = p.scalars.clone();
-        for (&k, &v) in base_ctx {
-            m.insert(k, v);
-        }
-        m
-    });
-    // Insert ke `vals` dan (bila ada) `merged` sekaligus.
+    let _t_clone_vals = _t0.elapsed();
+    // Konteks skalar penuh = `vals` itu sendiri: pemanggil menjamin
+    // base_ctx ⊇ pkg_param_ctx ⊇ pkg_const_scalars (collect_package_param_ctx
+    // meng-clone pkg_param_ctx yang meng-flatten konstanta package), jadi
+    // tidak perlu map `merged` terpisah (dulu clone pkg.scalars + merge
+    // base_ctx per module → bottleneck di OpenTitan).
+    // Insert ke `vals`.
     macro_rules! insert_val {
         ($k:expr, $v:expr) => {{
             vals.insert($k, $v);
-            if let Some(m) = merged.as_mut() {
-                m.insert($k, $v);
-            }
         }};
     }
     let mut positional_overrides: Vec<i64> = Vec::new();
@@ -166,7 +172,7 @@ pub fn resolve_param_values_with_ctx(
         if !vals.contains_key(&param.name) {
             match &param.default {
                 Some(e) => {
-                    if let Some(v) = eval_param_default(e, &vals, &merged, pkg) {
+                    if let Some(v) = eval_param_default(e, &vals, pkg) {
                         insert_val!(param.name, v);
                     } else if !param_default_is_collection(e) {
                         // Fallback global: param gagal dievaluasi (default
@@ -190,7 +196,7 @@ pub fn resolve_param_values_with_ctx(
     for (i, param) in module.params.iter().enumerate() {
         if param.is_localparam {
             if let Some(e) = &param.default {
-                if let Some(v) = eval_param_default(e, &vals, &merged, pkg) {
+                if let Some(v) = eval_param_default(e, &vals, pkg) {
                     insert_val!(param.name, v);
                 } else if !param_default_is_collection(e) {
                     // Fallback global sama seperti body params di atas.
@@ -207,7 +213,7 @@ pub fn resolve_param_values_with_ctx(
             *override_val
         } else {
             match &param.default {
-                Some(e) => eval_param_default(e, &vals, &merged, pkg).unwrap_or(0),
+                Some(e) => eval_param_default(e, &vals, pkg).unwrap_or(0),
                 None => 0,
             }
         };
@@ -320,8 +326,9 @@ pub fn resolve_param_values_with_ctx(
                 if let Some(fname) = f.name {
                     if let CVal::Scalar(v) = f.val {
                         let key = format!("{}.{}", pname.as_str(), fname.as_str());
-                        if !vals.contains_key(key.as_str()) {
-                            insert_val!(Symbol::intern(&key), v);
+                        let key_sym = Symbol::intern(&key);
+                        if !vals.contains_key(&key_sym) {
+                            insert_val!(key_sym, v);
                             key_created = true;
                         }
                     }
@@ -337,5 +344,8 @@ pub fn resolve_param_values_with_ctx(
         }
     }
 
+    if std::env::var("DBG_ELAB").is_ok() {
+        eprintln!("[DBG-RESOLVE] module '{}' total={}us clone_vals={}us", module.name.as_str(), _t0.elapsed().as_micros(), _t_clone_vals.as_micros());
+    }
     Ok(vals)
 }

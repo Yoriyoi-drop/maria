@@ -3,6 +3,7 @@ pub mod debug;
 pub mod engine_utils;
 pub mod waveform;
 pub mod core;
+pub mod mir;
 pub mod scheduler;
 pub mod eval;
 pub mod uvm;
@@ -178,6 +179,10 @@ pub struct SimulationEngine {
     /// Slot `fork_groups` yang sudah selesai & aman di-reuse (anti-leak:
     /// fork di dalam loop tidak menumpuk entry selamanya).
     pub fork_free: Vec<usize>,
+    /// LANG-29: situs `wait fork;` yang sedang menunggu group fork milik proses
+    /// ini selesai. Dipangkas di `fork_finish`; kontinuasi dieksekusi saat
+    /// semua fid yang ditunggu sudah selesai.
+    pub pending_wait_forks: Vec<WaitForkState>,
     pub reactive_events: Vec<EventKind>,
     pub strobe_events: Vec<Vec<IrExpr>>,
     pub fstrobe_events: Vec<(u32, Vec<IrExpr>)>,
@@ -186,6 +191,14 @@ pub struct SimulationEngine {
     /// LANG-24: batas kapasitas per mailbox (bounded mode). Absen/0 = unbounded.
     pub mailbox_bounds: HashMap<usize, usize>,
     pub semaphore_counts: HashMap<usize, u32>,
+    /// LANG-33: mode per constraint block — `(obj_id, block_name)` → enabled.
+    /// Absen = enabled (default). Dipakai solver utk me-skip block nonaktif
+    /// (IEEE 1800-2017 §18.5.12 `constraint_mode()`).
+    pub constraint_modes: HashMap<(ObjId, Symbol), bool>,
+    /// LANG-32: mode constraint block STATIC — key (class_name, block_name),
+    /// berlaku global untuk SEMUA instance class (IEEE 1800-2017 §18.5.10:
+    /// `constraint_mode()` pada static constraint mempengaruhi semua instance).
+    pub static_constraint_modes: HashMap<(Symbol, Symbol), bool>,
     pub assoc_data: HashMap<usize, HashMap<LogicVec, LogicVec>>,
     pub uvm_object_data: HashMap<ObjId, UvmObjectData>,
     pub uvm_component_data: HashMap<ObjId, UvmComponentData>,

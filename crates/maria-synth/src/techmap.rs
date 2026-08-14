@@ -292,6 +292,141 @@ fn val_bit(sir: &SirModule, vid: usize, i: usize) -> BitFn {
     }
 }
 
+/// F40 resubstitution: inline leaf yang merujuk node SEDERHANA menjadi
+/// BitFn node tersebut (bit-blast) sehingga cone per-bit bisa di-fuse ke
+/// SATU LUT6 (mux chain dari `case` → 1 LUT per bit, bukan 1 LUT per node
+/// SIR). Node aritmetika (Add/Sub/Mul/Div/Mod) & shift (Shl/Shr/Sar) TIDAK
+/// di-inline — representasinya net (CARRY4 / barrel shift) — begitu juga
+/// TriState. Guard depth cegah blow-up eksponensial pada chain dalam.
+fn expand_simple(sir: &SirModule, f: &BitFn) -> BitFn {
+    expand_simple_depth(sir, f, 8)
+}
+
+fn expand_simple_depth(sir: &SirModule, f: &BitFn, depth: usize) -> BitFn {
+    if depth == 0 {
+        return f.clone();
+    }
+    match f {
+        BitFn::Const(_) => f.clone(),
+        BitFn::Leaf(vid, bit) => {
+            let rv = resolve_vid(sir, *vid);
+            let nid = match &sir.values[rv] {
+                SirValue::Node(nid) => *nid,
+                _ => return f.clone(),
+            };
+            let node = &sir.nodes[nid];
+            let w = node.width.max(1);
+            if *bit >= w {
+                return BitFn::Const(false);
+            }
+            let inl = |vid2: usize, b2: usize, d: usize| {
+                expand_simple_depth(sir, &val_bit(sir, vid2, b2), d)
+            };
+            // Lebar operand untuk compare/reduce (output 1-bit, operand lebar).
+            let opw = node
+                .inputs
+                .iter()
+                .map(|&v| sir.value_width(v).max(1))
+                .max()
+                .unwrap_or(1);
+            match &node.kind {
+                SirNodeKind::And => BitFn::And(
+                    Box::new(inl(node.inputs[0], *bit, depth - 1)),
+                    Box::new(inl(node.inputs[1], *bit, depth - 1)),
+                )
+                .simplify(),
+                SirNodeKind::Or => BitFn::Or(
+                    Box::new(inl(node.inputs[0], *bit, depth - 1)),
+                    Box::new(inl(node.inputs[1], *bit, depth - 1)),
+                )
+                .simplify(),
+                SirNodeKind::Xor => BitFn::Xor(
+                    Box::new(inl(node.inputs[0], *bit, depth - 1)),
+                    Box::new(inl(node.inputs[1], *bit, depth - 1)),
+                )
+                .simplify(),
+                SirNodeKind::Not => {
+                    BitFn::Not(Box::new(inl(node.inputs[0], *bit, depth - 1))).simplify()
+                }
+                SirNodeKind::Buffer => inl(node.inputs[0], *bit, depth - 1),
+                SirNodeKind::Mux => BitFn::Mux(
+                    Box::new(inl(node.inputs[0], 0, depth - 1)),
+                    Box::new(inl(node.inputs[1], *bit, depth - 1)),
+                    Box::new(inl(node.inputs[2], *bit, depth - 1)),
+                )
+                .simplify(),
+                SirNodeKind::Eq => eq_fn(sir, node.inputs[0], node.inputs[1], opw),
+                SirNodeKind::Ne => {
+                    let mut acc = BitFn::Const(false);
+                    for k in 0..opw {
+                        let x = BitFn::Xor(
+                            Box::new(val_bit(sir, node.inputs[0], k)),
+                            Box::new(val_bit(sir, node.inputs[1], k)),
+                        );
+                        acc = BitFn::Or(Box::new(acc), Box::new(x)).simplify();
+                    }
+                    acc
+                }
+                SirNodeKind::Lt => lt_fn(sir, node.inputs[0], node.inputs[1], opw),
+                SirNodeKind::Le => BitFn::Or(
+                    Box::new(lt_fn(sir, node.inputs[0], node.inputs[1], opw)),
+                    Box::new(eq_fn(sir, node.inputs[0], node.inputs[1], opw)),
+                )
+                .simplify(),
+                SirNodeKind::Gt => BitFn::Not(Box::new(BitFn::Or(
+                    Box::new(lt_fn(sir, node.inputs[0], node.inputs[1], opw)),
+                    Box::new(eq_fn(sir, node.inputs[0], node.inputs[1], opw)),
+                )))
+                .simplify(),
+                SirNodeKind::Ge => {
+                    BitFn::Not(Box::new(lt_fn(sir, node.inputs[0], node.inputs[1], opw)))
+                        .simplify()
+                }
+                SirNodeKind::ReduceAnd | SirNodeKind::ReduceOr | SirNodeKind::ReduceXor => {
+                    reduce_fn(sir, node.inputs[0], opw, &node.kind)
+                }
+                SirNodeKind::Concat => {
+                    let mut offset = 0usize;
+                    for k in (0..node.inputs.len()).rev() {
+                        let kw = sir.value_width(node.inputs[k]);
+                        if *bit < offset + kw {
+                            return inl(node.inputs[k], *bit - offset, depth - 1);
+                        }
+                        offset += kw;
+                    }
+                    BitFn::Const(false)
+                }
+                SirNodeKind::Slice { msb, .. } => {
+                    if *msb >= *bit {
+                        inl(node.inputs[0], *msb - *bit, depth - 1)
+                    } else {
+                        BitFn::Const(false)
+                    }
+                }
+                _ => f.clone(), // aritmetika/shift/tristate → net (Leaf)
+            }
+        }
+        BitFn::Not(a) => BitFn::Not(Box::new(expand_simple_depth(sir, a, depth - 1))),
+        BitFn::And(a, b) => BitFn::And(
+            Box::new(expand_simple_depth(sir, a, depth - 1)),
+            Box::new(expand_simple_depth(sir, b, depth - 1)),
+        ),
+        BitFn::Or(a, b) => BitFn::Or(
+            Box::new(expand_simple_depth(sir, a, depth - 1)),
+            Box::new(expand_simple_depth(sir, b, depth - 1)),
+        ),
+        BitFn::Xor(a, b) => BitFn::Xor(
+            Box::new(expand_simple_depth(sir, a, depth - 1)),
+            Box::new(expand_simple_depth(sir, b, depth - 1)),
+        ),
+        BitFn::Mux(s, t, f2) => BitFn::Mux(
+            Box::new(expand_simple_depth(sir, s, depth - 1)),
+            Box::new(expand_simple_depth(sir, t, depth - 1)),
+            Box::new(expand_simple_depth(sir, f2, depth - 1)),
+        ),
+    }
+}
+
 /// Equality bit: `a_i == b_i`.
 fn eq_bit(sir: &SirModule, a: usize, b: usize, i: usize) -> BitFn {
     BitFn::Not(Box::new(BitFn::Xor(Box::new(val_bit(sir, a, i)), Box::new(val_bit(sir, b, i)))))
@@ -437,6 +572,23 @@ impl<'a> TechMapper<'a> {
             BitFn::Leaf(vid, bit) => return self.bit_of(*vid, *bit),
             _ => {}
         }
+        // F40 resubstitution: coba fuse cone per-bit — inline leaf yang
+        // merujuk node SEDERHANA (And/Or/Xor/Not/Mux/compare/reduce/buffer)
+        // sehingga mux chain dari `case` jadi SATU LUT6 per bit. Aritmetika/
+        // shift tetap net (CARRY4/barrel). Cone yang membengkak > K input →
+        // fallback ke f asli (per-node, AIG di bawah) — menghindari blow-up
+        // (mis. `count == 99` 8-bit tetap jadi EQ terpisah, bukan inline).
+        let expanded = expand_simple(self.sir, f);
+        let mut leaves = Vec::new();
+        let mut seen = HashSet::new();
+        expanded.collect(&mut leaves, &mut seen, self.sir);
+        leaves.sort_unstable();
+        if leaves.len() <= self.lut_inputs {
+            let init = expanded.init_table(&leaves, self.sir);
+            let inputs: Vec<OneBit> = leaves.iter().map(|&(v, b)| self.bit_of(v, b)).collect();
+            return self.emit_lut(init, inputs);
+        }
+        // Fallback: pack f asli (tanpa expand — cone per-node).
         let mut leaves = Vec::new();
         let mut seen = HashSet::new();
         f.collect(&mut leaves, &mut seen, self.sir);
@@ -1033,6 +1185,91 @@ impl<'a> TechMapper<'a> {
 
         // 5. FF wiring (butuh D-net hasil node mapping).
         self.wire_ffs();
+
+        // 6. F40 DCE: buang sel kombinasional yang output net-nya tak
+        //    terpakai (resubstitution meng-inline node intermediate → net
+        //    intermediate dead). Net tak terhubung ikut dibuang agar
+        //    verify_dag tetap bersih.
+        self.dce_unused();
+    }
+
+    /// F40: dead code elimination post-mapping — hapus sel kombinasional
+    /// yang SEMUA output net-nya tidak punya load (dan bukan io). Terjadi
+    /// karena resubstitution (`expand_simple`) meng-inline node sederhana
+    /// (And/Or/Xor/Mux/compare) ke dalam LUT konsumen → net intermediate
+    /// tidak pernah dipakai. Sel sequential (FF) tidak pernah dihapus.
+    /// Membangun netlist baru (port + net terpakai + sel live) supaya
+    /// index sel/net tetap konsisten (1 driver / N loads, verify_dag OK).
+    fn dce_unused(&mut self) {
+        let cells = std::mem::take(&mut self.nl.cells);
+        let nets = std::mem::take(&mut self.nl.nets);
+        let mut live_cell = vec![true; cells.len()];
+        loop {
+            let mut loads = vec![0usize; nets.len()];
+            for (cid, c) in cells.iter().enumerate() {
+                if !live_cell[cid] {
+                    continue;
+                }
+                for pin in &c.inputs {
+                    loads[pin.net] += 1;
+                }
+            }
+            let mut changed = false;
+            for (cid, c) in cells.iter().enumerate() {
+                if !live_cell[cid] || c.kind.is_sequential() {
+                    continue;
+                }
+                let dead = c.outputs.iter().all(|o| loads[o.net] == 0 && !nets[o.net].is_io);
+                if dead {
+                    live_cell[cid] = false;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        // Bangun netlist baru: port + net terpakai + sel live (index di-remap).
+        let name = self.nl.name;
+        let ports = std::mem::take(&mut self.nl.ports);
+        let mut new_nl = Netlist::new(name);
+        new_nl.ports = ports;
+        let mut net_map = vec![usize::MAX; nets.len()];
+        for (id, n) in nets.iter().enumerate() {
+            let used = live_cell.iter().enumerate().any(|(cid, &l)| {
+                l && (cells[cid].inputs.iter().any(|p| p.net == id)
+                    || cells[cid].outputs.iter().any(|p| p.net == id))
+            });
+            if n.is_io || used {
+                let nn = new_nl.add_net(n.name, n.width);
+                {
+                    let nn_ref = &mut new_nl.nets[nn];
+                    nn_ref.const_value = n.const_value;
+                    nn_ref.is_clock = n.is_clock;
+                    nn_ref.is_reset = n.is_reset;
+                    nn_ref.is_io = n.is_io;
+                }
+                net_map[id] = nn;
+            }
+        }
+        for (cid, c) in cells.iter().enumerate() {
+            if !live_cell[cid] {
+                continue;
+            }
+            let mut nc = c.clone();
+            nc.inputs = c
+                .inputs
+                .iter()
+                .map(|p| PinConn { net: net_map[p.net], pin: p.pin.clone(), bit: p.bit })
+                .collect();
+            nc.outputs = c
+                .outputs
+                .iter()
+                .map(|p| PinConn { net: net_map[p.net], pin: p.pin.clone(), bit: p.bit })
+                .collect();
+            new_nl.add_cell(nc);
+        }
+        self.nl = new_nl;
     }
 }
 
@@ -1064,10 +1301,25 @@ pub fn tech_map(sir: &SirModule, arch: &dyn TechArch) -> TechMapResult {
     let mut m = TechMapper::new(sir, arch);
     m.map_all();
     let ff_count = m.nl.cells.iter().filter(|c| c.kind.is_sequential()).count();
+    // Hitung ulang dari netlist final (setelah DCE) — counter lama bisa
+    // kelebihan (LUT intermediate dihapus).
+    let lut_count = m
+        .nl
+        .cells
+        .iter()
+        .filter(|c| matches!(c.kind, CellKind::Lut { .. }))
+        .count();
+    let carry4_count = m
+        .nl
+        .cells
+        .iter()
+        .filter(|c| matches!(c.kind, CellKind::Carry4))
+        .map(|c| (c.width.max(1) + 3) / 4)
+        .sum();
     TechMapResult {
         netlist: m.nl,
-        lut_count: m.lut_count,
-        carry4_count: m.carry_slices,
+        lut_count,
+        carry4_count,
         ff_count,
         skipped: m.skipped,
     }
@@ -1233,7 +1485,10 @@ mod tests {
         let sir = wide_and_sir();
         let arch = GenericArch;
         let res = tech_map(&sir, &arch);
-        assert_eq!(res.lut_count, 7, "8-input AND berantai → 1 LUT per node");
+        // F40 resubstitution: chain AND di-inline → cone 8 leaf > K=6 →
+        // AIG decompose: 1 LUT6 (6 leaf) + 2 LUT2 = 3 LUT (bukan 1 LUT per
+        // node = 7). Fungsi tetap benar — cone di-fuse sebelum LUT cut.
+        assert_eq!(res.lut_count, 3, "8-input AND → 1 LUT6 + 2 LUT2 = 3 LUT");
         assert_eq!(res.carry4_count, 0);
         let check = verify_dag(&res.netlist);
         assert!(check.ok, "{check:?}");
@@ -1322,5 +1577,73 @@ mod tests {
             }
         }
         assert!(verify_dag(&res.netlist).ok);
+    }
+
+    /// SIR ALU 8-bit — `case (op) {0: a&b, 1: a|b, 2: a+b, default: a^b}`
+    /// di-lower menjadi mux chain bertingkat: n9 = mux(n8, n7, n6),
+    /// n6 = mux(n5, n4, n3), n3 = mux(n2, n1, n0) (sama dengan dump SIR
+    /// `examples/synth/alu.sv`).
+    fn alu_sir() -> SirModule {
+        let mut m = SirModule::new(Symbol::intern("alu"));
+        let _ = m.add_value(SirValue::Port(0)); // a
+        let _ = m.add_value(SirValue::Port(1)); // b
+        let _ = m.add_value(SirValue::Port(2)); // op
+        let c2 = m.add_value(SirValue::Const(LogicVec::from_u64(2, 32)));
+        let c1 = m.add_value(SirValue::Const(LogicVec::from_u64(1, 32)));
+        let c0 = m.add_value(SirValue::Const(LogicVec::from_u64(0, 32)));
+        let n0 = m.add_node(SirNodeKind::Xor, vec![0, 1], 8);
+        let v0 = m.add_value(SirValue::Node(n0));
+        let n1 = m.add_node(SirNodeKind::Add, vec![0, 1], 8);
+        let v1 = m.add_value(SirValue::Node(n1));
+        let n2 = m.add_node(SirNodeKind::Eq, vec![2, c2], 1);
+        let v2 = m.add_value(SirValue::Node(n2));
+        let n3 = m.add_node(SirNodeKind::Mux, vec![v2, v1, v0], 8);
+        let v3 = m.add_value(SirValue::Node(n3));
+        let n4 = m.add_node(SirNodeKind::Or, vec![0, 1], 8);
+        let v4 = m.add_value(SirValue::Node(n4));
+        let n5 = m.add_node(SirNodeKind::Eq, vec![2, c1], 1);
+        let v5 = m.add_value(SirValue::Node(n5));
+        let n6 = m.add_node(SirNodeKind::Mux, vec![v5, v4, v3], 8);
+        let v6 = m.add_value(SirValue::Node(n6));
+        let n7 = m.add_node(SirNodeKind::And, vec![0, 1], 8);
+        let v7 = m.add_value(SirValue::Node(n7));
+        let n8 = m.add_node(SirNodeKind::Eq, vec![2, c0], 1);
+        let v8 = m.add_value(SirValue::Node(n8));
+        let n9 = m.add_node(SirNodeKind::Mux, vec![v8, v7, v6], 8);
+        let v9 = m.add_value(SirValue::Node(n9));
+        let _ = m.add_wire(Symbol::intern("y"), 8, v9);
+        let mk = |name: &str, value: usize, width: usize| maria_sir::SirPort {
+            name: Symbol::intern(name),
+            dir: maria_sir::PortDir::Input,
+            width,
+            value,
+        };
+        m.inputs.push(mk("a", 0, 8));
+        m.inputs.push(mk("b", 1, 8));
+        m.inputs.push(mk("op", 2, 2));
+        m.outputs.push(mk("y", v9, 8));
+        m
+    }
+
+    #[test]
+    fn tech_map_alu_case_fuses_to_8_luts() {
+        // Kriteria phase 4: `alu.sv` → LUT count sesuai ekspektasi.
+        // Resubstitution menggabungkan mux chain (case) + and/or/xor + eq
+        // menjadi SATU cone per bit: leaf a[i], b[i], op[0], op[1], sum-bit
+        // (net CARRY4) = 5 ≤ K=6 → 1 LUT6 per bit → 8 LUT. a+b → 2 CARRY4.
+        let sir = alu_sir();
+        let arch = GenericArch;
+        let res = tech_map(&sir, &arch);
+        assert_eq!(res.lut_count, 8, "alu case → 1 LUT6 per bit (cone 5 leaf)");
+        assert_eq!(res.carry4_count, 2, "a+b 8-bit → ceil(8/4)=2 CARRY4");
+        assert_eq!(res.ff_count, 0);
+        let check = verify_dag(&res.netlist);
+        assert!(check.ok, "{check:?}");
+        // Semua net ter-drive/konstanta/io — tidak ada floating.
+        for net in &res.netlist.nets {
+            if net.driver.is_none() && net.const_value.is_none() && !net.is_io {
+                panic!("net {} mengambang", net.name.as_str());
+            }
+        }
     }
 }

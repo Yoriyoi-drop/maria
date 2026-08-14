@@ -464,6 +464,11 @@ fn expand_item_list(
 /// Substitusi genvar di dalam satu ModuleItem.
 pub fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, value: i64) {
     match item {
+        ModuleItem::Let(ld) => {
+            // LANG-40: substitusi genvar di body let.
+            let old = ld.expr.clone();
+            ld.expr = substitute_loop_var_in_expr(&old, var_name, value);
+        }
         ModuleItem::Always(always) => {
             // Substitusi genvar di sensitivity list `@(sig[k])` juga — jika tidak,
             // `k` tertinggal sebagai Ident dan resolve range sensitivity gagal.

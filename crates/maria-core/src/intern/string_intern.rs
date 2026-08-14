@@ -144,9 +144,19 @@ impl<'de> serde::Deserialize<'de> for Symbol {
 
 impl Hash for Symbol {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Hash by string content, not u32 index, to be consistent with Borrow<str>.
-        // This enables HashMap<Symbol, V>::get("literal_str") to work correctly.
-        self.as_str().hash(state);
+        // Hash by u32 index (bukan string content). Hash content-nya setara
+        // karena intern menjamin string yang sama → index yang sama. Ini
+        // menghindari (a) lock pada string table, (b) SipHash over string —
+        // untuk HashMap<Symbol, _> berukuran puluhan ribu entri (parameter
+        // context OpenTitan), hashing string per lookup adalah bottleneck
+        // terbesar (perf: as_str + memcmp + SipHash ≈ 50% CPU elaboration).
+        //
+        // Konsekuensi: `Borrow<str>` TIDAK lagi tersedia untuk Symbol — semua
+        // lookup `map.get("literal")` / `map.get(x.as_str())` WAJIB memakai
+        // Symbol::intern terlebih dahulu (`map.get(&Symbol::intern("x"))`
+        // atau `map.get(&sym)`). Kompilator menemukan seluruh situs yang
+        // melanggar.
+        self.0.hash(state);
     }
 }
 
@@ -174,12 +184,10 @@ impl AsRef<str> for Symbol {
     }
 }
 
-/// Allows `HashMap<Symbol, V>::get("string_literal")` or `HashMap<Symbol, V>::get(name_str)`
-impl std::borrow::Borrow<str> for Symbol {
-    fn borrow(&self) -> &str {
-        self.as_str()
-    }
-}
+// CATATAN: `impl Borrow<str> for Symbol` DIHAPUS. Symbol kini hash by u32
+// index (lihat impl Hash) sehingga lookup `HashMap<Symbol, V>::get("literal")`
+// tidak lagi valid (hash string ≠ hash u32). Semua lookup harus memakai
+// Symbol yang sudah di-intern: `map.get(&Symbol::intern("x"))` / `map.get(&sym)`.
 
 impl PartialEq<String> for Symbol {
     fn eq(&self, other: &String) -> bool {

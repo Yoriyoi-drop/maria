@@ -52,7 +52,7 @@ impl SimulationEngine {
             if current == "__uvm_test" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -355,7 +355,7 @@ impl SimulationEngine {
                 }
             }
         };
-        if !self.design.classes.contains_key::<str>(class_name.as_str()) {
+        if !self.design.classes.contains_key(&Symbol::intern(&class_name)) {
             self.emit_warning(
                 DiagCode::DpiError,
                 format!("run_test: class '{}' tidak ditemukan", class_name),
@@ -483,7 +483,7 @@ impl SimulationEngine {
             if current == "__uvm_object" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -499,7 +499,7 @@ impl SimulationEngine {
             if current == "__uvm_component" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -515,7 +515,7 @@ impl SimulationEngine {
             if current == "__uvm_report_object" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -531,7 +531,7 @@ impl SimulationEngine {
             if current == "__uvm_sequence_item" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -547,7 +547,7 @@ impl SimulationEngine {
             if current == "__uvm_sequence" || current == "uvm_sequence" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -563,7 +563,7 @@ impl SimulationEngine {
             if current == "__uvm_sequencer" || current == "uvm_sequencer" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -583,7 +583,7 @@ impl SimulationEngine {
             if current == "__uvm_event" || current == "uvm_event" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -599,7 +599,7 @@ impl SimulationEngine {
             if current == "__uvm_barrier" || current == "uvm_barrier" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -615,7 +615,7 @@ impl SimulationEngine {
             if current == "__uvm_monitor" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -631,7 +631,7 @@ impl SimulationEngine {
             if current == "__uvm_analysis_port" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -647,7 +647,7 @@ impl SimulationEngine {
             if current == "__uvm_analysis_imp" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -665,7 +665,7 @@ impl SimulationEngine {
             if current == "__uvm_subscriber" || current == "uvm_subscriber" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -683,7 +683,7 @@ impl SimulationEngine {
             if current == "__uvm_tlm_fifo" || current == "uvm_tlm_fifo" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -699,7 +699,7 @@ impl SimulationEngine {
             if current == "__uvm_fifo_export" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -715,7 +715,7 @@ impl SimulationEngine {
             if current == "__uvm_callback" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -731,7 +731,7 @@ impl SimulationEngine {
             if current == "__uvm_callbacks" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -747,7 +747,7 @@ impl SimulationEngine {
             if current == "__uvm_driver" || current == "uvm_driver" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -781,7 +781,7 @@ impl SimulationEngine {
             if current == "__uvm_seq_item_port" || current == "uvm_seq_item_port" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -797,7 +797,7 @@ impl SimulationEngine {
             if current == "__uvm_reg" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -813,7 +813,7 @@ impl SimulationEngine {
             if current == "__uvm_reg_field" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -829,7 +829,7 @@ impl SimulationEngine {
             if current == "__uvm_reg_block" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
@@ -845,7 +845,7 @@ impl SimulationEngine {
             if current == "__uvm_reg_map" {
                 return true;
             }
-            match self.design.classes.get::<str>(current) {
+            match self.design.classes.get(&Symbol::intern(current)) {
                 Some(c) => match &c.extends {
                     Some(parent) => current = parent.as_str(),
                     None => return false,

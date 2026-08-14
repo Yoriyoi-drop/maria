@@ -610,7 +610,9 @@ impl Parser {
             Token::Continue => { self.advance(); self.skip_semi(); Ok(Stmt::Continue) }
             Token::Disable => {
                 self.advance();
-                if matches!(self.peek(), Token::Ident(s) if s == "fork") {
+                // `fork` adalah keyword (Token::Fork), bukan Ident — sama
+                // seperti `wait fork` (LANG-29).
+                if matches!(self.peek(), Token::Fork) {
                     self.advance(); self.skip_semi();
                     Ok(Stmt::Disable { name: Symbol::intern("fork") })
                 } else {
@@ -621,9 +623,12 @@ impl Parser {
             }
             Token::Wait => {
                 self.advance();
-                if matches!(self.peek(), Token::Ident(s) if s == "fork") {
+                // `fork` adalah keyword (Token::Fork), bukan Ident.
+                if matches!(self.peek(), Token::Fork) {
                     self.advance(); self.skip_semi();
-                    Ok(Stmt::Wait { cond: Expr::Value(Value::Decimal(0)), stmt: None })
+                    // LANG-29: `wait fork;` — varian khusus (bukan `wait (0)`
+                    // yang juga menghasilkan Wait{cond:0,stmt:None}).
+                    Ok(Stmt::WaitFork)
                 } else {
                     self.expect(Token::LParen)?;
                     let cond = self.parse_expr(0)?;

@@ -69,6 +69,10 @@ pub fn run(args: &LintArgs) -> Result<(), SimError> {
 
     findings.sort_by(|a, b| a.module.cmp(&b.module).then(a.check.cmp(b.check)));
 
+    // Simpan hasil ke cache pipeline (db.md "7. verify/ → lint/") agar
+    // `minspect cache` / run berikutnya membaca temuan tanpa lint ulang.
+    save_lint_cache(args, &findings);
+
     let n_warn = findings.iter().filter(|f| f.severity == "W").count();
     let n_err = findings.iter().filter(|f| f.severity == "E").count();
 
@@ -649,6 +653,7 @@ fn scan_stmt_reads(stmts: &[Stmt], reads: &mut HashSet<Symbol>, writes: &mut Has
                     scan_stmt_reads(std::slice::from_ref(s), reads, writes);
                 }
             }
+            Stmt::WaitFork => {}
             Stmt::EventControl { events, stmt } => {
                 for ev in events {
                     let inner = match ev {
@@ -864,5 +869,32 @@ fn case_item_count(stmt: &Stmt) -> usize {
         | Stmt::Unique0Case { items, .. }
         | Stmt::CaseInside { items, .. } => items.len(),
         _ => 0,
+    }
+}
+
+/// Simpan temuan lint ke cache pipeline (`lint/"report"`, db.md "7. verify/
+/// → lint/"). Best-effort — kegagalan cache tidak menggagalkan lint.
+fn save_lint_cache(args: &LintArgs, findings: &[Finding]) {
+    use maria_compiler::micd::cache::pipeline::LintPayload;
+    use maria_compiler::micd::cache::CacheCategory;
+
+    let Ok((mut layer, _pid)) = crate::open_cache_layer(args.targets, args.incdirs, args.defines)
+    else {
+        return;
+    };
+    let payload = LintPayload {
+        findings: findings
+            .iter()
+            .map(|f| maria_compiler::micd::cache::pipeline::LintFinding {
+                module: f.module.clone(),
+                check: f.check.to_string(),
+                severity: f.severity.to_string(),
+                message: f.message.clone(),
+            })
+            .collect(),
+    };
+    if let Ok(bytes) = bincode::serialize(&payload) {
+        let _ = layer.put(CacheCategory::Lint, "report", &bytes);
+        let _ = layer.save();
     }
 }

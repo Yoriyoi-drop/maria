@@ -186,6 +186,7 @@ pub(crate) fn stmt_has_func_call(func_name: &Symbol, stmts: &[Stmt]) -> bool {
                     }
                 }
             }
+            Stmt::WaitFork => {}
             Stmt::SysCall { args, .. } => {
                 for arg in args {
                     if expr_has_func_call(func_name, arg) {
@@ -539,6 +540,7 @@ pub(crate) fn rename_in_stmt(stmt: &Stmt, rename_map: &HashMap<Symbol, Symbol>) 
             cond: rename_in_expr(cond, rename_map),
             stmt: stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
         },
+        Stmt::WaitFork => Stmt::WaitFork,
         Stmt::EventControl { events, stmt } => Stmt::EventControl {
             events: events.clone(),
             stmt: stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
@@ -912,6 +914,103 @@ pub(crate) fn rename_in_expr(expr: Expr, rename_map: &HashMap<Symbol, Symbol>) -
             col: 0,
         },
         Expr::Value(_) | Expr::FillLit(_) | Expr::String(_) | Expr::Null => expr,
+        other => other,
+    }
+}
+
+/// LANG-40: substitusi ident parameter `let` dengan ekspresi argumen
+/// (rekursif). Varian umum ditangani eksplisit; varian leaf/jarang (Value,
+/// FillLit, String, ScopedIdent, StreamingConcat, CastWidth, Dist, StructLit)
+/// dikembalikan apa adanya (let body tipikal berisi aritmatika/perbandingan/
+/// select yang tercakup di sini). Dipakai elaborator (IR) dan evaluator
+/// engine (jalur AST class method).
+pub fn substitute_let_args(expr: Expr, map: &HashMap<Symbol, &Expr>) -> Expr {
+    match expr {
+        Expr::Ident { name, .. } => match map.get(&name) {
+            Some(repl) => (*repl).clone(),
+            None => Expr::Ident { name, line: 0, col: 0 },
+        },
+        Expr::RangeSelect { expr, msb, lsb } => Expr::RangeSelect {
+            expr: Box::new(substitute_let_args(*expr, map)),
+            msb: Box::new(substitute_let_args(*msb, map)),
+            lsb: Box::new(substitute_let_args(*lsb, map)),
+        },
+        Expr::BitSelect { expr, index } => Expr::BitSelect {
+            expr: Box::new(substitute_let_args(*expr, map)),
+            index: Box::new(substitute_let_args(*index, map)),
+        },
+        Expr::PartSelect { expr, base, width } => Expr::PartSelect {
+            expr: Box::new(substitute_let_args(*expr, map)),
+            base: Box::new(substitute_let_args(*base, map)),
+            width: Box::new(substitute_let_args(*width, map)),
+        },
+        Expr::Concat(items) => Expr::Concat(
+            items
+                .into_iter()
+                .map(|e| substitute_let_args(e, map))
+                .collect(),
+        ),
+        Expr::Replicate { count, expr } => Expr::Replicate {
+            count: Box::new(substitute_let_args(*count, map)),
+            expr: Box::new(substitute_let_args(*expr, map)),
+        },
+        Expr::UnaryOp { op, expr } => Expr::UnaryOp {
+            op,
+            expr: Box::new(substitute_let_args(*expr, map)),
+        },
+        Expr::BinaryOp { op, lhs, rhs } => Expr::BinaryOp {
+            op,
+            lhs: Box::new(substitute_let_args(*lhs, map)),
+            rhs: Box::new(substitute_let_args(*rhs, map)),
+        },
+        Expr::TernaryOp {
+            cond,
+            true_expr,
+            false_expr,
+        } => Expr::TernaryOp {
+            cond: Box::new(substitute_let_args(*cond, map)),
+            true_expr: Box::new(substitute_let_args(*true_expr, map)),
+            false_expr: Box::new(substitute_let_args(*false_expr, map)),
+        },
+        Expr::Paren(inner) => Expr::Paren(Box::new(substitute_let_args(*inner, map))),
+        Expr::FuncCall { name, args, line, col } => Expr::FuncCall {
+            name,
+            args: args
+                .into_iter()
+                .map(|e| substitute_let_args(e, map))
+                .collect(),
+            line,
+            col,
+        },
+        Expr::MethodCall {
+            obj,
+            method,
+            args,
+            with_clause,
+        } => Expr::MethodCall {
+            obj: Box::new(substitute_let_args(*obj, map)),
+            method,
+            args: args
+                .into_iter()
+                .map(|e| substitute_let_args(e, map))
+                .collect(),
+            with_clause: with_clause.map(|w| Box::new(substitute_let_args(*w, map))),
+        },
+        Expr::MemberAccess { obj, field } => Expr::MemberAccess {
+            obj: Box::new(substitute_let_args(*obj, map)),
+            field,
+        },
+        Expr::Inside { expr, range_list } => Expr::Inside {
+            expr: Box::new(substitute_let_args(*expr, map)),
+            range_list: range_list
+                .into_iter()
+                .map(|e| substitute_let_args(e, map))
+                .collect(),
+        },
+        Expr::Cast { expr, dtype } => Expr::Cast {
+            expr: Box::new(substitute_let_args(*expr, map)),
+            dtype,
+        },
         other => other,
     }
 }

@@ -498,6 +498,17 @@ pub struct SynthArgs {
     #[arg(long = "report-util")]
     pub report_util: Option<String>,
 
+    /// File constraint `.mcs` (clock period, IO delay, false/multicycle path)
+    /// — dipakai `--timing`. Default tanpa file: period 10ns, delay 0.
+    #[arg(long = "constraint")]
+    pub constraint: Option<String>,
+
+    /// Static timing + area analysis (phase 5): hitung arrival/required/
+    /// slack/WNS/TNS + critical path atas netlist (tech bila `--tech-map`, 
+    /// else generic). Tulis `<prefix>.timing.rpt` + `<prefix>.area.rpt`.
+    #[arg(long = "timing")]
+    pub timing: bool,
+
     /// Tambahkan include search path
     #[arg(short = 'I', long = "incdir", num_args = 1)]
     pub incdirs: Vec<String>,

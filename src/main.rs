@@ -347,7 +347,36 @@ fn run_formal(ir_design: &maria_ir::IrDesign, bound: u64, quiet: bool) -> Result
     Ok(())
 }
 
+/// Jalankan seluruh CLI di thread dengan stack besar.
+/// Parser/elaborator rekursif pada design besar (OpenTitan: 1600 modul,
+/// hierarki dalam) membutuhkan jauh lebih dari stack default 8MB main thread
+/// (stack overflow "thread 'main' has overflowed its stack" saat elaborasi).
+/// Fix rayon stack_size hanya menyentuh worker threads, bukan main thread.
 fn main() {
+    let stack_size = std::env::var("MARIA_STACK_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(256 * 1024 * 1024); // 256MB default, override via env
+    match std::thread::Builder::new()
+        .stack_size(stack_size)
+        .name("maria-main".into())
+        .spawn(real_main)
+    {
+        Ok(handle) => {
+            if let Err(panic) = handle.join() {
+                eprintln!("fatal: maria-main thread panicked: {:?}", panic);
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("fatal: cannot spawn maria-main worker thread: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Body utama program (dijalankan di thread dengan stack besar oleh `main`).
+fn real_main() {
     let mut cli = Cli::parse();
 
     // ── Config file TOML (configs/*.toml) ──
@@ -1217,6 +1246,7 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
                 // jalan) — elaborate/ terisi fallback AST, generate/ dari AST.
                 ir_design: None,
                 expanded_design: None,
+                opt_snapshot: None,
             };
             let mut layer = micd.cache_layer.take();
             if let Some(layer) = layer.as_mut() {
@@ -1255,47 +1285,71 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         eprintln!("[TIMING] Starting elaboration...");
     }
     let elab_start = std::time::Instant::now();
-    let source_lines: Vec<String> = combined.lines().map(|s| s.to_string()).collect();
-    let mut elaborator = Elaborator::with_source(design, source_lines, first_source.to_string());
-    // Mode elaborasi: dengan `--top` eksplisit → StrictSimulation (top wajib).
-    // Tanpa `--top` (run file satu-per-satu) → AnalysisRecovery: top yang tidak
-    // unik (multiple candidate / circular / missing root) TIDAK menggagalkan
-    // analisis — diagnostik dilaporkan, simulasi & VCD dinonaktifkan (Rule 4).
-    let elab_mode = pick_elab_mode(&cli);
-    let mut ir_design = match elaborator.elaborate(top_name, elab_mode) {
-        Ok(d) => d,
-        Err(e) => {
-            let diags = elaborator.flush_diagnostics();
-            if anim_active(&anim) {
-                let w = diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
-                anim_abort(&mut anim, 1, w);
+    // ── Reuse IR cache (db.md "5. elaborate/"): seluruh source di-reuse dari
+    // MICD preprocess cache (konten tidak berubah) → coba restore IR hasil
+    // elaborasi sebelumnya, skip elaborator.─
+    let mut restored_legacy_ir: Option<maria_ir::IrDesign> = None;
+    if !cli.recompile && micd_reused == sources.len() && !sources.is_empty() {
+        let top = top_name.or_else(|| design.modules.first().map(|m| m.name.as_str()));
+        if let Some(top) = top {
+            restored_legacy_ir = micd.restore_elaborate_ir(top);
+        }
+    }
+    let mut from_legacy_cache = false;
+    let mut elab_diags: Vec<maria_core::diagnostics::Diagnostic> = Vec::new();
+    let mut recovered = false;
+    let mut elaborator_opt: Option<Elaborator> = None;
+    let mut ir_design = match restored_legacy_ir {
+        Some(ir) => {
+            from_legacy_cache = true;
+            if !cli.quiet && !anim_active(&anim) {
+                eprintln!("[MICD] IR cache hit — elaborator di-skip (top '{}')", ir.top.name);
             }
-            emit_diags(&diags);
-            return Err(e);
+            ir
+        }
+        None => {
+            let source_lines: Vec<String> = combined.lines().map(|s| s.to_string()).collect();
+            let mut elaborator =
+                Elaborator::with_source(design, source_lines, first_source.to_string());
+            // Mode elaborasi: dengan `--top` eksplisit → StrictSimulation (top wajib).
+            // Tanpa `--top` (run file satu-per-satu) → AnalysisRecovery: top yang tidak
+            // unik (multiple candidate / circular / missing root) TIDAK menggagalkan
+            // analisis — diagnostik dilaporkan, simulasi & VCD dinonaktifkan (Rule 4).
+            let elab_mode = pick_elab_mode(&cli);
+            let d = match elaborator.elaborate(top_name, elab_mode) {
+                Ok(d) => d,
+                Err(e) => {
+                    let diags = elaborator.flush_diagnostics();
+                    if anim_active(&anim) {
+                        let w = diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
+                        anim_abort(&mut anim, 1, w);
+                    }
+                    emit_diags(&diags);
+                    return Err(e);
+                }
+            };
+            elab_diags = elaborator.flush_diagnostics();
+            if anim_active(&anim) {
+                anim_phase_done(&anim, Phase::Ela);
+                anim_phase_done(&anim, Phase::Opt);
+                anim_phase_done(&anim, Phase::Ver);
+                let w = elab_diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
+                let e = elab_diags.iter().filter(|d| d.is_error()).count();
+                anim_finish(&mut anim, e == 0, e, w);
+            }
+            if !anim_active(&anim) {
+                eprintln!("[TIMING] Elaboration done in {:?}", elab_start.elapsed());
+            }
+            // Flush elaboration-time diagnostics (warnings like WR0102)
+            emit_diags(&elab_diags);
+            // Mode analisis (recovery): top-level tidak dapat ditentukan secara
+            // unik karena `--top` tidak diberikan dan design tidak punya top
+            // yang jelas (multiple candidate / circular / root hilang).
+            recovered = elaborator.recovered;
+            elaborator_opt = Some(elaborator);
+            d
         }
     };
-    let elab_diags = elaborator.flush_diagnostics();
-    if anim_active(&anim) {
-        anim_phase_done(&anim, Phase::Ela);
-        anim_phase_done(&anim, Phase::Opt);
-        anim_phase_done(&anim, Phase::Ver);
-        let w = elab_diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
-        let e = elab_diags.iter().filter(|d| d.is_error()).count();
-        anim_finish(&mut anim, e == 0, e, w);
-    }
-    if !anim_active(&anim) {
-        eprintln!("[TIMING] Elaboration done in {:?}", elab_start.elapsed());
-    }
-
-    // Flush elaboration-time diagnostics (warnings like WR0102)
-    emit_diags(&elab_diags);
-
-    // Mode analisis (recovery): top-level tidak dapat ditentukan secara unik
-    // karena `--top` tidak diberikan dan design tidak punya top yang jelas
-    // (multiple candidate tops / circular / root hilang). Analisis selesai dan
-    // semua diagnostik sudah dilaporkan — simulasi & VCD TIDAK dijalankan
-    // karena design tidak boleh disimulasikan dari modul tebakan (Rule 2/4).
-    let recovered = elaborator.recovered;
 
     // ── Simulation Readiness Check (Rule 6) ──
     // Check all prerequisites before starting simulation
@@ -1385,8 +1439,16 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         let empty_deps: std::collections::HashMap<PathBuf, Vec<PathBuf>> =
             std::collections::HashMap::new();
         let fb = sources.first().map(PathBuf::from).unwrap_or_default();
+        let (elab_designs, elab_design, opt_snapshot) = match elaborator_opt.as_ref() {
+            Some(elab) => {
+                (vec![(&fb, &elab.design)], Some(&elab.design), Some(elab.opt_stats.snapshot()))
+            }
+            // Jalur cache hit: IR di-restore, elaborator tidak hidup —
+            // kategori elaborate/generate sudah terisi dari run sebelumnya.
+            None => (Vec::new(), None, None),
+        };
         let input = CachePopulateInput {
-            designs: vec![(&fb, &elaborator.design)],
+            designs: elab_designs,
             combined: &empty_combined,
             defines: &[],
             include_deps: &empty_deps,
@@ -1399,8 +1461,15 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             ir_design: Some(&ir_design),
             // designs sudah post-expansion (elaborator.design) — fallback
             // elaborate/ memakai designs itu sendiri.
-            expanded_design: None,
+            expanded_design: elab_design,
+            // Statistik optimasi elaborator (db.md "6. optimize/",
+            // "10. expression/") — di-snapshot setelah elaborasi sukses.
+            opt_snapshot,
         };
+        // Simpan IrDesign LENGKAP (bincode) di key `ir:<top>` — dipakai warm
+        // run berikutnya untuk melewati elaborator sepenuhnya (db.md
+        // "5. elaborate/"). Best-effort.
+        micd.store_elaborate_ir(&ir_design);
         let mut layer = micd.cache_layer.take();
         if let Some(layer) = layer.as_mut() {
             CachePopulator::populate_elab(layer, &input);
@@ -2147,44 +2216,85 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
     if anim_active(&anim) {
         anim_phase_running(&anim, Phase::Ela);
     }
-    let (source_lines, source_file) = session.source_info().unwrap_or_default();
-    let mut elab = if source_lines.is_empty() {
-        Elaborator::new(design)
-    } else {
-        Elaborator::with_source(design, source_lines, source_file)
-    };
-    // Mode elaborasi: dengan `--top` eksplisit → StrictSimulation (top wajib).
-    // Tanpa `--top` (run file satu-per-satu) → AnalysisRecovery: top yang tidak
-    // unik (multiple candidate / circular / missing root) TIDAK menggagalkan
-    // analisis — diagnostik dilaporkan, simulasi & VCD dinonaktifkan (Rule 4).
-    let elab_mode = pick_elab_mode(&cli);
-    let ir_design = match elab.elaborate(top_name, elab_mode) {
-        Ok(d) => d,
-        Err(e) => {
-            let diags = elab.flush_diagnostics();
-            if anim_active(&anim) {
-                let w = diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
-                anim_abort(&mut anim, 1, w);
-            }
-            emit_diags(&diags);
-            return Err(e);
+    // ── Reuse IR cache (db.md "5. elaborate/"): bila SELURUH file di-restore
+    // dari MICD (tidak ada yang berubah) dan hasil elaborasi sebelumnya
+    // tersimpan di cache, langsung pakai IR — elaborator di-skip penuh.
+    // Hanya aman bila run sebelumnya elaborasi BERSIH (cache elaborate hanya
+    // disimpan setelah gate error/recovery lolos di run itu).
+    let mut restored_ir: Option<maria_ir::IrDesign> = None;
+    // `micd_restored_count()` di-reset `save_micd()`; set path tidak → pakai
+    // `micd_restored_paths_count()` untuk deteksi warm run setelah save parse.
+    if !cli.recompile
+        && session.micd_restored_paths_count() == session.config.sources.len()
+        && !session.config.sources.is_empty()
+    {
+        // Top eksplisit (`--top`) atau default (module pertama — sama dengan
+        // pilihan elaborator). Cache IR disimpan per top (`ir:<top>`).
+        let top = top_name.or_else(|| design.modules.first().map(|m| m.name.as_str()));
+        if let Some(top) = top {
+            restored_ir = session.restore_elaborate_ir(top);
         }
-    };
-    let elab_diags = elab.flush_diagnostics();
-    if anim_active(&anim) {
-        anim_phase_done(&anim, Phase::Ela);
-        anim_phase_done(&anim, Phase::Opt);
-        anim_phase_done(&anim, Phase::Ver);
-        let w = elab_diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
-        let e = elab_diags.iter().filter(|d| d.is_error()).count();
-        anim_finish(&mut anim, e == 0, e, w);
     }
-    emit_diags(&elab_diags);
 
-    // Mode analisis (recovery): top-level tidak dapat ditentukan secara unik
-    // karena `--top` tidak diberikan. Semua diagnostik sudah dilaporkan —
-    // simulasi & VCD TIDAK dijalankan (Rule 2/4).
-    let recovered = elab.recovered;
+    let (mut ir_design, mut elab_diags, mut recovered, mut from_cache);
+    let mut elab_opt: Option<Elaborator> = None;
+    if let Some(ir) = restored_ir {
+        ir_design = ir;
+        elab_diags = Vec::new();
+        recovered = false;
+        from_cache = true;
+        if anim_active(&anim) {
+            anim_phase_done(&anim, Phase::Ela);
+            anim_phase_done(&anim, Phase::Opt);
+            anim_phase_done(&anim, Phase::Ver);
+            let e = 0;
+            anim_finish(&mut anim, true, e, 0);
+        }
+        if !cli.quiet && !anim_active(&anim) {
+            eprintln!("[MICD] IR cache hit — elaborator di-skip (top '{}')", ir_design.top.name);
+        }
+    } else {
+        let (source_lines, source_file) = session.source_info().unwrap_or_default();
+        let mut elab = if source_lines.is_empty() {
+            Elaborator::new(design)
+        } else {
+            Elaborator::with_source(design, source_lines, source_file)
+        };
+        // Mode elaborasi: dengan `--top` eksplisit → StrictSimulation (top wajib).
+        // Tanpa `--top` (run file satu-per-satu) → AnalysisRecovery: top yang tidak
+        // unik (multiple candidate / circular / missing root) TIDAK menggagalkan
+        // analisis — diagnostik dilaporkan, simulasi & VCD dinonaktifkan (Rule 4).
+        let elab_mode = pick_elab_mode(&cli);
+        ir_design = match elab.elaborate(top_name, elab_mode) {
+            Ok(d) => d,
+            Err(e) => {
+                let diags = elab.flush_diagnostics();
+                if anim_active(&anim) {
+                    let w = diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
+                    anim_abort(&mut anim, 1, w);
+                }
+                emit_diags(&diags);
+                return Err(e);
+            }
+        };
+        elab_diags = elab.flush_diagnostics();
+        if anim_active(&anim) {
+            anim_phase_done(&anim, Phase::Ela);
+            anim_phase_done(&anim, Phase::Opt);
+            anim_phase_done(&anim, Phase::Ver);
+            let w = elab_diags.iter().filter(|d| d.level == DiagLevel::Warning).count();
+            let e = elab_diags.iter().filter(|d| d.is_error()).count();
+            anim_finish(&mut anim, e == 0, e, w);
+        }
+        emit_diags(&elab_diags);
+
+        // Mode analisis (recovery): top-level tidak dapat ditentukan secara unik
+        // karena `--top` tidak diberikan. Semua diagnostik sudah dilaporkan —
+        // simulasi & VCD TIDAK dijalankan (Rule 2/4).
+        recovered = elab.recovered;
+        from_cache = false;
+        elab_opt = Some(elab);
+    }
 
     // ── Simulation Readiness Check (Rule 6) ──
     let elab_errs = elab_diags.iter().filter(|d| d.is_error()).count();
@@ -2253,8 +2363,14 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
     // "16. generate/") — save_micd di atas dipanggil sebelum elaborate, jadi
     // kategori ini baru bisa diisi setelah IR tersedia. Design post-expansion
     // (elab.design) dipakai fallback elaborate/ untuk module top yang
-    // sub-instance-nya dikonsumsi flatten IR.
-    session.save_elaborate_cache(&ir_design, Some(&elab.design));
+    // sub-instance-nya dikonsumsi flatten IR. Statistik optimasi elaborator
+    // ikut disimpan (db.md "6. optimize/", "10. expression/"). Jalur cache
+    // hit melewati blok ini — IR sudah tersimpan dari run sebelumnya.
+    if !from_cache {
+        let elab = elab_opt.as_ref().expect("elaborator pada jalur elaborasi penuh");
+        session.save_elaborate_cache(&ir_design, Some(&elab.design), Some(elab.opt_stats.snapshot()));
+    }
+
 
     if !cli.quiet {
         println!("Modules indexed: {}", index_len);
@@ -2904,6 +3020,8 @@ fn dispatch_synth(a: &crate::cli::SynthArgs) -> ! {
         emit_netlist: a.emit_netlist,
         tech_map: a.tech_map,
         report_util: a.report_util.clone(),
+        constraint: a.constraint.clone(),
+        timing: a.timing,
         quiet: a.quiet,
     };
     exit_tool(maria_api::tools::synth::run(&args));

@@ -628,6 +628,7 @@ impl Elaborator {
                     body: new_body,
                 })
             }
+            IrStmt::WaitFork => Ok(IrStmt::WaitFork),
             IrStmt::SysCall {
                 name,
                 args,

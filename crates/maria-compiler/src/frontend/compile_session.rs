@@ -1266,6 +1266,7 @@ impl CompileSession {
                 // post-expansion elaborator; fallback elaborate/ memakai
                 // designs (pre-expansion).
                 expanded_design: None,
+                opt_snapshot: None,
             };
             let mut layer = self.micd.as_mut().and_then(|d| d.cache_layer.take());
             if let Some(layer) = layer.as_mut() {
@@ -1408,9 +1409,9 @@ impl CompileSession {
         &mut self,
         ir: &maria_ir::IrDesign,
         expanded_design: Option<&maria_ast::types::Design>,
+        opt_snapshot: Option<maria_elaboration::util::OptimizeSnapshot>,
     ) {
         let Some(db) = self.micd.as_mut() else { return };
-        let Some(layer) = db.cache_layer.as_mut() else { return };
         let module_file: HashMap<String, PathBuf> = self
             .module_index
             .iter()
@@ -1429,6 +1430,17 @@ impl CompileSession {
             profile: None,
             ir_design: Some(ir),
             expanded_design,
+            opt_snapshot,
+        };
+        // Simpan IrDesign LENGKAP (bincode) di key `ir:<top>` — dipakai warm
+        // run untuk melewati elaborator sepenuhnya (db.md "5. elaborate/"):
+        // 1000 instance generate tidak perlu dielaborasi ulang. Dipanggil
+        // SEBELUM populate (store juga memakai cache_layer, hindari double
+        // borrow).
+        db.store_elaborate_ir(ir);
+        let layer = match db.cache_layer.as_mut() {
+            Some(l) => l,
+            None => return,
         };
         crate::micd::cache::pipeline::CachePopulator::populate_elab(layer, &input);
         if let Err(e) = layer.save() {
@@ -1439,6 +1451,23 @@ impl CompileSession {
     /// Jumlah AST yang di-restore dari MICD pada sesi ini.
     pub fn micd_restored_count(&self) -> usize {
         self.micd_restored
+    }
+
+    /// Jumlah file yang di-restore dari MICD — SAMA dengan
+    /// `micd_restored_count()` TAPI tidak di-reset oleh `save_micd()` (set
+    /// `micd_restored` di-nol-kan di akhir save, set path tetap). Dipakai
+    /// memutuskan reuse IR cache SETELAH save parse (lihat run_fast).
+    pub fn micd_restored_paths_count(&self) -> usize {
+        self.micd_restored_paths.len()
+    }
+
+    /// Coba restore `IrDesign` hasil elaborasi dari cache pipeline (db.md
+    /// "5. elaborate/"). Dipanggil pada warm run (seluruh file tidak berubah
+    /// — MICD restore penuh) agar elaborator bisa di-skip sepenuhnya.
+    /// `None` bila tidak ada entry / corrupt / top berbeda (pemanggil fallback
+    /// ke elaborasi penuh).
+    pub fn restore_elaborate_ir(&mut self, top: &str) -> Option<maria_ir::IrDesign> {
+        self.micd.as_mut()?.restore_elaborate_ir(top)
     }
 
     /// Dependency graph file-level dari module index: file A bergantung pada

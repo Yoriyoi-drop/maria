@@ -107,45 +107,16 @@ impl SimulationEngine {
         for item in items {
             match item {
                 ConstraintItem::Expr(e) => {
-                    // `x dist {...}` SEBAGAI CONSTRAINT = membership: nilai `x`
-                    // harus berada di himpunan distribusi (nilai & range),
-                    // BUKAN mengambil nilai acak dari distribusi (IrExpr::Dist
-                    // dipakai saat dist menjadi RHS assignment).
-                    if let Expr::Dist { expr: inner, items: dis } = e {
-                        let val = self.evaluate_ast_expr(inner)?;
-                        let mut ok = false;
-                        for di in dis {
-                            match di {
-                                DistItem::Value(v, _) => {
-                                    let vv = self.evaluate_ast_expr(v)?;
-                                    let w = val.width.max(vv.width);
-                                    if val.resize(w).case_eq(&vv.resize(w))
-                                        == LogicVec::from_u64(1, 1)
-                                    {
-                                        ok = true;
-                                        break;
-                                    }
-                                }
-                                DistItem::Range(lo, hi, _) => {
-                                    let a = self.evaluate_ast_expr(lo)?.to_u64();
-                                    let b = self.evaluate_ast_expr(hi)?.to_u64();
-                                    let v = val.to_u64();
-                                    if v >= a.min(b) && v <= a.max(b) {
-                                        ok = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        if !ok {
-                            return Ok(false);
-                        }
-                        continue;
-                    }
-                    let r = self.evaluate_ast_expr(e)?;
-                    if !r.to_bool().unwrap_or(false) {
+                    if !self.eval_constraint_expr(e, false)? {
                         return Ok(false);
                     }
+                }
+                ConstraintItem::Soft(e) => {
+                    // LANG-31: constraint soft (best-effort) — dievaluasi
+                    // sebagai preferensi, tapi pelanggaran DITOLERANSI:
+                    // boleh dilanggar bila bertentangan dengan hard constraint
+                    // (IEEE 1800-2017 §18.5.14).
+                    let _ = self.eval_constraint_expr(e, true)?;
                 }
                 ConstraintItem::If { cond, then, els } => {
                     let c = self.evaluate_ast_expr(cond)?.to_bool().unwrap_or(false);
@@ -160,6 +131,55 @@ impl SimulationEngine {
         Ok(true)
     }
 
+    /// Evaluasi SATU ekspresi constraint (F12): `x dist {...}` sebagai
+    /// membership (nilai harus ada di himpunan distribusi), ekspresi lain
+    /// sebagai Boolean. `tolerate=true` (LANG-31 soft): kegagalan dikembalikan
+    /// sebagai `true` — pelanggaran soft ditoleransi; hard (`tolerate=false`)
+    /// tetap wajib terpenuhi.
+    pub(crate) fn eval_constraint_expr(&mut self, e: &Expr, tolerate: bool) -> Result<bool, SimError> {
+        // `x dist {...}` SEBAGAI CONSTRAINT = membership: nilai `x` harus
+        // berada di himpunan distribusi (nilai & range), BUKAN mengambil nilai
+        // acak dari distribusi (IrExpr::Dist dipakai saat dist menjadi RHS
+        // assignment).
+        if let Expr::Dist { expr: inner, items: dis } = e {
+            let val = self.evaluate_ast_expr(inner)?;
+            let mut ok = false;
+            for di in dis {
+                match di {
+                    DistItem::Value(v, _) => {
+                        let vv = self.evaluate_ast_expr(v)?;
+                        let w = val.width.max(vv.width);
+                        if val.resize(w).case_eq(&vv.resize(w))
+                            == LogicVec::from_u64(1, 1)
+                        {
+                            ok = true;
+                            break;
+                        }
+                    }
+                    DistItem::Range(lo, hi, _) => {
+                        let a = self.evaluate_ast_expr(lo)?.to_u64();
+                        let b = self.evaluate_ast_expr(hi)?.to_u64();
+                        let v = val.to_u64();
+                        if v >= a.min(b) && v <= a.max(b) {
+                            ok = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if ok {
+                return Ok(true);
+            }
+            return Ok(tolerate);
+        }
+        let r = self.evaluate_ast_expr(e)?;
+        if r.to_bool().unwrap_or(false) {
+            Ok(true)
+        } else {
+            Ok(tolerate)
+        }
+    }
+
     /// Enhanced constraint solver: analyze constraints, compute domains, guided generation,
     /// with bounded backtracking. Falls back to rejection sampling with more attempts.
     pub(crate) fn solve_constraints(
@@ -168,7 +188,7 @@ impl SimulationEngine {
         class_name: &str,
         inline_constraint: Option<InlineConstraint<'_>>,
     ) -> Result<SolveResult, SimError> {
-        let class_def = self.design.classes.get(class_name)
+        let class_def = self.design.classes.get(&Symbol::intern(class_name))
             .ok_or_else(|| SimError::with_diag(
                 DiagCode::NullHandle,
                 format!("class '{}' not found", class_name),
@@ -197,7 +217,13 @@ impl SimulationEngine {
         // Analyze class constraints: ekstrak domain HANYA dari item ekspresi
         // level-atas yang sederhana. Item `if/else` (F12) bersifat kondisional
         // — tidak diekstrak ke domain, divalidasi penuh di eval_constraint_body.
-        for (_, body) in &class_def.constraints {
+        // LANG-33: block yang di-disable via constraint_mode(0) di-skip.
+        // LANG-32: block STATIC dicek global per-class (semua instance).
+        let class_sym = Symbol::intern(class_name);
+        for (block_name, is_static, body) in &class_def.constraints {
+            if !self.constraint_block_enabled(obj_id, class_sym, *block_name, *is_static) {
+                continue;
+            }
             for item in body {
                 if let ConstraintItem::Expr(expr) = item {
                     let _ = analyze_constraint_for_domains(expr, &mut domains);
@@ -236,8 +262,13 @@ impl SimulationEngine {
             // Evaluate class constraints: evaluasi PENUH semua body (termasuk
             // item if/else F12). Domain sederhana sudah dijamin generasi
             // terpandu; evaluasi ulang penuh = correctness check.
+            // LANG-33: block nonaktif (constraint_mode(0)) di-skip.
+            // LANG-32: block STATIC dicek global per-class.
             let mut all_satisfied = true;
-            for (_, body) in &class_def.constraints {
+            for (block_name, is_static, body) in &class_def.constraints {
+                if !self.constraint_block_enabled(obj_id, class_sym, *block_name, *is_static) {
+                    continue;
+                }
                 if !self.eval_constraint_body(body)? {
                     all_satisfied = false;
                     break;
@@ -274,7 +305,7 @@ impl SimulationEngine {
 /// Extract solve-before ordering from constraints
 fn extract_before_order(class_def: &IrClassDef) -> HashMap<Symbol, HashSet<Symbol>> {
     let mut before_map: HashMap<Symbol, HashSet<Symbol>> = HashMap::new();
-    for (_, body) in &class_def.constraints {
+    for (_, _, body) in &class_def.constraints {
         for item in body {
             if let ConstraintItem::SolveBefore { vars } = item {
                 if vars.len() >= 2 {

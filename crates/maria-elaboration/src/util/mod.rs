@@ -13,6 +13,7 @@
 //!   - operator.rs        — operator mapping & gate expression building
 //!   - width.rs           — expression width computation
 //!   - type_subst.rs      — type parameter substitution
+//!   - opt_stats.rs       — statistik optimasi (const fold, loop unroll, eval)
 //!
 //! ──────────────────────────────────────────────────────────────────────────────
 
@@ -42,3 +43,6 @@ pub use width::*;
 
 pub mod type_subst;
 pub use type_subst::*;
+
+pub mod opt_stats;
+pub use opt_stats::*;

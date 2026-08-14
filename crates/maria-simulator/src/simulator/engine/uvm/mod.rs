@@ -5,5 +5,8 @@ pub mod util;
 pub mod constraint_solver;
 pub mod config;
 pub mod sync;
+pub mod object;
+pub mod component;
+pub mod reg;
 pub mod fifo;
 pub mod seq;

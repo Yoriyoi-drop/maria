@@ -905,6 +905,36 @@ impl MicdDatabase {
         self.save().map(|_| ())
     }
 
+    /// Simpan `IrDesign` hasil elaborasi LENGKAP ke cache pipeline (db.md
+    /// "5. elaborate/", key `ir:<top>`). Dipakai warm run untuk melewati
+    /// elaborator sepenuhnya. Best-effort — gagal menyimpan IR tidak
+    /// menggagalkan save utama.
+    pub fn store_elaborate_ir(&mut self, ir: &maria_ir::IrDesign) {
+        use crate::micd::cache::CacheCategory;
+        let Some(layer) = self.cache_layer.as_mut() else {
+            return;
+        };
+        let Ok(bytes) = crate::micd::ast::serialize_ir(ir) else {
+            return;
+        };
+        let key = format!("ir:{}", ir.top.name.as_str());
+        let _ = layer.put(CacheCategory::Elaborate, &key, &bytes);
+    }
+
+    /// Coba restore `IrDesign` hasil elaborasi dari cache pipeline (db.md
+    /// "5. elaborate/"). `None` bila tidak ada entry / corrupt / top berbeda.
+    pub fn restore_elaborate_ir(&mut self, top: &str) -> Option<maria_ir::IrDesign> {
+        use crate::micd::cache::CacheCategory;
+        let layer = self.cache_layer.as_mut()?;
+        let key = format!("ir:{}", top);
+        let bytes = layer.get(CacheCategory::Elaborate, &key)?;
+        let ir = crate::micd::ast::deserialize_ir(&bytes)?;
+        if ir.top.name.as_str() != top {
+            return None;
+        }
+        Some(ir)
+    }
+
     pub fn get_diags(&self, path: &Path) -> Option<&FileDiags> {
         self.diags.get(path)
     }
@@ -1178,125 +1208,6 @@ impl MicdDatabase {
             format::commit_tmp(&obj)?;
         }
         sweep_objects(&objs, OBJ_PREPROC, &live)
-    }
-
-    /// Buat snapshot build baru (mirip commit). Menyimpan state saat ini.
-    /// Parent otomatis = snapshot terakhir (linear default). Untuk membuat
-    /// DAG bercabang/merge, gunakan [`MicdDatabase::snapshot_from`].
-    pub fn snapshot(&mut self, note: String) -> io::Result<u64> {
-        let parent = last_snapshot_id(&self.snapshots);
-        let parents = if parent == 0 { Vec::new() } else { vec![parent] };
-        self.snapshot_from(parents, note)
-    }
-
-    /// Buat snapshot dengan parent eksplisit (DAG, Kritik 13 db.md).
-    /// `parents = []` → snapshot akar; `parents = [a]` → turunan a (linear);
-    /// `parents = [a, b]` → merge (dua cabang digabung, mirip Git).
-    /// Semua parent harus sudah ada; id otomatis = max(id)+1.
-    pub fn snapshot_from(&mut self, parents: Vec<u64>, note: String) -> io::Result<u64> {
-        for p in &parents {
-            if !self.snapshots.contains(p) {
-                return Err(io::Error::other(format!(
-                    "MICD snapshot: parent {} belum ada",
-                    p
-                )));
-            }
-        }
-        let _lock = acquire_write_lock(
-            &self.lock_path(),
-            std::time::Duration::from_secs(5),
-            std::time::Duration::from_millis(10),
-            std::time::Duration::from_secs(30),
-        )
-        .map_err(|e| io::Error::other(e.to_string()))?;
-        let id = last_snapshot_id(&self.snapshots) + 1;
-        let snap = Snapshot {
-            id,
-            created_ns: now_ns(),
-            parents,
-            files: self.files.values().cloned().collect(),
-            graph: self.graph.clone(),
-            verify: self.verify.iter().map(|(k, v)| (*k, v.clone())).collect(),
-            symbols: self.symbols.clone(),
-            diags: self.diags.values().cloned().collect(),
-            flags_hash: self.flags_hash,
-            note,
-        };
-        let path = snapshot_path(&self.state_dir(), id);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let bytes = bincode::serialize(&snap).map_err(io::Error::other)?;
-        std::fs::write(&path, bytes)?;
-        self.snapshots.push(id);
-        // Pertahankan maksimal 16 snapshot. Buang yang TIDAK menjadi parent
-        // snapshot lain (leaf tertua) — bukan asal buang terdepan, agar DAG
-        // tidak kehilangan merge-base.
-        self.prune_snapshots(16);
-        Ok(id)
-    }
-
-    /// Buang snapshot berlebih (maks `keep`) tanpa merusak DAG.
-    /// Selalu buang yang TERTUA (id terkecil) agar snapshot terbaru tetap
-    /// ada (build terakhir yang paling berguna untuk rollback). Untuk menjaga
-    /// DAG tetap utuh, parent yang dibuang di-rewrite dari keturunannya
-    /// (squash) sehingga tidak ada referensi menggantung.
-    fn prune_snapshots(&mut self, keep: usize) {
-        while self.snapshots.len() > keep {
-            let oldest = *self.snapshots.first().unwrap();
-            // Squash: hapus `oldest` dari daftar parent semua snapshot lain.
-            for id in &self.snapshots {
-                if *id == oldest {
-                    continue;
-                }
-                if let Some(mut s) = read_snapshot(&self.state_dir(), *id) {
-                    if s.parents.contains(&oldest) {
-                        s.parents.retain(|p| *p != oldest);
-                        let path = snapshot_path(&self.state_dir(), *id);
-                        if let Some(parent) = path.parent() {
-                            std::fs::create_dir_all(parent).ok();
-                        }
-                        let _ = std::fs::write(
-                            path,
-                            bincode::serialize(&s).unwrap_or_default(),
-                        );
-                    }
-                }
-            }
-            let _ = std::fs::remove_file(snapshot_path(&self.state_dir(), oldest));
-            self.snapshots.retain(|x| *x != oldest);
-        }
-    }
-
-    /// Rollback ke snapshot `id`: restore metadata + graph + verify + symbols.
-    /// AST cache dibiarkan (objek yang tidak cocok diabaikan otomatis).
-    pub fn rollback(&mut self, id: u64) -> io::Result<()> {
-        let _lock = acquire_write_lock(
-            &self.lock_path(),
-            std::time::Duration::from_secs(5),
-            std::time::Duration::from_millis(10),
-            std::time::Duration::from_secs(30),
-        )
-        .map_err(|e| io::Error::other(e.to_string()))?;
-        let path = snapshot_path(&self.state_dir(), id);
-        let bytes = std::fs::read(&path)?;
-        let snap: Snapshot = bincode::deserialize(&bytes).map_err(io::Error::other)?;
-        self.files = snap
-            .files
-            .into_iter()
-            .map(|m| (m.path.clone(), m))
-            .collect();
-        self.graph = snap.graph;
-        self.verify = snap.verify.into_iter().collect();
-        self.symbols = snap.symbols;
-        self.diags = snap
-            .diags
-            .into_iter()
-            .map(|d| (d.path.clone(), d))
-            .collect();
-        self.flags_hash = snap.flags_hash;
-        self.dirty = true;
-        Ok(())
     }
 
     /// Bersihkan seluruh database.

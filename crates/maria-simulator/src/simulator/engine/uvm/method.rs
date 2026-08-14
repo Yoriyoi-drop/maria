@@ -296,7 +296,7 @@ impl SimulationEngine {
         let class_def = self
             .design
             .classes
-            .get(class_name)
+            .get(&Symbol::intern(class_name))
             .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, format!("class '{}' not found", class_name)))?
             .clone();
         if class_def.rand_fields.is_empty() {
@@ -307,7 +307,7 @@ impl SimulationEngine {
 
         // Extract solve...before ordering
         let mut before_map: HashMap<Symbol, HashSet<Symbol>> = HashMap::new();
-        for (_, body) in &class_def.constraints {
+        for (_, _, body) in &class_def.constraints {
             for item in body {
                 if let ConstraintItem::SolveBefore { vars } = item {
                     if vars.len() >= 2 {
@@ -355,8 +355,14 @@ impl SimulationEngine {
             }
 
             // Evaluate all class constraints (rekursif — termasuk if/else F12)
+            // LANG-33: block nonaktif (constraint_mode(0)) di-skip.
+            // LANG-32: block STATIC dicek global per-class (semua instance).
+            let class_sym = Symbol::intern(class_name);
             let mut all_satisfied = true;
-            for (_, body) in &class_def.constraints {
+            for (block_name, is_static, body) in &class_def.constraints {
+                if !self.constraint_block_enabled(obj_id, class_sym, *block_name, *is_static) {
+                    continue;
+                }
                 if !self.eval_constraint_body(body)? {
                     all_satisfied = false;
                     break;
@@ -383,10 +389,11 @@ impl SimulationEngine {
         }
 
         self.current_this = old_this;
-        Err(SimError::with_diag(
-            DiagCode::InternalError,
-            format!("randomize failed: could not satisfy all constraints after {} attempts", max_attempts),
-        ))
+        // IEEE 1800-2017 §18.6.1: bila solusi tidak ditemukan, `randomize()`
+        // mengembalikan 0 (BUKAN error fatal). Constraint yang bertentangan
+        // (unsatisfiable) adalah kondisi runtime yang sah — testbench
+        // memeriksa return value untuk retry/fallback.
+        Ok(LogicVec::from_u64(0, 1))
     }
 
 }

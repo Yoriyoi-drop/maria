@@ -168,6 +168,37 @@ pub struct ForkGroup {
     /// true = Join/JoinNone (slot aman di-reuse saat semua branch selesai).
     /// false = JoinAny (branch yang dibuang masih mereferensi fid → jangan reuse).
     pub(super) reclaimable: bool,
+    /// LANG-29: nama proses top-level yang membuat group ini
+    /// (`current_process_name` saat `fork` dieksekusi). Dipakai `wait fork`
+    /// untuk memilih group milik proses yang sedang berjalan. None = dibuat
+    /// di luar konteks proses (fallback: ikut semua group aktif).
+    pub(super) spawner: Option<String>,
+    /// LANG-30: `disable fork` — child processes group ini di-terminate.
+    /// Branch yang masih tertunda (ContinueBlock/ContinueAstBlock dengan
+    /// fork_id ini) di-skip tanpa eksekusi dan langsung decrement.
+    pub(super) disabled: bool,
+}
+
+/// LANG-29: satu situs `wait fork;` yang sedang menunggu. Dipangkas di
+/// `fork_finish` (saat group selesai); bila `fids` kosong, kontinuasi
+/// dieksekusi. Mendukung jalur IR (module/initial) dan AST (task/method).
+#[derive(Debug, Clone)]
+pub struct WaitForkState {
+    /// Fork group yang masih ditunggu (fid) — dipangkas saat group selesai.
+    pub fids: Vec<usize>,
+    /// Kontinuasi jalur IR (statement setelah `wait fork`).
+    pub continuation: Vec<IrStmt>,
+    /// Kontinuasi jalur AST (task/method) — kosong bila jalur IR.
+    pub ast_continuation: Vec<maria_ast::Stmt>,
+    /// Konteks task/method saat suspend (jalur AST).
+    pub this: Option<ObjId>,
+    pub method: Option<Symbol>,
+    pub locals: Vec<HashMap<Symbol, LogicVec>>,
+    pub base_len: usize,
+    /// Nama proses saat `wait fork` dieksekusi — di-restore sebelum kontinuasi
+    /// dijalankan (check_wait_forks berjalan di luar konteks EvalProcess,
+    /// jadi current_process_name bisa menunjuk proses lain).
+    pub process_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -176,6 +207,10 @@ pub struct Continuation {
     pub stmts_remaining: Vec<IrStmt>,
     pub fork_id: Option<usize>,
     pub process_id: Option<ObjId>,
+    /// LANG-29: nama proses saat suspend — ContinueBlock me-restore
+    /// `current_process_name` agar `wait fork` (dan fitur berbasis nama proses)
+    /// tetap melihat proses yang benar setelah resume. None = tidak diketahui.
+    pub process_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

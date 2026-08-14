@@ -1,0 +1,9 @@
+[package]
+name = "maria-timing"
+version = "0.1.0"
+edition = "2021"
+description = "Maria static timing analysis + area — constraint .mcs, WNS/TNS/critical path (SYNTHESIS.md phase 5)"
+
+[dependencies]
+maria-core = { path = "../maria-core" }
+maria-netlist = { path = "../maria-netlist" }

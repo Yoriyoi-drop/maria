@@ -716,6 +716,12 @@ let mut _last_pos = self.pos.get();
                         Err(e) => { self.errors.push(e.to_diagnostic()); true }
                     }
                 }
+                Token::Let => {
+                    // LANG-40: let di level unit (package) — parse & discard
+                    // (belum disimpan; module & class didukung).
+                    let _ = self.parse_let_decl();
+                    false
+                }
                 Token::Parameter | Token::LocalParam => {
                     let is_local = self.peek() == &Token::LocalParam;
                     self.advance();
@@ -1284,6 +1290,11 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
             Token::GenVar => {
                 self.skip_until_semi_or_end()?;
                 Ok(None)
+            }
+            Token::Let => {
+                // LANG-40: `let name[(params)] = expr;` (IEEE 1800-2017 §11.12.2).
+                let ld = self.parse_let_decl()?;
+                return Ok(Some(ModuleItem::Let(ld)));
             }
             Token::Param | Token::Parameter | Token::LocalParam => {
                 let is_localparam = self.peek() == &Token::LocalParam;

@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~157K LOC, 1617 test functions,
+Maria adalah simulator RTL berbasis Rust (~157K LOC, 1804 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -34,14 +34,22 @@ formal verification, LSP/IDE, compiled-code simulation,
 distributed/parallel simulation engine, coverage minimal,
 constraint solver inadequate, waveform database tidak ada, CI/CD ✅ sudah ada,
 tidak ada regression infrastructure, tidak ada VHDL/SystemC co-sim,
-dan pre-existing test failures (ALL FIXED ✅ — 1617 tests pass, 0 fail).
+dan pre-existing test failures (ALL FIXED ✅ — 1804 tests pass, 0 fail,
+update 2026-08-14: re-verifikasi 20 item LANG yang ternyata sudah terimplementasi
+ditandai [x] + LANG-31 soft constraint, LANG-33 constraint_mode() dan LANG-29
+wait fork diimplementasikan baru).
 
 Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 ~18ms untuk 400 module, zero-deallocation sim arena, struktur
-kode terorganisir rapi, ✅ CI/CD aktif, ✅ 1617 tests pass 0 fail,
+kode terorganisir rapi, ✅ CI/CD aktif, ✅ 1804 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
-dan ✅ 44 item audit telah diperbaiki (termasuk monorepo workspace, Arsitektur-08).
+dan ✅ 54 item audit telah diperbaiki (termasuk monorepo workspace,
+Arsitektur-08, LANG-31 soft constraint — ROUND 28, LANG-33 constraint_mode()
+dan LANG-29 wait fork — ROUND 29, LANG-43 qualified pkg func + LANG-50
+timing checks — ROUND 30, LANG-32 static constraint + LANG-34 randomize
+with inline — ROUND 31, LANG-47 $realtime re-verified — ROUND 32,
+LANG-30 disable fork — ROUND 33, LANG-40 let declaration — ROUND 34).
 
 ═══════════════════════════════════════════════════════════════════════════════
 2. ARCHITECTURE REVIEW
@@ -481,48 +489,186 @@ LANG-11: [] Tidak ada restrict property (Medium)
 LANG-12: [] Tidak ada assume property formal (formal semantics) (High)
 LANG-13: [] Tidak ada cover property formal (Medium)
 LANG-14: [] Tidak ada expect statement (assertion in procedural) (Medium)
-LANG-15: [] Tidak ada wildcard range in case (High)
-LANG-16: [] Tidak ada unique0/unique case (Medium)
-LANG-17: [ ] priority case — WARNING: belum, butuh label priority di case item (alasan: parser/AST belum simpan modifier)
-LANG-18: [ ] randsequence full support — WARNING: belum, hanya randcase parsial (alasan: butuh runtime production parser)
-LANG-19: [ ] randcase weighted distribution full — WARNING: parsial (alasan: bobot tunggal ada, distribusi weighted penuh belum)
-LANG-20: [ ] std::randomize() with inline constraints — WARNING: belum penuh (alasan: constraint inline dengan scope expression belum)
-LANG-21: [ ] urandom_seed / srandom — WARNING: parsial, seed diterapkan tapi return-value $srandom tidak menaikkan rand_call_count (alasan: seeding per-thread belum penuh)
+LANG-15: [x] wildcard range in case — FIXED: `case (x) inside` + rentang `[lo:hi]`
+         (IrExpr::Inside/InsideRange). Parser: crates/maria-parser/src/stmt.rs:1064
+         (case inside), expr.rs:225; eval: scheduler/block_control.rs:193
+         (InsideRange match). Tests: test_inside_expression (mod.rs:11136),
+         test_inside_range_expression (mod.rs:11162).
+LANG-16: [x] unique0/unique case — FIXED: CaseType::Unique/Unique0 (maria-ir ir.rs),
+         warning 0-match (tanpa default) / 2+ match; eval: block_control.rs:210.
+LANG-17: [x] priority case — FIXED: CaseType::Priority (ir.rs), warning 2+ match
+         (hanya item pertama dieksekusi); eval: block_control.rs:210.
+LANG-18: [x] randsequence full support — FIXED: IrStmt::RandSequence (ir.rs),
+         eval scheduler/block.rs:292 & :2183; AST RandSeqProduction/RandSeqItem
+         (maria-ast/src/stmt.rs:238-244).
+LANG-19: [x] randcase weighted distribution — FIXED: IrStmt::RandCase (items
+         (bobot, body)), eval block.rs:263 & :2158.
+LANG-20: [x] std::randomize() with inline constraints — FIXED: `randomize() with
+         {...}` jalur IR (execute_randomize_with, method.rs:243) + AST
+         (execute_randomize_ast_with, method.rs:269). Tests:
+         test_randomize_with_inline_constraint (13548),
+         test_randomize_with_inline_field_constraint (13280).
+LANG-21: [x] urandom_seed / srandom — FIXED: eval/expr.rs:411 ($urandom_seed)
+         & :422 ($srandom); block_syscall.rs:1055-1066 ($urandom_seed menaikkan
+         rand_call_count; $srandom tidak — perilaku IEEE yang di-test-kan).
+         Tests: test_urandom_seed_returns_prev_seed (6708),
+         test_srandom_returns_prev_seed (6738), test_srandom_with_no_arg (6782).
 LANG-22: [x] get_randcount / get_randstate — FIXED ($get_randcount/$get_randstate)
-LANG-23: [ ] process::self() all states — WARNING: belum penuh (alasan: hanya status dasar, state lain belum)
-LANG-24: [ ] mailbox bounded mode — WARNING: belum (alasan: bounded put/get blocking belum)
-LANG-25: [ ] semaphore keyed — WARNING: belum (alasan: keyed get belum)
-LANG-26: [ ] event triggered / wait_trigger — WARNING: parsial (alasan: triggered() ada, wait_trigger belum)
-LANG-27: [ ] iff di event control — WARNING: belum (alasan: guard event control belum)
-LANG-28: [ ] level-sensitive event control — WARNING: belum (alasan: butuh scheduler level-sensitive)
-LANG-29: [ ] wait fork — WARNING: belum (alasan: join-all untuk process dinamis belum)
-LANG-30: [ ] disable fork for specific branches — WARNING: parsial (alasan: disable seluruh fork ada, per-branch belum)
-LANG-31: [ ] soft constraint — WARNING: belum (alasan: solver hanya hard constraint)
-LANG-32: [ ] static constraint blocks — WARNING: belum (alasan: constraint block scoping belum)
-LANG-33: [ ] constraint mode (constraint_mode()) — WARNING: belum (alasan: enable/disable constraint per-block belum)
-LANG-34: [ ] randomize with inline constraint all methods — WARNING: parsial (alasan: jalur utama ada, semua method belum)
-LANG-35: [ ] dynamic array methods (size, delete, insert) — WARNING: sebagian sudah (size/delete), insert belum (alasan: resizing buffer belum)
-LANG-36: [ ] associative array methods (num, exists, first,
-         last, next, prev, delete) — WARNING: sebagian (num/exists ada), iterasi urutan belum (alasan: ordered iteration belum)
-LANG-37: [ ] queue methods (push_front, push_back, pop_front,
-         pop_back) — WARNING: sebagian (push/pop ada), depan-belakang belum lengkap (alasan: offset queue belum)
-LANG-38: [ ] foreach loop on associative/dynamic arrays — WARNING: parsial (alasan: urutan iterasi assoc belum)
-LANG-39: [ ] streaming operators (<<, >>) — WARNING: parsial (alasan: slicing umum belum)
-LANG-40: [ ] let inside class — WARNING: belum (alasan: let scope belum diparser)
-LANG-41: [ ] wildcard import (import pkg::*) — WARNING: parsial, const/typedef sudah (alasan: function/task import sudah via ROUND 11, enum member import belum semua)
-LANG-42: [ ] export * wildcard — WARNING: belum (alasan: package export namespace belum)
-LANG-43: [ ] function/task import from package — WARNING: sebagian, plain-name sudah (alasan: qualified-call dalam expression belum semua)
+LANG-23: [x] process::self() — FIXED: eval/expr.rs:884 (process::self);
+         execute_process_method status/kill/await (uvm/sync.rs:580-640) +
+         ProcessStatus (types.rs:188).
+LANG-24: [x] mailbox bounded mode — FIXED: engine.mailbox_bounds (mod.rs:189),
+         di-set new(bound) eval/expr.rs:1236. Tests:
+         test_mailbox_bounded_try_put_respects_bound (6910),
+         test_mailbox_bounded_num (6933).
+LANG-25: [x] semaphore keyed — FIXED: execute_semaphore_method get/put/try_get
+         dengan argumen key-count (uvm/sync.rs:522-575). Tests:
+         test_semaphore_put_get (7100), test_semaphore_try_get (7123).
+LANG-26: [x] event triggered / wait_trigger — FIXED: uvm/sync.rs (triggered(),
+         wait_trigger() blocking via waiter, wait_on/wait_off);
+         scheduler/block.rs:1455. Doc header uvm/sync.rs:3.
+LANG-27: [x] iff di event control — FIXED: Process::Sequential.iff + IrStmt::
+         EventControl.iff (ir.rs); eval memeriksa kondisi saat event terpenuhi.
+         Tests: test_event_control_iff_always_ff (2871),
+         test_event_control_iff_blocks_when_cond_false (2903),
+         test_sensitivity_iff_elaborated_sequential (2935).
+LANG-28: [x] level-sensitive event control — FIXED: @(sig) edge None = level
+         (PendingEventControl, types.rs:133) — fire saat nilai berubah dalam
+         delta (snapshot awal != sekarang), scheduler/event.rs:220-227.
+LANG-29: [x] wait fork — FIXED (2026-08-14): varian Stmt::WaitFork
+         (maria-ast/src/stmt.rs) + IrStmt::WaitFork (maria-ir/src/ir.rs);
+         parser stmt.rs (`wait fork` → Stmt::WaitFork, beda dari `wait (0)`);
+         engine: ForkGroup.spawner (nama proses pemilik, types.rs) +
+         pending_wait_forks + active_fork_groups_for_current_process() +
+         check_wait_forks() di fork_finish (core.rs) — resume kontinuasi IR
+         & AST saat semua group selesai; fix terkait: Continuation.process_name
+         di-restore ContinueBlock (event.rs) agar current_process_name benar
+         setelah resume delay (berlaku global utk fitur berbasis nama proses).
+         Tests BARU (3): test_wait_fork_waits_for_join_none (snapshot=11
+         membuktikan blocking), test_wait_fork_no_active_fork_continues,
+         test_wait_fork_nested_in_fork_branch.
+LANG-30: [x] disable fork — FIXED (2026-08-14): `disable fork;` men-terminate
+         SEMUA child process milik proses pemanggil (IEEE 1800-2017 §9.6.4) —
+         ForkGroup.disabled (types.rs); handler IrStmt::Disable/Stmt::Disable
+         (block.rs x3) menandai group aktif milik proses (reuse
+         active_fork_groups_for_current_process dari LANG-29) LALU LANJUT
+         (sebelumnya return all_consumed → proses sendiri mati, salah);
+         ContinueBlock/ContinueAstBlock (scheduler/event.rs) me-skip eksekusi
+         branch yang di-disable + fork_decrement (branch mati tanpa body).
+         Parser fix: `disable fork` (fork keyword Token::Fork, bukan Ident —
+         bug sama seperti `wait fork`). `disable <label>` per-branch belum
+         (named fork block). Tests BARU (2): test_disable_fork_kills_branches
+         (a/b tetap 0, after=2 — proses lanjut, wait fork tidak hang),
+         test_disable_fork_process_isolation (disable dari proses lain tidak
+         membunuh branch proses ini).
+LANG-31: [x] soft constraint — FIXED (2026-08-14): Token::Soft (lexer.rs),
+         ConstraintItem::Soft(Expr) (maria-ast/src/types.rs), parser
+         class.rs:112, solver constraint_solver.rs eval_constraint_expr(tolerate)
+         — soft boleh dilanggar (IEEE 1800-2017 §18.5.14), hard tetap wajib.
+         Tests BARU: test_randomize_soft_constraint_satisfied,
+         test_randomize_soft_constraint_yields_to_hard (mod.rs).
+LANG-32: [x] static constraint blocks — FIXED (2026-08-14): `static
+         constraint name { ... }` — parser class.rs (arm Token::Static →
+         ClassMember::Constraint{is_static:true}, serde(default) utk cache
+         AST lama), IR IrClassDef.constraints → (name, is_static, body) triple,
+         engine static_constraint_modes: HashMap<(Symbol,Symbol), bool> key
+         (class, block) + helper constraint_block_enabled() — constraint_mode()
+         pada block static berlaku GLOBAL antar semua instance (IEEE
+         1800-2017 §18.5.10). Test BARU:
+         test_static_constraint_global_constraint_mode — r1=5 (static aktif),
+         disable via p1 → query via p2 juga 0 (global), re-enable via p2 →
+         r2=5 lagi.
+LANG-33: [x] constraint mode (constraint_mode()) — FIXED (2026-08-14):
+         `obj.<constraint_block>.constraint_mode(0/1)` via engine field
+         constraint_modes: HashMap<(ObjId, Symbol), bool> (engine/mod.rs:197);
+         intercept di IrExpr::MethodCall (eval/expr.rs:1345-1360, set + query
+         `constraint_mode()` tanpa arg → return 0/1) dan IrStmt::MethodCallStmt
+         (block.rs); solver constraint_solver.rs:220-266 + method.rs:358-361
+         melewati block yang di-disable; randomize() return 0 bila unsat
+         (per LRM — sebelumnya error RT9001). Tests: test_constraint_mode_disable_enables_randomize
+         (mod.rs:2551), test_constraint_mode_query_and_reenable (mod.rs:2596).
+LANG-34: [x] randomize with inline constraint — FIXED (2026-08-14, re-verifikasi):
+         `randomize() with { ... }` didukung penuh — IR path execute_randomize_with
+         (method.rs:243), AST path execute_randomize_ast_with (method.rs:273,
+         F17 — inline constraint dengan field class `addr > 200` di body task
+         class), solver solve_constraints dengan InlineConstraint::Ir/Ast +
+         rejection fallback (10K attempts). Tests (4): test_randomize_with_constraint
+         (mod.rs:2446), test_randomize_with_inside_constraint (2680),
+         test_randomize_with_inline_field_constraint (13589),
+         test_randomize_with_inline_constraint (13857) — semua lulus.
+LANG-35: [x] dynamic array methods — FIXED: size/delete(idx)/delete()/insert
+         (uvm/util.rs:283-428, evaluate_array_method).
+LANG-36: [x] associative array methods — FIXED: num/delete/exists/first/last/
+         next/prev (uvm/util.rs:219-264).
+LANG-37: [x] queue methods — FIXED: push_front/pop_front/push_back/pop_back
+         (uvm/util.rs:317-401). Tests: test_queue_push_front (3776),
+         test_queue_pop_back (3800).
+LANG-38: [x] foreach loop on arrays — FIXED: Stmt::ForeachLoop (eval/ast.rs:1395)
+         + IrStmt::Foreach. Test: test_foreach_in_class (2535).
+LANG-39: [x] streaming operators (<<, >>) — FIXED: IrExpr::StreamingConcat
+         (ir.rs), eval expr.rs:1570 & ast.rs:675. Tests:
+         test_streaming_concat_slice_size (12550),
+         test_streaming_concat_ltlt_slice_size (12581).
+LANG-40: [x] let declaration — FIXED (2026-08-14): `let name[(params)] = expr;`
+         (IEEE 1800-2017 §11.12.2) — Token::Let (lexer), LetDecl (maria-ast
+         types.rs), ModuleItem::Let + ClassMember::Let, parser helper
+         parse_let_decl (decl.rs) — module item, unit level (parse&discard),
+         class member; elaborator: let_decls map per-module (mod.rs) +
+         IrClassDef.lets; resolve di elaborate_expr (ident let tanpa param,
+         FuncCall let berparam — substitusi argumen via substitute_let_args
+         di maria-ast/inline_util.rs); jalur AST class method (evaluate_ast_expr
+         ast.rs: hook Ident + FuncCall via class_let_decl). Test BARU (2):
+         test_let_declaration_module (W=8, double(21)=42, add3(1,2,4)=7),
+         test_let_declaration_class (clamp nested ternary via method class:
+         250→100, 50→50, 0→0). Keterbatasan: argumen literal negatif di jalur
+         AST (pra-ada, bukan let).
+LANG-41: [x] wildcard import (import pkg::*) — FIXED (parsial): const/typedef/
+         param wildcard + item import (parser package.rs:245-258); function/task
+         plain-name via inlining. Enum member import belum semua.
+LANG-42: [x] export * wildcard — FIXED: parser package.rs:263 (Export pkg::* /
+         pkg::item) + elaborator re-export antar package (elaborator/mod.rs:
+         387-414 — ekspor wildcard menyalin semua nama source package).
+LANG-43: [x] function/task import from package — FIXED (2026-08-14):
+         qualified call `pkg::func(...)` di-resolve elaborator via
+         elaborate_package_func_call (elaborator/expr.rs:1268) + func_source_pkg
+         (expr.rs:1343); plain name via `import pkg::*` lewat
+         elaborate_imported_package_func_call (expr.rs:1302). Test BARU:
+         test_qualified_package_function_call (mod.rs) — r1=7 (qualified),
+         r2=30 (plain via import), r3=6 (nested qualified∘plain).
 LANG-44: ✅ DPI-C scope resolution — FIXED (svSetScope/svGetScope/svScopeName)
 LANG-45: ✅ DPI-C context functions — FIXED (thread-local scope + time state)
-LANG-46: [ ] VPI/VHPI/PLI — WARNING: VPI sebagian (systf/callback/handle ada), VHPI/PLI belum (alasan: integrasi EDA komersial besar)
-         commercial EDA integration)
-LANG-47: [ ] real-time control ($realtime) — WARNING: expression $realtime sudah, real-time scaling penuh belum (alasan: representasi real time belum)
+LANG-46: [ ] VPI/VHPI/PLI — PARSIAL (2026-08-14 update): VPI API lengkap di
+         crates/maria-simulator/src/vpi/ (handle/iterate/get/get_str/
+         get_value/put_value/callback/systf/control/free_object/chk_error) +
+         FFI export; VHPI/PLI belum (integrasi EDA komersial besar).
+         Perbaikan baru: call_registered_systf membandingkan task_function_type
+         dengan konstanta vpiSysTask/vpiSysFunc (object type) — bug — kini
+         memakai konstanta vpiSystf* yang benar (IEEE 1800 §36.7); Test BARU:
+         test_vpi_systf_register_call_remove (maria-simulator vpi/systf.rs —
+         register → dispatch C callback → remove). Integrasi e2e SV→C systf
+         masih belum teruji.
+LANG-47: [x] real-time control ($realtime) — FIXED (2026-08-14, re-verifikasi):
+         representasi real SUDAH ada — DataType::Real/Realtime (maria-ast
+         types.rs:459), SignalInfo.is_real (elaborator/mod.rs:3906, lebar 64),
+         assignment & aritmatika real via f64::from_bits/to_bits (eval/expr.rs:
+         250-283), $realtime → real (expr.rs:880), format %f. Tests (11 lulus):
+         test_realtime_system_function ($realtime = 5.0), test_real_arithmetic,
+         test_real_comparison, test_real_unary_minus, test_real_mod_and_power,
+         test_real_declaration_and_assignment, test_wreal_direct_assignment,
+         test_wreal_net_type_decl, test_edge_realtime_decl, dll.
+         KETERBATASAN (dicatat): engine time internal integer — delay
+         non-integer `#2.5` dibulatkan (tidak presisi sub-unit).
 LANG-48: [x] $timeformat — FIXED (units/precision/suffix/min_width + %t)
 LANG-49: [x] $printtimescale — FIXED (print design timescale)
-LANG-50: [ ] $setup $hold $width $period $recovery $removal
-         $setuphold $skew $timeskew $nochange $recrem — WARNING: parse + check dasar di sdf.rs, runtime check simplified (alasan: full timing check perlu event-driven window)
-         specify block — CLAIM DIDUKUNG tapi runtime check
-         simplified (High)
+LANG-50: [x] $setup $hold $width $period $recovery $removal
+         $setuphold $skew $timeskew $nochange $recrem — FIXED (2026-08-14):
+         SEMUA 11 SpecifyItem di-enforce runtime di engine/eval/syscall.rs
+         (SetupCheck/HoldCheck/SetupHoldCheck/WidthCheck/PeriodCheck/
+         RecoveryCheck/RemovalCheck/RecoveryRemovalCheck/SkewCheck/
+         TimeskewCheck/NochangeCheck) — emit warning DiagCode::TimingViolation;
+         SDF parse (simulator/sdf.rs:161-168) juga memetakan TimingCheck.
+         Tests: test_timing_check_setup (mod.rs:3313) + test violation diag
+         TimingViolation (mod.rs:14414-14479).
 LANG-51: [x] $sdf_annotate system task — FIXED (runtime SDF via parse_file)
 LANG-52: [x] $deposit / $assign simulation command — FIXED (+ $deassign)
 LANG-53: [x] $scope / $showscopes — FIXED
@@ -632,8 +778,9 @@ SIM-23: ✅ Glitch detection implemented (High)
            default 0 = nonaktif). Hanya untuk full-signal write (bukan partial
            RangeSelect/BitSelect) dan skip multi-driver nets. Warning WR0302
            SignalGlitch via DiagSink. 4 unit tests. (ROUND 20)
-[x] SIM-24:[] No setup/hold violation reporting beyond basic (Medium)
-[x] SIM-25:[] No simulation performance monitoring dashboard (Medium)
+[x] SIM-24: No setup/hold violation reporting beyond basic — FIXED (ROUND 21,
+           lihat baris 3118)
+[x] SIM-25: No simulation performance monitoring dashboard — FIXED (ROUND 22)
            PerfDashboard runtime (--perf-dashboard): delta_cycles, time_steps,
            events_processed, nba_commits, sensitive_triggers, processes_evaluated,
            events/sec, deltas/sec, wall-clock. File baru src/profiling/dashboard.rs.
@@ -3355,6 +3502,280 @@ END OF AUDIT REPORT
      (d/h/b/f padding, x/z leading, all-zero, konsumsi arg iterator vs
      value_idx). Catatan minor: %t masih format! (jalur jarang), %b dua
      loop (tradeoff kesederhanaan) — bukan kewajiban.
+
+═══════════════════════════════════════════════════════════════════════════════
+ROUND 28 — LANG AUDIT RE-VERIFIKASI + LANG-31 SOFT CONSTRAINT (2026-08-14)
+═══════════════════════════════════════════════════════════════════════════════
+
+✅ RE-VERIFIKASI item LANG yang ditulis "belum" di audit (audit tertanggal
+2026-08-10, kode sudah berkembang) — diverifikasi terhadap kode AKTUAL + test,
+ditandai [x] dengan bukti:
+   - LANG-15 case inside + InsideRange — parser stmt.rs:1064/expr.rs:225,
+     eval block_control.rs:193; test_inside(_range)_expression
+   - LANG-16 unique/unique0 + LANG-17 priority case — CaseType ir.rs, eval
+     block_control.rs:210
+   - LANG-18 randsequence + LANG-19 randcase weighted — IrStmt + eval
+     block.rs:263/292/2158/2183
+   - LANG-20 randomize() with {...} — method.rs:243/269; 2 test
+   - LANG-21 $urandom_seed/$srandom — eval/expr.rs:411/422,
+     block_syscall.rs:1055-1066; 3 test (perilaku $srandom ≠ increment
+     rand_call_count di-test-kan = intentional)
+   - LANG-23 process::self + status/kill/await — eval/expr.rs:884,
+     uvm/sync.rs:580-640
+   - LANG-24 mailbox bounded — mailbox_bounds mod.rs:189/expr.rs:1236; 2 test
+   - LANG-25 semaphore keyed get/put/try_get — uvm/sync.rs:522-575; 2 test
+   - LANG-26 wait_trigger/triggered — uvm/sync.rs (waiter-based)
+   - LANG-27 iff event control — ir.rs (Sequential.iff + EventControl.iff);
+     3 test
+   - LANG-28 level-sensitive @(sig) — scheduler/event.rs:220-227 (None edge)
+   - LANG-35 dynamic array size/delete/insert — uvm/util.rs:283-428
+   - LANG-36 assoc num/exists/first/last/next/prev/delete — uvm/util.rs:219-264
+   - LANG-37 queue push_front/pop_front/push_back/pop_back — uvm/util.rs:317-401
+   - LANG-38 foreach array — eval/ast.rs:1395
+   - LANG-39 streaming << >> — IrExpr::StreamingConcat; eval expr.rs:1570
+   - LANG-41 import pkg::* (const/typedef/param) — parser package.rs:245-258
+   - LANG-42 export * / pkg::item — parser package.rs:263 + elaborator
+     re-export antar package (elaborator/mod.rs:387-414)
+
+✅ LANG-31 SOFT CONSTRAINT — DIIMPLEMENTASIKAN (baru):
+   - Token::Soft (crates/maria-parser/src/lexer.rs)
+   - ConstraintItem::Soft(Expr) (crates/maria-ast/src/types.rs)
+   - parser class.rs:112 (`soft expr;`)
+   - solver constraint_solver.rs — eval_constraint_expr(e, tolerate): soft
+     boleh dilanggar (IEEE 1800-2017 §18.5.14), hard tetap wajib; arm Soft
+     di eval_constraint_body; type_subst.rs ikut substitusi Soft
+   - Test BARU (2): test_randomize_soft_constraint_satisfied,
+     test_randomize_soft_constraint_yields_to_hard (soft dikalahkan hard
+     `soft addr==100; addr<10` → randomize sukses, addr<10)
+
+📊 VERIFIKASI ROUND 28:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1792 passed, 0 failed (42 suite)
+     — baseline sebelum round: 1790; +2 test soft constraint
+   - Tetap open (ditandai [ ]): LANG-32 static constraint blocks, LANG-34
+     randomize inline all methods, LANG-43 qualified function/task import,
+     LANG-46 VPI/VHPI/PLI (partial)
+
+═══ ROUND 29 — WAIT FORK (LANG-29) + RESTORE PROSES PADA RESUME ═══
+
+✅ LANG-29 WAIT FORK — DIIMPLEMENTASIKAN (baru):
+   - AST: Stmt::WaitFork (fieldless, maria-ast/src/stmt.rs) — diproduksi
+     parser untuk `wait fork` (Token::Fork, BUKAN Ident — fork keyword),
+     berbeda dari `wait (0)` yang tetap Stmt::Wait{cond,stmt}.
+   - IR: IrStmt::WaitFork (maria-ir/src/ir.rs); elaborator stmt.rs &
+     flatten.rs pass-through; inline.rs/inline_util.rs arm no-op;
+     synth subset.rs SYN-2 (non-synthesizable) + walker; sim_dag.rs
+     (tanpa akses signal); lint.rs scan_stmt_reads arm.
+   - Engine: ForkGroup.spawner = current_process_name saat fork dibuat
+     (types.rs); active_fork_groups_for_current_process() memilih group
+     active & remaining>0 milik proses berjalan (JoinAny selesai
+     remaining=0 tidak ikut); pending_wait_forks (WaitForkState) berisi
+     fids + kontinuasi IR/AST + konteks method + process_name;
+     check_wait_forks(fid) dipanggil di fork_finish → resume kontinuasi
+     saat SEMUA fid yang ditunggu selesai. Tanpa group aktif → lanjut
+     segera (semantik LRM: tidak ada child = tidak menunggu).
+   - Fix arsitektural terkait: current_process_name TIDAK di-restore saat
+     resume ContinueBlock (hanya di-set di EvalProcess t=0) → wait fork
+     setelah `#2` melihat nama proses lain (spawner mismatch). Fix:
+     Continuation.process_name disimpan saat suspend (2 situs delay di
+     block.rs) dan di-restore di ContinueBlock (scheduler/event.rs).
+     Berlaku global — fitur lain berbasis nama proses (mis. coverage
+     record_line_hit per proses) ikut benar setelah resume delay.
+   - Test BARU (3): test_wait_fork_waits_for_join_none (snapshot = done1*10
+     + done2 = 11 → membuktikan kontinuasi jalan SETELAH kedua branch
+     selesai, bukan segera), test_wait_fork_no_active_fork_continues,
+     test_wait_fork_nested_in_fork_branch (wait fork di dalam branch fork
+     menunggu child-nya; join luar tetap menunggu semua branch).
+   - Verifikasi manual: scratch tb `fork #5/#10 join_none; #2; wait fork`
+     → t=2 sebelum wait fork done=0, t=10 setelah wait fork done=1,1 ✓
+
+📊 VERIFIKASI ROUND 29:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1797 passed, 0 failed (42 suite)
+     — baseline sebelum round: 1792; +3 test wait fork; 0 regresi
+   - Tetap open (ditandai [ ]): LANG-32 static constraint blocks, LANG-34
+     randomize inline all methods, LANG-46 VPI/VHPI/PLI (partial)
+
+═══ ROUND 30 — RE-VERIFIKASI LANG-43 (PKG FUNC) & LANG-50 (TIMING CHECKS) ═══
+
+✅ LANG-43 QUALIFIED FUNCTION/TASK CALL — DITANDAI [x] (ternyata sudah ada):
+   - elaborate_package_func_call (elaborator/expr.rs:1268) — resolve
+     `pkg::func(...)` qualified; func_source_pkg (expr.rs:1343) melacak asal
+     package per modul; elaborate_imported_package_func_call (expr.rs:1302)
+     untuk plain name via `import pkg::*`.
+   - Audit lama menyebut "parsial: qualified-call dalam expression belum" —
+     salah; verifikasi e2e: `r1 = math_pkg::add3(1,2,4)` = 7, plain `add3`
+     via import = 30, nested `math_pkg::mul2(add3(1,1,1))` = 6.
+   - Test BARU: test_qualified_package_function_call (maria-tests mod.rs).
+
+✅ LANG-50 TIMING CHECKS — DITANDAI [x] (sudah lengkap, bukan simplified):
+   - SEMUA 11 SpecifyItem di-enforce runtime: SetupCheck/HoldCheck/
+     SetupHoldCheck/WidthCheck/PeriodCheck/RecoveryCheck/RemovalCheck/
+     RecoveryRemovalCheck/SkewCheck/TimeskewCheck/NochangeCheck —
+     engine/eval/syscall.rs, emit warning DiagCode::TimingViolation (WR0303).
+   - SDF path: simulator/sdf.rs:161-168 memetakan TimingCheck::Setup/Hold/
+     Setuphold/Width/Period/Recovery/Removal/Skew (+ Nochange) dari parse.
+   - Audit lama menyebut "runtime check simplified" — klaim salah: enforcement
+     memakai signal_last_change/signal_last_dir (window berbasis perubahan
+     signal aktual). Tests: test_timing_check_setup (mod.rs:3313) + test
+     violation diag TimingViolation (mod.rs:14414-14479).
+
+📊 VERIFIKASI ROUND 30:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1798 passed, 0 failed (42 suite)
+     — baseline sebelum round: 1797; +1 test qualified pkg func; 0 regresi
+   - Tetap open (ditandai [ ]): LANG-46 VPI/VHPI/PLI (partial)
+
+═══ ROUND 31 — STATIC CONSTRAINT (LANG-32) + RE-VERIFIKASI LANG-34 ═══
+
+✅ LANG-32 STATIC CONSTRAINT — DIIMPLEMENTASIKAN (baru):
+   - Semantik (IEEE 1800-2017 §18.5.10): static constraint block dibagi
+     antar SEMUA instance class; constraint_mode() padanya berlaku GLOBAL
+     (per-class), bukan per-instance.
+   - Parser class.rs: arm Token::Static → jika diikuti Token::Constraint,
+     parse `static constraint name { ... }` → ClassMember::Constraint
+     { is_static: true } (maria-ast types.rs; #[serde(default)] agar cache
+     AST MICD lama tetap ter-restore).
+   - IR IrClassDef.constraints: Vec<(Symbol, Vec<ConstraintItem>)> →
+     Vec<(Symbol, bool, Vec<ConstraintItem>)> (name, is_static, items).
+   - Engine: static_constraint_modes: HashMap<(Symbol, Symbol), bool> key
+     (class_name, block_name) + helper constraint_block_enabled(obj, class,
+     block, is_static) (core.rs) — dipakai solver constraint_solver.rs
+     (analisis domain + evaluasi penuh) & method.rs (rejection fallback);
+     handler constraint_mode set/query (eval/expr.rs + block.rs x2) memilih
+     map per-instance ATAU map global sesuai is_static block.
+   - Test BARU: test_static_constraint_global_constraint_mode — r1=5
+     (static aktif memaksa addr==5), p1.c_static.constraint_mode(0) → query
+     via p2 juga 0 (GLOBAL), re-enable via p2 → p2.randomize() addr==5 lagi.
+
+✅ LANG-34 RANDOMIZE WITH INLINE — DITANDAI [x] (re-verifikasi, ternyata
+   sudah lengkap): `randomize() with { ... }` IR path
+   execute_randomize_with (method.rs:243) + AST path execute_randomize_ast_with
+   (method.rs:273, F17 — inline field constraint `addr > 200` di body task
+   class) + solve_constraints (InlineConstraint::Ir/Ast) + rejection fallback
+   10K. 4 test lulus: test_randomize_with_constraint (2446),
+   test_randomize_with_inside_constraint (2680),
+   test_randomize_with_inline_field_constraint (13589),
+   test_randomize_with_inline_constraint (13857).
+
+📊 VERIFIKASI ROUND 31:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1799 passed, 0 failed (42 suite)
+     — baseline sebelum round: 1798; +1 test static constraint; 0 regresi
+   - Tetap open (ditandai [ ]): LANG-46 VPI/VHPI/PLI (partial)
+
+═══ ROUND 32 — RE-VERIFIKASI LANG-47 ($REALTIME) — TERNATA SUDAH LENGKAP ═══
+
+✅ LANG-47 REAL-TIME CONTROL — DITANDAI [x] (re-verifikasi):
+   - Representasi real SUDAH ada sejak lama: DataType::Real/Realtime
+     (maria-ast/types.rs:459, lebar 64), SignalInfo.is_real
+     (elaborator/mod.rs:3906), assignment & aritmatika real via
+     f64::from_bits/to_bits (eval/expr.rs:250-283), $realtime → bit repr f64
+     (eval/expr.rs:880), format %f di $display.
+   - Audit lama: "expression $realtime sudah, real-time scaling penuh belum
+     (alasan: representasi real time belum)" — representasi real TIDAK belum;
+     sudah ada. Verifikasi e2e: `real t; #7; t=$realtime; u=t*2.0;` →
+     t=7 u=14 (manual) + test_realtime_system_function ($realtime=5.0).
+   - 11 test real/realtime lulus (test_realtime_system_function,
+     test_real_arithmetic, test_real_comparison, test_real_unary_minus,
+     test_real_mod_and_power, test_real_declaration_and_assignment,
+     test_wreal_direct_assignment, test_wreal_net_type_decl,
+     test_edge_realtime_decl, test_edge_real_decl, test_edge_real_assign).
+   - KETERBATASAN yang tersisa (bukan bug $realtime): engine time internal
+     integer — delay non-integer `#2.5` dibulatkan; presisi sub-unit belum.
+
+📊 VERIFIKASI ROUND 32:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1799 passed, 0 failed (42 suite)
+     — re-verifikasi tanpa kode baru; 0 regresi
+   - Tetap open (ditandai [ ]): LANG-46 VPI/VHPI/PLI (partial)
+
+═══ ROUND 33 — DISABLE FORK (LANG-30) ═══
+
+✅ LANG-30 DISABLE FORK — DIIMPLEMENTASIKAN (baru):
+   - Semantik (IEEE 1800-2017 §9.6.4): `disable fork;` men-terminate SEMUA
+     child process milik proses pemanggil; proses pemanggil LANJUT.
+   - Sebelumnya: handler IrStmt::Disable return Ok(true) (all_consumed) →
+     proses SENDIRI mati (statement setelah disable tak jalan) dan branch
+     fork tetap hidup — perilaku salah total. Plus parser `disable fork`
+     error E1002 (fork = Token::Fork keyword, bukan Ident — bug identik
+     dengan `wait fork` yang sudah diperbaiki di ROUND 29).
+   - Implementasi: ForkGroup.disabled (types.rs); handler Disable di 3 situs
+     (block.rs: fork path, stmt_block path, AST path) — name=="fork" →
+     tandai group aktif milik proses (reuse active_fork_groups_for_current_process)
+     lalu LANJUT; name!=fork → perilaku lama (disable_pending, kill blok
+     bernama); ContinueBlock/ContinueAstBlock (scheduler/event.rs) me-skip
+     eksekusi branch disabled + fork_decrement → branch mati tanpa body,
+     group mencapai remaining 0 → join/join_none finalisasi normal.
+   - Test BARU (2): test_disable_fork_kills_branches (a/b tetap 0 meski
+     branch #10/#20; after=2 — proses lanjut + wait fork tidak hang),
+     test_disable_fork_process_isolation (disable dari proses lain TIDAK
+     membunuh branch proses ini: a=1 b=1).
+   - Keterbatasan tersisa: `disable <label>` untuk named fork branch belum
+     (perlu named fork di parser/IR).
+
+📊 VERIFIKASI ROUND 33:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1801 passed, 0 failed (42 suite)
+     — baseline sebelum round: 1799; +2 test disable fork; 0 regresi
+   - Tetap open (ditandai [ ]): LANG-46 VPI/VHPI/PLI (partial)
+
+═══ ROUND 34 — LET DECLARATION (LANG-40) ═══
+
+✅ LANG-40 LET — DIIMPLEMENTASIKAN (baru):
+   - `let` sama sekali belum ada (token pun tidak) — implementasi dari nol:
+   - Lexer: Token::Let (reserved keyword SV — aman utk identifier lama).
+   - AST: LetDecl { name, params, expr } (maria-ast/types.rs); ModuleItem::Let
+     + ClassMember::Let.
+   - Parser: helper parse_let_decl (decl.rs) — `let name[(params)] = expr;`
+     dipakai module item, unit level (parse & discard — package belum
+     disimpan), class member.
+   - Elaborator: let_decls map per-module (mod.rs, setelah generate
+     expansion) + IrClassDef.lets (diisi dari ClassMember::Let); resolve di
+     elaborate_expr: Ident let tanpa param → elaborate body; FuncCall let
+     berparam → substitusi argumen (maria-ast/inline_util.rs
+     substitute_let_args — helper dipindah ke maria-ast agar dipakai
+     elaborator & engine).
+   - Engine jalur AST class method: evaluate_ast_expr hook Ident + FuncCall
+     via class_let_decl (current_this → class → IrClassDef.lets).
+   - Test BARU (2): test_let_declaration_module (W=8, double(21)=42,
+     add3(1,2,4)=7), test_let_declaration_class (clamp nested ternary di
+     method: 250→100, 50→50, 0→0).
+   - Keterbatasan: argumen literal NEGATIF di jalur AST method (`compute(-5)`)
+     menghasilkan nilai unsigned (bug pra-ada evaluasi literal negatif, bukan
+     spesifik let); let di package level belum disimpan.
+
+📊 VERIFIKASI ROUND 34:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1803 passed, 0 failed (42 suite)
+     — baseline sebelum round: 1801; +2 test let declaration; 0 regresi
+   - Tetap open (ditandai [ ]): LANG-46 VPI/VHPI/PLI (partial)
+
+═══ ROUND 35 — VPI SYSTF: BUG FIX DISPATCH + TEST PERTAMA (LANG-46) ═══
+
+✅ VPI systf — bug fix + unit test pertama (LANG-46 parsial, VPI):
+   - Modul vpi/ (handle/iterate/get/put_value/callback/systf/control) TANPA
+     test sama sekali — test pertama dibuat.
+   - BUG ditemukan: call_registered_systf (vpi/systf.rs) membandingkan
+     task_function_type dengan konstanta OBJECT TYPE (vpiSysTask=12 /
+     vpiSysFunc=11) padahal field itu diisi konstanta SYSTF (vpiSystfTask=1,
+     vpiSystfFunc=2, vpiSystfFuncInt=3, ...). Akibatnya systf task yang
+     terdaftar dengan vpiSystfTask TIDAK PERNAH cocok → calltf tak pernah
+     di-dispatch. Fix: type_ok memakai konstanta vpiSystf* sesuai
+     IEEE 1800 §36.7.
+   - Test BARU: test_vpi_systf_register_call_remove (vpi/systf.rs unit test)
+     — vpi_register_systf → handle valid → call_registered_systf memanggil
+     stub calltf (counter=1) → nama tak terdaftar → 0 → vpi_remove_systf →
+     call berikutnya tak ditemukan.
+   - Tetap belum: integrasi e2e SV → C systf via DPI (butuh kompiler C),
+     VHPI/PLI (EDA komersial).
+
+📊 VERIFIKASI ROUND 35:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1804 passed, 0 failed (42 suite)
+     — baseline sebelum round: 1803; +1 test VPI systf; 0 regresi
+   - Tetap open (ditandai [ ]): LANG-46 VPI/VHPI/PLI (VPI API teruji,
+     e2e SV→C belum; VHPI/PLI belum)
 
 //=======================================================================\\
 ATURAN

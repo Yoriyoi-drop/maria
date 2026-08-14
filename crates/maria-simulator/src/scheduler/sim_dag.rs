@@ -207,6 +207,7 @@ fn stmt_signal_access(stmts: &[IrStmt], access: &mut SignalAccess) {
             // Statements that don't access signals
             IrStmt::SysFinish | IrStmt::Null
             | IrStmt::Break | IrStmt::Continue
+            | IrStmt::WaitFork
             | IrStmt::Disable { .. } => {}
         }
     }

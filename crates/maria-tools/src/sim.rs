@@ -97,7 +97,15 @@ pub fn run(args: &SimArgs) -> Result<(), SimError> {
         for (k, v) in stats.iter().collect::<Vec<_>>().iter() {
             kv(k, v);
         }
+        // Simpan ringkasan ke cache pipeline (db.md "19. coverage/") agar
+        // `minspect cache` membaca hasil tanpa simulasi ulang.
+        save_coverage_cache(args, &stats);
     }
+
+    // Simpan ringkasan simulasi + index signal ke cache pipeline (db.md
+    // "17. simulation/", "18. waveform/") — initial state, sensitivity list,
+    // scheduler, signal index — agar tool lain membacanya tanpa simulasi ulang.
+    save_sim_waveform_cache(args, &engine);
 
     if args.assertions && assertion_errors > 0 {
         return Err(SimError::with_diag(
@@ -114,4 +122,119 @@ pub fn run(args: &SimArgs) -> Result<(), SimError> {
         ));
     }
     Ok(())
+}
+
+/// Simpan ringkasan coverage ke cache pipeline (`coverage/"last"`, db.md
+/// "19. coverage/"). Best-effort — kegagalan cache tidak menggagalkan msim.
+fn save_coverage_cache(args: &SimArgs, stats: &std::collections::HashMap<String, f64>) {
+    use maria_compiler::micd::cache::pipeline::CoveragePayload;
+    use maria_compiler::micd::cache::CacheCategory;
+
+    let Ok((mut layer, _pid)) = crate::open_cache_layer(args.files, args.incdirs, args.defines)
+    else {
+        return;
+    };
+    let get = |k: &str| stats.get(k).copied().unwrap_or(0.0) as u64;
+    let payload = CoveragePayload {
+        line_items: get("line_items"),
+        line_hits: get("line_total_hits"),
+        branch_total: get("branch_total"),
+        branch_covered: get("branch_covered"),
+        toggle_signals: get("toggle_signals"),
+        toggle_transitions: get("toggle_transitions"),
+        fsm_signals: get("fsm_signals"),
+        fsm_states: get("fsm_states"),
+    };
+    if let Ok(bytes) = bincode::serialize(&payload) {
+        let _ = layer.put(CacheCategory::Coverage, "last", &bytes);
+        let _ = layer.save();
+    }
+}
+
+/// Simpan ringkasan simulasi + index signal ke cache pipeline (db.md
+/// "17. simulation/", "18. waveform/"). Best-effort — kegagalan cache tidak
+/// menggagalkan msim. `simulation/"last"` berisi initial state + scheduler +
+/// sensitivity list; `waveform/"last"` berisi signal index top (nama, lebar,
+/// kind, net) agar VCD/FST lebih cepat dibuka tanpa mem-parse ulang.
+fn save_sim_waveform_cache(args: &SimArgs, engine: &SimulationEngine) {
+    use maria_compiler::micd::cache::pipeline::{
+        ProcessCounts, SimulationPayload, WaveSignal, WaveformPayload,
+    };
+    use maria_compiler::micd::cache::CacheCategory;
+    use maria_ir::{NetType, Process, SignalKind};
+
+    let Ok((mut layer, _pid)) = crate::open_cache_layer(args.files, args.incdirs, args.defines)
+    else {
+        return;
+    };
+
+    // sensitivity list + initial state dari top (post-flatten).
+    let mut processes = ProcessCounts::default();
+    for proc in &engine.design.top.processes {
+        match proc {
+            Process::Combinational { .. } => processes.combinational += 1,
+            Process::CombReactive { .. } => processes.comb_reactive += 1,
+            Process::Sequential { .. } => processes.sequential += 1,
+            Process::Initial { .. } => processes.initial += 1,
+            Process::Final { .. } => processes.final_ += 1,
+            Process::AlwaysWithDelay { .. } => processes.always_with_delay += 1,
+        }
+    }
+    let mut init_signals = 0usize;
+    for s in &engine.design.top.signals {
+        if s.init_val.to_u64() != 0 {
+            init_signals += 1;
+        }
+    }
+    let sim_payload = SimulationPayload {
+        end_time: engine.state.time,
+        events_processed: engine.sim_perf.counters.events_processed,
+        signal_count: engine.design.top.signals.len(),
+        init_signals,
+        processes,
+    };
+    if let Ok(bytes) = bincode::serialize(&sim_payload) {
+        let _ = layer.put(CacheCategory::Simulation, "last", &bytes);
+    }
+
+    // Signal index top → VCD/FST dibuka tanpa mem-parse ulang.
+    let kind_of = |k: &SignalKind| match k {
+        SignalKind::Wire => "wire",
+        SignalKind::Reg => "reg",
+        SignalKind::Logic => "logic",
+        SignalKind::Input => "input",
+        SignalKind::Output => "output",
+        SignalKind::Inout => "inout",
+    };
+    let net_of = |n: NetType| match n {
+        NetType::Wire => "wire",
+        NetType::Wand => "wand",
+        NetType::Wor => "wor",
+        NetType::Tri => "tri",
+        NetType::Tri0 => "tri0",
+        NetType::Tri1 => "tri1",
+        NetType::TriAnd => "triand",
+        NetType::TriOr => "trior",
+        NetType::Supply0 => "supply0",
+        NetType::Supply1 => "supply1",
+    };
+    let wave = WaveformPayload {
+        signals: engine
+            .design
+            .top
+            .signals
+            .iter()
+            .map(|s| WaveSignal {
+                name: s.name.to_string(),
+                width: s.width,
+                kind: kind_of(&s.kind).to_string(),
+                net: net_of(s.net_type).to_string(),
+                is_signed: s.is_signed,
+            })
+            .collect(),
+    };
+    if let Ok(bytes) = bincode::serialize(&wave) {
+        let _ = layer.put(CacheCategory::Waveform, "last", &bytes);
+    }
+    let _ = layer.save();
 }

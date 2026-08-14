@@ -20,13 +20,16 @@
 //! | hierarchy/     | instance & import tiap module              | nama module  |
 //! | elaborate/     | instance, port binding, proses, net (IR)   | nama module  |
 //! | generate/      | blok if/for/case + instance hasil generate | nama module  |
+//! | optimize/      | const fold + loop unroll (elaborator)      | "last"       |
+//! | expression/    | evaluasi ekspresi + sampel hasil fold      | "last"       |
 //! | profile/       | profil build terakhir                      | "last"       |
 //!
 //! elaborate/ diisi dari IR bila tersedia (dipakai `save_elaborate_cache`
-//! setelah elaborasi); tanpa IR diisi fallback AST (instance saja). Kategori
-//! optimize/expression/simulation/waveform/coverage/lint tidak diisi otomatis
-//! — store-nya fungsional dan dapat dipopulasi oleh tool (msim/mcov/mlint/
-//! dst.) lewat [`super::CacheLayer::put`].
+//! setelah elaborasi); tanpa IR diisi fallback AST (instance saja). optimize/
+//! + expression/ diisi dari snapshot statistik elaborator (dipakai juga
+//! `save_elaborate_cache`). simulation/ + waveform/ diisi `msim` setelah run
+//! (initial state, scheduler, signal index); coverage/ diisi `mcov`/`msim
+//! --coverage`; lint/ diisi `mlint`. Semua lewat [`super::CacheLayer::put`].
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -300,6 +303,91 @@ pub struct GeneratePayload {
     pub expanded_instances: usize,
 }
 
+/// Satu temuan lint (db.md "7. verify/ → lint/").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LintFinding {
+    pub module: String,
+    pub check: String,
+    /// "W" warning / "E" error.
+    pub severity: String,
+    pub message: String,
+}
+
+/// Payload kategori lint/: hasil `mlint` per project — disimpan tool, dibaca
+/// `minspect cache` / run berikutnya tanpa menjalankan lint ulang.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LintPayload {
+    pub findings: Vec<LintFinding>,
+}
+
+/// Ringkasan coverage (db.md "19. coverage/"): line/branch/toggle/FSM —
+/// disimpan `mcov` (atau msim dengan --coverage), dibaca tanpa simulasi ulang.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CoveragePayload {
+    pub line_items: u64,
+    pub line_hits: u64,
+    pub branch_total: u64,
+    pub branch_covered: u64,
+    pub toggle_signals: u64,
+    pub toggle_transitions: u64,
+    pub fsm_signals: u64,
+    pub fsm_states: u64,
+}
+
+/// Ringkasan simulasi (db.md "17. simulation/"): initial state, scheduler
+/// (event processed, end time), sensitivity list — disimpan `msim` setelah
+/// run, dibaca tanpa simulasi ulang (mis. `minspect cache`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SimulationPayload {
+    /// End time simulasi (timewheel terakhir).
+    pub end_time: u64,
+    /// Jumlah event yang diproses scheduler.
+    pub events_processed: u64,
+    /// Jumlah signal di top (post-flatten).
+    pub signal_count: usize,
+    /// Jumlah signal dengan initial state non-zero (bukan default x/z).
+    pub init_signals: usize,
+    /// Jumlah proses per tipe (sensitivity list).
+    pub processes: ProcessCounts,
+}
+
+/// Satu signal dalam index waveform (db.md "18. waveform/").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WaveSignal {
+    pub name: String,
+    pub width: usize,
+    pub kind: String,
+    pub net: String,
+    pub is_signed: bool,
+}
+
+/// Payload kategori waveform/ per module (db.md "18. waveform/"): signal
+/// index + metadata (lebar, tipe, net) — agar VCD/FST lebih cepat dibuka
+/// tanpa mem-parse ulang file waveform.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WaveformPayload {
+    pub signals: Vec<WaveSignal>,
+}
+
+/// Payload kategori optimize/ (db.md "6. optimize/"): ringkasan optimasi
+/// elaborator — constant folding, loop unroll, statement hasil unroll.
+/// Disimpan setelah elaborasi (jalur `--fast`), dibaca tool tanpa compile.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct OptimizePayload {
+    pub const_folds: usize,
+    pub loop_unrolls: usize,
+    pub unrolled_stmts: usize,
+}
+
+/// Payload kategori expression/ (db.md "10. expression/"): evaluasi ekspresi
+/// selama elaborasi — jumlah panggilan `elaborate_expr` + sampel
+/// (ekspresi → nilai) hasil constant folding (`4+5 → 9`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ExpressionPayload {
+    pub expr_evals: usize,
+    pub samples: Vec<(String, i64)>,
+}
+
 // ─── Input populator ───
 
 /// Data yang dibutuhkan populator. Caller (CompileSession::save_micd / jalur
@@ -334,6 +422,10 @@ pub struct CachePopulateInput<'a> {
     /// → fallback memakai `designs` (pre-expansion, instance generate belum
     /// terlihat).
     pub expanded_design: Option<&'a Design>,
+    /// Statistik optimasi elaborator (db.md "6. optimize/", "10. expression/") —
+    /// const fold, loop unroll, evaluasi ekspresi. `None` bila elaborasi belum
+    /// berjalan (jalur parse-only / save_micd sebelum elaborate).
+    pub opt_snapshot: Option<maria_elaboration::util::OptimizeSnapshot>,
 }
 
 /// Populator lapisan `cache/` dari data compile.
@@ -363,15 +455,18 @@ impl CachePopulator {
         Self::populate_modules(layer, input, &sig_of);
         Self::populate_elaborate(layer, input);
         Self::populate_generate(layer, input);
+        Self::populate_optimize(layer, input);
         Self::populate_profile(layer, input);
     }
 
-    /// Isi hanya kategori elaborate/ + generate/ (dipakai jalur yang sudah
-    /// punya IR setelah elaborasi — save_micd dipanggil sebelum elaborate agar
-    /// cache parse tetap tersimpan walau elaborasi gagal).
+    /// Isi hanya kategori elaborate/ + generate/ + optimize/ + expression/
+    /// (dipakai jalur yang sudah punya IR setelah elaborasi — save_micd
+    /// dipanggil sebelum elaborate agar cache parse tetap tersimpan walau
+    /// elaborasi gagal).
     pub fn populate_elab(layer: &mut CacheLayer, input: &CachePopulateInput) {
         Self::populate_elaborate(layer, input);
         Self::populate_generate(layer, input);
+        Self::populate_optimize(layer, input);
     }
 
     /// preprocess/: expanded source + timescale per file.
@@ -679,6 +774,30 @@ impl CachePopulator {
         }
     }
 
+    /// optimize/ + expression/: statistik optimasi elaborator (db.md
+    /// "6. optimize/", "10. expression/"). Disimpan sekali per build (`"last"`)
+    /// dari snapshot opt_stats elaborator.
+    fn populate_optimize(layer: &mut CacheLayer, input: &CachePopulateInput) {
+        let Some(snap) = &input.opt_snapshot else {
+            return;
+        };
+        let opt = OptimizePayload {
+            const_folds: snap.const_folds,
+            loop_unrolls: snap.loop_unrolls,
+            unrolled_stmts: snap.unrolled_stmts,
+        };
+        if let Ok(b) = bincode::serialize(&opt) {
+            let _ = layer.put(CacheCategory::Optimize, "last", &b);
+        }
+        let expr = ExpressionPayload {
+            expr_evals: snap.expr_evals,
+            samples: snap.expr_samples.clone(),
+        };
+        if let Ok(b) = bincode::serialize(&expr) {
+            let _ = layer.put(CacheCategory::Expression, "last", &b);
+        }
+    }
+
     /// profile/: profil build terakhir.
     fn populate_profile(layer: &mut CacheLayer, input: &CachePopulateInput) {
         if let Some(p) = &input.profile {
@@ -892,6 +1011,7 @@ mod tests {
                     dtype_name: None,
                     array_range: None,
                     extra_packed_dims: vec![],
+                    init_expr: None,
                 },
                 Port {
                     name: Symbol::intern("out"),
@@ -901,6 +1021,7 @@ mod tests {
                     dtype_name: None,
                     array_range: None,
                     extra_packed_dims: vec![],
+                    init_expr: None,
                 },
             ],
             params: vec![],
@@ -1001,6 +1122,7 @@ mod tests {
             }),
             ir_design: None,
             expanded_design: None,
+            opt_snapshot: None,
         };
         CachePopulator::populate(&mut layer, &input);
         layer.save().unwrap();
@@ -1071,6 +1193,7 @@ mod tests {
                 profile: None,
                 ir_design: None,
                 expanded_design: None,
+            opt_snapshot: None,
             };
             CachePopulator::populate(&mut layer, &input);
             layer.save().unwrap();
@@ -1234,6 +1357,7 @@ mod tests {
             profile: None,
             ir_design: Some(&ir),
             expanded_design: Some(&expanded),
+            opt_snapshot: None,
         };
         CachePopulator::populate(&mut layer, &input);
 
@@ -1276,6 +1400,7 @@ mod tests {
             profile: None,
             ir_design: Some(&ir),
             expanded_design: None,
+            opt_snapshot: None,
         };
         CachePopulator::populate(&mut layer, &input);
         layer.save().unwrap();
@@ -1306,6 +1431,57 @@ mod tests {
     }
 
     #[test]
+    fn test_lint_and_coverage_payload_roundtrip() {
+        // Payload hasil tool (mlint/mcov) — disimpan via CacheLayer::put,
+        // dibaca minspect cache. Verifikasi serialisasi bincode bundar.
+        let root = test_root("lint_cov");
+        let db = root.join("db");
+        std::fs::create_dir_all(&db).unwrap();
+        let mut layer = CacheLayer::open(&db, "pid", 0).unwrap();
+
+        let lint = LintPayload {
+            findings: vec![LintFinding {
+                module: "counter".into(),
+                check: "unused".into(),
+                severity: "W".into(),
+                message: "signal tidak dipakai".into(),
+            }],
+        };
+        let lint_b = bincode::serialize(&lint).unwrap();
+        layer.put(CacheCategory::Lint, "report", &lint_b);
+
+        let cov = CoveragePayload {
+            line_items: 3,
+            line_hits: 3,
+            branch_total: 4,
+            branch_covered: 2,
+            toggle_signals: 1,
+            toggle_transitions: 2,
+            fsm_signals: 0,
+            fsm_states: 0,
+        };
+        let cov_b = bincode::serialize(&cov).unwrap();
+        layer.put(CacheCategory::Coverage, "last", &cov_b);
+        layer.save().unwrap();
+
+        // Baca ulang (lapisan baru) — data bertahan lintas open.
+        let mut layer2 = CacheLayer::open(&db, "pid", 0).unwrap();
+        let got_lint: LintPayload = bincode::deserialize(
+            &layer2.get(CacheCategory::Lint, "report").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(got_lint.findings.len(), 1);
+        assert_eq!(got_lint.findings[0].check, "unused");
+        let got_cov: CoveragePayload = bincode::deserialize(
+            &layer2.get(CacheCategory::Coverage, "last").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(got_cov.line_hits, 3);
+        assert_eq!(got_cov.branch_covered, 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn test_populate_elab_fallback_without_ir() {
         // Tanpa IR (jalur parse-only): elaborate/ diisi fallback AST (instance),
         // generate/ tetap terisi dari blok generate AST.
@@ -1328,6 +1504,7 @@ mod tests {
             profile: None,
             ir_design: None,
             expanded_design: None,
+            opt_snapshot: None,
         };
         CachePopulator::populate(&mut layer, &input);
 
@@ -1339,6 +1516,118 @@ mod tests {
         let elab: ElaboratePayload =
             bincode::deserialize(&layer.get(CacheCategory::Elaborate, "genmod").unwrap()).unwrap();
         assert_eq!(elab.instance_count, 0, "fallback AST: instance di dalam blok generate tidak dihitung (belum diekspansi)");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_sim_and_waveform_payload_roundtrip() {
+        // Payload hasil msim (db.md "17. simulation/", "18. waveform/") —
+        // disimpan via CacheLayer::put, dibaca minspect cache.
+        let root = test_root("sim_wave");
+        let db = root.join("db");
+        std::fs::create_dir_all(&db).unwrap();
+        let mut layer = CacheLayer::open(&db, "pid", 0).unwrap();
+
+        let sim = SimulationPayload {
+            end_time: 101,
+            events_processed: 42,
+            signal_count: 4,
+            init_signals: 1,
+            processes: ProcessCounts {
+                combinational: 1,
+                sequential: 1,
+                initial: 1,
+                ..Default::default()
+            },
+        };
+        layer.put(
+            CacheCategory::Simulation,
+            "last",
+            &bincode::serialize(&sim).unwrap(),
+        );
+        let wave = WaveformPayload {
+            signals: vec![WaveSignal {
+                name: "count".into(),
+                width: 8,
+                kind: "output".into(),
+                net: "wire".into(),
+                is_signed: false,
+            }],
+        };
+        layer.put(
+            CacheCategory::Waveform,
+            "last",
+            &bincode::serialize(&wave).unwrap(),
+        );
+        layer.save().unwrap();
+
+        let mut layer2 = CacheLayer::open(&db, "pid", 0).unwrap();
+        let got_sim: SimulationPayload = bincode::deserialize(
+            &layer2.get(CacheCategory::Simulation, "last").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(got_sim.end_time, 101);
+        assert_eq!(got_sim.processes.sequential, 1);
+        assert_eq!(got_sim.init_signals, 1);
+        let got_wave: WaveformPayload = bincode::deserialize(
+            &layer2.get(CacheCategory::Waveform, "last").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(got_wave.signals.len(), 1);
+        assert_eq!(got_wave.signals[0].name, "count");
+        assert_eq!(got_wave.signals[0].width, 8);
+        assert_eq!(got_wave.signals[0].kind, "output");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_populate_optimize_and_expression_from_snapshot() {
+        // Statistik optimasi elaborator (db.md "6. optimize/", "10. expression/")
+        // di-populate dari OptimizeSnapshot (Cell counters → snapshot) dan
+        // dibaca ulang dari cache.
+        let root = test_root("opt_expr");
+        let db = root.join("db");
+        std::fs::create_dir_all(&db).unwrap();
+        let mut layer = CacheLayer::open(&db, "pid", 0).unwrap();
+        let path = PathBuf::from("m.sv");
+        let design = sample_design();
+        let input = CachePopulateInput {
+            designs: vec![(&path, &design)],
+            combined: &HashMap::new(),
+            defines: &[],
+            include_deps: &HashMap::new(),
+            lexer_payloads: vec![],
+            symbols: vec![],
+            type_entries: vec![],
+            verify: vec![],
+            module_file: HashMap::new(),
+            profile: None,
+            ir_design: None,
+            expanded_design: None,
+            opt_snapshot: Some(maria_elaboration::util::OptimizeSnapshot {
+                const_folds: 5,
+                loop_unrolls: 2,
+                unrolled_stmts: 16,
+                expr_evals: 42,
+                expr_samples: vec![("WIDTH*8".to_string(), 256)],
+            }),
+        };
+        CachePopulator::populate(&mut layer, &input);
+        layer.save().unwrap();
+
+        let opt: OptimizePayload = bincode::deserialize(
+            &layer.get(CacheCategory::Optimize, "last").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(opt.const_folds, 5);
+        assert_eq!(opt.loop_unrolls, 2);
+        assert_eq!(opt.unrolled_stmts, 16);
+        let expr: ExpressionPayload = bincode::deserialize(
+            &layer.get(CacheCategory::Expression, "last").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(expr.expr_evals, 42);
+        assert_eq!(expr.samples, vec![("WIDTH*8".to_string(), 256)]);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

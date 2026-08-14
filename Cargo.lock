@@ -1921,6 +1921,7 @@ dependencies = [
  "maria-sir",
  "maria-synth",
  "maria-tech",
+ "maria-timing",
  "maria-tools",
  "memmap2",
  "mimalloc",
@@ -2068,6 +2069,7 @@ version = "0.3.0"
 dependencies = [
  "maria-ast",
  "maria-core",
+ "serde",
 ]
 
 [[package]]
@@ -2152,6 +2154,15 @@ dependencies = [
  "maria-sir",
  "maria-synth",
  "maria-tech",
+ "maria-timing",
+]
+
+[[package]]
+name = "maria-timing"
+version = "0.1.0"
+dependencies = [
+ "maria-core",
+ "maria-netlist",
 ]
 
 [[package]]
@@ -2171,6 +2182,7 @@ dependencies = [
  "maria-sir",
  "maria-synth",
  "maria-tech",
+ "maria-timing",
  "serde_json",
 ]
 

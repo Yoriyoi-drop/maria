@@ -1,11 +1,16 @@
-//! uvm_event + uvm_barrier — sinkronisasi antar komponen UVM (F21).
+//! Primitif sinkronisasi antar komponen UVM — event, barrier, mailbox,
+//! semaphore, dan process handle (F21/LANG-24).
 //! `uvm_event`: trigger()/wait_trigger()/triggered()/reset()/is_on()/wait_on().
 //! `uvm_barrier`: new(name, threshold)/wait_for()/wait_for_count(n)/reset().
+//! `mailbox`: new(bound)/put/get/try_put/try_get/num/size + blocking wait
+//!            (uvm_try_mailbox_wait / uvm_mailbox_release_waiters).
+//! `semaphore`: new(n)/get/put/try_get.
+//! `process`: status/kill/await/self/suspend/resume.
 //! Blocking `wait_*` TIDAK di-handle di sini (method hanya side-effect-free
 //! query) — block.rs mendeteksi MethodCall wait_* dan memanggil
 //! `uvm_try_wait` (suspend + daftarkan waiter) / `uvm_release_waiters`
 //! (resume semua waiter saat trigger()/barrier penuh).
-//! 1 file = 1 tanggung jawab: hanya sinkronisasi event & barrier.
+//! 1 file = 1 tanggung jawab: hanya sinkronisasi & primitif konkurensi.
 
 use super::super::SimulationEngine;
 use maria_core::diagnostics::DiagCode;
@@ -299,5 +304,338 @@ impl SimulationEngine {
             );
         }
         Ok(())
+    }
+
+    // ─── mailbox (LANG-24) ───────────────────────────────────────────────
+
+    pub(crate) fn execute_mailbox_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
+        match method {
+            "new" => {
+                // LANG-24: `new(bound)` — simpan batas kapasitas (bounded mode).
+                if let Some(bound) = args.first() {
+                    let b = bound.to_u64() as usize;
+                    if b > 0 {
+                        self.mailbox_bounds.insert(obj_id, b);
+                    }
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "put" => {
+                if args.is_empty() {
+                    return Err(self.diag_error(DiagCode::DpiError, "mailbox::put expects 1 argument"));
+                }
+                let bound = self.mailbox_bounds.get(&obj_id).copied().unwrap_or(0);
+                let len = self.mailbox_queues.get(&obj_id).map(|q| q.len()).unwrap_or(0);
+                if bound > 0 && len >= bound {
+                    // Bounded + penuh di konteks ekspresi (non-blocking): warning,
+                    // item dibuang (semantics try_put). Jalur statement blocking
+                    // (block.rs) men-suspend putter — lihat uvm_try_mailbox_wait.
+                    self.emit_warning(
+                        DiagCode::NullHandle,
+                        format!(
+                            "mailbox #({}) full; non-blocking put dropped item (obj_id={})",
+                            bound, obj_id
+                        ),
+                    );
+                    return Ok(LogicVec::from_u64(0, 1));
+                }
+                self.mailbox_queues
+                    .entry(obj_id)
+                    .or_default()
+                    .push_back(args[0].clone());
+                self.uvm_mailbox_release_waiters(obj_id, false)?;
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "get" => {
+                let err = SimError::with_diag(DiagCode::NullHandle, "mailbox not initialized");
+                let q = self
+                    .mailbox_queues
+                    .get_mut(&obj_id)
+                    .ok_or_else(|| err.clone())?;
+                if q.is_empty() {
+                    return Ok(LogicVec::default());
+                }
+                let v = q.remove(0).unwrap_or(LogicVec::new(1));
+                self.uvm_mailbox_release_waiters(obj_id, true)?;
+                Ok(v)
+            }
+            "try_get" => {
+                let err = SimError::with_diag(DiagCode::NullHandle, "mailbox not initialized");
+                let q = self
+                    .mailbox_queues
+                    .get_mut(&obj_id)
+                    .ok_or_else(|| err.clone())?;
+                if q.is_empty() {
+                    return Ok(LogicVec::from_u64(0, 1));
+                }
+                let _ = q.remove(0);
+                self.uvm_mailbox_release_waiters(obj_id, true)?;
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "try_put" => {
+                if args.is_empty() {
+                    return Err(self.diag_error(DiagCode::DpiError, "mailbox::try_put expects 1 argument"));
+                }
+                let bound = self.mailbox_bounds.get(&obj_id).copied().unwrap_or(0);
+                let len = self.mailbox_queues.get(&obj_id).map(|q| q.len()).unwrap_or(0);
+                if bound > 0 && len >= bound {
+                    return Ok(LogicVec::from_u64(0, 1));
+                }
+                self.mailbox_queues
+                    .entry(obj_id)
+                    .or_default()
+                    .push_back(args[0].clone());
+                self.uvm_mailbox_release_waiters(obj_id, false)?;
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "num" => {
+                let err = SimError::with_diag(DiagCode::NullHandle, "mailbox not initialized");
+                let q = self
+                    .mailbox_queues
+                    .get(&obj_id)
+                    .ok_or_else(|| err.clone())?;
+                Ok(LogicVec::from_u64(q.len() as u64, 32))
+            }
+            "size" => {
+                let err = SimError::with_diag(DiagCode::NullHandle, "mailbox not initialized");
+                let q = self
+                    .mailbox_queues
+                    .get(&obj_id)
+                    .ok_or_else(|| err.clone())?;
+                Ok(LogicVec::from_u64(q.len() as u64, 32))
+            }
+            _ => Err(self.diag_error(DiagCode::NotImplemented, format!(
+                "unknown mailbox method: {}",
+                method
+            ))),
+        }
+    }
+
+    /// Blocking wait mailbox (dipanggil block.rs `Stmt::Expr`):
+    /// - "get": kosong → daftar waiter, suspend (Ok(true)); ada → Ok(false).
+    /// - "put": bounded + penuh → daftar waiter, suspend; ada ruang → Ok(false).
+    /// Return Ok(true) = harus suspend. (LANG-24)
+    pub(crate) fn uvm_try_mailbox_wait(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        continuation: Vec<maria_ast::Stmt>,
+        fork_id: Option<usize>,
+        this: Option<ObjId>,
+        method_opt: Option<Symbol>,
+    ) -> Result<bool, SimError> {
+        match method {
+            "get" => {
+                let empty = self
+                    .mailbox_queues
+                    .get(&obj_id)
+                    .map(|q| q.is_empty())
+                    .unwrap_or(true);
+                if !empty {
+                    return Ok(false);
+                }
+            }
+            "put" => {
+                let bound = self.mailbox_bounds.get(&obj_id).copied().unwrap_or(0);
+                if bound == 0 {
+                    // Unbounded — tidak pernah penuh.
+                    return Ok(false);
+                }
+                let len = self
+                    .mailbox_queues
+                    .get(&obj_id)
+                    .map(|q| q.len())
+                    .unwrap_or(0);
+                if len < bound {
+                    return Ok(false);
+                }
+            }
+            _ => return Ok(false),
+        }
+        self.uvm_sync_waiters.entry(obj_id).or_default().push(UvmSyncWaiter {
+            continuation,
+            fork_id,
+            this,
+            method: method_opt,
+            wait_label: method.to_string(),
+        });
+        Ok(true)
+    }
+
+    /// Resume waiter mailbox yang match: `getters=true` → "get";
+    /// `getters=false` → "put". Menjadwalkan ContinueAstBlock t+1. (LANG-24)
+    pub(crate) fn uvm_mailbox_release_waiters(
+        &mut self,
+        obj_id: ObjId,
+        getters: bool,
+    ) -> Result<(), SimError> {
+        let all = self.uvm_sync_waiters.remove(&obj_id).unwrap_or_default();
+        let (matched, rest): (Vec<_>, Vec<_>) = all.into_iter().partition(|w| {
+            if getters {
+                w.wait_label == "get"
+            } else {
+                w.wait_label == "put"
+            }
+        });
+        if !rest.is_empty() {
+            self.uvm_sync_waiters.insert(obj_id, rest);
+        }
+        let t = self.state.time as usize + 1;
+        self.ensure_events(t);
+        for w in matched {
+            self.push_event(
+                t,
+                RegionEvent {
+                    region: EventRegion::Active,
+                    event: EventKind::ContinueAstBlock(
+                        w.continuation,
+                        w.fork_id,
+                        w.this,
+                        w.method,
+                    ),
+                },
+            );
+        }
+        Ok(())
+    }
+
+    // ─── semaphore ───────────────────────────────────────────────────────
+
+    pub(crate) fn execute_semaphore_method(
+        &mut self,
+        obj_id: ObjId,
+        method: &str,
+        args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
+        match method {
+            "new" => {
+                let init = if !args.is_empty() {
+                    args[0].to_u64() as u32
+                } else {
+                    0
+                };
+                self.semaphore_counts.insert(obj_id, init);
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "get" => {
+                let key_count = if !args.is_empty() {
+                    args[0].to_u64() as u32
+                } else {
+                    1
+                };
+                let err = SimError::with_diag(DiagCode::NullHandle, "semaphore not initialized");
+                let c = self
+                    .semaphore_counts
+                    .get_mut(&obj_id)
+                    .ok_or_else(|| err.clone())?;
+                if *c < key_count {
+                    return Err(self.diag_error(DiagCode::MemoryOutOfBounds, "semaphore::get: insufficient keys"));
+                }
+                *c -= key_count;
+                Ok(LogicVec::from_u64(*c as u64, 32))
+            }
+            "put" => {
+                let key_count = if !args.is_empty() {
+                    args[0].to_u64() as u32
+                } else {
+                    1
+                };
+                let err = SimError::with_diag(DiagCode::NullHandle, "semaphore not initialized");
+                let c = self
+                    .semaphore_counts
+                    .get_mut(&obj_id)
+                    .ok_or_else(|| err.clone())?;
+                *c += key_count;
+                Ok(LogicVec::from_u64(*c as u64, 32))
+            }
+            "try_get" => {
+                let key_count = if !args.is_empty() {
+                    args[0].to_u64() as u32
+                } else {
+                    1
+                };
+                let c = self
+                    .semaphore_counts
+                    .get_mut(&obj_id)
+                    .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, "semaphore not initialized"))?;
+                if *c >= key_count {
+                    *c -= key_count;
+                    Ok(LogicVec::from_u64(1, 1))
+                } else {
+                    Ok(LogicVec::from_u64(0, 1))
+                }
+            }
+            _ => Err(self.diag_error(DiagCode::NotImplemented, format!(
+                "unknown semaphore method: {}",
+                method
+            ))),
+        }
+    }
+
+    // ─── process handle ──────────────────────────────────────────────────
+
+    pub(crate) fn execute_process_method(
+        &mut self,
+        _obj_id: ObjId,
+        method: &str,
+        _args: &[LogicVec],
+    ) -> Result<LogicVec, SimError> {
+        match method {
+            "status" => {
+                let status = self
+                    .process_map
+                    .get(&_obj_id)
+                    .map(|p| p.status as u64)
+                    .unwrap_or(0);
+                Ok(LogicVec::from_u64(status, 32))
+            }
+            "kill" => {
+                let conts = if let Some(pi) = self.process_map.get_mut(&_obj_id) {
+                    pi.status = ProcessStatus::Killed;
+                    std::mem::take(&mut pi.await_continuations)
+                } else {
+                    Vec::new()
+                };
+                for cont in conts {
+                    self.evaluate_block_with_delay(&cont)?;
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "await" => {
+                let status = self
+                    .process_map
+                    .get(&_obj_id)
+                    .map(|p| p.status)
+                    .unwrap_or(ProcessStatus::Finished);
+                if status == ProcessStatus::Finished || status == ProcessStatus::Killed {
+                    return Ok(LogicVec::from_u64(1, 1));
+                }
+                // Mark target as awaited — current process will yield at post-statement check
+                self.pending_await_target = Some(_obj_id);
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "self" => Ok(LogicVec::from_u64(_obj_id as u64, 64)),
+            "suspend" => {
+                if let Some(pi) = self.process_map.get_mut(&_obj_id) {
+                    pi.status = ProcessStatus::Suspended;
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "resume" => {
+                if let Some(pi) = self.process_map.get_mut(&_obj_id) {
+                    pi.status = ProcessStatus::Running;
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            _ => Err(self.diag_error(DiagCode::NotImplemented, format!(
+                "unknown process method: {}",
+                method
+            ))),
+        }
     }
 }

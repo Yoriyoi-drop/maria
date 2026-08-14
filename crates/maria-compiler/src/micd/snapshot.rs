@@ -12,15 +12,19 @@
 //! dari snapshot yang dipilih; `snapshot(...)` otomatis mengambil parent
 //! terakhir. Linear tetap mungkin (tiap snapshot ber-parent satu).
 
+use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use super::diag::FileDiags;
 use super::graph::FileGraph;
+use super::lock::acquire_write_lock;
 use super::metadata::FileMeta;
 use super::symbol::SymbolIndex;
+use super::verify::now_ns;
 use super::verify::VerifyResult;
+use super::MicdDatabase;
 
 /// Isi satu snapshot build.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -149,6 +153,132 @@ pub fn merge_base(root: &Path, a: u64, b: u64) -> Option<u64> {
         }
     }
     None
+}
+
+// ─── Operasi snapshot/rollback pada MicdDatabase ───
+//
+// 1 file = 1 tanggung jawab: manajemen snapshot (buat, prune, rollback)
+// tinggal di sini — mod.rs hanya facade pembuka database.
+
+impl MicdDatabase {
+    /// Buat snapshot build baru (mirip commit). Menyimpan state saat ini.
+    /// Parent otomatis = snapshot terakhir (linear default). Untuk membuat
+    /// DAG bercabang/merge, gunakan [`MicdDatabase::snapshot_from`].
+    pub fn snapshot(&mut self, note: String) -> io::Result<u64> {
+        let parent = last_snapshot_id(&self.snapshots);
+        let parents = if parent == 0 { Vec::new() } else { vec![parent] };
+        self.snapshot_from(parents, note)
+    }
+
+    /// Buat snapshot dengan parent eksplisit (DAG, Kritik 13 db.md).
+    /// `parents = []` → snapshot akar; `parents = [a]` → turunan a (linear);
+    /// `parents = [a, b]` → merge (dua cabang digabung, mirip Git).
+    /// Semua parent harus sudah ada; id otomatis = max(id)+1.
+    pub fn snapshot_from(&mut self, parents: Vec<u64>, note: String) -> io::Result<u64> {
+        for p in &parents {
+            if !self.snapshots.contains(p) {
+                return Err(io::Error::other(format!(
+                    "MICD snapshot: parent {} belum ada",
+                    p
+                )));
+            }
+        }
+        let _lock = acquire_write_lock(
+            &self.lock_path(),
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_millis(10),
+            std::time::Duration::from_secs(30),
+        )
+        .map_err(|e| io::Error::other(e.to_string()))?;
+        let id = last_snapshot_id(&self.snapshots) + 1;
+        let snap = Snapshot {
+            id,
+            created_ns: now_ns(),
+            parents,
+            files: self.files.values().cloned().collect(),
+            graph: self.graph.clone(),
+            verify: self.verify.iter().map(|(k, v)| (*k, v.clone())).collect(),
+            symbols: self.symbols.clone(),
+            diags: self.diags.values().cloned().collect(),
+            flags_hash: self.flags_hash,
+            note,
+        };
+        let path = snapshot_path(&self.state_dir(), id);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let bytes = bincode::serialize(&snap).map_err(io::Error::other)?;
+        std::fs::write(&path, bytes)?;
+        self.snapshots.push(id);
+        // Pertahankan maksimal 16 snapshot. Buang yang TIDAK menjadi parent
+        // snapshot lain (leaf tertua) — bukan asal buang terdepan, agar DAG
+        // tidak kehilangan merge-base.
+        self.prune_snapshots(16);
+        Ok(id)
+    }
+
+    /// Buang snapshot berlebih (maks `keep`) tanpa merusak DAG.
+    /// Selalu buang yang TERTUA (id terkecil) agar snapshot terbaru tetap
+    /// ada (build terakhir yang paling berguna untuk rollback). Untuk menjaga
+    /// DAG tetap utuh, parent yang dibuang di-rewrite dari keturunannya
+    /// (squash) sehingga tidak ada referensi menggantung.
+    fn prune_snapshots(&mut self, keep: usize) {
+        while self.snapshots.len() > keep {
+            let oldest = *self.snapshots.first().unwrap();
+            // Squash: hapus `oldest` dari daftar parent semua snapshot lain.
+            for id in &self.snapshots {
+                if *id == oldest {
+                    continue;
+                }
+                if let Some(mut s) = read_snapshot(&self.state_dir(), *id) {
+                    if s.parents.contains(&oldest) {
+                        s.parents.retain(|p| *p != oldest);
+                        let path = snapshot_path(&self.state_dir(), *id);
+                        if let Some(parent) = path.parent() {
+                            std::fs::create_dir_all(parent).ok();
+                        }
+                        let _ = std::fs::write(
+                            path,
+                            bincode::serialize(&s).unwrap_or_default(),
+                        );
+                    }
+                }
+            }
+            let _ = std::fs::remove_file(snapshot_path(&self.state_dir(), oldest));
+            self.snapshots.retain(|x| *x != oldest);
+        }
+    }
+
+    /// Rollback ke snapshot `id`: restore metadata + graph + verify + symbols.
+    /// AST cache dibiarkan (objek yang tidak cocok diabaikan otomatis).
+    pub fn rollback(&mut self, id: u64) -> io::Result<()> {
+        let _lock = acquire_write_lock(
+            &self.lock_path(),
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_millis(10),
+            std::time::Duration::from_secs(30),
+        )
+        .map_err(|e| io::Error::other(e.to_string()))?;
+        let path = snapshot_path(&self.state_dir(), id);
+        let bytes = std::fs::read(&path)?;
+        let snap: Snapshot = bincode::deserialize(&bytes).map_err(io::Error::other)?;
+        self.files = snap
+            .files
+            .into_iter()
+            .map(|m| (m.path.clone(), m))
+            .collect();
+        self.graph = snap.graph;
+        self.verify = snap.verify.into_iter().collect();
+        self.symbols = snap.symbols;
+        self.diags = snap
+            .diags
+            .into_iter()
+            .map(|d| (d.path.clone(), d))
+            .collect();
+        self.flags_hash = snap.flags_hash;
+        self.dirty = true;
+        Ok(())
+    }
 }
 
 // ─── Tests ───

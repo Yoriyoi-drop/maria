@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use maria_ast::types::{GenerateItem, Module, ModuleItem, PortDirection, TypedefDecl};
 use maria_compiler::frontend::compile_session::CompileSession;
 use maria_compiler::frontend::module_index::EntryKind;
+use maria_compiler::micd::cache::CacheCategory;
 use maria_core::intern::Symbol;
 use crate::{open_project, section, kv};
 
@@ -60,7 +61,7 @@ pub fn run(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
 /// laporan menunjuk lapisan cache project yang sedang dikerjakan.
 fn cache_stats(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
     let files = crate::collect_targets(args.targets)?;
-    let (layer, pid) = crate::open_cache_layer(args.targets, args.incdirs, args.defines)?;
+    let (mut layer, pid) = crate::open_cache_layer(args.targets, args.incdirs, args.defines)?;
 
     section("Pipeline Cache");
     kv("root", maria_compiler::micd::MicdDatabase::default_root().display());
@@ -83,6 +84,127 @@ fn cache_stats(args: &InspectArgs) -> Result<(), maria_core::error::SimError> {
             cs.misses,
             cs.hit_rate_pct(),
         );
+    }
+
+    // Detail payload kategori hasil tool (lint/, coverage/) — dibaca tanpa
+    // menjalankan tool ulang (db.md "19. coverage/", "7. verify/ → lint/").
+    if layer.contains(CacheCategory::Lint, "report") {
+        if let Some(bytes) = layer.get(CacheCategory::Lint, "report") {
+            if let Ok(p) = bincode::deserialize::<maria_compiler::micd::cache::pipeline::LintPayload>(&bytes)
+            {
+                let w = p.findings.iter().filter(|f| f.severity == "W").count();
+                let e = p.findings.iter().filter(|f| f.severity == "E").count();
+                section("Lint (dari cache)");
+                kv("findings", p.findings.len());
+                kv("warning", w);
+                kv("error", e);
+                for f in p.findings.iter().take(8) {
+                    println!(
+                        "    [{}] {:<10} {:<12} {}",
+                        f.severity, f.check, f.module, f.message
+                    );
+                }
+                if p.findings.len() > 8 {
+                    println!("    … {} temuan lainnya", p.findings.len() - 8);
+                }
+            }
+        }
+    }
+    if layer.contains(CacheCategory::Coverage, "last") {
+        if let Some(bytes) = layer.get(CacheCategory::Coverage, "last") {
+            if let Ok(p) =
+                bincode::deserialize::<maria_compiler::micd::cache::pipeline::CoveragePayload>(&bytes)
+            {
+                let line_pct = if p.line_items > 0 {
+                    p.line_hits as f64 / p.line_items as f64 * 100.0
+                } else {
+                    0.0
+                };
+                let branch_pct = if p.branch_total > 0 {
+                    p.branch_covered as f64 / p.branch_total as f64 * 100.0
+                } else {
+                    0.0
+                };
+                section("Coverage (dari cache)");
+                kv("line", format!("{}/{} ({:.1}%)", p.line_hits, p.line_items, line_pct));
+                kv("branch", format!("{}/{} ({:.1}%)", p.branch_covered, p.branch_total, branch_pct));
+                kv("toggle", format!("{} signals, {} transitions", p.toggle_signals, p.toggle_transitions));
+                kv("fsm", format!("{} signals, {} states", p.fsm_signals, p.fsm_states));
+            }
+        }
+    }
+    if layer.contains(CacheCategory::Simulation, "last") {
+        if let Some(bytes) = layer.get(CacheCategory::Simulation, "last") {
+            if let Ok(p) =
+                bincode::deserialize::<maria_compiler::micd::cache::pipeline::SimulationPayload>(
+                    &bytes,
+                )
+            {
+                section("Simulation (dari cache)");
+                kv("end time", format!("#{}", p.end_time));
+                kv("events processed", p.events_processed);
+                kv("signals", format!("{} ({} init non-zero)", p.signal_count, p.init_signals));
+                kv(
+                    "sensitivity",
+                    format!(
+                        "{} comb, {} seq, {} initial, {} final, {} delay",
+                        p.processes.combinational,
+                        p.processes.sequential,
+                        p.processes.initial,
+                        p.processes.final_,
+                        p.processes.always_with_delay
+                    ),
+                );
+            }
+        }
+    }
+    if layer.contains(CacheCategory::Waveform, "last") {
+        if let Some(bytes) = layer.get(CacheCategory::Waveform, "last") {
+            if let Ok(p) =
+                bincode::deserialize::<maria_compiler::micd::cache::pipeline::WaveformPayload>(&bytes)
+            {
+                section("Waveform (dari cache)");
+                kv("signals", p.signals.len());
+                for s in p.signals.iter().take(8) {
+                    println!(
+                        "    {:<24} {} bit  {:<6} net={} {}",
+                        s.name,
+                        s.width,
+                        s.kind,
+                        s.net,
+                        if s.is_signed { "signed" } else { "" }
+                    );
+                }
+                if p.signals.len() > 8 {
+                    println!("    … {} signal lainnya", p.signals.len() - 8);
+                }
+            }
+        }
+    }
+    if layer.contains(CacheCategory::Optimize, "last") {
+        if let Some(bytes) = layer.get(CacheCategory::Optimize, "last") {
+            if let Ok(p) =
+                bincode::deserialize::<maria_compiler::micd::cache::pipeline::OptimizePayload>(&bytes)
+            {
+                section("Optimize (dari cache)");
+                kv("constant folds", p.const_folds);
+                kv("loop unrolls", p.loop_unrolls);
+                kv("unrolled stmts", p.unrolled_stmts);
+            }
+        }
+    }
+    if layer.contains(CacheCategory::Expression, "last") {
+        if let Some(bytes) = layer.get(CacheCategory::Expression, "last") {
+            if let Ok(p) =
+                bincode::deserialize::<maria_compiler::micd::cache::pipeline::ExpressionPayload>(&bytes)
+            {
+                section("Expression (dari cache)");
+                kv("expr evals", p.expr_evals);
+                for (e, v) in p.samples.iter().take(8) {
+                    println!("    {} → {}", e, v);
+                }
+            }
+        }
     }
 
     section("Cache Summary");

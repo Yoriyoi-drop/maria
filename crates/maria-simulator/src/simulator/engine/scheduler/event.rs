@@ -106,6 +106,21 @@ impl SimulationEngine {
             }
             EventKind::ContinueBlock(cont) => {
                 self.ensure_events(t);
+                // LANG-30: branch fork yang di-disable via `disable fork` —
+                // skip eksekusi body, langsung decrement (branch mati).
+                if let Some(fid) = cont.fork_id {
+                    if fid < self.fork_groups.len() && self.fork_groups[fid].disabled {
+                        self.fork_decrement(fid)?;
+                        return Ok(());
+                    }
+                }
+                // LANG-29: restore nama proses saat suspend — ContinueBlock
+                // diproses di luar EvalProcess sehingga current_process_name
+                // bisa menunjuk proses lain; `wait fork` (dan fitur berbasis
+                // nama proses lain) butuh konteks yang benar setelah resume.
+                if let Some(pn) = &cont.process_name {
+                    self.current_process_name = Some(pn.clone());
+                }
                 let all_consumed =
                     self.evaluate_block_with_delay_fork(&cont.stmts_to_exec, cont.fork_id)?;
                 // Detect natural process completion: when a continuation runs to completion (all_consumed)
@@ -130,6 +145,13 @@ impl SimulationEngine {
                 }
             }
             EventKind::ContinueAstBlock(stmts, fork_id, this_opt, method_opt) => {
+                // LANG-30: branch AST fork yang di-disable — skip eksekusi.
+                if let Some(fid) = fork_id {
+                    if fid < self.fork_groups.len() && self.fork_groups[fid].disabled {
+                        self.fork_decrement(fid)?;
+                        return Ok(());
+                    }
+                }
                 // F18: kontinuasi task/method UVM setelah delay — restore konteks
                 // `this` + method yang disimpan saat suspend (sama seperti pola
                 // PendingAstEventControl). Tanpa ini, body task yang dijalankan
@@ -537,12 +559,12 @@ impl SimulationEngine {
                 }
                 Process::Sequential {
                     clock,
-                    reset: _reset,
+                    reset,
                     body,
                     iff,
                     ..
                 } => {
-                    let trigger = match clock {
+                    let clock_trigger = match clock {
                         // F27: *Hier = clock lewat port interface (`posedge
                         // b.clk`) — resolve Symbol path via hier_signal_map.
                         ClockEdge::PosEdge(_) | ClockEdge::PosEdgeHier(_) => {
@@ -564,8 +586,10 @@ impl SimulationEngine {
                     };
                     // LANG-27: guard `iff (cond)` — proses hanya dijalankan bila
                     // kondisi benar saat edge clock terjadi. Kondisi dievaluasi
-                    // di nilai sesudah edge (delta ini).
-                    let trigger = trigger
+                    // di nilai sesudah edge (delta ini). Guard HANYA untuk
+                    // edge clock — reset async harus tetap memicu walau iff
+                    // false (kalau tidak, reset terlewat → FF stuck X).
+                    let trigger = clock_trigger
                         && match iff {
                             Some(cond) => {
                                 match self.evaluate_expr(cond) {
@@ -575,6 +599,34 @@ impl SimulationEngine {
                             }
                             None => true,
                         };
+                    // F40 fix: async reset edge (negedge rst_n / posedge rst)
+                    // memicu proses LANGSUNG — dulu reset diabaikan di sini
+                    // (`reset: _reset`) sehingga `always_ff @(posedge clk or
+                    // negedge rst_n)` tidak pernah fire saat reset, dan FF
+                    // tanpa init tetap X/z selamanya. Body always_ff berisi
+                    // branch `if (!rst_n)` yang mengeksekusi reset value.
+                    let trigger = trigger
+                        || reset
+                            .as_ref()
+                            .filter(|r| r.r#async)
+                            .map(|r| {
+                                let sid = r.signal;
+                                // polarity: true = aktif-high (posedge),
+                                // false = aktif-low (negedge) — diisi
+                                // elaborator dari event sensitivity.
+                                let active_high = r.polarity;
+                                changed.iter().any(|(id, old, new)| {
+                                    *id == sid
+                                        && if active_high {
+                                            old.to_bool() != Some(true)
+                                                && new.to_bool() == Some(true)
+                                        } else {
+                                            old.to_bool() != Some(false)
+                                                && new.to_bool() == Some(false)
+                                        }
+                                })
+                            })
+                            .unwrap_or(false);
                     if trigger {
                         // ── Cycle-Based Fusion: jika process ini termasuk fused domain,
                         // evaluasi SEMUA process dalam domain sekaligus (sequential + follower comb).

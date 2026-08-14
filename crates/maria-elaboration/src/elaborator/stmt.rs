@@ -964,6 +964,7 @@ impl Elaborator {
                     body,
                 })
             }
+            Stmt::WaitFork => Ok(IrStmt::WaitFork),
             Stmt::LoopFor {
                 init,
                 cond,
@@ -994,6 +995,9 @@ impl Elaborator {
                     }
                 }
                 if let Ok(Some(unrolled)) = unroll_result {
+                    // Statistik cache pipeline (db.md "6. optimize/"): loop
+                    // for yang berhasil di-unroll + jumlah statement hasilnya.
+                    self.opt_stats.record_loop_unroll(unrolled.len());
                     return Ok(IrStmt::Block { stmts: unrolled });
                 }
                 // Fallback: generate runtime LoopFor. Loop var (`for (int j = 0 ...)`)
@@ -1981,12 +1985,12 @@ impl Elaborator {
                 // Try struct/union field write
                 let hier_name = Self::build_hier_name(obj, field.as_str());
                 if std::env::var("MARIA_DBG_HIER").is_ok() && !hier_name.is_empty() {
-                    let in_sigmap = signal_map.contains_key(hier_name.as_str());
+                    let in_sigmap = signal_map.contains_key(&Symbol::intern(&hier_name));
                     let in_signals = signals.iter().any(|s| s.name.as_str() == hier_name);
                     eprintln!("[DBG-HIER] lvalue hier_name='{}' sigmap={} signals={} obj={:?}",
                         hier_name, in_sigmap, in_signals, obj);
                 }
-                if let Some(&sig_id) = signal_map.get(hier_name.as_str()) {
+                if let Some(&sig_id) = signal_map.get(&Symbol::intern(&hier_name)) {
                     return Ok(IrLValue::Signal(sig_id, 0));
                 }
                 // F27: port interface (`bus_if b` — iface_type di-set, class_name
@@ -1996,7 +2000,7 @@ impl Elaborator {
                 if let Some((base_name, _)) =
                     Self::collect_member_chain(obj, *field, &self.param_vals)
                 {
-                    if let Some(&base_sid) = signal_map.get(base_name.as_str()) {
+                    if let Some(&base_sid) = signal_map.get(&Symbol::intern(&base_name)) {
                         let base_info = &signals[base_sid];
                         if base_info.iface_type.is_some() && base_info.class_name.is_none() {
                             if !hier_name.is_empty() {
@@ -2011,7 +2015,7 @@ impl Elaborator {
                 if let Some((base_name, chain)) =
                     Self::collect_member_chain(obj, *field, &self.param_vals)
                 {
-                    if let Some(&base_sid) = signal_map.get(base_name.as_str()) {
+                    if let Some(&base_sid) = signal_map.get(&Symbol::intern(&base_name)) {
                         let base_info = &signals[base_sid];
                         if !base_info.struct_fields.is_empty() {
                             let mut offset = 0usize;
@@ -2162,7 +2166,7 @@ impl Elaborator {
                         if !hier_name.is_empty() {
                             let base_is_signal =
                                 Self::collect_member_chain(obj, *field, &self.param_vals)
-                                    .map(|(base, _)| signal_map.contains_key(base.as_str()))
+                                    .map(|(base, _)| signal_map.contains_key(&Symbol::intern(&base)))
                                     .unwrap_or(false);
                             if !base_is_signal {
                                 return Ok(IrLValue::HierRef(Symbol::intern(&hier_name)));
@@ -2191,7 +2195,7 @@ impl Elaborator {
                         if let Some((base_name, _)) =
                             Self::collect_member_chain(obj, *field, &self.param_vals)
                         {
-                            if let Some(&base_sid) = signal_map.get(base_name.as_str()) {
+                            if let Some(&base_sid) = signal_map.get(&Symbol::intern(&base_name)) {
                                 return Ok(IrLValue::ObjectField {
                                     sig_id: base_sid,
                                     field: *field,
@@ -2386,6 +2390,7 @@ fn stmt_kind_name(s: &Stmt) -> &'static str {
         Stmt::EventControl { .. } => "event_control",
         Stmt::EventTrigger { .. } => "event_trigger",
         Stmt::Wait { .. } => "wait",
+        Stmt::WaitFork => "wait_fork",
         Stmt::LoopForever { .. } => "forever",
         Stmt::LoopFor { .. } => "for",
         Stmt::LoopWhile { .. } => "while",

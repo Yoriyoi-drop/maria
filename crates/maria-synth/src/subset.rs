@@ -227,7 +227,10 @@ impl Ctx {
     /// Periksa statement — dipanggil untuk setiap statement (via walker).
     fn stmt_issue(&mut self, st: &IrStmt, module: Symbol, err: &mut usize, warn: &mut usize) {
         match st {
-            IrStmt::Delay { .. } | IrStmt::Wait { .. } | IrStmt::EventControl { .. } => {
+            IrStmt::Delay { .. }
+            | IrStmt::Wait { .. }
+            | IrStmt::WaitFork
+            | IrStmt::EventControl { .. } => {
                 self.push(
                     module,
                     "SYN-2",
@@ -378,6 +381,7 @@ fn stmt_kind_name(st: &IrStmt) -> &'static str {
         IrStmt::Assume { .. } => "assume",
         IrStmt::Cover { .. } => "cover",
         IrStmt::WaitOrder { .. } => "wait_order",
+        IrStmt::WaitFork => "wait_fork",
         IrStmt::RandCase { .. } => "randcase",
         IrStmt::RandSequence { .. } => "randsequence",
     }
@@ -451,6 +455,7 @@ where
             | IrStmt::Delay { body, .. }
             | IrStmt::Wait { body, .. }
             | IrStmt::EventControl { body, .. } => walk_stmts(body, f),
+            IrStmt::WaitFork => {}
             IrStmt::Fork { processes, .. } => {
                 for p in processes {
                     walk_stmts(p, f);

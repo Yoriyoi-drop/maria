@@ -70,7 +70,15 @@ pub enum ClassMember {
     Constraint {
         name: Symbol,
         body: Vec<ConstraintItem>,
+        /// LANG-32: `static constraint` — block dibagi antar SEMUA instance
+        /// class; constraint_mode()-nya berlaku global per-class, bukan
+        /// per-instance (IEEE 1800-2017 §18.5.10). serde(default) agar AST
+        /// cache MICD lama (tanpa field ini) tetap bisa di-restore.
+        #[serde(default)]
+        is_static: bool,
     },
+    /// LANG-40: `let` di dalam class (IEEE 1800-2017 §11.12.2).
+    Let(LetDecl),
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -94,6 +102,11 @@ pub enum ConstraintItem {
         then: Vec<ConstraintItem>,
         els: Vec<ConstraintItem>,
     },
+    /// LANG-31: `soft expr;` — constraint soft (best-effort). Solver
+    /// mengevaluasinya, tetapi pelanggaran TIDAK membuat randomize gagal:
+    /// soft constraint boleh dilanggar bila bertentangan dengan hard
+    /// constraint (IEEE 1800-2017 §18.5.14).
+    Soft(Expr),
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -139,6 +152,10 @@ pub struct Port {
     /// Dimensi packed tambahan sebelum nama port: `[a:b][c:d] name`.
     /// Dimensi pertama di `range`/`expr_range`, sisanya di sini.
     pub extra_packed_dims: Vec<ExprRange>,
+    /// Initializer port ANSI: `output reg [7:0] b = 8'h2A;` — SV legal.
+    /// Elaborator menerjemahkannya ke `Process::Initial` (seperti initializer
+    /// deklarasi `reg b = 8'h2A;`). None = port tanpa default value.
+    pub init_expr: Option<Expr>,
 }
 
 impl Port {
@@ -593,6 +610,20 @@ pub enum ModuleItem {
         modport: Option<Symbol>,
         vif_name: Symbol,
     },
+    /// LANG-40: `let name = expr;` / `let name(a, b) = expr;` — deklarasi
+    /// let (IEEE 1800-2017 §11.12.2): alias ekspresi scoped. Parameter
+    /// kosong = konstanta ekspresi; parameter di-substitusi saat pemakaian.
+    Let(LetDecl),
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct LetDecl {
+    pub name: Symbol,
+    /// Parameter formal let (bisa kosong).
+    pub params: Vec<Symbol>,
+    /// Ekspresi body — dievaluasi saat pemakaian `name(args)` dengan
+    /// parameter disubstitusi oleh argumen.
+    pub expr: Expr,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

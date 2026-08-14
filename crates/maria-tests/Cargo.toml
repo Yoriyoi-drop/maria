@@ -17,11 +17,12 @@ maria-env = { path = "../maria-env" }
 maria-mv = { path = "../maria-mv" }
 
 [dev-dependencies]
-# Phase 4 tech mapping e2e: netlist hasil mapping disimulasikan engine Maria.
+# Phase 4/5 e2e: tech mapping (sim netlist = sim RTL) + timing/area STA.
 maria-sir = { path = "../maria-sir" }
 maria-synth = { path = "../maria-synth" }
 maria-netlist = { path = "../maria-netlist" }
 maria-tech = { path = "../maria-tech" }
+maria-timing = { path = "../maria-timing" }
 
 [features]
 default = ["jit", "dpi"]

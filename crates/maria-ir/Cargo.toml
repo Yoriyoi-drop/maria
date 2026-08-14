@@ -7,3 +7,4 @@ description = "Maria IR: IrDesign, IrStmt, IrExpr, LogicVec — intermediate rep
 [dependencies]
 maria-core = { path = "../maria-core" }
 maria-ast = { path = "../maria-ast" }
+serde = { version = "1", features = ["derive", "rc"] }

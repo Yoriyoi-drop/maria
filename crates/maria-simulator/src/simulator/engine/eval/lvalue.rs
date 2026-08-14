@@ -491,7 +491,7 @@ impl SimulationEngine {
 
     pub(crate) fn get_local(&self, name: &str) -> Option<LogicVec> {
         for scope in self.method_locals.iter().rev() {
-            if let Some(v) = scope.get::<str>(name) {
+            if let Some(v) = scope.get(&Symbol::intern(name)) {
                 return Some(v.clone());
             }
         }
@@ -548,7 +548,7 @@ impl SimulationEngine {
                 if hier.is_empty() {
                     None
                 } else {
-                    self.design.hier_signal_map.get::<str>(hier.as_str()).copied()
+                    self.design.hier_signal_map.get(&Symbol::intern(&hier)).copied()
                 }
             }
             _ => None,

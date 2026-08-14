@@ -1,4 +1,5 @@
 use maria_api::compile_str;
+use maria_core::intern::Symbol;
 fn main() {
     let source = r#"
 class counter;
@@ -33,7 +34,7 @@ endmodule
                     s.name, s.width, s.class_name, s.array_depth
                 );
             }
-            if let Some(cls) = design.classes.get("counter") {
+            if let Some(cls) = design.classes.get(&Symbol::intern("counter")) {
                 println!(
                     "Class 'counter': {} fields, {} methods",
                     cls.fields.len(),

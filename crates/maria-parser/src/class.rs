@@ -109,6 +109,28 @@ impl Parser {
                 body.push(ConstraintItem::If { cond, then, els });
                 continue;
             }
+            // `soft expr;` (LANG-31) — constraint soft (best-effort): boleh
+            // dilanggar bila bertentangan dengan hard constraint.
+            if self.peek() == &Token::Soft {
+                self.advance();
+                match self.parse_expr(0) {
+                    Ok(expr) => {
+                        self.skip_semi();
+                        body.push(ConstraintItem::Soft(expr));
+                    }
+                    Err(_) => {
+                        // Recovery: skip ke ';' atau '}'
+                        loop {
+                            match self.peek() {
+                                Token::Semi => { self.advance(); break; }
+                                Token::RBrace | Token::Eof => break,
+                                _ => { self.advance(); }
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
             // Ekspresi constraint (relasional/equality/inside/dist)
             // parse_expr might fail on complex constraint expressions;
             // if so, skip to ';' to recover
@@ -442,7 +464,29 @@ impl Parser {
                     self.expect(Token::LBrace)?;
                     let body = self.parse_constraint_items()?;
                     self.expect(Token::RBrace)?;
-                    members.push(ClassMember::Constraint { name: cname, body });
+                    members.push(ClassMember::Constraint { name: cname, body, is_static: false });
+                }
+                Token::Let => {
+                    // LANG-40: `let` di dalam class.
+                    match self.parse_let_decl() {
+                        Ok(ld) => members.push(ClassMember::Let(ld)),
+                        Err(_) => { let _ = self.skip_until_semi_or_end(); }
+                    }
+                }
+                Token::Static => {
+                    // LANG-32: `static constraint name { ... }` — block constraint
+                    // dibagi antar semua instance class (IEEE 1800-2017 §18.5.10).
+                    self.advance();
+                    if self.peek() == &Token::Constraint {
+                        self.advance();
+                        let cname = self.expect_ident()?;
+                        self.expect(Token::LBrace)?;
+                        let body = self.parse_constraint_items()?;
+                        self.expect(Token::RBrace)?;
+                        members.push(ClassMember::Constraint { name: cname, body, is_static: true });
+                    }
+                    // Bukan static constraint (static var/function/task) — token
+                    // Static sudah dikonsumsi; member diparse di iterasi berikutnya.
                 }
                 Token::Class => {
                     // Nested class — skip entire body to matching endclass

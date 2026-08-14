@@ -35,3 +35,5 @@ mod debug_lexer;
 
 #[cfg(test)]
 mod synth_phase4;
+#[cfg(test)]
+mod synth_phase5;

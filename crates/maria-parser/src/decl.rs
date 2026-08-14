@@ -742,6 +742,37 @@ impl Parser {
         }
     }
 
+    /// LANG-40: `let name[(params)] = expr;` (IEEE 1800-2017 §11.12.2).
+    /// Mengonsumsi token `let` lalu memparse nama, parameter opsional, `=`,
+    /// ekspresi body, dan semicolon.
+    pub(crate) fn parse_let_decl(&mut self) -> Result<LetDecl, SimError> {
+        self.advance(); // consume 'let'
+        let lname = self.expect_ident()?;
+        let mut params = Vec::new();
+        if self.peek() == &Token::LParen {
+            self.advance();
+            if self.peek() != &Token::RParen {
+                loop {
+                    params.push(self.expect_ident()?);
+                    if self.peek() == &Token::Comma {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            self.expect(Token::RParen)?;
+        }
+        self.expect(Token::BlockingAssign)?;
+        let lexpr = self.parse_expr(0)?;
+        self.skip_semi();
+        Ok(LetDecl {
+            name: lname,
+            params,
+            expr: lexpr,
+        })
+    }
+
     pub(crate) fn parse_typedef(&mut self) -> Result<TypedefDecl, SimError> {
         self.advance(); // consume typedef
         let (name, dtype, range, extra_packed_dims) = match self.peek() {

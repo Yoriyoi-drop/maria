@@ -14,6 +14,7 @@ members = [
     "crates/maria-formal",
     "crates/maria-sir",
     "crates/maria-netlist",
+    "crates/maria-timing",
     "crates/maria-tech",
     "crates/maria-synth",
     "crates/maria-env",
@@ -70,6 +71,7 @@ maria-compiler = { path = "crates/maria-compiler" }
 maria-simulator = { path = "crates/maria-simulator" }
 maria-mv = { path = "crates/maria-mv" }
 maria-sir = { path = "crates/maria-sir" }
+maria-timing = { path = "crates/maria-timing" }
 maria-tech = { path = "crates/maria-tech" }
 maria-synth = { path = "crates/maria-synth" }
 maria-env = { path = "crates/maria-env" }
@@ -119,3 +121,11 @@ gui = ["maria-api/gui"]
 opt-level = 3
 lto = true
 codegen-units = 1
+
+# Profil cepat untuk iterasi development — tanpa LTO agar link < 1 menit.
+# Dipakai: `cargo build --profile fast`. Hasil benchmark FINAL tetap memakai
+# `--release` (LTO) agar angka performance akurat.
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16

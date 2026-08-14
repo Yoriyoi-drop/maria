@@ -58,7 +58,7 @@ pub fn const_eval_with_params(
         Expr::Value(Value::Octal { bits, .. }) => parse_literal(bits, 8),
         Expr::String(s) => Ok(string_to_i64(s)),
         Expr::Ident { name, .. } => {
-            if let Some(&val) = param_vals.get(name.as_str()) {
+            if let Some(&val) = param_vals.get(name) {
                 Ok(val)
             } else if name == "1" {
                 Ok(1)
@@ -418,7 +418,7 @@ pub fn const_eval_with_params(
             // konstanta dengan struct localparam array.
             if let Some(bk) = expr_base_key(obj, param_vals) {
                 let key = format!("{}.{}", bk, field.as_str());
-                if let Some(&v) = param_vals.get(key.as_str()) {
+                if let Some(&v) = param_vals.get(&Symbol::intern(&key)) {
                     return Ok(v);
                 }
                 if std::env::var("DBG_MEMBER").is_ok() {
@@ -468,7 +468,7 @@ pub fn const_eval_with_params(
             if let Expr::Ident { name, .. } = expr.as_ref() {
                 let idx = const_eval_with_params(index, param_vals)?;
                 let key = format!("{}[{}]", name.as_str(), idx);
-                if let Some(&v) = param_vals.get(key.as_str()) {
+                if let Some(&v) = param_vals.get(&Symbol::intern(&key)) {
                     return Ok(v);
                 }
             }
@@ -480,7 +480,7 @@ pub fn const_eval_with_params(
                     let r = const_eval_with_params(row_idx, param_vals)?;
                     let c = const_eval_with_params(index, param_vals)?;
                     let key = format!("{}[{}][{}]", name.as_str(), r, c);
-                    if let Some(&v) = param_vals.get(key.as_str()) {
+                    if let Some(&v) = param_vals.get(&Symbol::intern(&key)) {
                         return Ok(v);
                     }
                 }

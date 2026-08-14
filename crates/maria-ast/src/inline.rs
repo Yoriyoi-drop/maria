@@ -1273,6 +1273,7 @@ fn inline_funcs_in_stmt_inner(
                 }),
             }
         }
+        Stmt::WaitFork => Stmt::WaitFork,
         Stmt::EventControl { events, stmt } => Stmt::EventControl {
             events: events.clone(),
             stmt: stmt.map(|s| {

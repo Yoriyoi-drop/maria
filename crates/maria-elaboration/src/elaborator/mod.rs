@@ -37,6 +37,108 @@ pub mod stmt;
 pub mod expr;
 use maria_ir::*;
 
+/// Kumpulkan nama modul yang di-instansiasi sebuah module item, termasuk
+/// instance di dalam blok generate (recursive: If/For/Case/Items).
+fn collect_inst_names(item: &ModuleItem, out: &mut Vec<Symbol>) {
+    match item {
+        ModuleItem::Instance(inst) => out.push(inst.module_name),
+        ModuleItem::Generate(GenerateBlock { items }) => {
+            for gi in items {
+                match gi {
+                    GenerateItem::If { true_items, false_items, .. } => {
+                        for it in true_items.iter().chain(false_items.iter()) {
+                            collect_inst_names(it, out);
+                        }
+                    }
+                    GenerateItem::For { body_items, .. } => {
+                        for it in body_items {
+                            collect_inst_names(it, out);
+                        }
+                    }
+                    GenerateItem::Case { items, default, .. } => {
+                        for ci in items {
+                            for m in &ci.body {
+                                collect_inst_names(m, out);
+                            }
+                        }
+                        if let Some(mis) = default {
+                            for m in mis {
+                                collect_inst_names(m, out);
+                            }
+                        }
+                    }
+                    GenerateItem::Items(mis) => {
+                        for m in mis {
+                            collect_inst_names(m, out);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Graf instansiasi module-level: nama module → nama module yang di-instansiasi
+/// (direct + generate). Dipakai auto top resolution (cone size) dan penentuan
+/// candidate top (module yang TIDAK di-instansiasi siapa pun).
+fn build_inst_graph(design: &Design) -> HashMap<Symbol, Vec<Symbol>> {
+    let mut graph: HashMap<Symbol, Vec<Symbol>> = HashMap::new();
+    for m in &design.modules {
+        let mut deps: Vec<Symbol> = Vec::new();
+        for item in &m.items {
+            collect_inst_names(item, &mut deps);
+        }
+        graph.insert(m.name, deps);
+    }
+    graph
+}
+
+/// Ukuran cone (BFS) sebuah module candidate: banyaknya modul yang di-reach
+/// secara transitif. SoC chip top (menginstansiasi ratusan modul) jauh lebih
+/// besar daripada testbench/bind/assertion kecil — diskriminator utama auto
+/// top resolution.
+fn module_cone_size(start: Symbol, graph: &HashMap<Symbol, Vec<Symbol>>) -> usize {
+    let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
+    let mut stack: Vec<Symbol> = vec![start];
+    while let Some(n) = stack.pop() {
+        if !seen.insert(n) {
+            continue;
+        }
+        if let Some(deps) = graph.get(&n) {
+            stack.extend(deps.iter().copied());
+        }
+    }
+    seen.len()
+}
+
+/// Skor kandidat top untuk auto resolution: ukuran cone (transitive module
+/// count) sebagai bobot DOMINAN (×20) + sinyal nama sebagai tie-breaker.
+/// Preferensi simulasi (`verilator`/`_sim`/`tb`) dan `chip`; penalti wrapper
+/// teknologi khusus (`_asic`/`_cw`/`fpga`) dan assertion bind
+/// (`_bind`/`_fpv`/`_sva`/`_assert`) yang bukan top fungsional. Bobot cone
+/// sengaja jauh di atas bonus nama — SoC chip (cone 500+) selalu menang atas
+/// testbench kecil walau tb diberi bonus nama.
+fn score_auto_top(name: Symbol, cone: usize) -> i64 {
+    let lower = name.as_str().to_ascii_lowercase();
+    let mut s = (cone as i64) * 20;
+    if lower.contains("verilator") || lower.contains("_sim") || lower.starts_with("tb") || lower.contains("_tb") {
+        s += 100;
+    }
+    if lower.contains("chip") {
+        s += 100;
+    }
+    if lower.contains("_asic") || lower.contains("_cw") || lower.contains("fpga") {
+        s -= 300;
+    }
+    if lower.contains("_bind") || lower.contains("_fpv") || lower.contains("_sva") || lower.contains("_assert")
+        || lower.contains("_sca_wrapper")
+    {
+        s -= 500;
+    }
+    s
+}
+
 const BUILTIN_UVM_CLASSES: &[&str] = &[
     "uvm_object",
     "uvm_component",
@@ -113,6 +215,11 @@ pub struct Elaborator {
     pub design: Design,
     pub modules: HashMap<Symbol, IrModule>,
     pub param_vals: HashMap<Symbol, i64>,
+    /// LANG-40: `let` declaration module saat ini (Symbol → LetDecl) — alias
+    /// ekspresi scoped (IEEE 1800-2017 §11.12.2). Di-set per-module di
+    /// elaborate_module_with_params_and_type; di-resolve elaborate_expr
+    /// (ident untuk let tanpa parameter, FuncCall untuk let berparameter).
+    pub let_decls: HashMap<Symbol, LetDecl>,
     pub typedef_map: HashMap<Symbol, usize>,
     pub typedef_field_map: HashMap<Symbol, Vec<StructFieldInfo>>,
     /// Range + packed dims typedef module/package (untuk mengisi `packed_dims`
@@ -157,6 +264,12 @@ pub struct Elaborator {
     /// dipanggil di dalam body function yang di-inline (AST inline pass).
     pub func_source_pkg: HashMap<Symbol, HashMap<Symbol, Symbol>>,    pub source_lines: Vec<String>,
     pub source_file: String,
+    /// Cache hasil `find_name_in_source` per nama (pure function dari
+    /// source_lines). Nama yang sama di-query berkali-kali (mis. pesan error
+    /// `'X' not found in parameter context` untuk parameter yang sama di
+    /// banyak module) — tanpa cache, setiap query meng-scan 1.1M baris merged
+    /// source (~1.5-2s) yang menjadi bottleneck terbesar di desain besar.
+    pub source_name_loc: std::cell::RefCell<HashMap<Symbol, (usize, usize)>>,
     pub current_module: Option<Symbol>,
     /// Set module reachable dari top (F38). Error elaborasi di module yang
     /// TIDAK ada di set ini (TB/DV terpisah, dependensi hilang) di-downgrade
@@ -182,6 +295,9 @@ pub struct Elaborator {
     /// dilakukan SEKALI per signature unik. Dibatasi (bounded) agar memori
     /// tidak membengkak pada desain dengan ribuan signature berbeda.
     pub param_ir_cache: HashMap<(Symbol, u64), IrModule>,
+    /// Statistik optimasi untuk cache pipeline (db.md "6. optimize/",
+    /// "10. expression/") — const fold, loop unroll, evaluasi ekspresi.
+    pub opt_stats: super::util::OptStats,
 }
 
 impl Elaborator {
@@ -354,6 +470,7 @@ impl Elaborator {
             design,
             modules: HashMap::new(),
             param_vals: HashMap::new(),
+            let_decls: HashMap::new(),
             typedef_map: HashMap::new(),
             typedef_dims: HashMap::new(),
             typedef_field_map: HashMap::new(),
@@ -371,6 +488,7 @@ impl Elaborator {
             func_source_pkg: HashMap::new(),
             source_lines,
             source_file,
+            source_name_loc: std::cell::RefCell::new(HashMap::new()),
             current_module: None,
             reachable: std::collections::HashSet::new(),
             recovered: false,
@@ -379,6 +497,7 @@ impl Elaborator {
             cache_hits: 0,
             cache_misses: 0,
             param_ir_cache: HashMap::new(),
+            opt_stats: super::util::OptStats::default(),
         }
     }
 
@@ -462,7 +581,7 @@ impl Elaborator {
         }
         if std::env::var("DBG_ELAB").is_ok() {
             let n_arr_elems: usize = self.pkg_const_arrays.values().map(|v| v.len()).sum();
-            eprintln!("[DBG-ELAB] global package param ctx built in {:?} ({} entries; scalars={} arrays={} array_elems={})", elab_t0.elapsed(), self.pkg_param_ctx.len(), self.pkg_const_scalars.len(), self.pkg_const_arrays.len(), n_arr_elems);
+            eprintln!("[DBG-ELAB] global package param ctx built in {}us ({} entries; scalars={} arrays={} array_elems={})", elab_t0.elapsed().as_micros(), self.pkg_param_ctx.len(), self.pkg_const_scalars.len(), self.pkg_const_arrays.len(), n_arr_elems);
         }
         // Process bind declarations: add bound instances to target modules
         let binds = std::mem::take(&mut self.design.binds);
@@ -544,7 +663,7 @@ impl Elaborator {
                         vec![import_item.as_str()]
                     };
                     for name in names {
-                        if let Some(pkg_item) = pkg_items.get(name) {
+                        if let Some(pkg_item) = pkg_items.get(&Symbol::intern(name)) {
                             match pkg_item {
                                 PackageItem::Function(f) => {
                                     let entry = self.func_source_pkg.entry(module.name).or_default();
@@ -608,7 +727,7 @@ _ => {}
         }
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] bind+import prepass done in {:?}", elab_t0.elapsed());
+            eprintln!("[DBG-ELAB] bind+import prepass done in {}us", elab_t0.elapsed().as_micros());
         }
         // Inline function calls in all modules
         for module in &mut self.design.modules {
@@ -662,13 +781,13 @@ _ => {}
         }
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] inline done in {:?}", elab_t0.elapsed());
+            eprintln!("[DBG-ELAB] inline done in {}us", elab_t0.elapsed().as_micros());
         }
         // Expand generates in all modules (with resolved params)
         for i in 0..self.design.modules.len() {
             let mod_t0 = std::time::Instant::now();
             let ctx = self.collect_package_param_ctx(&self.design.modules[i]);
-            let ctx_ms = mod_t0.elapsed().as_millis();
+            let ctx_us = mod_t0.elapsed().as_micros();
             // Konteks package untuk evaluasi PENUH default param ($bits(typedef),
             // inlining fungsi package) pada jalur resolusi localparam header.
             // `structs` = index struct package GLOBAL (base name → fields,
@@ -690,11 +809,11 @@ _ => {}
                 Some(&pkg_full),
             )
             .map_err(|e| self.elab_diag_at(DiagCode::SimulationError, e, 0, 0))?;
-            let resolve_ms = mod_t0.elapsed().as_millis();
+            let resolve_us = mod_t0.elapsed().as_micros();
             let module_name = self.design.modules[i].name;
             self.current_module = Some(module_name);
             if std::env::var("DBG_ELAB").is_ok() {
-                eprintln!("[DBG-ELAB] expanding generates in module '{}' ({}/{}) ctx={}ms resolve={}ms", module_name.as_str(), i + 1, self.design.modules.len(), ctx_ms, resolve_ms);
+                eprintln!("[DBG-ELAB] expanding generates in module '{}' ({}/{}) ctx={}us resolve={}us", module_name.as_str(), i + 1, self.design.modules.len(), ctx_us, resolve_us);
             }
             // Process generate expansion in isolated block to release mutable borrow before elab_diag_at
             let gen_result = {
@@ -707,7 +826,7 @@ _ => {}
         }
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] generate expansion done in {:?}", elab_t0.elapsed());
+            eprintln!("[DBG-ELAB] generate expansion done in {}us", elab_t0.elapsed().as_micros());
         }
         // Dead module detection: find unreachable modules via reachability from top
         let top_sym = top_module.map(Symbol::intern);
@@ -820,7 +939,7 @@ _ => {}
         self.reachable = reachable.clone();
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] dead-module detection done in {:?} (reachable={})", elab_t0.elapsed(), reachable.len());
+            eprintln!("[DBG-ELAB] dead-module detection done in {}us (reachable={})", elab_t0.elapsed().as_micros(), reachable.len());
         }
         // ── Incremental elaboration pass ──
         // 1. Compute structural checksums for all modules
@@ -849,7 +968,7 @@ _ => {}
         let mut dep_sigs: HashMap<Symbol, u64> = HashMap::new();
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] checksums+topo done in {:?} (topo_len={})", elab_t0.elapsed(), topo_order.len());
+            eprintln!("[DBG-ELAB] checksums+topo done in {}us (topo_len={})", elab_t0.elapsed().as_micros(), topo_order.len());
         }
         // Bila `--top` diberikan: lewati elaborasi module yang tidak reachable
         // dari top (sudah diperingatkan sebagai unreachable di atas). Error di
@@ -888,12 +1007,12 @@ _ => {}
                 match self.elaborate_module(module, &module_names) {
                     Ok(ir) => {
                         if std::env::var("DBG_ELAB").is_ok()
-                            && mod_t0.elapsed().as_millis() > 100
+                            && mod_t0.elapsed().as_micros() > 100_000
                         {
                             eprintln!(
-                                "[DBG-ELAB]   module '{}' elaborated in {:?}",
+                                "[DBG-ELAB]   module '{}' elaborated in {}us",
                                 mod_name.as_str(),
-                                mod_t0.elapsed()
+                                mod_t0.elapsed().as_micros()
                             );
                         }
                         self.module_cache.insert(dep_aware, ir.clone());
@@ -936,7 +1055,7 @@ _ => {}
         }
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] module elaboration loop done in {:?} (hits={} misses={})", elab_t0.elapsed(), self.cache_hits, self.cache_misses);
+            eprintln!("[DBG-ELAB] module elaboration loop done in {}us (hits={} misses={})", elab_t0.elapsed().as_micros(), self.cache_hits, self.cache_misses);
         }
         // Elaborate interfaces as modules (ports + decls + processes), so
         // interface initial/always/assign blocks actually run inside the
@@ -1023,15 +1142,14 @@ _ => {}
         }
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] interfaces done in {:?}", elab_t0.elapsed());
+            eprintln!("[DBG-ELAB] interfaces done in {}us", elab_t0.elapsed().as_micros());
         }
         // Find top module
+        let inst_graph = build_inst_graph(&self.design);
         let mut instantiated_modules = std::collections::HashSet::new();
-        for m in &self.design.modules {
-            for item in &m.items {
-                if let ModuleItem::Instance(inst) = item {
-                    instantiated_modules.insert(inst.module_name);
-                }
+        for deps in inst_graph.values() {
+            for d in deps {
+                instantiated_modules.insert(*d);
             }
         }
         let candidate_tops: Vec<Symbol> = self.design.modules.iter()
@@ -1087,18 +1205,35 @@ let top_name = match top_module {
                         self.design.modules.first().map(|m| m.name).unwrap_or(Symbol::EMPTY)
                     }
                 } else if candidate_tops.len() > 1 {
-                    if mode == ElaborateMode::StrictSimulation {
+                    // Auto top resolution: pilih kandidat dengan skor unik
+                    // tertinggi (cone transitif + sinyal nama). Design besar
+                    // (filelist OpenTitan: chip SoC + ratusan testbench/bind)
+                    // biasanya punya banyak candidate — heuristik ini memilih
+                    // top yang PALING lengkap secara deterministik. Hanya bila
+                    // ada pemenang unik; seri → perilaku lama (error/recovery).
+                    let mut scored: Vec<(i64, Symbol)> = candidate_tops
+                        .iter()
+                        .map(|c| (score_auto_top(*c, module_cone_size(*c, &inst_graph)), *c))
+                        .collect();
+                    scored.sort_by(|a, b| {
+                        b.0.cmp(&a.0).then_with(|| a.1.as_str().cmp(b.1.as_str()))
+                    });
+                    let unique_winner = scored.len() >= 2 && scored[0].0 > scored[1].0;
+                    if unique_winner {
+                        scored[0].1
+                    } else if mode == ElaborateMode::StrictSimulation {
                         let mut reason = "Unable to determine top-level design.\n\
                                           Simulation cancelled.\n\n\
                                           Reason:\n\
-                                          • multiple candidate tops:".to_string();
+                                          • multiple candidate tops (auto-resolution tie):".to_string();
                         for cand in &candidate_tops {
                             reason.push_str(&format!("\n   - {}", cand.as_str()));
                         }
                         return Err(self.elab_diag(DiagCode::MultipleCandidateTops, reason));
+                    } else {
+                        self.recovered = true;
+                        scored[0].1
                     }
-                    self.recovered = true;
-                    candidate_tops[0]
                 } else {
                     candidate_tops[0]
                 }
@@ -1162,7 +1297,7 @@ let mut top = match self.modules.remove(&top_name) {
         };
 
         if std::env::var("DBG_ELAB").is_ok() {
-            eprintln!("[DBG-ELAB] top found in {:?}", elab_t0.elapsed());
+            eprintln!("[DBG-ELAB] top found in {}us", elab_t0.elapsed().as_micros());
         }
         // Flatten instances: merge child module processes into the top module
         let hier_signal_map = self.flatten_instances(&mut top)?;
@@ -1232,6 +1367,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1244,6 +1380,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1256,6 +1393,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1268,6 +1406,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1280,6 +1419,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1292,6 +1432,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1304,6 +1445,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1316,6 +1458,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1328,6 +1471,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1340,6 +1484,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1352,6 +1497,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             // F23: uvm_analysis_export — passthrough port (connect + write
@@ -1367,6 +1513,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             // F23: uvm_tlm_fifo — FIFO TLM blocking put/get/peek + export
@@ -1381,6 +1528,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1393,6 +1541,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             // F24: uvm_seq_item_port — port driver↔sequencer. Method
@@ -1409,6 +1558,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             // F22: uvm_subscriber — komponen penerima broadcast analysis port.
@@ -1425,6 +1575,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1437,6 +1588,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1449,6 +1601,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1461,6 +1614,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1473,6 +1627,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1485,6 +1640,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             // F21: uvm_event — sinkronisasi trigger/wait antar komponen.
@@ -1500,6 +1656,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             // F21: uvm_barrier — sinkronisasi N-proses (threshold).
@@ -1513,6 +1670,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
             classes.insert(
@@ -1525,6 +1683,7 @@ let mut top = match self.modules.remove(&top_name) {
                     methods: vec![],
                     constraints: vec![],
                     rand_fields: vec![],
+                    lets: vec![],
                 },
             );
         }
@@ -1742,12 +1901,17 @@ let mut top = match self.modules.remove(&top_name) {
     /// dan di-clone oleh tiap module (lihat `collect_package_param_ctx`).
     fn build_pkg_param_ctx(&mut self) {
         let mut ctx: HashMap<Symbol, i64> = HashMap::new();
-        // Enum member constants dari package (plain + qualified, sequential)
-        let pkg_enums: Vec<(Symbol, Vec<(Symbol, Option<Expr>)>)> = self
+        // Enum member constants dari package (plain + qualified, sequential).
+        // Struktur per-typedef (Vec<Vec<…>>) — member enum tanpa nilai eksplisit
+        // melanjutkan counter HANYA dalam typedef yang sama (standar SV).
+        // Sebelumnya di-flatten jadi satu list per package sehingga counter
+        // `last` bocor lintas enum → mis. `alu_op_base_e` di otbn_pkg mendapat
+        // nilai 256+ (harusnya 0..8) karena menumpuk setelah enum lain.
+        let pkg_enums: Vec<(Symbol, Vec<Vec<(Symbol, Option<Expr>)>>)> = self
             .package_symbols
             .iter()
             .filter_map(|(pkg_name, items)| {
-                let enums: Vec<(Symbol, Option<Expr>)> = items
+                let enums: Vec<Vec<(Symbol, Option<Expr>)>> = items
                     .values()
                     .filter_map(|item| {
                         if let PackageItem::Typedef(td) = item {
@@ -1760,7 +1924,6 @@ let mut top = match self.modules.remove(&top_name) {
                             None
                         }
                     })
-                    .flatten()
                     .collect();
                 if enums.is_empty() {
                     None
@@ -1787,27 +1950,30 @@ let mut top = match self.modules.remove(&top_name) {
                     }
                 }
             }
-            // Enum member constants di package (plain + qualified, sequential)
-            for (pkg_name, members) in &pkg_enums {
-                let mut last = 0i64;
-                for (member_name, member_expr) in members {
-                    let val = match member_expr {
-                        Some(expr) => match const_eval_with_params(expr, &ctx) {
-                            Ok(v) => v,
-                            Err(_) => last,
-                        },
-                        None => last,
-                    };
-                    if !ctx.contains_key(member_name) {
-                        ctx.insert(*member_name, val);
-                        changed = true;
+            // Enum member constants di package (plain + qualified, sequential).
+            // `last` di-reset per typedef enum (lihat komentar pkg_enums).
+            for (pkg_name, enums) in &pkg_enums {
+                for members in enums {
+                    let mut last = 0i64;
+                    for (member_name, member_expr) in members {
+                        let val = match member_expr {
+                            Some(expr) => match const_eval_with_params(expr, &ctx) {
+                                Ok(v) => v,
+                                Err(_) => last,
+                            },
+                            None => last,
+                        };
+                        if !ctx.contains_key(member_name) {
+                            ctx.insert(*member_name, val);
+                            changed = true;
+                        }
+                        let qualified = Symbol::intern(&format!("{}::{}", pkg_name, member_name));
+                        if let std::collections::hash_map::Entry::Vacant(e) = ctx.entry(qualified) {
+                            e.insert(val);
+                            changed = true;
+                        }
+                        last = val + 1;
                     }
-                    let qualified = Symbol::intern(&format!("{}::{}", pkg_name, member_name));
-                    if let std::collections::hash_map::Entry::Vacant(e) = ctx.entry(qualified) {
-                        e.insert(val);
-                        changed = true;
-                    }
-                    last = val + 1;
                 }
             }
             if !changed {
@@ -1948,13 +2114,13 @@ let mut top = match self.modules.remove(&top_name) {
         let mut ctx: HashMap<Symbol, i64> = self.pkg_param_ctx.clone();
         let t1 = std::time::Instant::now();
         if dbg {
-            eprintln!("[DBG-ELAB]   collect clone pkg ctx: {:?} (pkg_ctx={})", t1.duration_since(t0), self.pkg_param_ctx.len());
+            eprintln!("[DBG-ELAB]   collect clone pkg ctx: {}us (pkg_ctx={})", t1.duration_since(t0).as_micros(), self.pkg_param_ctx.len());
         }
         // Context $unit imports sudah di-precompute (konstan antar-module).
         ctx.extend(self.unit_import_ctx.iter().map(|(k, v)| (*k, *v)));
         let t2 = std::time::Instant::now();
         if dbg {
-            eprintln!("[DBG-ELAB]   collect extend unit ctx: {:?} (unit_ctx={})", t2.duration_since(t1), self.unit_import_ctx.len());
+            eprintln!("[DBG-ELAB]   collect extend unit ctx: {}us (unit_ctx={})", t2.duration_since(t1).as_micros(), self.unit_import_ctx.len());
         }
         // Import set milik module itu sendiri (di luar $unit).
         let module_imports: Vec<(Symbol, Symbol)> = module
@@ -2026,8 +2192,8 @@ let mut top = match self.modules.remove(&top_name) {
                 break;
             }
         }
-        if dbg && tf.elapsed().as_millis() > 20 {
-            eprintln!("[DBG-ELAB]   collect fixed-point: {:?} (module_imports={}, enums={})", tf.elapsed(), module_imports.len(), module_enums.len());
+        if dbg && tf.elapsed().as_micros() > 20_000 {
+            eprintln!("[DBG-ELAB]   collect fixed-point: {}us (module_imports={}, enums={})", tf.elapsed().as_micros(), module_imports.len(), module_enums.len());
         }
         // Merge konstanta package yang sudah dievaluasi penuh — hanya untuk
         // import set milik module ($unit sudah ada di unit_import_ctx).
@@ -2052,11 +2218,11 @@ let mut top = match self.modules.remove(&top_name) {
             let gn = Symbol::intern("NUM_GPIOS");
             eprintln!("[DBG-ELAB]   tb imports={:?} NUM_GPIOS_in_ctx={}", module_imports.iter().map(|(p, i)| format!("{}::{}", p.as_str(), i.as_str())).collect::<Vec<_>>(), ctx.contains_key(&gn));
         }
-        if dbg && tl.elapsed().as_millis() > 20 {
-            eprintln!("[DBG-ELAB]   collect flatten-module: {:?}", tl.elapsed());
+        if dbg && tl.elapsed().as_micros() > 20_000 {
+            eprintln!("[DBG-ELAB]   collect flatten-module: {}us", tl.elapsed().as_micros());
         }
-        if dbg && t0.elapsed().as_millis() > 50 {
-            eprintln!("[DBG-ELAB]   collect total: {:?}", t0.elapsed());
+        if dbg && t0.elapsed().as_micros() > 50_000 {
+            eprintln!("[DBG-ELAB]   collect total: {}us", t0.elapsed().as_micros());
         }
         ctx
     }
@@ -2093,15 +2259,40 @@ let mut top = match self.modules.remove(&top_name) {
         if name.is_empty() || name.len() > 128 {
             return (0, 0);
         }
-        for (i, line) in self.source_lines.iter().enumerate() {
-            if line.trim_start().starts_with('`') {
-                continue;
-            }
-            if let Some(col) = line.find(name) {
-                return (i + 1, col + 1);
-            }
+        // Nama yang TIDAK plausibel sebagai token source (mengandung spasi,
+        // kurung kurawal, dll. — mis. debug-format `Ident { name: Symbol(...)
+        // }.mosi` dari pesan width-mismatch) TIDAK akan pernah ditemukan di
+        // source. Tanpa guard ini, setiap nama unik memaksa scan penuh 1.1M
+        // baris merged source (~1.5-2s) — module TB/DV dengan banyak diagnostic
+        // seperti itu (mis. spid_status_tb) bisa memakan 100+ detik.
+        // Karakter yang diizinkan: identifier SV + kualifikasi `::` +
+        // member access `.` + array `[]` + `$` (system) + angka.
+        if !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '_' | ':' | '.' | '[' | ']' | '$' | '-'))
+        {
+            return (0, 0);
         }
-        (0, 0)
+        // Pure function dari source_lines — memoize per nama. Tanpa ini setiap
+        // diagnostic tanpa lokasi meng-scan seluruh merged source (1.1M baris
+        // di OpenTitan) yang memakan ~1.5-2s per panggilan.
+        let sym = Symbol::intern(name);
+        if let Some(&loc) = self.source_name_loc.borrow().get(&sym) {
+            return loc;
+        }
+        let result = (|| {
+            for (i, line) in self.source_lines.iter().enumerate() {
+                if line.trim_start().starts_with('`') {
+                    continue;
+                }
+                if let Some(col) = line.find(name) {
+                    return (i + 1, col + 1);
+                }
+            }
+            (0, 0)
+        })();
+        self.source_name_loc.borrow_mut().insert(sym, result);
+        result
     }
 
     /// Buat error diagnostic dengan posisi source.
@@ -2185,16 +2376,17 @@ let mut top = match self.modules.remove(&top_name) {
     /// di-store via import/typedef module), lalu package_symbols langsung
     /// (scoped type tanpa import eksplisit).
     pub(crate) fn lookup_struct_fields(&self, type_name: &str) -> Option<Vec<StructFieldInfo>> {
+        let type_sym = Symbol::intern(type_name);
         // 1. Cek map yang sudah di-store (nama polos & scoped).
-        if let Some(f) = self.typedef_field_map.get(type_name) {
+        if let Some(f) = self.typedef_field_map.get(&type_sym) {
             if !f.is_empty() {
                 return Some(f.clone());
             }
         }
         // 2. Scoped `pkg::type` — cari typedef di package asal.
         if let Some((pkg, t)) = type_name.split_once("::") {
-            if let Some(items) = self.package_symbols.get(pkg) {
-                if let Some(PackageItem::Typedef(td)) = items.get(t) {
+            if let Some(items) = self.package_symbols.get(&Symbol::intern(pkg)) {
+                if let Some(PackageItem::Typedef(td)) = items.get(&Symbol::intern(t)) {
                     if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. })
                     {
                         let fields = self.compute_struct_fields(&td.dtype);
@@ -2205,7 +2397,7 @@ let mut top = match self.modules.remove(&top_name) {
                 }
             }
             // Key map bisa juga `pkg::type` — cek sekali lagi dengan nama asli.
-            if let Some(f) = self.typedef_field_map.get(type_name) {
+            if let Some(f) = self.typedef_field_map.get(&type_sym) {
                 if !f.is_empty() {
                     return Some(f.clone());
                 }
@@ -2215,7 +2407,7 @@ let mut top = match self.modules.remove(&top_name) {
         //    bertipe typedef package lain, mis. `intr_test_reg_t` di dalam
         //    `reg2hw_t` tanpa import eksplisit).
         for items in self.package_symbols.values() {
-            if let Some(PackageItem::Typedef(td)) = items.get(type_name) {
+            if let Some(PackageItem::Typedef(td)) = items.get(&type_sym) {
                 if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. })
                 {
                     let fields = self.compute_struct_fields(&td.dtype);
@@ -2377,7 +2569,7 @@ let mut top = match self.modules.remove(&top_name) {
                 }
                 // Check package symbols for typedefs
                 for pkg_items in self.package_symbols.values() {
-                    if let Some(PackageItem::Typedef(td)) = pkg_items.get(name.as_str()) {
+                    if let Some(PackageItem::Typedef(td)) = pkg_items.get(name) {
                         let width = self.resolve_typedef_width_dims(
                             &td.dtype,
                             td.range.as_ref(),
@@ -2393,8 +2585,8 @@ let mut top = match self.modules.remove(&top_name) {
                 // Nama disimpan sebagai "pkg::type", sedangkan key package
                 // symbols hanya berisi nama tipe tanpa prefix.
                 if let Some((pkg, type_name)) = name.as_str().split_once("::") {
-                    if let Some(pkg_items) = self.package_symbols.get(pkg) {
-                        if let Some(PackageItem::Typedef(td)) = pkg_items.get(type_name) {
+                    if let Some(pkg_items) = self.package_symbols.get(&Symbol::intern(pkg)) {
+                        if let Some(PackageItem::Typedef(td)) = pkg_items.get(&Symbol::intern(type_name)) {
                             let width = self.resolve_typedef_width_dims(
                                 &td.dtype,
                                 td.range.as_ref(),
@@ -2651,7 +2843,7 @@ impl Elaborator {
         let step_t0 = std::time::Instant::now();
         let step_ck = |name: &str, t0: &std::time::Instant| {
             if dbg_step {
-                eprintln!("[DBG-STEP] {}: {} in {:?}", module.name.as_str(), name, t0.elapsed());
+                eprintln!("[DBG-STEP] {}: {} in {}us", module.name.as_str(), name, t0.elapsed().as_micros());
             }
         };
         let mut effective_params = param_vals.clone();
@@ -2804,15 +2996,12 @@ impl Elaborator {
             );
         }
         self.param_vals = effective_params.clone();
-        // Pastikan context package GLOBAL (qualified `pkg::name` + enum member
-        // plain dari SEMUA package) tersedia untuk evaluasi konstanta di body
-        // module (localparam default seperti `get_synd_width(...)` di otp_macro,
-        // cast `dm::dm_csr_e'(...)`, scoped `pkg::member`, dll). effective_params
-        // biasanya sudah membawa ctx, tapi jalur module lain / override instance
-        // bisa kehilangan qualified keys ini — merge idempoten murah (entry cek).
-        for (k, v) in &self.pkg_param_ctx {
-            self.param_vals.entry(*k).or_insert(*v);
-        }
+        // Context package GLOBAL (qualified `pkg::name` + enum member) sudah
+        // dijamin ada di effective_params: param_vals selalu berasal dari
+        // resolve_param_values → collect_package_param_ctx yang meng-clone
+        // pkg_param_ctx (yang meng-flatten konstanta package). Merge loop
+        // 63k-entry per module adalah no-op (semua key sudah ada) dan dihapus
+        // (bottleneck di desain besar).
         // Pre-pass: process $unit typedefs (top-level typedefs outside any module)
         let unit_typedefs = self.design.unit_typedefs.clone();
         for td in &unit_typedefs {
@@ -3017,6 +3206,10 @@ impl Elaborator {
         let mut processes = Vec::new();
         let mut sub_instances = Vec::new();
         let mut next_id = 0usize;
+        // F40: initializer port ANSI (`output reg [7:0] b = 8'h2A`) —
+        // dikumpulkan di port loop, di-emit sebagai Process::Initial di blok
+        // decl init (proc_counter tersedia di sana).
+        let mut port_inits: Vec<(Symbol, Expr)> = Vec::new();
 
         // Helper to get or create signal
         let get_or_create_signal = |name: Symbol,
@@ -3202,6 +3395,10 @@ impl Elaborator {
                 PortDirection::Inout => inouts.push(sid),
                 PortDirection::Ref => inouts.push(sid),
             }
+            // F40: initializer port ANSI — SV legal, dulu di-drop parser.
+            if let Some(init_expr) = &port.init_expr {
+                port_inits.push((port.name, init_expr.clone()));
+            }
             // Struct-typed port: isi struct_fields agar member access
             // (`hw2reg.val.d = ...`) bisa di-resolve sebagai lvalue. dtype_name
             // bisa berformat `pkg::type` (scoped) atau nama typedef biasa.
@@ -3309,10 +3506,11 @@ impl Elaborator {
         // struct literal selalu memenuhi kondisi proses tiap iterasi (skip
         // condition di-skip untuk struct) sehingga `changed` selalu true dan
         // `loop` tidak pernah break (timeout 600s pada full run).
-        let mut merged: Scalars = self.pkg_const_scalars.clone();
-        for (&k, &v) in &effective_params {
-            merged.insert(k, v);
-        }
+        // Konteks skalar = effective_params itu sendiri: ia sudah ⊇
+        // pkg_const_scalars (param_vals dari resolve_param_values meng-clone
+        // pkg_param_ctx yang meng-flatten konstanta package), jadi map
+        // `merged` terpisah (clone pkg_const_scalars + merge effective_params
+        // per module) redundant dan dihapus (bottleneck di desain besar).
         loop {
             let mut changed = false;
             for (pname, expr) in &body_param_defaults {
@@ -3360,13 +3558,12 @@ impl Elaborator {
                 //    member access struct package).
                 if let Some(val) = eval_param_default_full(
                     expr,
-                    &merged,
+                    &effective_params,
                     &self.pkg_const_arrays,
                     &self.package_symbols,
                     &struct_vals,
                 ) {
                     effective_params.insert(*pname, val);
-                    merged.insert(*pname, val);
                     if is_struct_lit {
                         struct_lit_done.insert(*pname);
                     }
@@ -3376,7 +3573,7 @@ impl Elaborator {
                 // 2) Struct via evaluator penuh — simpan untuk member access.
                 if let Some(CVal::Struct(fields)) = eval_cval_full(
                     expr,
-                    &merged,
+                    &effective_params,
                     &self.pkg_const_arrays,
                     &self.package_symbols,
                     &struct_vals,
@@ -3389,7 +3586,6 @@ impl Elaborator {
                 // 3) Jalur cepat skalar lama (literal murni, operator dasar).
                 if let Ok(val) = const_eval_with_params(expr, &effective_params) {
                     effective_params.insert(*pname, val);
-                    merged.insert(*pname, val);
                     if is_struct_lit {
                         struct_lit_done.insert(*pname);
                     }
@@ -3405,7 +3601,6 @@ impl Elaborator {
                     &self.package_symbols,
                 ) {
                     effective_params.insert(*pname, val);
-                    merged.insert(*pname, val);
                     if is_struct_lit {
                         struct_lit_done.insert(*pname);
                     }
@@ -3438,7 +3633,6 @@ impl Elaborator {
                         let key = Symbol::intern(&path);
                         if !effective_params.contains_key(&key) {
                             effective_params.insert(key, *v);
-                            merged.insert(key, *v);
                         }
                     }
                     CVal::Array(elems) => {
@@ -3486,7 +3680,6 @@ impl Elaborator {
                 0,
             );
             effective_params.insert(*pname, 1);
-            merged.insert(*pname, 1);
         }
         // Daftarkan nama struct localparam/parameter (yang tersimpan di
         // `struct_vals`) ke `effective_params` dengan nilai placeholder 0.
@@ -3499,7 +3692,6 @@ impl Elaborator {
         for (sname, _fields) in &struct_vals {
             if !effective_params.contains_key(sname) {
                 effective_params.insert(*sname, 0);
-                merged.insert(*sname, 0);
             }
         }
         self.param_vals = effective_params.clone();
@@ -3558,6 +3750,23 @@ impl Elaborator {
 
         // Update param_vals after generate expansion which may add body-level params
         self.param_vals = effective_params.clone();
+
+        // LANG-40: kumpulkan `let` declaration module ini (items + hasil
+        // ekspansi generate) — di-resolve elaborate_expr sebagai alias
+        // ekspresi (IEEE 1800-2017 §11.12.2). Scope per-module: setiap module
+        // menimpa map.
+        let mut let_decls: HashMap<Symbol, LetDecl> = HashMap::new();
+        for item in &module.items {
+            if let ModuleItem::Let(ld) = item {
+                let_decls.insert(ld.name, ld.clone());
+            }
+        }
+        for item in &expanded_items {
+            if let ModuleItem::Let(ld) = item {
+                let_decls.entry(ld.name).or_insert_with(|| ld.clone());
+            }
+        }
+        self.let_decls = let_decls;
 
         // Enum member constants dari typedef di DALAM blok generate (hasil
         // ekspansi) — mis. `typedef enum {...PmEnLastPos} rv_dm_pm_en_e;` di
@@ -4322,8 +4531,8 @@ impl Elaborator {
             let item_t0 = std::time::Instant::now();
             let item_ck = |kind: &str, t0: &std::time::Instant| {
                 let e = t0.elapsed();
-                if dbg_step && e.as_millis() > 200 {
-                    eprintln!("[DBG-STEP] {}: item<{}> in {:?}", module.name.as_str(), kind, e);
+                if dbg_step && e.as_micros() > 200_000 {
+                    eprintln!("[DBG-STEP] {}: item<{}> in {}us", module.name.as_str(), kind, e.as_micros());
                 }
             };
             match item {
@@ -4944,6 +5153,26 @@ impl Elaborator {
             }
         }
 
+        // F40: initializer port ANSI (`output reg [7:0] b = 8'h2A;`) →
+        // Process::Initial, setara deklarasi `reg b = 8'h2A;`.
+        for (name, init_expr) in &port_inits {
+            let lhs = self.elaborate_lvalue(
+                &Expr::Ident { name: *name, line: 0, col: 0 },
+                &signal_map,
+                &signals,
+            )?;
+            let rhs = self.elaborate_expr(init_expr, &signal_map, &signals)?;
+            processes.push(Process::Initial {
+                name: format_sym(b"port_init_", proc_counter),
+                body: vec![IrStmt::BlockingAssign {
+                    lhs,
+                    rhs,
+                    delay: None,
+                }],
+            });
+            proc_counter += 1;
+        }
+
         // Process declaration initializers (wire a = 1; reg b = 0; etc.)
         for decl in &all_decls {
             for var in &decl.names {
@@ -5059,12 +5288,12 @@ impl Elaborator {
                     _ => None,
                 })
                 .collect();
-            let constraints: Vec<(Symbol, Vec<maria_ast::types::ConstraintItem>)> = cd
+            let constraints: Vec<(Symbol, bool, Vec<maria_ast::types::ConstraintItem>)> = cd
                 .members
                 .iter()
                 .filter_map(|m| {
-                    if let ClassMember::Constraint { name, body } = m {
-                        Some((*name, body.clone()))
+                    if let ClassMember::Constraint { name, body, is_static } = m {
+                        Some((*name, *is_static, body.clone()))
                     } else {
                         None
                     }
@@ -5085,6 +5314,14 @@ impl Elaborator {
                     }
                 })
                 .collect();
+            let lets: Vec<maria_ast::types::LetDecl> = cd
+                .members
+                .iter()
+                .filter_map(|m| match m {
+                    ClassMember::Let(ld) => Some(ld.clone()),
+                    _ => None,
+                })
+                .collect();
             // Merge parent class fields (recursively) — parent fields come before child fields
             let all_fields = if let Some(ref parent_name) = cd.extends {
         let parent_key = parent_name
@@ -5093,12 +5330,12 @@ impl Elaborator {
             .unwrap_or_else(|| parent_name.as_str());
         let mut merged = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        if let Some(parent_cd) = classes.get(parent_key) {
+        if let Some(parent_cd) = classes.get(&Symbol::intern(parent_key)) {
                     let mut ancestors: Vec<&IrClassDef> = vec![parent_cd];
                     loop {
                         let current = ancestors.last().unwrap();
                         if let Some(ref gp) = current.extends {            let gp_key = gp.split("::").last().unwrap_or_else(|| gp.as_str());
-            if let Some(gp_cd) = classes.get(gp_key) {
+            if let Some(gp_cd) = classes.get(&Symbol::intern(gp_key)) {
                                 ancestors.push(gp_cd);
                             } else {
                                 break;
@@ -5144,6 +5381,7 @@ impl Elaborator {
                     methods,
                     constraints,
                     rand_fields,
+                    lets,
                 },
             );
         }

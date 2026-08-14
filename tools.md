@@ -79,9 +79,23 @@ Cache yang sudah terisi dapat DIBACA ulang tanpa compile ulang:
 - `maria mprof file.sv --cached` — profil + bottleneck + rekomendasi dari
   build terakhir (db.md "20. profile/" — Maria mengetahui bottleneck sendiri),
   tanpa menjalankan pipeline.
+- `maria minspect file.sv cache` — selain statistik per kategori, menampilkan
+  isi lint/ (temuan `mlint`), coverage/ (hasil `mcov`/`msim --coverage`),
+  simulation/ (initial state + scheduler + sensitivity list), waveform/
+  (signal index top: nama, lebar, kind, net), optimize/ (const fold + loop
+  unroll) dan expression/ (evaluasi ekspresi + sampel hasil fold) langsung
+  dari cache, tanpa menjalankan tool/simulasi ulang.
 
-Kategori yang belum diisi otomatis (optimize/expression/simulation/waveform/
-coverage/lint) dapat dipopulasi tool via cache layer API.
+Tool juga MENULIS hasilnya ke cache: `mlint` → lint/"report", `mcov` dan
+`msim --coverage` → coverage/"last" (db.md "7. verify/ → lint/",
+"19. coverage/"). Setiap `msim` (dengan atau tanpa --coverage) juga menulis
+simulation/"last" dan waveform/"last" — initial state, event scheduler,
+sensitivity list, dan signal index agar VCD/FST lebih cepat dibuka (db.md
+"17. simulation/", "18. waveform/"). Setelah elaborasi (jalur `run`
+standar & `--fast`), optimize/"last" dan expression/"last" ikut terisi dari
+statistik elaborator: jumlah constant folding, loop for yang di-unroll +
+statement hasilnya, jumlah evaluasi ekspresi (`elaborate_expr`), dan sampel
+hasil fold (`WIDTH*8 → 256`) — db.md "6. optimize/", "10. expression/".
 
 Contoh output `maria minspect cache test/counter.sv`:
 
@@ -235,7 +249,11 @@ Synthesizability check (SYN-1..9)
 Lowering RTL → SIR (node-based, `maria-sir`)
 Pass manager optimizer (const fold, arith, mux, CSE, DCE)
 SIR → generic netlist (`maria-netlist` — 1-driver/N-load DAG)
-Netlist `.mvnet` / `netlist.v` / `netlist.json`
+Tech mapping → LUT6/CARRY4/FF (`--tech-map`, phase 4)
+STA + area (`--timing` + `--constraint .mcs`, phase 5)
+Liberty `.lib` parser → `.libmdb` (maria-tech, phase 6 — fondasi ASIC mapping)
+Netlist `.mvnet` / `netlist.v` / `netlist.json` / `tech.v`
+Timing report (`timing.rpt`) & area report (`area.rpt`)
 Utilization report
 
 Contoh
@@ -246,6 +264,9 @@ maria synth rtl/counter.sv --dump-sir
 maria synth rtl/alu.sv --dump-sir-opt --preset generic
 maria synth rtl/counter.sv --top counter --dump-netlist
 maria synth rtl/counter.sv --top counter --emit-netlist
+maria synth rtl/alu.sv --top alu --tech-map
+maria synth rtl/counter.sv --top counter --tech-map --preset fpga
+maria synth rtl/alu.sv --top alu --tech-map --timing --constraint chip.mcs
 
 Output
 
@@ -253,6 +274,9 @@ Skor sintesizability
 Dump SIR sebelum & setelah optimasi (--dump-sir / --dump-sir-opt)
 Dump netlist generik (--dump-netlist)
 Emit netlist ke file: `counter.netlist.v` / `.mvnet` / `.json` (--emit-netlist)
+Tech mapping → `alu.tech.v` / `.json` / `.mvnet` + LUT/CARRY4/FF (--tech-map)
+STA → `alu.timing.rpt`: WNS/TNS/critical path (--timing --constraint .mcs)
+Area → `alu.area.rpt`: LUT/CARRY4/FF + unit area
 Pass manager: const fold, arith, mux, CSE, DCE (--preset generic|fpga|asic|custom)
 FF / LUT / CARRY4 / BRAM / DSP
 Netlist gate-level — bisa disimulasikan engine Maria (hasil = sim RTL)

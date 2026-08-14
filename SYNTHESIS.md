@@ -489,6 +489,35 @@ Detil implementasi (fase 3):
   output compare/reduce 1-bit. Sel `Slice` juga parameterized (lebar operand
   penuh — potongan `a[msb:lsb]` dari nilai lebar apa pun).
 
+Detil tech mapping (fase 4, `maria-synth/src/techmap.rs`, CLI `--tech-map`):
+
+- **Bit-blast + LUT cut** — tiap bit output node → fungsi Boolean `BitFn`
+  (And/Or/Xor/Not/Mux/compare/reduce + konstanta di-fold). Cone dengan ≤ K
+  leaf (K = `arch.lut_inputs()`, LUT6 → 6) di-pack jadi SATU `LUT6`;
+  `init` = truth table 64-bit dievaluasi atas 2^K kombinasi (konvensi
+  Xilinx: leaf 0 → pin i0). Input tak terpakai di-tie `1'b0`.
+- **Resubstitution (cone fusion)** — leaf yang merujuk node SEDERHANA
+  (And/Or/Xor/Not/Mux/compare/reduce/buffer) di-inline ke BitFn konsumen;
+  bila cone gabungan ≤ K → 1 LUT (mux chain `case` → 1 LUT6 per bit, bukan
+  1 LUT per node). Aritmetika/shift TIDAK di-inline (tetap net CARRY4 /
+  barrel). Cone yang membengkak > K → fallback per-node (mis. `count == 99`
+  tetap EQ terpisah, hindari blow-up). Guard depth 8.
+- **Carry chain** — Add/Sub → `CARRY4` (`{co,s} = ci + a + b`; Sub via
+  `a + ~b + 1`, `ci=1`); fallback ripple adder LUT bila arsitektur tanpa
+  carry. `carry4_count` = Σ ceil(width/4) per CARRY4.
+- **AIG decomposition** — cone > K dipecah struktural: tiap sub-fungsi →
+  LUT, node atas menggabungkan (≤ 2 input; Mux 3).
+- **Register** → FF per-bit (`Dff`/`DffE`/`DffR`/`DffRE`, reset dari
+  `ResetSpec`).
+- **DCE post-mapping** — sel kombinasional yang output net-nya tak terpakai
+  dibuang (resubstitution membuat net intermediate dead); net tak terhubung
+  ikut dibuang agar `verify_dag` bersih. Sel sequential tidak pernah
+  dihapus.
+- Emisi `<prefix>.tech.v/.json/.mvnet` — LUT6/CARRY4/DFF* sebagai modul
+  parameterized + `always_comb` case untuk LUT (dapat disimulasikan engine
+  Maria). Kriteria fase 4: `alu.sv` → **LUT 8, CARRY4 2, FF 0** dan sim
+  tech netlist = sim RTL.
+
 ---
 
 ## 12. Technology Library (crate `maria-tech`)
@@ -519,6 +548,20 @@ Sumber: **Liberty (`.lib`)** → parser subset → *Maria Technology Database*
 Back-end bawaan: `generic`, `fpga` (fpga-x7: LUT6/FF/CARRY4/BRAM36/DSP48/IO/
 BUFG), `asic` (cell library dari `.lib`), `custom`. P&R ASIC → external tool
 (konservatif, ditolak `mimpl` dengan pesan jelas).
+
+**Liberty parser (fase 6 — `maria-tech/src/liberty.rs`):**
+
+- Subset yang didukung: `library` (name, delay_model, time_unit),
+  `cell` (area, footprint, pin), `pin` (direction, capacitance, function,
+  timing), `timing` (related_pin, `rise/fall_propagation_delay (scalar)`)
+  → `TimingArc`. Grup/atribut lain (`technology`, `voltage_unit`, `ff`,
+  `timing_sense`, `leakage_power`, …) di-skip toleran tanpa error.
+- Delay dikonversi ke ns sesuai `time_unit`; `LibertyCell::arc_delay_ns(from,
+  to)` ambil maksimum rise/fall — dipakai STA ASIC di fase 7.
+- **`.libmdb`**: format teks deterministik (dapat di-commit/di-diff, ala
+  `.mvnet`) via `save_mdb`/`load_mdb` — pola MICD sederhana.
+- Contoh: `examples/synth/generic.lib` (4 sel: NAND2_X1/NOR2_X1/INV_X1/
+  DFF_X1 + area + timing arc).
 
 ---
 
@@ -599,6 +642,9 @@ maria synth counter.sv --top counter --emit-mvnet --report-util
 maria synth counter.sv --dump-sir            # SIR sebelum optimasi
 maria synth counter.sv --dump-sir-opt        # SIR setelah optimasi
 maria synth counter.sv --dump-netlist
+maria synth counter.sv --top counter --tech-map          # LUT6/CARRY4/FF (phase 4)
+maria synth alu.sv --top alu --tech-map --timing \
+  --constraint chip.mcs                                 # STA + area (phase 5)
 maria synth --check-only rtl/                # hanya SYN subset check
 maria synth counter.sv --opt speed --lut-merge on
 maria synth counter.sv --equiv 20            # equivalence check Z3 (S6)
@@ -608,16 +654,29 @@ maria synth counter.sv --equiv 20            # equivalence check Z3 (S6)
 |------|--------|
 | `--preset` | generic / fpga (default) / asic / custom |
 | `--lib` | file `.lib` (wajib untuk preset asic) |
-| `--constraint` | file `.mcs` |
+| `--constraint` | file `.mcs` (dipakai `--timing`; default period 10ns) |
 | `--check-only` | analisis sintesizability SYN-1..9 tanpa netlist |
 | `--dump-sir` / `--dump-sir-opt` / `--dump-netlist` | debugging per tahap |
 | `--emit-mvnet` / `--emit-verilog` | netlist `.mvnet` / `netlist.v` |
+| `--tech-map` | mapping LUT6/CARRY4/FF → `<top>.tech.v/.json/.mvnet` (phase 4) |
+| `--timing` | STA + area → `<top>.timing.rpt` / `<top>.area.rpt` (phase 5) |
 | `--report-util` / `--report-json` | report utilisasi |
 | `--equiv [BOUND]` | equivalence check RTL↔netlist via Z3 (`maria-formal`) |
 | `--opt area\|speed` | tujuan optimasi |
 
 Tool lain: `maria mimpl` (P&R FPGA) dan `maria msta` (STA) — membaca `.mvnet`
-hasil `synth`.
+hasil `synth`. `--timing` menyediakan STA penuh di `synth` itu sendiri
+(WNS/TNS/critical path), `msta` menyusul untuk jalur netlist mandiri.
+
+**Timing & area (phase 5, crate `maria-timing`):** model delay deterministik
+(LUT6 0.30 ns, CARRY4 0.05×width, fanout 0.05/load, clk→q 0.50, setup 0.20;
+input/output delay dari `.mcs`) sehingga critical path bisa dihitung ulang
+manual. Verifikasi: alu → `WNS +5.60` (arrival 3.40 = 2.0 input_delay + 0.8
+CARRY4 + 0.35 LUT + 0.15 CONCAT + 0.10 BUF), counter → `WNS +4.35` (9
+endpoint). Constraint: `clock clk { period = 10ns; }`, `input_delay 2ns;`,
+`output_delay 1ns;`, `max_fanout 32;`, `false_path { from = rst; }`,
+`multicycle_path 2 { from = reg_a; to = reg_b; }` — contoh di
+`examples/synth/chip.mcs`.
 
 ---
 
@@ -709,21 +768,44 @@ technology mapping ASIC):
 | **1** ✅ | RTL → SIR | `maria-sir` (sir.rs/lower.rs/print.rs) + `--dump-sir` | `counter.sv` → SIR node ADD/EQ/MUX + register d/q/clk/rst benar; unit test 9 |
 | **2** ✅ | SIR optimizer | `pass.rs` (SynthPass trait + SynthPipeline + preset + fixed-point) + `opt/` (const_fold, arith, mux, cse, dce) + `--dump-sir-opt`/`--preset` | `counter.sv` 7→5 node (CONCAT fold, NOT push-through-MUX); `alu_opt.sv` `(a&0)|(b&FF)|~~a → a\|b`, `(a+0)+(b*4) → a+(b<<2)`; unit test 29 + 9 maria-sir; full workspace 34 suite EXIT=0 |
 | **3** ✅ | SIR → generic netlist | `maria-netlist` crate (net.rs/cell.rs/lower.rs/graph.rs/emit.rs/json.rs) + emit `.mvnet`/`netlist.v`/`netlist.json` + `--dump-netlist`/`--emit-netlist` | **sim netlist = sim RTL**: counter netlist → `TB_COUNT 10` (sama dgn RTL), alu_opt netlist → `y=7 z=19`; DAG 1-driver/N-load + deterministik; unit test 11 + regresi space-separated di maria-tests; full workspace 36 suite EXIT=0 |
-| **4** | generic tech mapping | LUT cut (n≤6 → LUT6 init), carry chain, AIG dekomposisi | `alu.sv` → LUT count sesuai ekspektasi |
-| **5** | timing + area | `maria-timing`/`maria-area` + constraint `.mcs` | WNS/TNS/critical path benar (path manual dihitung ulang) |
-| **6** | Liberty (`.lib`) | parser subset → `maria-tech/liberty.rs` → `.mdb` | unit test parser .lib (area/delay) |
+| **4** ✅ | generic tech mapping | LUT cut (n≤6 → LUT6 init), carry chain, AIG dekomposisi, resubstitution (cone fusion) + DCE | **`alu.sv` → LUT 8, CARRY4 2, FF 0** (mux chain `case` → 1 LUT6 per bit); sim tech netlist = sim RTL (alu `2 11 13 9` = RTL, counter `1 2 3 15`); unit test 41 maria-synth; full workspace 40 suite EXIT=0 |
+| **5** ✅ | timing + area | `maria-timing` crate (constraint.rs/timing.rs/area.rs) + constraint `.mcs` + `--timing`/`--constraint` | **WNS/TNS/critical path benar (manual)**: alu `WNS +5.60` (arrival 3.40 = 2.0 in_delay + 0.8 CARRY4 + 0.35 LUT + 0.15 CONCAT + 0.10 BUF); counter `WNS +4.35`, 9 endpoint (8 FF + 1 out); unit test 9 maria-timing + e2e phase5 3; full workspace 42 suite EXIT=0 |
+| **6** ✅ | Liberty (`.lib`) | parser subset → `maria-tech/liberty.rs` → `.mdb` (deterministik, ala `.mvnet`) | `generic.lib` 4 sel (NAND/NOR/INV/DFF) area+timing arc benar; unit test 8 maria-tech (parse + mdb roundtrip); full workspace 42 suite EXIT=0 |
 | **7** | ASIC mapping | boolean → pohon cell 2-input (INV/NAND/NOR/XOR/MUX) | `--preset asic --lib sky130.lib` → netlist cell |
 | **8** | FPGA mapping | LUT/FF/BRAM/DSP inference penuh + P&R (`mimpl`) + STA (`msta`) | `mimpl`/`msta` end-to-end; `msynth --equiv` Z3 pass |
 | **9** | incremental synthesis | MICD `sir.mdb`/`netlist.mdb` + dependency graph → affected region | ubah 1 modul → hanya region itu di-synth ulang |
 
-**Status:** Phase 1 (RTL→SIR), Phase 2 (SIR optimizer), & Phase 3 (SIR →
-generic netlist) selesai — `maria-sir` + `maria-synth` (pass manager + 5 pass
-optimizer + `--dump-sir-opt`/`--preset`) + `maria-netlist` (lowering SIR →
-netlist 1-driver/N-load + `--dump-netlist`/`--emit-netlist`). Loop verifikasi
-tertutup: netlist yang di-emit **disimulasikan engine Maria** dan hasilnya
-sama dengan sim RTL (kriteria fase 3). Fondasi S1 sebelumnya (SYN check +
-netlist pra-map + `.mvnet` + report utilisasi) tetap ada dan tidak
-di-refactor.
+**Status:** Phase 1 (RTL→SIR), Phase 2 (SIR optimizer), Phase 3 (SIR →
+generic netlist), Phase 4 (generic tech mapping), **Phase 5 (timing +
+area)**, & **Phase 6 (Liberty parser)** selesai — `maria-sir` +
+`maria-synth` (pass manager + 5 pass optimizer + `--dump-sir-opt`/
+`--preset`) + `maria-netlist` (lowering SIR → netlist 1-driver/N-load +
+`--dump-netlist`/`--emit-netlist`) + `--tech-map` (LUT cut / CARRY4 /
+resubstitution / DCE, detail di §12) + `maria-timing` (STA `--timing` +
+constraint `.mcs` `--constraint`, detail di §15-16) + `maria-tech/liberty.rs`
+(parser Liberty subset: library/cell/pin/timing arc + `save_mdb`/`load_mdb`
+`.libmdb`, detail di §12). Loop verifikasi tertutup: netlist & netlist
+ter-map yang di-emit **disimulasikan engine Maria** dan hasilnya sama dengan
+sim RTL. Fondasi S1 sebelumnya (SYN check + netlist pra-map + `.mvnet` +
+report utilisasi) tetap ada.
+
+**F40 — dua perbaikan engine inti (berdampak luas, ditemukan saat validasi
+fase 4):**
+1. **Async reset edge memicu `Process::Sequential`** — `always_ff @(posedge
+   clk or negedge rst_n)` TIDAK pernah fire saat negedge rst_n
+   (`trigger_sensitive_processes` mengabaikan `reset`). Reset yang terjadi
+   ANTARA dua clock edge tak diterapkan → FF tanpa init tetap X/z → `count+1`
+   = X → counter stuck 0. Fix di `scheduler/event.rs`: trigger juga pada
+   edge signal reset (polaritas dari `ResetInfo.polarity`, hanya reset async
+   `r#async`). Transisi X→0 di t=0 juga dianggap negedge (TB yang set reset
+   aktif di t=0 tanpa edge kini berfungsi).
+2. **Initializer port ANSI** — `output reg [7:0] b = 8'h2A` legal di SV tapi
+   token `=` tidak di-parse `parse_port_list` → `expected RParen` → module
+   gagal parse (E3001). Fix: parser `parse_port_list` membaca `= expr` ke
+   field baru `Port.init_expr` (maria-ast) + elaborator membuat
+   `Process::Initial` (setara `reg b = 8'h2A;`).
+Keduanya di-cover unit test baru di maria-tests
+(`test_async_reset_edge_triggers_sequential`, `test_port_ansi_initializer`).
 
 **Exit criteria per phase:** `cargo test --workspace` hijau + e2e contoh di
 `examples/synth/` (SIR/netlist/report di-commit sebagai golden).

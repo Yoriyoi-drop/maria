@@ -44,6 +44,12 @@ impl SimulationEngine {
                         64,
                     ));
                 }
+                // LANG-40: ident `let` class tanpa parameter — evaluasi body.
+                if let Some(ld) = self.class_let_decl(name).cloned() {
+                    if ld.params.is_empty() {
+                        return self.evaluate_ast_expr(&ld.expr);
+                    }
+                }
                 if let Some(local) = self.get_local(name.as_str()) {
                     return Ok(local);
                 }
@@ -359,6 +365,20 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(1, 1))
             }
             Expr::FuncCall { name, args, line, col, .. } => {
+                // LANG-40: panggilan `let name(args)` di class — substitusi
+                // parameter dengan argumen lalu evaluasi body.
+                if let Some(ld) = self.class_let_decl(name).cloned() {
+                    if !ld.params.is_empty() && ld.params.len() == args.len() {
+                        let map: HashMap<Symbol, &Expr> = ld
+                            .params
+                            .iter()
+                            .zip(args.iter())
+                            .map(|(p, a)| (*p, a))
+                            .collect();
+                        let body = maria_ast::inline_util::substitute_let_args(ld.expr.clone(), &map);
+                        return self.evaluate_ast_expr(&body);
+                    }
+                }
                 // F20: catat posisi call agar warning runtime punya file:line:col.
                 self.set_cur_src_pos(*line, *col);
                 let arg_vals: Vec<LogicVec> = args
@@ -483,7 +503,7 @@ impl SimulationEngine {
                 // ini, pemanggilan REKURSIF di dalam body function (yang
                 // dieksekusi via AST eval) jatuh ke fallback RT9003 di bawah
                 // → hasil 0 (bug siluman: fact(5) = 0 padahal 120).
-                if self.design.module_functions.contains_key(name.as_str()) {
+                if self.design.module_functions.contains_key(name) {
                     return self.execute_module_function_call(name, &arg_vals);
                 }
                 // F20: gunakan posisi call terakhir yang diketahui (bukan 0,0)
@@ -820,7 +840,7 @@ impl SimulationEngine {
             .signals
             .iter()
             .position(|s| s.name == name)
-            .or_else(|| self.design.hier_signal_map.get(name).copied())
+            .or_else(|| self.design.hier_signal_map.get(&Symbol::intern(name)).copied())
     }
 
 
@@ -859,7 +879,7 @@ impl SimulationEngine {
         // member di-zero-initialize). Tanpa ini, baca field yang belum pernah
         // di-assign (mis. `if (got_cnt == 0)` sebelum `got_cnt = ...` di
         // run_phase driver) memunculkan warning RT0001 + null default.
-        if let Some(cls) = self.design.classes.get::<str>(&effective) {
+        if let Some(cls) = self.design.classes.get(&Symbol::intern(&effective)) {
             if let Some(obj) = self.state.get_object_mut(obj_id) {
                 for field in &cls.fields {
                     obj.fields
@@ -1458,4 +1478,14 @@ impl SimulationEngine {
         }
     }
 
+
+    /// LANG-40: cari `let` declaration di class milik `current_this`.
+    /// Dipakai evaluate_ast_expr untuk resolve ident (let tanpa parameter)
+    /// dan FuncCall (let berparameter) di body method/task class.
+    fn class_let_decl(&self, name: &Symbol) -> Option<&maria_ast::types::LetDecl> {
+        let obj_id = self.current_this?;
+        let class_name = self.state.objects.get(obj_id)?.class_name;
+        let class_def = self.design.classes.get(&class_name)?;
+        class_def.lets.iter().find(|ld| ld.name == *name)
+    }
 }

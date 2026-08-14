@@ -43,6 +43,11 @@ pub struct SynthArgs<'a> {
     pub tech_map: bool,
     /// Tulis report utilisasi ke file (opsional; tanpa ini ke stdout).
     pub report_util: Option<String>,
+    /// File constraint `.mcs` (phase 5) — dipakai `--timing`.
+    pub constraint: Option<String>,
+    /// Static timing + area analysis (phase 5): WNS/TNS/critical path + area
+    /// → <prefix>.timing.rpt / <prefix>.area.rpt.
+    pub timing: bool,
     pub quiet: bool,
 }
 
@@ -169,6 +174,7 @@ pub fn run(args: &SynthArgs) -> Result<(), SimError> {
         // LUT cut (≤K input, init nyata) + AIG dekomposisi (>K input) +
         // carry chain (CARRY4) + FF per-bit. Emisi <prefix>.tech.v/.json/.mvnet
         // + report LUT/CARRY4/FF. `--device` memilih arsitektur (generic/fpga-x7).
+        let mut tech_netlist: Option<maria_netlist::Netlist> = None;
         if args.tech_map {
             let arch = maria_tech::arch_for(match args.device.as_str() {
                 "fpga-x7" => "fpga",
@@ -209,6 +215,55 @@ pub fn run(args: &SynthArgs) -> Result<(), SimError> {
                 })?;
                 if !args.quiet {
                     println!("  tech netlist → {}", path.display());
+                }
+            }
+            tech_netlist = Some(res.netlist);
+        }
+
+        // ── Timing & Area (Phase 5, SYNTHESIS.md §15-17) ──
+        // STA atas netlist: arrival/required/slack → WNS/TNS + critical path
+        // + estimasi area. Netlist: tech (bila `--tech-map`) else generic.
+        // Constraint `.mcs` opsional (default: period 10ns, delay 0).
+        if args.timing {
+            let nl = match &tech_netlist {
+                Some(n) => n,
+                None => {
+                    let g = maria_netlist::lower_module(&sir_opt);
+                    tech_netlist.insert(g)
+                }
+            };
+            let (constraint, cname) = match &args.constraint {
+                Some(p) => {
+                    let path = PathBuf::from(p);
+                    let c = maria_timing::load_constraints(&path).map_err(|e| {
+                        SimError::with_diag(
+                            maria_core::diagnostics::DiagCode::IoError,
+                            format!("{}: {}", path.display(), e),
+                        )
+                    })?;
+                    (c, p.clone())
+                }
+                None => (maria_timing::Constraint::default(), "default (10ns)".to_string()),
+            };
+            let rep = maria_timing::analyze(nl, &constraint, &maria_timing::TimingOptions::default());
+            let area = maria_timing::estimate_area(nl);
+            let timing_rpt = maria_timing::render_timing_report(&rep, &cname);
+            let area_rpt = maria_timing::render_area_report(&area);
+            section("Timing (phase 5 — STA)");
+            print!("{}", timing_rpt);
+            section("Area (phase 5 — estimate)");
+            print!("{}", area_rpt);
+            let prefix = args.output.clone().unwrap_or_else(|| top_name.clone());
+            for (suffix, content) in [("timing.rpt", timing_rpt), ("area.rpt", area_rpt)] {
+                let path = PathBuf::from(format!("{}.{}", prefix, suffix));
+                std::fs::write(&path, content).map_err(|e| {
+                    SimError::with_diag(
+                        maria_core::diagnostics::DiagCode::IoError,
+                        format!("{}: {}", path.display(), e),
+                    )
+                })?;
+                if !args.quiet {
+                    println!("  report → {}", path.display());
                 }
             }
         }

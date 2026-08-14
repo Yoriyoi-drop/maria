@@ -1247,7 +1247,7 @@ impl SimulationEngine {
                     // Auto-sample covergroup immediately on new()
                     self.sample_covergroup(class_name.as_str())?;
                 } else if !class_name.is_empty() {
-                    if let Some(cls) = self.design.classes.get(class_name.as_str()) {
+                    if let Some(cls) = self.design.classes.get(&class_name) {
                         if let Some(obj) = self.state.get_object_mut(obj_id) {
                             for field in &cls.fields {
                                 obj.fields
@@ -1342,6 +1342,49 @@ impl SimulationEngine {
                 args,
                 with_clause,
             } => {
+                // LANG-33: `obj.<constraint_block>.constraint_mode(0/1)` —
+                // set/query mode constraint block (IEEE 1800-2017 §18.5.12).
+                // Di-intercept SEBELUM evaluasi obj (field block bukan data
+                // field — evaluasi sebagai MemberAccess akan error).
+                if method.as_str() == "constraint_mode" {
+                    if let IrExpr::MemberAccess { obj: inner, field } = obj.as_ref() {
+                        let obj_val = self.evaluate_expr(inner)?;
+                        let obj_id = obj_val.to_u64() as ObjId;
+                        // LANG-32: block STATIC — constraint_mode() berlaku
+                        // global untuk SEMUA instance class (§18.5.10), jadi
+                        // set/query di static_constraint_modes (key class+block).
+                        let class_sym = self
+                            .state
+                            .objects
+                            .get(obj_id)
+                            .map(|o| o.class_name)
+                            .unwrap_or(Symbol::EMPTY);
+                        let is_static = self
+                            .design
+                            .classes
+                            .get(&class_sym)
+                            .map(|cd| {
+                                cd.constraints
+                                    .iter()
+                                    .any(|(bn, st, _)| bn == field && *st)
+                            })
+                            .unwrap_or(false);
+                        if let Some(arg) = args.first() {
+                            let mode = self.evaluate_expr(arg)?.to_u64() != 0;
+                            if is_static {
+                                self.static_constraint_modes
+                                    .insert((class_sym, *field), mode);
+                            } else {
+                                self.constraint_modes.insert((obj_id, *field), mode);
+                            }
+                            return Ok(LogicVec::from_u64(1, 1));
+                        }
+                        // Tanpa argumen: query mode saat ini (default enabled).
+                        let mode =
+                            self.constraint_block_enabled(obj_id, class_sym, *field, is_static);
+                        return Ok(LogicVec::from_u64(if mode { 1 } else { 0 }, 1));
+                    }
+                }
                 if let IrExpr::String(s) = obj.as_ref() {
                     let arg_vals: Vec<LogicVec> = args
                         .iter()
@@ -1613,7 +1656,7 @@ impl SimulationEngine {
                     .collect::<Result<_, _>>()?;
 
                 // Get previous arg values for edge detection
-                let prev_vals = self.udp_prev_args.get(udp_name.as_str());
+                let prev_vals = self.udp_prev_args.get(udp_name);
                 let current_bits: Vec<LogicVal> = arg_vals
                     .iter()
                     .map(|v| v.bits.first().copied().unwrap_or(LogicVal::X))
@@ -1758,7 +1801,7 @@ impl SimulationEngine {
                             if let Some(dot_pos) = bound_sig_name.rfind('.') {
                                 let inst_path = &bound_sig_name[..dot_pos];
                                 let sig_key = format!("{}.{}", inst_path, field);
-                                if let Some(&field_sid) = self.design.hier_signal_map.get::<str>(sig_key.as_str())
+                                if let Some(&field_sid) = self.design.hier_signal_map.get(&Symbol::intern(&sig_key))
                                 {
                                     result = self.state.read_signal(field_sid).clone();
                                 }
@@ -1818,7 +1861,7 @@ impl SimulationEngine {
         // Check recursion depth
         let depth = self
             .recursion_depth
-            .get(name.as_str())
+            .get(name)
             .copied()
             .unwrap_or(0);
         if depth >= self.max_recursion_depth {
@@ -1836,7 +1879,7 @@ impl SimulationEngine {
         let func = self
             .design
             .module_functions
-            .get(name.as_str())
+            .get(name)
             .cloned()
             .ok_or_else(|| {
                 self.diag_error(
@@ -1901,7 +1944,7 @@ impl SimulationEngine {
         // Initialize internal variables with X
         for decl in &func.decls {
             for var in &decl.names {
-                if !locals.contains_key(var.name.as_str()) {
+                if !locals.contains_key(&var.name) {
                     let width = if let Some(r) = &var.range {
                         r.width()
                     } else {

@@ -164,7 +164,7 @@ impl SimulationEngine {
         method: &str,
     ) -> Result<IrClassMethod, SimError> {
         let mut current = class_name;
-        while let Some(cls) = self.design.classes.get::<str>(current) {
+        while let Some(cls) = self.design.classes.get(&Symbol::intern(current)) {
             if let Some(m) = cls.methods.iter().find(|m| m.name == method) {
                 return Ok(m.clone());
             }
