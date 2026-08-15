@@ -31,6 +31,14 @@ pub struct IrDesign {
     /// `` `coverage_on `` (koordinat output preprocessed). Dipakai engine untuk
     /// mengecualikan baris dari line coverage (SIM-29).
     pub coverage_exclusions: Vec<(usize, usize)>,
+    /// SIM-29: peta baris statement untuk filtering line coverage per-statement.
+    /// Key = `format!("{}.{:?}", process_name, std::mem::discriminant(stmt))` —
+    /// SAMA dengan key `record_line_hit` (engine/coverage.rs), value = baris
+    /// sumber statement (1-based, koordinat output preprocessed). Di-populate
+    /// elaborator (stmt.rs) dari AST via `expr_location`; engine
+    /// `record_line_hit` melewati statement yang barisnya berada dalam
+    /// `` `coverage_off ``/`` `coverage_on `` (is_line_excluded).
+    pub stmt_lines: HashMap<Symbol, usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

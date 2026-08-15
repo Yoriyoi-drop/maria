@@ -288,6 +288,12 @@ pub struct SimulationEngine {
     /// Line ranges (start, end) inklusif 1-based yang di-exclude dari line
     /// coverage oleh `` `coverage_off ``/`` `coverage_on `` (SIM-29).
     pub coverage_exclusions: Vec<(usize, usize)>,
+    /// SIM-29: peta baris per statement — key `format!("{}.{:?}", process_name,
+    /// discriminant)` (SAMA dengan key `cover_line`), value = baris sumber
+    /// statement. Di-populate elaborator (IrDesign.stmt_lines); dipakai
+    /// `record_line_hit` untuk melewati statement yang barisnya berada dalam
+    /// region `` `coverage_off ``/`` `coverage_on ``.
+    pub stmt_lines: HashMap<Symbol, usize>,
     /// Glitch detection: max pulse width (in time units) for A->B->A detection. 0 = disabled.
     pub glitch_window: u64,
     /// Glitch detection: per-signal (time of last change, value before last change)

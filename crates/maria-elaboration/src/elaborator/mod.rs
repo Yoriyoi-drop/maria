@@ -270,6 +270,14 @@ pub struct Elaborator {
     /// banyak module) — tanpa cache, setiap query meng-scan 1.1M baris merged
     /// source (~1.5-2s) yang menjadi bottleneck terbesar di desain besar.
     pub source_name_loc: std::cell::RefCell<HashMap<Symbol, (usize, usize)>>,
+    /// SIM-29: peta baris statement untuk line coverage exclusion — key
+    /// `format!("{}.{:?}", process_name, discriminant)` SAMA dengan key
+    /// `record_line_hit` di engine. Diisi saat menerjemahkan statement
+    /// (elaborate_stmt) dari AST via `expr_location`; disalin ke IrDesign
+    /// di akhir `elaborate`. RefCell karena `elaborate_stmt` menerima `&self`.
+    pub stmt_lines: std::cell::RefCell<HashMap<Symbol, usize>>,
+    /// SIM-29: nama proses yang sedang dielaborasi (untuk key stmt_lines).
+    pub current_proc_name: std::cell::RefCell<Option<Symbol>>,
     pub current_module: Option<Symbol>,
     /// Set module reachable dari top (F38). Error elaborasi di module yang
     /// TIDAK ada di set ini (TB/DV terpisah, dependensi hilang) di-downgrade
@@ -489,6 +497,8 @@ impl Elaborator {
             source_lines,
             source_file,
             source_name_loc: std::cell::RefCell::new(HashMap::new()),
+            stmt_lines: std::cell::RefCell::new(HashMap::new()),
+            current_proc_name: std::cell::RefCell::new(None),
             current_module: None,
             reachable: std::collections::HashSet::new(),
             recovered: false,
@@ -1352,6 +1362,13 @@ let mut top = match self.modules.remove(&top_name) {
                     Some("uvm_report_object") => {
                         cls.extends = Some(Symbol::intern("__uvm_report_object"))
                     }
+                    // OpenTitan DV: `dv_report_server extends uvm_default_report_server`
+                    // (`uvm_report_server` di UVM asli extends uvm_report_object →
+                    // uvm_object). Tanpa remap ini extends tak dikenal → super.new
+                    // gagal (RT8001) saat sim.
+                    Some("uvm_report_server") | Some("uvm_default_report_server") => {
+                        cls.extends = Some(Symbol::intern("__uvm_report_object"))
+                    }
                     Some("uvm_factory") => cls.extends = Some(Symbol::intern("__uvm_factory")),
                     Some("uvm_resource_db") => cls.extends = Some(Symbol::intern("__uvm_resource_db")),
                     _ => {}
@@ -1764,6 +1781,7 @@ let mut top = match self.modules.remove(&top_name) {
             },
             pkg_scoped_consts: std::mem::take(&mut self.pkg_param_ctx),
             coverage_exclusions: Vec::new(),
+            stmt_lines: self.stmt_lines.take(),
         })
     }
 
@@ -2974,27 +2992,15 @@ impl Elaborator {
                 _ => {}
             }
         }
-        // Merge konstanta package yang sudah dievaluasi (skalar + array) ke effective_params.
-        maria_ast::const_eval_ext::flatten_consts_into_ctx(
-            &self.pkg_const_scalars,
-            &self.pkg_const_arrays,
-            &mut effective_params,
-        );
-        let mut unit_import_sets = self.design.unit_imports.clone();
-        for item in &module.items {
-            if let ModuleItem::Import { package, item: import_item } = item {
-                unit_import_sets.push((*package, *import_item));
-            }
-        }
-        for (package, import_item) in &unit_import_sets {
-            maria_ast::const_eval_ext::flatten_imported_consts_into_ctx(
-                package.as_str(),
-                import_item.as_str(),
-                &self.pkg_const_scalars,
-                &self.pkg_const_arrays,
-                &mut effective_params,
-            );
-        }
+        // Merge konstanta package + import module ke effective_params SUDAH
+        // dikerjakan di collect_package_param_ctx (jalur resolve_param_values):
+        //   - pkg_param_ctx   sudah memuat flatten_consts_into_ctx SEKALI
+        //     (line build_pkg_param_ctx) — qualified + key array `name[i]`.
+        //   - unit_import_ctx sudah memuat flatten $unit imports (delta).
+        //   - module.items import di-flatten di collect_package_param_ctx.
+        // Blok re-flatten di sini MENGULANG format!("{}[{}]") + Symbol::intern
+        // untuk ribuan elemen konstanta per-module (bottleneck: 43% memcmp +
+        // 28% Symbol::as_str di OpenTitan — interning berulang). Dihapus.
         self.param_vals = effective_params.clone();
         // Context package GLOBAL (qualified `pkg::name` + enum member) sudah
         // dijamin ada di effective_params: param_vals selalu berasal dari
@@ -4080,14 +4086,23 @@ impl Elaborator {
                     } else {
                         LogicVec::new(elem_width)
                     };
+                    // `LogicVec::new` me-clamp lebar > 1M bit jadi 1 bit (guard
+                    // OOM untuk lebar bogus). Memory SRAM asli OpenTitan
+                    // (`sram_ctrl` dgn ECC: 65536 x 76 = 4.98M bit) sah dan
+                    // jauh lebih besar dari 1M — pakai `fill` (tanpa clamp)
+                    // untuk full_init agar init array tidak out-of-bounds.
                     let mut full_init = if kind == SignalKind::Wire {
                         LogicVec::fill(LogicVal::Z, total_width)
                     } else {
-                        LogicVec::new(total_width)
+                        LogicVec::fill(LogicVal::X, total_width)
                     };
+                    let init_n = full_init.bits.len();
                     for i in 0..depth {
                         for j in 0..elem_width {
-                            full_init.bits[i * elem_width + j] = elem_init.bits[j].clone();
+                            let idx = i * elem_width + j;
+                            if idx < init_n && j < elem_init.bits.len() {
+                                full_init.bits[idx] = elem_init.bits[j].clone();
+                            }
                         }
                     }
                     sig.init_val = full_init;
@@ -4557,15 +4572,20 @@ impl Elaborator {
                     item_ck(item_kind, &item_t0);
                 }
                 ModuleItem::Initial(initial) => {
-                    match self.elaborate_stmt_block(
+                    // SIM-29: set nama proses SEBELUM elaborate agar stmt_lines
+                    // tercatat dengan key yang SAMA dengan record_line_hit.
+                    let name = format_sym(b"initial_", proc_counter);
+                    proc_counter += 1;
+                    *self.current_proc_name.borrow_mut() = Some(name);
+                    let body_res = self.elaborate_stmt_block(
                         &initial.stmts,
                         &signal_map,
                         known_modules,
                         &signals,
-                    ) {
+                    );
+                    *self.current_proc_name.borrow_mut() = None;
+                    match body_res {
                         Ok(body) => {
-                            let name = format_sym(b"initial_", proc_counter);
-                            proc_counter += 1;
                             processes.push(Process::Initial { name, body });
                         }
                         Err(e) => {
@@ -4580,15 +4600,19 @@ impl Elaborator {
                     item_ck(item_kind, &item_t0);
                 }
                 ModuleItem::Final(final_block) => {
-                    match self.elaborate_stmt_block(
+                    // SIM-29: set nama proses SEBELUM elaborate.
+                    let name = format_sym(b"final_", proc_counter);
+                    proc_counter += 1;
+                    *self.current_proc_name.borrow_mut() = Some(name);
+                    let body_res = self.elaborate_stmt_block(
                         &final_block.stmts,
                         &signal_map,
                         known_modules,
                         &signals,
-                    ) {
+                    );
+                    *self.current_proc_name.borrow_mut() = None;
+                    match body_res {
                         Ok(body) => {
-                            let name = format_sym(b"final_", proc_counter);
-                            proc_counter += 1;
                             processes.push(Process::Final { name, body });
                         }
                         Err(e) => {

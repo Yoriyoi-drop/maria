@@ -118,7 +118,22 @@ impl SimulationEngine {
                     .unwrap_or(2);
                 Ok(LogicVec::from_u64(level as u64, 32))
             }
-            "build_phase" | "connect_phase" | "run_phase" => Ok(LogicVec::from_u64(1, 1)),
+            // Fase UVM adalah no-op di base class (super.xxx_phase(phase)
+            // tidak melakukan apa-apa di UVM asli; subclass yang override
+            // dieksekusi normal via dispatch user method).
+            "build_phase"
+            | "connect_phase"
+            | "end_of_elaboration_phase"
+            | "start_of_simulation_phase"
+            | "run_phase"
+            | "extract_phase"
+            | "check_phase"
+            | "report_phase"
+            | "final_phase"
+            | "reset_phase"
+            | "configure_phase"
+            | "main_phase"
+            | "shutdown_phase" => Ok(LogicVec::from_u64(1, 1)),
             _ => self.execute_uvm_report_object_method(obj_id, method, args),
         }
     }

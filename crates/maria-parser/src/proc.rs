@@ -230,6 +230,47 @@ impl Parser {
         })
     }
 
+    /// Intra-assignment delay: `lhs = #(expr) rhs`, `lhs <= #expr rhs`
+    /// (LRM 1800 §10.4.3). Hanya `#(rise, fall, turnoff)` atau `#expr` polos.
+    /// Mengembalikan `None` bila token berikut bukan `#`.
+    pub(crate) fn parse_intra_assign_delay(&mut self) -> Result<Option<Delay>, SimError> {
+        if self.peek() != &Token::Hash {
+            return Ok(None);
+        }
+        self.advance(); // consume '#'
+        if self.peek() == &Token::LParen {
+            // #(rise, fall, turnoff) — pakai parse_delay dari posisi sebelum
+            // `#` tidak mungkin (sudah di-consume), jadi parse manual di sini.
+            self.advance(); // consume '('
+            let rise = Some(self.parse_expr(0)?);
+            let fall = if self.peek() == &Token::Comma {
+                self.advance();
+                Some(self.parse_expr(0)?)
+            } else {
+                None
+            };
+            let turnoff = if self.peek() == &Token::Comma {
+                self.advance();
+                Some(self.parse_expr(0)?)
+            } else {
+                None
+            };
+            self.expect(Token::RParen)?;
+            Ok(Some(Delay {
+                rise,
+                fall,
+                turnoff,
+            }))
+        } else {
+            let d = self.parse_expr(0)?;
+            Ok(Some(Delay {
+                rise: Some(d),
+                fall: None,
+                turnoff: None,
+            }))
+        }
+    }
+
     pub(crate) fn parse_function(&mut self, virtual_flag: bool) -> Result<FunctionDecl, SimError> {
         self.advance(); // consume 'function'
                         // Capture optional 'static' qualifier

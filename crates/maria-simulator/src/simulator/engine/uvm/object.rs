@@ -250,6 +250,11 @@ impl SimulationEngine {
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
+            // Fase UVM apa pun = no-op di uvm_object (super.xxx_phase di
+            // subclass user). Tanpa ini `super.end_of_elaboration_phase`
+            // error RT9003 "uvm_object::end_of_elaboration_phase not
+            // implemented" dan sim mati (core_ibex_base_test.sv:233).
+            m if m.ends_with("_phase") => Ok(LogicVec::from_u64(1, 1)),
             _ => Err(self.diag_error(DiagCode::NotImplemented, format!(
                 "uvm_object::{} not implemented",
                 method

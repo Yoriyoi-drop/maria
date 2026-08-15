@@ -114,6 +114,17 @@ impl SimulationEngine {
         if parent == "__uvm_object" || self.is_uvm_object_hierarchy(parent.as_str()) {
             return self.execute_uvm_object_method(obj_id, method, args);
         }
+        // Parent UVM library class TIDAK terdaftar di design (filelist tanpa
+        // library UVM penuh, mis. `uvm_default_report_server` yang di-extends
+        // OpenTitan `dv_report_server`). Di UVM asli class tersebut
+        // extends uvm_report_object → uvm_object; `super.new`/method lain di
+        // subclass user harus di-dispatch ke builtin report_object (yang
+        // meneruskan ke object). Tanpa fallback ini `super.new(name)` error
+        // RT8001 "method 'new' not found in class 'uvm_default_report_server'"
+        // → simulasi mati.
+        if !self.design.classes.contains_key(&parent) && parent.as_str().starts_with("uvm_") {
+            return self.execute_uvm_report_object_method(obj_id, method, args);
+        }
         // Super dispatch: start search from parent class, skipping current class override
         let method_def = self.find_method_in_hierarchy(parent.as_str(), method)?.clone();
         self.execute_method_body(Some(obj_id), &method_def, args, method)

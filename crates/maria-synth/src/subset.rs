@@ -708,6 +708,7 @@ mod tests {
             source_file: None,
             pkg_scoped_consts: Default::default(),
             coverage_exclusions: Vec::new(),
+            stmt_lines: std::collections::HashMap::new(),
         }
     }
 

@@ -112,6 +112,43 @@ pub fn dispatch_synch() {
     dispatch_callback(vhpiCbReadOnlySynch);
 }
 
+/// Fire semua callback value-change (vhpiCbValueChange) untuk signal dengan
+/// SignalId tertentu. Callback yang obj-nya NULL (semua signal) atau obj-nya
+/// Signal(sig_id, _) yang cocok → di-fire. Clone registry dulu, drop lock,
+/// lalu panggil (cegah deadlock).
+pub fn fire_value_change_callbacks(
+    sig_id: usize,
+    _old_val: &maria_ir::LogicVec,
+    _new_val: &maria_ir::LogicVec,
+) {
+    let matching: Vec<t_vhpi_cb_data> = {
+        let reg = vhpi_callbacks().lock().unwrap();
+        reg.iter()
+            .filter(|cb| {
+                if cb.data.reason != vhpiCbValueChange {
+                    return false;
+                }
+                // obj NULL = semua signal; obj Signal(id, _) = signal tertentu.
+                if cb.data.obj.is_null() {
+                    return true;
+                }
+                if let Some(obj) = super::handle::lookup(cb.data.obj) {
+                    matches!(obj.kind, super::handle::VhpiObjectKind::Signal(id, _) if id == sig_id)
+                        || matches!(obj.kind, super::handle::VhpiObjectKind::Port(id, _) if id == sig_id)
+                } else {
+                    false
+                }
+            })
+            .map(|cb| cb.data.clone())
+            .collect()
+    };
+    for mut data in matching {
+        if let Some(cb) = data.cb_rtn {
+            unsafe { cb(&mut data); }
+        }
+    }
+}
+
 pub fn clear_all_callbacks() {
     vhpi_callbacks().lock().unwrap().clear();
 }

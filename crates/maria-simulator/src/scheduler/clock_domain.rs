@@ -505,6 +505,7 @@ mod tests {
             module_functions: HashMap::new(),
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
         };
         let analysis = ClockDomainAnalysis::analyze(&design);
         assert_eq!(analysis.num_domains(), 0);
@@ -570,6 +571,7 @@ mod tests {
             module_functions: HashMap::new(),
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
         };
 
         let analysis = ClockDomainAnalysis::analyze(&design);
@@ -628,6 +630,7 @@ mod tests {
             module_functions: HashMap::new(),
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
         };
 
         let analysis = ClockDomainAnalysis::analyze(&design);

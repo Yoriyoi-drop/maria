@@ -566,10 +566,13 @@ impl SimulationEngine {
                 // Fall back to object field access (class objects)
                 let obj_val = self.evaluate_ast_expr(obj)?;
                 let obj_id = obj_val.to_u64() as ObjId;
-                let obj_data = self
-                    .state
-                    .get_object(obj_id)
-                    .ok_or_else(|| SimError::with_diag(DiagCode::NullHandle, format!("object {} not found", obj_id)))?;
+                // Handle OOB (stale/garbage id dari signal handle yang belum
+                // ter-alloc di run ini) → null default, bukan error — konsisten
+                // dgn handle null (id 0) yang sudah graceful. Hard error di
+                // sini menghentikan seluruh sim (E9001) utk bug handle.
+                let Some(obj_data) = self.state.get_object(obj_id) else {
+                    return Ok(LogicVec::new(1));
+                };
                 Ok(obj_data
                     .fields
                     .get(field)
@@ -582,8 +585,12 @@ impl SimulationEngine {
                 let i = idx_val.to_u64() as usize;
                 // Check if this is an array field access (extract element, not bit)
                 if let Some(elem_width) = self.get_field_elem_width(inner) {
-                    let start = i * elem_width;
-                    let end = (start + elem_width).min(val.width);
+                    let start = i.saturating_mul(elem_width);
+                    let end = start.saturating_add(elem_width).min(val.width);
+                    // Guard OOB (index X/negatif → huge): return X elemen.
+                    if start >= end || start >= val.bits.len() {
+                        return Ok(LogicVec::fill(LogicVal::X, elem_width));
+                    }
                     let mut bits = val.bits[start..end].to_vec();
                     if bits.len() < elem_width {
                         bits.resize(elem_width, LogicVal::X);
@@ -611,6 +618,13 @@ impl SimulationEngine {
                 let m = msb_val.to_u64() as usize;
                 let l = lsb_val.to_u64() as usize;
                 let (start, end) = if m > l { (l, m) } else { (m, l) };
+                // Guard OOB (nilai msb/lsb dari ekspresi yang nilainya X/negatif
+                // bisa jadi huge): return X, jangan panic slice.
+                let n = val.bits.len();
+                if start >= n || end >= n || start > end {
+                    let w = (end.saturating_sub(start).saturating_add(1)).max(1);
+                    return Ok(LogicVec::fill(LogicVal::X, w));
+                }
                 let bits = val.bits[start..=end].to_vec();
                 Ok(LogicVec {
                     width: bits.len(),
@@ -627,13 +641,15 @@ impl SimulationEngine {
                 let width_val = self.evaluate_ast_expr(width)?;
                 let b = base_val.to_u64() as usize;
                 let w = width_val.to_u64() as usize;
-                if b + w <= val.width && w > 0 {
+                let in_bounds = b <= val.width && w > 0 && b.saturating_add(w) <= val.width;
+                if in_bounds {
                     let bits = val.bits[b..b + w].to_vec();
                     Ok(LogicVec { width: w, bits })
                 } else if w == 0 {
                     Ok(LogicVec::from_u64(0, 1))
                 } else {
-                    Err(SimError::with_diag(DiagCode::MemoryOutOfBounds, "part-select out of range"))
+                    // Out-of-range part-select → X (LRM §11.5.1), bukan error.
+                    Ok(LogicVec::fill(LogicVal::X, w.min(val.width.max(1))))
                 }
             }
             Expr::Paren(inner) => self.evaluate_ast_expr(inner),

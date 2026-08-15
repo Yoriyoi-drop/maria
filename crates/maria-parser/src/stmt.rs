@@ -845,16 +845,18 @@ impl Parser {
                     }
                     Token::BlockingAssign => {
                         self.advance();
+                        let delay = self.parse_intra_assign_delay()?;
                         let rhs = self.parse_expr(0)?;
                         self.skip_semi();
-                        Ok(Stmt::BlockingAssign { lhs, rhs, delay: None })
+                        Ok(Stmt::BlockingAssign { lhs, rhs, delay })
                     }
                     Token::NonBlockingAssign => {
                         if is_valid_lvalue(&lhs) {
                             self.advance();
+                            let delay = self.parse_intra_assign_delay()?;
                             let rhs = self.parse_expr(0)?;
                             self.skip_semi();
-                            Ok(Stmt::NonBlockingAssign { lhs, rhs, delay: None })
+                            Ok(Stmt::NonBlockingAssign { lhs, rhs, delay })
                         } else {
                             self.advance();
                             let rhs = self.parse_expr(8)?;

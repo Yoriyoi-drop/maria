@@ -16,7 +16,22 @@ impl Elaborator {
         signals: &[SignalInfo],
     ) -> Result<Process, SimError> {
         let name = Symbol::intern(&format!("always_{}", 0));
+        // SIM-29: set nama proses agar stmt_lines tercatat dengan key yang
+        // SAMA dengan record_line_hit engine (current_process_name).
+        *self.current_proc_name.borrow_mut() = Some(name);
 
+        let result = self.elaborate_always_inner(&always, signal_map, signals, name);
+        *self.current_proc_name.borrow_mut() = None;
+        result
+    }
+
+    fn elaborate_always_inner(
+        &self,
+        always: &AlwaysBlock,
+        signal_map: &HashMap<Symbol, SignalId>,
+        signals: &[SignalInfo],
+        name: Symbol,
+    ) -> Result<Process, SimError> {
         match always.kind {
             AlwaysKind::AlwaysComb | AlwaysKind::AlwaysLatch => {
                 let body = self.elaborate_stmt_block(&always.stmts, signal_map, &[], signals)?;

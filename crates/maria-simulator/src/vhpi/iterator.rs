@@ -2,6 +2,7 @@
 //!
 //! `vhpi_iterate(object_kind, handle)` membuat iterator atas object terkait;
 //! `vhpi_scan(iterator)` mengembalikan object berikutnya (NULL saat habis).
+#![allow(non_upper_case_globals)]
 
 use super::handle::{VhpiHandle, VhpiObjectKind};
 use super::object::*;

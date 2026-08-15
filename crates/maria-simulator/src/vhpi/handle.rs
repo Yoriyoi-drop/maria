@@ -71,6 +71,12 @@ pub(crate) fn register_object(kind: VhpiObjectKind) -> VhpiHandle {
     VhpiHandle { ptr: id as *mut std::ffi::c_void }
 }
 
+/// Ekspos registrasi object untuk test e2e (maria-tests) — pola sama dgn
+/// vpi handle test. Produksi memakai vhpi_handle_by_name / iterator.
+pub fn register_object_for_test(kind: VhpiObjectKind) -> VhpiHandle {
+    register_object(kind)
+}
+
 pub(crate) fn lookup(handle: VhpiHandle) -> Option<VhpiObject> {
     if handle.is_null() { return None; }
     let id = handle.ptr as u64;

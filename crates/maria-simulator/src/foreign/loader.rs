@@ -108,11 +108,17 @@ pub fn find_library(name: &str, search_paths: &[PathBuf]) -> Option<PathBuf> {
 // ─── Pemuatan (feature "dpi" → libloading) ───
 
 /// Muat library native. `None` bila feature "dpi" off (stub) atau load gagal.
+/// Path di-canonicalize ke ABSOLUT — dlopen TIDAK search cwd, path relatif
+/// (mis. `--vhpi libfoo.so` di direktori kerja) gagal tanpa ini.
 #[cfg(feature = "dpi")]
 pub fn load_library(path: &Path) -> Result<std::sync::Arc<libloading::Library>, String> {
-    match unsafe { libloading::Library::new(path) } {
+    let abs = match std::fs::canonicalize(path) {
+        Ok(p) => p,
+        Err(e) => return Err(format!("cannot resolve '{}': {}", path.display(), e)),
+    };
+    match unsafe { libloading::Library::new(&abs) } {
         Ok(lib) => Ok(std::sync::Arc::new(lib)),
-        Err(e) => Err(format!("cannot load '{}': {}", path.display(), e)),
+        Err(e) => Err(format!("cannot load '{}': {}", abs.display(), e)),
     }
 }
 

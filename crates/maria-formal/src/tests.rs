@@ -336,6 +336,7 @@ mod tests {
             module_functions: HashMap::new(),
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
         };
 
         let mut engine = test_engine();
@@ -386,6 +387,7 @@ mod tests {
             module_functions: HashMap::new(),
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
         };
 
         let mut engine = test_engine();
@@ -438,6 +440,7 @@ mod tests {
             module_functions: HashMap::new(),
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
         };
 
         let mut engine = test_engine();
@@ -565,6 +568,7 @@ mod tests {
             module_functions: HashMap::new(),
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
         };
 
         let results = engine.check_assertions_bmc(&design);
@@ -636,6 +640,7 @@ mod tests {
             module_functions: HashMap::new(),
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
         };
 
         let results = engine.check_assertions_bmc(&design);
@@ -752,6 +757,7 @@ mod tests {
             module_functions: HashMap::new(),
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
         };
 
         let results = engine.check_assertions_bmc(&design);
@@ -828,6 +834,7 @@ mod tests {
             module_functions: HashMap::new(),
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
         };
 
         let results = engine.check_assertions_bmc(&design);

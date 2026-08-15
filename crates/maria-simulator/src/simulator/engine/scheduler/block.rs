@@ -136,15 +136,79 @@ impl SimulationEngine {
                         return Ok(false);
                     }
                 }
-                IrStmt::BlockingAssign { lhs, rhs, delay: _ } => {
+                IrStmt::BlockingAssign { lhs, rhs, delay } => {
                     if !self.is_forced(lhs) {
                         let val = self.eval_assign_rhs(rhs, lhs)?;
+                        if let Some(d) = delay {
+                            if *d > 0 {
+                                // Intra-assignment delay `lhs = #d rhs`: RHS
+                                // di-sampling SEKARANG, write dilakukan saat
+                                // t+d (≡ `#d; lhs = rhs_sampled;`).
+                                let delay_t = self.state.time as usize + *d as usize;
+                                self.ensure_events(delay_t);
+                                let mut later: Vec<IrStmt> = vec![IrStmt::BlockingAssign {
+                                    lhs: lhs.clone(),
+                                    rhs: IrExpr::Const(val),
+                                    delay: None,
+                                }];
+                                later.extend(stmts[i + 1..].to_vec());
+                                if let Some(loop_cont) = &self.loop_continuation {
+                                    later.extend(loop_cont.clone());
+                                }
+                                if !later.is_empty() {
+                                    let pid = self.current_process_id;
+                                    self.push_event(delay_t, RegionEvent {
+                                        region: EventRegion::Active,
+                                        event: EventKind::ContinueBlock(Continuation {
+                                            stmts_to_exec: later,
+                                            stmts_remaining: vec![],
+                                            fork_id,
+                                            process_id: pid,
+                                            process_name: self.current_process_name.clone(),
+                                        }),
+                                    });
+                                }
+                                return Ok(false);
+                            }
+                        }
                         self.write_lvalue(lhs, val)?;
                     }
                 }
-                IrStmt::NonBlockingAssign { lhs, rhs, delay: _ } => {
+                IrStmt::NonBlockingAssign { lhs, rhs, delay } => {
                     if !self.is_forced(lhs) {
                         let val = self.eval_assign_rhs(rhs, lhs)?;
+                        if let Some(d) = delay {
+                            if *d > 0 {
+                                // Intra-assignment delay `lhs <= #d rhs`: RHS
+                                // di-sampling SEKARANG, NBA di-queue saat t+d
+                                // (≡ `#d; lhs <= rhs_sampled;`).
+                                let delay_t = self.state.time as usize + *d as usize;
+                                self.ensure_events(delay_t);
+                                let mut later: Vec<IrStmt> = vec![IrStmt::NonBlockingAssign {
+                                    lhs: lhs.clone(),
+                                    rhs: IrExpr::Const(val),
+                                    delay: None,
+                                }];
+                                later.extend(stmts[i + 1..].to_vec());
+                                if let Some(loop_cont) = &self.loop_continuation {
+                                    later.extend(loop_cont.clone());
+                                }
+                                if !later.is_empty() {
+                                    let pid = self.current_process_id;
+                                    self.push_event(delay_t, RegionEvent {
+                                        region: EventRegion::Active,
+                                        event: EventKind::ContinueBlock(Continuation {
+                                            stmts_to_exec: later,
+                                            stmts_remaining: vec![],
+                                            fork_id,
+                                            process_id: pid,
+                                            process_name: self.current_process_name.clone(),
+                                        }),
+                                    });
+                                }
+                                return Ok(false);
+                            }
+                        }
                         self.nba_pending.push((lhs.clone(), val));
                     }
                 }
@@ -2069,14 +2133,19 @@ impl SimulationEngine {
                 }
             }
             match stmt {
-                IrStmt::BlockingAssign { lhs, rhs, delay: _ } => {
+                IrStmt::BlockingAssign { lhs, rhs, delay } => {
                     if !self.is_forced(lhs) {
+                        // Intra-assignment delay di konteks zero-time (fungsi/
+                        // task body non-suspend) tidak bisa di-suspend — apply
+                        // segera (konstruk ilegal di fungsi; fallback aman).
+                        let _ = delay;
                         let val = self.eval_assign_rhs(rhs, lhs)?;
                         self.write_lvalue(lhs, val)?;
                     }
                 }
-                IrStmt::NonBlockingAssign { lhs, rhs, delay: _ } => {
+                IrStmt::NonBlockingAssign { lhs, rhs, delay } => {
                     if !self.is_forced(lhs) {
+                        let _ = delay;
                         let val = self.eval_assign_rhs(rhs, lhs)?;
                         self.nba_pending.push((lhs.clone(), val));
                     }

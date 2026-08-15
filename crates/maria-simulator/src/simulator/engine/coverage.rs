@@ -97,12 +97,6 @@ impl SimulationEngine {
     /// Apakah baris (1-based, koordinat output preprocessed) berada dalam
     /// region `` `coverage_off ``/`` `coverage_on `` sehingga line coverage-nya
     /// harus di-exclude (SIM-29).
-    ///
-    /// # Note
-    /// API dicadangkan untuk filtering line-aware: `record_line_hit` saat ini
-    /// memakai key `process_name + discriminant(stmt)` tanpa info baris, jadi
-    /// metode ini belum di-konsumsi jalur produksi (diverifikasi via unit test).
-    #[allow(dead_code)]
     pub fn is_line_excluded(&self, line: usize) -> bool {
         self.coverage_exclusions
             .iter()
@@ -115,6 +109,16 @@ impl SimulationEngine {
             return;
         }
         let key = Symbol::intern(&format!("{}.{:?}", process_name, std::mem::discriminant(stmt)));
+        // SIM-29: statement pada baris dalam `` `coverage_off ``/`` `coverage_on ``
+        // TIDAK dihitung line coverage-nya. Baris statement di-lookup dari
+        // side-table `stmt_lines` (key SAMA dengan cover_line) — di-populate
+        // elaborator dari AST (expr_location). Statement tanpa baris
+        // (line 0 / tidak dicatat) tetap dihitung.
+        if let Some(&line) = self.stmt_lines.get(&key) {
+            if self.is_line_excluded(line) {
+                return;
+            }
+        }
         *self.cover_line.entry(key).or_insert(0) += 1;
     }
 

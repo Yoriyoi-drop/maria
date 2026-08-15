@@ -2698,6 +2698,152 @@ endmodule
 }
 
 #[test]
+fn test_vhpi_value_change_callback_e2e() {
+    // VHPI value-change callback (vhpiCbValueChange) di-fire engine saat
+    // signal berubah (ForeignEvent::ValueChange ke scheduler — poin 5
+    // arsitektur user). Callback di-register utk signal 'q'; verifikasi
+    // terpanggil saat q berubah dari 0 → 1.
+    use maria_api::vhpi::callback::{fire_value_change_callbacks, vhpiCbValueChange};
+    use maria_api::vhpi::handle::{register_object_for_test, VhpiObjectKind};
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    static FIRED: AtomicI32 = AtomicI32::new(0);
+
+    extern "C" fn vc_cb(_data: *mut maria_api::vhpi::callback::t_vhpi_cb_data) -> i32 {
+        FIRED.fetch_add(1, Ordering::SeqCst);
+        0
+    }
+
+    // Registrasi callback value-change utk signal id 0 (obj Signal(0,0)).
+    let obj = register_object_for_test(VhpiObjectKind::Signal(0, 0));
+    let cb = maria_api::vhpi::callback::t_vhpi_cb_data {
+        reason: vhpiCbValueChange,
+        cb_rtn: Some(vc_cb),
+        user_data: std::ptr::null_mut(),
+        obj,
+        time: std::ptr::null_mut(),
+    };
+    let h = maria_api::vhpi::callback::vhpi_register_cb(&cb);
+    assert!(h.is_valid(), "callback terdaftar");
+
+    // Fire langsung (simulasi jalur engine: commit signal → callback).
+    let old = maria_ir::LogicVec::from_u64(0, 8);
+    let new = maria_ir::LogicVec::from_u64(1, 8);
+    fire_value_change_callbacks(0, &old, &new);
+    assert_eq!(FIRED.load(Ordering::SeqCst), 1, "value-change callback utk signal 0 terpanggil");
+
+    // Signal id lain → tidak terpanggil.
+    fire_value_change_callbacks(5, &old, &new);
+    assert_eq!(FIRED.load(Ordering::SeqCst), 1, "signal id beda tak boleh fire");
+
+    // obj NULL (semua signal) → terpanggil utk signal apa pun.
+    let cb_all = maria_api::vhpi::callback::t_vhpi_cb_data {
+        reason: vhpiCbValueChange,
+        cb_rtn: Some(vc_cb),
+        user_data: std::ptr::null_mut(),
+        obj: maria_api::vhpi::handle::VhpiHandle::NULL,
+        time: std::ptr::null_mut(),
+    };
+    let h2 = maria_api::vhpi::callback::vhpi_register_cb(&cb_all);
+    fire_value_change_callbacks(9, &old, &new);
+    assert_eq!(FIRED.load(Ordering::SeqCst), 2, "obj NULL fire utk signal apa pun");
+
+    maria_api::vhpi::callback::vhpi_remove_cb(h);
+    maria_api::vhpi::callback::vhpi_remove_cb(h2);
+    maria_api::vhpi::callback::clear_all_callbacks();
+}
+
+#[test]
+fn test_vhpi_loader_e2e_gcc_so() {
+    // e2e VHPI library C sungguhan (arsitektur poin 3: JANGAN compile PLI/
+    // VHPI ke Rust — pakai C ABI + dynamic loader). Compile C → .so via gcc,
+    // load via foreign loader, verifikasi `vhpi_startup` C terpanggil.
+    // Skip test bila gcc tidak tersedia di environment.
+    use std::path::Path;
+    use std::process::Command;
+
+    // Cek gcc tersedia.
+    let gcc_ok = Command::new("gcc").arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
+    if !gcc_ok {
+        eprintln!("SKIP: gcc tidak tersedia — test VHPI .so dilewati");
+        return;
+    }
+
+    let dir = std::env::temp_dir().join(format!("maria_vhpi_e2e_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("buat dir temp");
+    let c_path = dir.join("vhpi_stub.c");
+    let so_path = dir.join("libvhpi_stub.so");
+    std::fs::write(&c_path, r#"
+#include <stdio.h>
+int vhpi_startup(void) {
+    printf("vhpi_startup called (C stub)\n");
+    return 0;
+}
+"#).expect("tulis C stub");
+
+    let status = Command::new("gcc")
+        .args(["-shared", "-fPIC", "-o"])
+        .arg(&so_path)
+        .arg(&c_path)
+        .status()
+        .expect("jalankan gcc");
+    assert!(status.success(), "gcc compile .so gagal");
+
+    // Load via foreign loader (canonicalize path absolut — dlopen tak search cwd).
+    let vhpi = maria_api::vhpi::loader::load_vhpi_library(so_path.to_str().unwrap())
+        .expect("load VHPI .so");
+    assert_eq!(vhpi.abi.arch, std::env::consts::ARCH, "ABI arch cocok");
+    assert_eq!(vhpi.abi.os, std::env::consts::OS, "ABI os cocok");
+
+    // vhpi_startup dari C terpanggil (return 0 = sukses).
+    maria_api::vhpi::loader::call_vhpi_startup(&vhpi).expect("vhpi_startup sukses");
+
+    // Bersihkan.
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = Path::new("libvhpi_test.so"); // (scratch manual, bukan test ini)
+}
+
+#[test]
+fn test_pli_loader_e2e_gcc_so() {
+    // e2e PLI library C sungguhan: compile C → .so, load, cek entry point
+    // `veriusertfs` / `vpi_startup` terdeteksi. Skip bila gcc tidak ada.
+    use std::process::Command;
+
+    let gcc_ok = Command::new("gcc").arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
+    if !gcc_ok {
+        eprintln!("SKIP: gcc tidak tersedia — test PLI .so dilewati");
+        return;
+    }
+
+    let dir = std::env::temp_dir().join(format!("maria_pli_e2e_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("buat dir temp");
+    let c_path = dir.join("pli_stub.c");
+    let so_path = dir.join("libpli_stub.so");
+    std::fs::write(&c_path, r#"
+#include <stdio.h>
+int vpi_startup(void) {
+    printf("pli vpi_startup called (C stub)\n");
+    return 0;
+}
+"#).expect("tulis C stub");
+
+    let status = Command::new("gcc")
+        .args(["-shared", "-fPIC", "-o"])
+        .arg(&so_path)
+        .arg(&c_path)
+        .status()
+        .expect("jalankan gcc");
+    assert!(status.success(), "gcc compile .so gagal");
+
+    let pli = maria_api::pli::loader::load_pli_library(so_path.to_str().unwrap())
+        .expect("load PLI .so");
+    assert!(maria_api::pli::loader::has_pli_entry_points(&pli), "entry point vpi_startup terdeteksi");
+    maria_api::pli::loader::call_pli_startup(&pli).expect("pli vpi_startup sukses");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_randomize_soft_constraint_satisfied() {
     // LANG-31: `soft` constraint — best-effort. Soft yang TIDAK bertentangan
     // dengan hard constraint: randomize harus sukses (soft boleh terpenuhi
@@ -8394,6 +8540,121 @@ endmodule
         .map(|(_, v)| v.to_u64())
         .unwrap_or(0);
     assert_eq!(v, 42, "simulation should complete successfully");
+}
+
+#[test]
+fn test_uvm_super_phase_noop() {
+    // `super.end_of_elaboration_phase(phase)` di subclass UVM harus no-op
+    // (bukan error RT9003 "uvm_object::end_of_elaboration_phase not
+    // implemented") — pola OpenTitan core_ibex_base_test.
+    let source = r#"
+class my_test extends uvm_test;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void end_of_elaboration_phase(uvm_phase phase);
+        super.end_of_elaboration_phase(phase);
+    endfunction
+endclass
+
+module tb;
+    my_test t;
+    reg [31:0] result;
+    initial begin
+        t = new("t", null);
+        result = 42;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let v = sigs
+        .iter()
+        .find(|(n, _)| n == "result")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    assert_eq!(v, 42, "super.xxx_phase harus no-op, tidak error");
+}
+
+#[test]
+fn test_task_method_array_lvalue_dynamic_index() {
+    // LHS array dengan index dinamis (`mem[count] = v`) di body task method
+    // harus didukung — bukan error RT9003 "unsupported lvalue type in task
+    // method: BitSelect" (pola OpenTitan DV, mis. model flash bank).
+    let source = r#"
+class c;
+    int mem[8];
+    int count;
+    function new();
+        for (int i = 0; i < 8; i++) mem[i] = 0;
+        count = 0;
+    endfunction
+    task push(int v);
+        mem[count] = v;
+        count = count + 1;
+    endtask
+    function int read(int i);
+        return mem[i];
+    endfunction
+endclass
+
+module tb;
+    c obj;
+    reg [31:0] result;
+    initial begin
+        obj = new();
+        obj.push(5);
+        obj.push(7);
+        result = obj.read(1);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let v = sigs
+        .iter()
+        .find(|(n, _)| n == "result")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    assert_eq!(v, 7, "array lvalue index dinamis di task method harus jalan");
+}
+
+#[test]
+fn test_uvm_super_new_unknown_base_class() {
+    // OpenTitan DV: `dv_report_server extends uvm_default_report_server`
+    // (kelas library UVM TIDAK ada di filelist). `super.new(name)` di
+    // subclass user harus jatuh ke builtin report_object, bukan error
+    // RT8001 "method 'new' not found in class 'uvm_default_report_server'".
+    let source = r#"
+class dv_report_server extends uvm_default_report_server;
+    function new (string name = "");
+        super.new(name);
+    endfunction
+    function string tag();
+        return "dv";
+    endfunction
+endclass
+
+module tb;
+    dv_report_server srv;
+    reg [31:0] result;
+    initial begin
+        srv = new("mysrv");
+        result = 42;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let v = sigs
+        .iter()
+        .find(|(n, _)| n == "result")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    assert_eq!(
+        v, 42,
+        "super.new pada class UVM base yang tidak terdaftar harus tidak error"
+    );
 }
 
 #[test]
@@ -15499,6 +15760,56 @@ endmodule
         );
     }
     engine.run().unwrap();
+}
+
+#[test]
+fn test_coverage_exclusion_filters_line_hits() {
+    // SIM-29 e2e: statement pada baris dalam `` `coverage_off ``/`` `coverage_on ``
+    // TIDAK dihitung line coverage. Sebelum fix, record_line_hit memakai key
+    // process+discriminant tanpa info baris → statement di region excluded
+    // ikut dihitung. Sekarang elaborator mencatat baris per statement
+    // (IrDesign.stmt_lines) dan engine melewati statement yang barisnya
+    // excluded (is_line_excluded).
+    let source = r#"
+module tb;
+    reg [7:0] x;
+    reg [7:0] y;
+    initial begin
+        x = 5;
+    end
+`coverage_off
+    initial begin
+        y <= 3;
+    end
+`coverage_on
+    initial #2 $finish;
+endmodule
+"#;
+    let design = crate::compile_str(source).unwrap();
+    assert!(
+        !design.stmt_lines.is_empty(),
+        "stmt_lines harus terisi oleh elaborator (SIM-29)"
+    );
+    let mut engine = crate::simulator::SimulationEngine::new(design, 5);
+    engine.coverage_enabled = true;
+    engine.run().unwrap();
+
+    // initial_0 (x = 5) berada DI LUAR region → harus dihitung.
+    assert!(
+        engine
+            .cover_line
+            .keys()
+            .any(|k| k.as_str().starts_with("initial_0.")),
+        "statement di luar region coverage_off harus dihitung line hit"
+    );
+    // initial_1 (y <= 3) berada DI DALAM region → TIDAK boleh dihitung.
+    assert!(
+        !engine
+            .cover_line
+            .keys()
+            .any(|k| k.as_str().starts_with("initial_1.")),
+        "statement di dalam region coverage_off TIDAK boleh dihitung line hit (SIM-29)"
+    );
 }
 
 #[test]

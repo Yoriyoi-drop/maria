@@ -520,6 +520,169 @@ impl SimulationEngine {
                     )))
                 }
             }
+            maria_ast::Expr::BitSelect { expr: inner, index } => {
+                // `arr[idx] = rhs` — array element (array field/queue) ATAU
+                // bit select pada vector. Konsisten dgn evaluate_ast_stmt.
+                let idx_val = self.evaluate_ast_expr(index)?;
+                let idx = idx_val.to_u64() as usize;
+                if let Some(elem_width) = self.get_field_elem_width(inner) {
+                    let lhs_val = self.evaluate_ast_expr(inner)?;
+                    let mut bits = lhs_val.bits.clone();
+                    let start = idx * elem_width;
+                    for (j, b) in val.bits.iter().enumerate() {
+                        if start + j < bits.len() {
+                            bits[start + j] = *b;
+                        }
+                    }
+                    let new_val = LogicVec {
+                        width: bits.len(),
+                        bits,
+                    };
+                    match inner.as_ref() {
+                        maria_ast::Expr::Ident { name, .. } => {
+                            self.write_local_or_field(name.as_str(), new_val)
+                        }
+                        maria_ast::Expr::MemberAccess { obj, field } => {
+                            let ov = self.evaluate_ast_expr(obj)?;
+                            let oid = ov.to_u64() as ObjId;
+                            if let Some(o) = self.state.get_object_mut(oid) {
+                                o.fields.insert(*field, new_val);
+                                Ok(())
+                            } else {
+                                Err(self.diag_error(
+                                    maria_core::diagnostics::DiagCode::NullHandle,
+                                    format!("object {} not found for field write", oid),
+                                ))
+                            }
+                        }
+                        _ => Err(self.diag_error(
+                            maria_core::diagnostics::DiagCode::NotImplemented,
+                            format!("unsupported array base in task method: {:?}", inner),
+                        )),
+                    }
+                } else {
+                    let lhs_val = self.evaluate_ast_expr(inner)?;
+                    let mut bits = lhs_val.bits.clone();
+                    if idx < bits.len() {
+                        let bit = val.bits.first().copied().unwrap_or(LogicVal::X);
+                        bits[idx] = bit;
+                    }
+                    let width = bits.len();
+                    let new_val = LogicVec { width, bits };
+                    match inner.as_ref() {
+                        maria_ast::Expr::Ident { name, .. } => {
+                            self.write_local_or_field(name.as_str(), new_val)
+                        }
+                        maria_ast::Expr::MemberAccess { obj, field } => {
+                            let ov = self.evaluate_ast_expr(obj)?;
+                            let oid = ov.to_u64() as ObjId;
+                            if let Some(o) = self.state.get_object_mut(oid) {
+                                o.fields.insert(*field, new_val);
+                                Ok(())
+                            } else {
+                                Err(self.diag_error(
+                                    maria_core::diagnostics::DiagCode::NullHandle,
+                                    format!("object {} not found for field write", oid),
+                                ))
+                            }
+                        }
+                        _ => Err(self.diag_error(
+                            maria_core::diagnostics::DiagCode::NotImplemented,
+                            format!("unsupported bit base in task method: {:?}", inner),
+                        )),
+                    }
+                }
+            }
+            maria_ast::Expr::RangeSelect {
+                expr: inner,
+                msb,
+                lsb,
+            } => {
+                let lhs_val = self.evaluate_ast_expr(inner)?;
+                let msb_val = self.evaluate_ast_expr(msb)?;
+                let lsb_val = self.evaluate_ast_expr(lsb)?;
+                let m = msb_val.to_u64() as usize;
+                let l = lsb_val.to_u64() as usize;
+                let (start, end) = if m > l { (l, m) } else { (m, l) };
+                let range_len = end - start + 1;
+                let mut bits = lhs_val.bits.clone();
+                for j in 0..val.width.min(range_len) {
+                    if start + j < bits.len() {
+                        bits[start + j] = val.bits[j];
+                    }
+                }
+                let new_val = LogicVec {
+                    width: bits.len(),
+                    bits,
+                };
+                match inner.as_ref() {
+                    maria_ast::Expr::Ident { name, .. } => {
+                        self.write_local_or_field(name.as_str(), new_val)
+                    }
+                    maria_ast::Expr::MemberAccess { obj, field } => {
+                        let ov = self.evaluate_ast_expr(obj)?;
+                        let oid = ov.to_u64() as ObjId;
+                        if let Some(o) = self.state.get_object_mut(oid) {
+                            o.fields.insert(*field, new_val);
+                            Ok(())
+                        } else {
+                            Err(self.diag_error(
+                                maria_core::diagnostics::DiagCode::NullHandle,
+                                format!("object {} not found for field write", oid),
+                            ))
+                        }
+                    }
+                    _ => Err(self.diag_error(
+                        maria_core::diagnostics::DiagCode::NotImplemented,
+                        format!("unsupported range base in task method: {:?}", inner),
+                    )),
+                }
+            }
+            maria_ast::Expr::PartSelect {
+                expr: inner,
+                base,
+                width,
+            } => {
+                // `inner[base +: width]` — parser sudah menormalisasi `-:` ke
+                // base = msb-(width-1), jadi base selalu indeks BAWAH.
+                let base_val = self.evaluate_ast_expr(base)?;
+                let width_val = self.evaluate_ast_expr(width)?;
+                let b = base_val.to_u64() as usize;
+                let w = width_val.to_u64() as usize;
+                let lhs_val = self.evaluate_ast_expr(inner)?;
+                let mut bits = lhs_val.bits.clone();
+                for j in 0..val.width.min(w.max(1)) {
+                    if b + j < bits.len() {
+                        bits[b + j] = val.bits[j];
+                    }
+                }
+                let new_val = LogicVec {
+                    width: bits.len(),
+                    bits,
+                };
+                match inner.as_ref() {
+                    maria_ast::Expr::Ident { name, .. } => {
+                        self.write_local_or_field(name.as_str(), new_val)
+                    }
+                    maria_ast::Expr::MemberAccess { obj, field } => {
+                        let ov = self.evaluate_ast_expr(obj)?;
+                        let oid = ov.to_u64() as ObjId;
+                        if let Some(o) = self.state.get_object_mut(oid) {
+                            o.fields.insert(*field, new_val);
+                            Ok(())
+                        } else {
+                            Err(self.diag_error(
+                                maria_core::diagnostics::DiagCode::NullHandle,
+                                format!("object {} not found for field write", oid),
+                            ))
+                        }
+                    }
+                    _ => Err(self.diag_error(
+                        maria_core::diagnostics::DiagCode::NotImplemented,
+                        format!("unsupported part-select base in task method: {:?}", inner),
+                    )),
+                }
+            }
             _ => Err(self.diag_error(maria_core::diagnostics::DiagCode::NotImplemented, format!(
                 "unsupported lvalue type in task method: {:?}",
                 lhs

@@ -25,6 +25,7 @@ impl SimulationEngine {
         SimulationEngine {
             state,
             coverage_exclusions: design.coverage_exclusions.clone(),
+            stmt_lines: design.stmt_lines.clone(),
             design,
             sim_limit,
             report_progress: false,
@@ -1002,6 +1003,36 @@ impl SimulationEngine {
                                     }
                                 }
                                 self.sim_perf.counters.sensitive_triggers += 1;
+                                // ── Foreign value-change callback (VPI cbValueChange
+                                // + VHPI vhpiCbValueChange) — signal yang berubah
+                                // di-fire sebagai ForeignEvent::ValueChange ke
+                                // scheduler (poin 5 arsitektur user), bukan dari
+                                // thread library.
+                                for (id, old_v, new_v) in &changed {
+                                    if let Some(sig) = self.design.top.signals.get(*id) {
+                                        let name = sig.name.as_str();
+                                        // VPI callback memakai t_vpi_value —
+                                        // bangun dari LogicVec (format IntVal).
+                                        let old_vpi = crate::vpi::types::t_vpi_value {
+                                            format: crate::vpi::types::vpiIntVal,
+                                            value: crate::vpi::types::vpi_value_union {
+                                                integer: old_v.to_u64() as i32,
+                                            },
+                                        };
+                                        let new_vpi = crate::vpi::types::t_vpi_value {
+                                            format: crate::vpi::types::vpiIntVal,
+                                            value: crate::vpi::types::vpi_value_union {
+                                                integer: new_v.to_u64() as i32,
+                                            },
+                                        };
+                                        crate::vpi::callback::fire_value_change_callbacks(
+                                            name, &old_vpi, &new_vpi,
+                                        );
+                                        crate::vhpi::callback::fire_value_change_callbacks(
+                                            *id, old_v, new_v,
+                                        );
+                                    }
+                                }
                                 self.trigger_sensitive_processes(&changed, t)?;
                             }
                             // Process Reactive events (from events[t] and reactive_events buffer)
@@ -1161,6 +1192,11 @@ impl SimulationEngine {
 
             // ── VPI: Read-Write Synch callback after all signal updates ──
             crate::vpi::callback::dispatch_read_write_synch();
+            // ── VHPI (IEEE 1076-2008): time step + ReadWrite/ReadOnly synch
+            // callback tiap time step — callback foreign masuk antrian
+            // scheduler (bukan thread library), poin 5 arsitektur user.
+            crate::vhpi::api::dispatch_time_step();
+            crate::vhpi::api::dispatch_synch();
 
             // ── Debug check at start of cycle ──
             if self.debug_mode != DebugMode::Normal {

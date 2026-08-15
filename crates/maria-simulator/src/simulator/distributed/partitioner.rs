@@ -315,6 +315,7 @@ impl DesignPartitioner {
             source_file: None,
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
         }
     }
 

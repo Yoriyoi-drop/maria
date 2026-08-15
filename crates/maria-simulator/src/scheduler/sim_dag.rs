@@ -772,6 +772,7 @@ mod tests {
             module_functions: HashMap::new(),
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
         };
         let dag = SimulationDag::build(&design);
         assert_eq!(dag.num_layers(), 0);
@@ -855,6 +856,7 @@ mod tests {
             module_functions: HashMap::new(),
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
+            stmt_lines: HashMap::new(),
         };
 
         let dag = SimulationDag::build(&design);

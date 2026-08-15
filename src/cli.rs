@@ -737,6 +737,17 @@ pub struct Cli {
     #[arg(long = "dpi-lib", num_args = 1)]
     pub dpi_libs: Vec<String>,
 
+    /// VHPI (IEEE 1076-2008) shared library to load — ABI-compatible adapter
+    /// (can be specified multiple times). Loading memakai feature "dpi"
+    /// (libloading); tanpa feature → error jelas saat --vhpi dipakai.
+    #[arg(long = "vhpi", num_args = 1)]
+    pub vhpi_libs: Vec<String>,
+
+    /// PLI (IEEE 1364) shared library to load — ABI-compatible adapter
+    /// (can be specified multiple times).
+    #[arg(long = "pli", num_args = 1)]
+    pub pli_libs: Vec<String>,
+
     /// Save simulation checkpoint to file (after sim, or at --break-cycle)
     #[arg(long = "save")]
     pub save: Option<String>,

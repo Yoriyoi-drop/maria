@@ -81,6 +81,7 @@ mod tests {
             source_file: None,
             pkg_scoped_consts: Default::default(),
             coverage_exclusions: Vec::new(),
+            stmt_lines: std::collections::HashMap::new(),
         };
         let out = synthesize(&ir, &SynthOpts::default());
         assert_eq!(out.check.error_count(), 0);

@@ -144,6 +144,15 @@ impl SimulationEngine {
                 } else {
                     (*msb, *lsb)
                 };
+                // Guard: index di luar lebar signal (elab kadang menghasilkan
+                // select out-of-range utk memory/struct yang lebarnya dinamis)
+                // — clamp ke X, jangan panic. Konsisten dgn BitSelect yang
+                // pakai `get().unwrap_or(X)`.
+                let n = val.bits.len();
+                if start >= n || end >= n || start > end {
+                    let w = (end - start + 1).max(1);
+                    return Ok(LogicVec::fill(LogicVal::X, w));
+                }
                 let bits = val.bits[start..=end].to_vec();
                 Ok(LogicVec {
                     width: bits.len(),
@@ -165,11 +174,13 @@ impl SimulationEngine {
                 } else {
                     (*msb, *lsb)
                 };
+                // Out-of-range select → X (LRM 1800 §11.5.1: part-select di
+                // luar batas menghasilkan X). Jangan error/panic — lebar
+                // dinamis (struct/memory) kadang menghasilkan select OOB
+                // yang legal secara runtime (flash_bank: [1:0] pada lebar 1).
                 if end >= val.width {
-                    return Err(self.diag_error(maria_core::diagnostics::DiagCode::MemoryOutOfBounds, format!(
-                        "range select out of bounds: {}:{} on width {}",
-                        msb, lsb, val.width
-                    )));
+                    let w = (end - start + 1).max(1);
+                    return Ok(LogicVec::fill(LogicVal::X, w));
                 }
                 let bits = val.bits[start..=end].to_vec();
                 Ok(LogicVec {
@@ -1512,10 +1523,11 @@ impl SimulationEngine {
             IrExpr::MemberAccess { obj, field } => {
                 let obj_val = self.evaluate_expr(obj)?;
                 let obj_id = obj_val.to_u64() as ObjId;
-                let obj_data = self
-                    .state
-                    .get_object(obj_id)
-                    .ok_or_else(|| format!("object {} not found", obj_id))?;
+                // Handle OOB (stale id) → null default, bukan error (konsisten
+                // dgn jalur AST; sim tidak boleh abort utk bug handle).
+                let Some(obj_data) = self.state.get_object(obj_id) else {
+                    return Ok(LogicVec::new(1));
+                };
                 let val = obj_data
                     .fields
                     .get(field)

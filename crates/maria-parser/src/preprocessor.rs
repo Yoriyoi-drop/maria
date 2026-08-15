@@ -99,6 +99,15 @@ impl Preprocessor {
         while i < lines.len() {
             let mut raw_line = lines[i].to_string();
             loop {
+                // `\` di AKHIR baris hanya line-continuation bila berada di
+                // LUAR comment/string. File OpenTitan (aon_osc.sv) menaruh `\`
+                // di dalam `// ...` comment untuk MENGAKHIRI komentar (baris
+                // berikutnya `` `endif `` tetap directive nyata) — perlakuan
+                // `\`-in-comment sebagai continuation (sebelumnya) menelan
+                // `` `endif `` sehingga ifdef tak seimbang dan module hilang.
+                if !trailing_backslash_is_continuation(&raw_line) {
+                    break;
+                }
                 let te = raw_line.trim_end();
                 if !te.ends_with('\\') && !te.ends_with("\\\r") {
                     break;
@@ -110,7 +119,11 @@ impl Preprocessor {
                 raw_line.pop(); // remove trailing \
                 i += 1;
                 if i < lines.len() {
-                    raw_line.push('\n');
+                    // LRM 1800 §22.5.1: `\` + <newline> di-DELETE. Baris yang
+                    // digabung tidak boleh memutus komentar (case aon_osc.sv:
+                    // `// ... input\` + `` `endif `` — jika joined dengan
+                    // newline, `` `endif `` menjadi directive nyata dan ifdef
+                    // jadi tak seimbang → module hilang).
                     raw_line.push_str(lines[i]);
                 } else {
                     break;
@@ -738,4 +751,66 @@ fn unbalanced_macro_call(line: &str) -> bool {
         }
     }
     macro_open && paren_depth > 0
+}
+
+/// True jika `\` di akhir baris adalah line-continuation sungguhan — yaitu
+/// berada di LUAR comment (`//`, `/* */`) dan string. `\` yang berada DI
+/// DALAM comment/string TIDAK meneruskan baris (baris berikutnya tetap baris
+/// terpisah, komentar berakhir di newline). Ini perilaku yang dipakai tool
+/// reference (Verilator/VCS) oleh kode OpenTitan: aon_osc.sv menaruh `\`
+/// di akhir komentar `// ... input\` supaya `` `endif `` baris berikutnya
+/// tetap directive nyata — jika `\`-in-comment dianggap continuation, ifdef
+/// menjadi tak seimbang dan module aon_osc hilang dari design.
+fn trailing_backslash_is_continuation(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    // Cari `\` terakhir yang bukan whitespace-trailing.
+    let mut end = line.len();
+    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    if end == 0 || bytes[end - 1] != b'\\' {
+        return false;
+    }
+    // Scan sampai posisi `\` (exclusive), lacak state comment/string.
+    let mut in_block = false;
+    let mut in_line = false;
+    let mut in_string = false;
+    let mut j = 0;
+    while j < end {
+        let c = bytes[j];
+        if in_block {
+            if c == b'*' && j + 1 < end && bytes[j + 1] == b'/' {
+                in_block = false;
+                j += 2;
+            } else {
+                j += 1;
+            }
+            continue;
+        }
+        if in_string {
+            if c == b'\\' && j + 1 < end {
+                j += 2;
+            } else {
+                if c == b'"' {
+                    in_string = false;
+                }
+                j += 1;
+            }
+            continue;
+        }
+        if c == b'/' && j + 1 < end && bytes[j + 1] == b'/' {
+            in_line = true;
+            break;
+        }
+        if c == b'/' && j + 1 < end && bytes[j + 1] == b'*' {
+            in_block = true;
+            j += 2;
+            continue;
+        }
+        if c == b'"' {
+            in_string = true;
+        }
+        j += 1;
+    }
+    !in_line && !in_block && !in_string
 }

@@ -832,15 +832,22 @@ impl CompileSession {
     }
 
     /// Clear all caches (local + remote if configured).
-    pub fn clear_cache(&mut self) {
+    ///
+    /// `clear_micd=false`: MICD tidak ikut dihapus. Dipakai `--cache-clear`
+    /// pada akhir run — MICD sudah dihapus di AWAL run (sebelum attach), jadi
+    /// clear lagi di akhir hanya membuang hasil rebuild fresh yang baru
+    /// disimpan (run berikutnya jadi rebuild penuh lagi).
+    pub fn clear_cache(&mut self, clear_micd: bool) {
         self.cache.clear();
         // If remote is set, also clear remote
         if let Some(ref backend) = self.cache.remote {
             let _ = backend.clear();
         }
         // Clear MICD persistent database if attached
-        if let Some(db) = self.micd.as_mut() {
-            let _ = db.clear();
+        if clear_micd {
+            if let Some(db) = self.micd.as_mut() {
+                let _ = db.clear();
+            }
         }
         self.micd_restored = 0;
         self.lexer_payloads.lock().unwrap().clear();

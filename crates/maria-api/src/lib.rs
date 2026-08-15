@@ -142,10 +142,20 @@ pub fn read_project_file(path: &str) -> Result<Vec<String>, SimError> {
     let content = fs::read_to_string(path)
         .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("cannot read '{}': {}", path, e)))?;
     let base = Path::new(path).parent().unwrap_or(Path::new("."));
+    let mut in_foreign = false;
     let files: Vec<String> = content
         .lines()
         .map(|l| l.trim())
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter(|l| {
+            // Bagian `[foreign]` (poin 9 arsitektur user) bukan file .sv —
+            // di-skip di sini, di-parse read_project_with_foreign.
+            if l.starts_with('[') && l.ends_with(']') {
+                in_foreign = l.trim_matches(['[', ']']).trim() == "foreign";
+                return false;
+            }
+            !in_foreign
+        })
         .map(|l| {
             let p = base.join(l);
             p.to_string_lossy().to_string()
@@ -158,6 +168,92 @@ pub fn read_project_file(path: &str) -> Result<Vec<String>, SimError> {
         ));
     }
     Ok(files)
+}
+
+/// Isi file project .maria — daftar file .sv + bagian `[foreign]`
+/// (arsitektur masukan user poin 9):
+///
+/// ```text
+/// tb_top.sv
+/// rtl/counter.sv
+///
+/// [foreign]
+/// vhpi = ["libvhpi_test.so"]
+/// pli  = ["libpli_test.so"]
+/// dpi  = ["libdpi_test.so"]
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ProjectFile {
+    /// File .sv (path sudah relatif ke direktori .maria).
+    pub files: Vec<String>,
+    /// Library VHPI (IEEE 1076-2008) dari `[foreign] vhpi = [...]`.
+    pub vhpi_libs: Vec<String>,
+    /// Library PLI (IEEE 1364) dari `[foreign] pli = [...]`.
+    pub pli_libs: Vec<String>,
+    /// Library DPI (IEEE 1800 §35) dari `[foreign] dpi = [...]`.
+    pub dpi_libs: Vec<String>,
+}
+
+/// Baca file project .maria — daftar file .sv + bagian `[foreign]`.
+/// Baris non-kosong non-komentar di luar `[foreign]` = file .sv (satu per
+/// baris, path relatif ke direktori .maria, pola lama). Bagian `[foreign]`
+/// berisi list library per interface (format TOML-like `key = ["a.so", ...]`).
+pub fn read_project_with_foreign(path: &str) -> Result<ProjectFile, SimError> {
+    let content = fs::read_to_string(path).map_err(|e| {
+        SimError::with_diag(DiagCode::InvalidSyntax, format!("cannot read '{}': {}", path, e))
+    })?;
+    let base = Path::new(path).parent().unwrap_or(Path::new("."));
+    let mut proj = ProjectFile::default();
+    let mut in_foreign = false;
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            in_foreign = line.trim_matches(['[', ']']).trim() == "foreign";
+            continue;
+        }
+        if in_foreign {
+            // Format: `key = ["lib1.so", "lib2.so"]` (atau tanpa kurung).
+            if let Some((key, val)) = line.split_once('=') {
+                let key = key.trim();
+                let list: Vec<String> = val
+                    .trim()
+                    .trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .split(',') // komentar //
+                    .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if list.is_empty() {
+                    continue;
+                }
+                // Path library di-resolve relatif ke direktori .maria (pola
+                // sama dengan file .sv) — dlopen butuh path absolut.
+                let resolved: Vec<String> = list
+                    .iter()
+                    .map(|p| {
+                        let pbuf = base.join(p);
+                        pbuf.to_string_lossy().to_string()
+                    })
+                    .collect();
+                match key {
+                    "vhpi" => proj.vhpi_libs.extend(resolved),
+                    "pli" => proj.pli_libs.extend(resolved),
+                    "dpi" => proj.dpi_libs.extend(resolved),
+                    _ => {
+                        // Kunci tak dikenal → peringatan via stderr (tidak gagal).
+                        eprintln!("warning: [foreign] key '{}' tak dikenal di '{}'", key, path);
+                    }
+                }
+            }
+        } else {
+            let p = base.join(line);
+            proj.files.push(p.to_string_lossy().to_string());
+        }
+    }
+    Ok(proj)
 }
 
 /// Compile multiple .sv files into IR design
@@ -350,3 +446,86 @@ pub mod test_util;
 
 // Test suite utama pindah ke crate `maria-tests` (crates/) — lib ini hanya
 // menyimpan API publik + helper test (test_util).
+
+#[cfg(test)]
+mod project_file_tests {
+    use super::*;
+
+    fn write_temp(name: &str, content: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("maria_proj_{}_{}", name, std::process::id()));
+        std::fs::create_dir_all(&dir).expect("buat dir");
+        let p = dir.join("proj.maria");
+        std::fs::write(&p, content).expect("tulis");
+        p
+    }
+
+    #[test]
+    fn test_read_project_with_foreign_parses_libs() {
+        let p = write_temp("foreign", r#"
+rtl/top.sv
+rtl/counter.sv
+
+[foreign]
+vhpi = ["libvhpi_a.so", "libvhpi_b.so"]
+pli = ["libpli.so"]
+dpi = ["libdpi.so"]
+"#);
+        let proj = read_project_with_foreign(p.to_str().unwrap()).expect("parse");
+        // File .sv ter-resolve relatif ke direktori project.
+        assert_eq!(proj.files.len(), 2);
+        let base = p.parent().unwrap();
+        assert!(proj.files[0].starts_with(base.to_str().unwrap()), "path relatif ke .maria");
+        // Library ter-resolve + terpisah per interface.
+        assert_eq!(proj.vhpi_libs.len(), 2);
+        assert!(proj.vhpi_libs[0].contains("libvhpi_a.so"));
+        assert!(proj.vhpi_libs[1].contains("libvhpi_b.so"));
+        assert_eq!(proj.pli_libs.len(), 1);
+        assert!(proj.pli_libs[0].contains("libpli.so"));
+        assert_eq!(proj.dpi_libs.len(), 1);
+        assert!(proj.dpi_libs[0].contains("libdpi.so"));
+        // Path library juga relatif ke direktori project.
+        assert!(proj.vhpi_libs[0].starts_with(base.to_str().unwrap()));
+        let _ = std::fs::remove_dir_all(&p.parent().unwrap());
+    }
+
+    #[test]
+    fn test_read_project_file_skips_foreign_section() {
+        let p = write_temp("skip", r#"
+rtl/top.sv
+
+[foreign]
+vhpi = ["libvhpi.so"]
+"#);
+        let files = read_project_file(p.to_str().unwrap()).expect("parse");
+        assert_eq!(files.len(), 1, "bagian [foreign] TIDAK boleh jadi file .sv");
+        assert!(files[0].contains("rtl/top.sv"));
+        let _ = std::fs::remove_dir_all(&p.parent().unwrap());
+    }
+
+    #[test]
+    fn test_read_project_with_foreign_unknown_key_warns() {
+        let p = write_temp("unknown", r#"
+rtl/top.sv
+
+[foreign]
+vhpi = ["libvhpi.so"]
+foo = ["libfoo.so"]
+"#);
+        let proj = read_project_with_foreign(p.to_str().unwrap()).expect("parse");
+        assert_eq!(proj.vhpi_libs.len(), 1);
+        assert!(proj.dpi_libs.is_empty(), "kunci tak dikenal diabaikan");
+        assert!(proj.pli_libs.is_empty());
+        let _ = std::fs::remove_dir_all(&p.parent().unwrap());
+    }
+
+    #[test]
+    fn test_read_project_with_foreign_no_section() {
+        let p = write_temp("nosect", "rtl/top.sv\n");
+        let proj = read_project_with_foreign(p.to_str().unwrap()).expect("parse");
+        assert_eq!(proj.files.len(), 1);
+        assert!(proj.vhpi_libs.is_empty());
+        assert!(proj.pli_libs.is_empty());
+        assert!(proj.dpi_libs.is_empty());
+        let _ = std::fs::remove_dir_all(&p.parent().unwrap());
+    }
+}

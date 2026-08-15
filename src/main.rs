@@ -472,6 +472,8 @@ fn real_main() {
             Ok(flist) => cli_sources.extend(flist.into_iter().map(std::path::PathBuf::from)),
             Err(e) => eprintln!("warning: filelist '{}': {}", fpath, e),
         }
+        // [foreign] di-load di run()/run_fast() (pipeline aktual) — bukan di
+        // sini (workspace setup hanya seed sources; menghindari load ganda).
     }
     let mut ws = maria_api::env::WorkspaceContext::open_in(
         &std::env::current_dir().unwrap_or_default(),
@@ -525,6 +527,51 @@ fn real_main() {
 
 /// Baca byte sumber sebuah file. Untuk file `.mv` (F8) byte berasal dari
 /// buffer hasil transpile on-the-fly; untuk file lain langsung dari disk.
+/// Load library foreign dari bagian `[foreign]` file project .maria
+/// (arsitektur poin 9). Load VHPI/PLI/DPI; error → warning (bukan gagal
+/// compile) agar project tetap bisa jalan tanpa library opsional.
+fn load_project_foreign_libs(proj: &maria_api::ProjectFile, cli: &Cli) {
+    for lib_path in &proj.vhpi_libs {
+        match maria_api::vhpi::loader::load_vhpi_library(lib_path) {
+            Ok(vhpi) => {
+                if !cli.quiet {
+                    println!("  [foreign] VHPI library loaded: {} (abi {:?})", vhpi.path.display(), vhpi.abi);
+                }
+                if let Err(e) = maria_api::vhpi::loader::call_vhpi_startup(&vhpi) {
+                    eprintln!("warning: vhpi_startup '{}': {}", lib_path, e);
+                }
+            }
+            Err(e) => eprintln!("warning: [foreign] failed to load VHPI library '{}': {}", lib_path, e),
+        }
+    }
+    for lib_path in &proj.pli_libs {
+        match maria_api::pli::loader::load_pli_library(lib_path) {
+            Ok(pli) => {
+                if !cli.quiet {
+                    println!("  [foreign] PLI library loaded: {} (abi {:?})", pli.path.display(), pli.abi);
+                }
+                if let Err(e) = maria_api::pli::loader::call_pli_startup(&pli) {
+                    eprintln!("warning: vpi_startup (PLI) '{}': {}", lib_path, e);
+                }
+            }
+            Err(e) => eprintln!("warning: [foreign] failed to load PLI library '{}': {}", lib_path, e),
+        }
+    }
+    #[cfg(feature = "dpi")]
+    for lib_path in &proj.dpi_libs {
+        use maria_api::simulator::dpi::DpiEngine;
+        let mut eng = DpiEngine::new();
+        match eng.load_library(lib_path) {
+            Ok(_) => {
+                if !cli.quiet {
+                    println!("  [foreign] DPI library loaded: {}", lib_path);
+                }
+            }
+            Err(e) => eprintln!("warning: [foreign] failed to load DPI library '{}': {}", lib_path, e),
+        }
+    }
+}
+
 fn read_source_bytes(path: &Path, inline: &std::collections::HashMap<PathBuf, Vec<u8>>) -> std::io::Result<Vec<u8>> {
     if let Some(bytes) = inline.get(path) {
         return Ok(bytes.clone());
@@ -541,6 +588,9 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
     if let Some(ref fpath) = cli.filelist {
         let flist = read_project_file(fpath)?;
         sources.extend(flist);
+        // [foreign] di-load di run_fast() — filelist otomatis masuk fast
+        // pipeline (line ~691); jalur legacy (.mv inline) memakai CLI flags
+        // --vhpi/--pli eksplisit.
     }
 
     // ── F8: `run x.mv` — transpile on-the-fly ke buffer (tanpa menulis file) ──
@@ -719,6 +769,11 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         &proot,
         &src_paths,
     );
+    // `--cache-clear`: hapus MICD SEBELUM reuse, agar run ini benar-benar
+    // full-rebuild (lihat juga blok attach_micd untuk jalur run).
+    if cli.cache_clear {
+        let _ = micd.clear();
+    }
 
     let mut combined = String::new();
     let mut design_timescale = None;
@@ -1701,6 +1756,46 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         }
     }
 
+    // Load VHPI shared libraries (IEEE 1076-2008 ABI-compatible adapter).
+    // Tanpa feature "dpi" (libloading) pemakaian --vhpi mengembalikan error
+    // jelas dari loader, bukan panic.
+    if !cli.vhpi_libs.is_empty() {
+        for lib_path in &cli.vhpi_libs {
+            match maria_api::vhpi::loader::load_vhpi_library(lib_path) {
+                Ok(vhpi) => {
+                    if !cli.quiet {
+                        println!("  VHPI library loaded: {} (abi {:?})", vhpi.path.display(), vhpi.abi);
+                    }
+                    if let Err(e) = maria_api::vhpi::loader::call_vhpi_startup(&vhpi) {
+                        eprintln!("warning: vhpi_startup '{}': {}", lib_path, e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("warning: failed to load VHPI library '{}': {}", lib_path, e);
+                }
+            }
+        }
+    }
+
+    // Load PLI shared libraries (IEEE 1364 ABI-compatible adapter).
+    if !cli.pli_libs.is_empty() {
+        for lib_path in &cli.pli_libs {
+            match maria_api::pli::loader::load_pli_library(lib_path) {
+                Ok(pli) => {
+                    if !cli.quiet {
+                        println!("  PLI library loaded: {} (abi {:?})", pli.path.display(), pli.abi);
+                    }
+                    if let Err(e) = maria_api::pli::loader::call_pli_startup(&pli) {
+                        eprintln!("warning: vpi_startup (PLI) '{}': {}", lib_path, e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("warning: failed to load PLI library '{}': {}", lib_path, e);
+                }
+            }
+        }
+    }
+
     // Apply plusargs
     for pa in &cli.plusargs {
         if let Some((key, val)) = pa.split_once('=') {
@@ -2049,6 +2144,11 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
     if let Some(ref fpath) = cli.filelist {
         let flist = read_project_file(fpath)?;
         sources.extend(flist.into_iter().map(PathBuf::from));
+        // [foreign] dari file project (VHPI/PLI/DPI).
+        match maria_api::read_project_with_foreign(fpath) {
+            Ok(proj) => load_project_foreign_libs(&proj, &cli),
+            Err(e) => eprintln!("warning: [foreign] '{}': {}", fpath, e),
+        }
     }
 
     let config = SessionConfig {
@@ -2091,12 +2191,19 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
             &session.config.incdirs,
             &session.config.defines,
         );
-        let db = maria_compiler::micd::MicdDatabase::open_project_with_context(
+        let mut db = maria_compiler::micd::MicdDatabase::open_project_with_context(
             &micd_root,
             &pid,
             &proot,
             &session.config.sources,
         );
+        // `--cache-clear` HARUS menghapus database SEBELUM restore/compile —
+        // clear di akhir run (lihat bawah) telat: restore sudah memakai data
+        // stale, dan bila run gagal (error elaborasi) clear tidak pernah
+        // dieksekusi sama sekali (run abort sebelum sampai ke sana).
+        if cli.cache_clear {
+            let _ = db.clear();
+        }
         if cli.recompile {
             // Full rebuild: buka db tanpa restore; hasil parse tetap disimpan
             // supaya run berikutnya (tanpa --recompile) bisa restore.
@@ -2394,9 +2501,11 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
         }
     }
 
-    // Clear all cache if requested
+    // Clear all cache if requested (MICD sudah dihapus di awal run — clear
+    // di sini hanya membersihkan cache compile/JIT/remote, MICD fresh hasil
+    // rebuild run ini dipertahankan agar run berikutnya cepat).
     if cli.cache_clear {
-        session.clear_cache();
+        session.clear_cache(false);
         if !cli.quiet {
             eprintln!("All caches cleared.");
         }
@@ -2558,6 +2667,44 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
                             eprintln!("warning: failed to load DPI library '{}': {}", lib_path, e);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // Load VHPI shared libraries (IEEE 1076-2008) — jalur run_fast.
+    if !cli.vhpi_libs.is_empty() {
+        for lib_path in &cli.vhpi_libs {
+            match maria_api::vhpi::loader::load_vhpi_library(lib_path) {
+                Ok(vhpi) => {
+                    if !cli.quiet {
+                        println!("  VHPI library loaded: {} (abi {:?})", vhpi.path.display(), vhpi.abi);
+                    }
+                    if let Err(e) = maria_api::vhpi::loader::call_vhpi_startup(&vhpi) {
+                        eprintln!("warning: vhpi_startup '{}': {}", lib_path, e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("warning: failed to load VHPI library '{}': {}", lib_path, e);
+                }
+            }
+        }
+    }
+
+    // Load PLI shared libraries (IEEE 1364) — jalur run_fast.
+    if !cli.pli_libs.is_empty() {
+        for lib_path in &cli.pli_libs {
+            match maria_api::pli::loader::load_pli_library(lib_path) {
+                Ok(pli) => {
+                    if !cli.quiet {
+                        println!("  PLI library loaded: {} (abi {:?})", pli.path.display(), pli.abi);
+                    }
+                    if let Err(e) = maria_api::pli::loader::call_pli_startup(&pli) {
+                        eprintln!("warning: vpi_startup (PLI) '{}': {}", lib_path, e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("warning: failed to load PLI library '{}': {}", lib_path, e);
                 }
             }
         }

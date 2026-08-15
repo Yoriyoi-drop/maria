@@ -888,7 +888,17 @@ impl Parser {
                                     | Token::Int
                                     | Token::Integer
                             ) || (matches!(&ahead, Token::Ident(_))
-                                && matches!(self.peek_ahead(2), Token::Scope));
+                                && matches!(self.peek_ahead(2), Token::Scope))
+                                || (matches!(&ahead, Token::Ident(_))
+                                    && matches!(self.peek_ahead(2), Token::Ident(_)));
+                            // `Ident Ident` setelah comma = port baru bertipe
+                            // user-defined: `input clk_i, flash_ctrl_err_t
+                            // op_err_o` (flash_ctrl_err_t = type dari package).
+                            // Tanpa ini `flash_ctrl_err_t` dikira nama port
+                            // lanjutan deklarasi `clk_i` → `op_err_o` error
+                            // `expected RParen` → module hilang (E3001).
+                            // Kasus lanjutan `input a, b, c;` (Ident + Comma /
+                            // Semi) tetap dikira lanjutan — benar.
                             if !is_new_port {
                                 self.advance();
                             } else {

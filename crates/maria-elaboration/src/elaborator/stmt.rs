@@ -329,7 +329,51 @@ impl Elaborator {
         })
     }
 
+    /// SIM-29: wrapper `elaborate_stmt` — memanggil inner lalu mencatat baris
+    /// statement ke `stmt_lines` (key `format!("{}.{:?}", proc, discriminant)`
+    /// SAMA dengan `record_line_hit` di engine). Line diekstrak dari AST via
+    /// `stmt_source_line` (expr_location); statement tanpa line (0) tidak
+    /// dicatat sehingga tidak ikut ter-exclude.
     fn elaborate_stmt(
+        &self,
+        stmt: &Stmt,
+        signal_map: &HashMap<Symbol, SignalId>,
+        known_modules: &[Symbol],
+        signals: &[SignalInfo],
+    ) -> Result<IrStmt, SimError> {
+        let ir = self.elaborate_stmt_inner(stmt, signal_map, known_modules, signals)?;
+        if let Some(proc) = self.current_proc_name.borrow().as_ref() {
+            let line = stmt_source_line(stmt);
+            if line > 0 {
+                let key = Symbol::intern(&format!("{}.{:?}", proc, std::mem::discriminant(&ir)));
+                self.stmt_lines.borrow_mut().entry(key).or_insert(line);
+            }
+        }
+        Ok(ir)
+    }
+
+    /// Konst-eval intra-assignment delay (`= #(d) rhs`, `<= #d rhs`) menjadi
+    /// `Option<u64>`. Gagal konst-eval → warning + fallback 1 (sama dengan
+    /// `Stmt::Delay`): engine hanya mendukung delay konstan.
+    fn elab_intra_assign_delay(&self, delay: &Option<maria_ast::types::Delay>) -> Option<u64> {
+        let d = delay.as_ref()?;
+        let expr = d.rise.as_ref().or(d.fall.as_ref()).or(d.turnoff.as_ref())?;
+        match const_eval_with_params(expr, &self.param_vals) {
+            Ok(v) => Some(v.max(0) as u64),
+            Err(e) => {
+                let (l, c) = crate::util::generate::expr_location(expr);
+                self.elab_warn_at(
+                    DiagCode::SimulationError,
+                    format!("non-constant intra-assignment delay evaluated as 1: {}", e),
+                    l,
+                    c,
+                );
+                Some(1)
+            }
+        }
+    }
+
+    fn elaborate_stmt_inner(
         &self,
         stmt: &Stmt,
         signal_map: &HashMap<Symbol, SignalId>,
@@ -347,7 +391,7 @@ impl Elaborator {
                 let body = self.elaborate_stmt_block(stmts, signal_map, known_modules, signals)?;
                 Ok(IrStmt::Block { stmts: body })
             }
-            Stmt::BlockingAssign { lhs, rhs, .. } => {
+            Stmt::BlockingAssign { lhs, rhs, delay } => {
                 let ir_lhs = self.elaborate_lvalue(lhs, signal_map, signals)?;
                 // Check if LHS is a virtual interface signal
                 let is_vif_lhs = match &ir_lhs {
@@ -393,10 +437,10 @@ impl Elaborator {
                 Ok(IrStmt::BlockingAssign {
                     lhs: ir_lhs,
                     rhs: ir_rhs,
-                    delay: None,
+                    delay: self.elab_intra_assign_delay(delay),
                 })
             }
-            Stmt::NonBlockingAssign { lhs, rhs, .. } => {
+            Stmt::NonBlockingAssign { lhs, rhs, delay } => {
                 let ir_lhs = self.elaborate_lvalue(lhs, signal_map, signals)?;
                 let ir_is_vif = match &ir_lhs {
                     IrLValue::Signal(sid, _) => signals
@@ -436,7 +480,7 @@ impl Elaborator {
                 Ok(IrStmt::NonBlockingAssign {
                     lhs: ir_lhs,
                     rhs: ir_rhs,
-                    delay: None,
+                    delay: self.elab_intra_assign_delay(delay),
                 })
             }
             Stmt::IfElse {
@@ -2370,6 +2414,45 @@ fn value_to_i64(v: &Value) -> i64 {
         )
         .unwrap_or(0),
         Value::Real(_) => 0,
+    }
+}
+
+/// SIM-29: ekstrak baris sumber statement (1-based, koordinat output
+/// preprocessed) dari AST. Memakai `expr_location` pada ekspresi utama
+/// statement (lhs/cond/expr/delay — yang membawa line/col dari parser).
+/// Statement tanpa ekspresi pembawa line mengembalikan 0 → tidak dicatat di
+/// `stmt_lines` → tidak ikut ter-exclude (statement kosong/null tidak punya
+/// makna line coverage).
+fn stmt_source_line(s: &Stmt) -> usize {
+    use crate::util::generate::expr_location;
+    match s {
+        Stmt::SysCall { line, .. } => *line,
+        Stmt::Assert { cond, .. } | Stmt::Assume { cond, .. } | Stmt::Cover { cond, .. }
+        | Stmt::Expect { cond, .. } => expr_location(cond).0,
+        Stmt::BlockingAssign { lhs, .. } | Stmt::NonBlockingAssign { lhs, .. }
+        | Stmt::StmtAssign { lhs, .. } | Stmt::Force { lhs, .. } => expr_location(lhs).0,
+        Stmt::IfElse { cond, .. } | Stmt::UniqueIf { cond, .. } | Stmt::PriorityIf { cond, .. }
+        | Stmt::Wait { cond, .. } => expr_location(cond).0,
+        Stmt::Case { expr, .. } | Stmt::CaseX { expr, .. } | Stmt::CaseZ { expr, .. }
+        | Stmt::UniqueCase { expr, .. } | Stmt::PriorityCase { expr, .. }
+        | Stmt::Unique0Case { expr, .. } | Stmt::CaseInside { expr, .. }
+        | Stmt::StmtCase { expr, .. } => expr_location(expr).0,
+        Stmt::LoopWhile { cond, .. } | Stmt::DoWhile { cond, .. } => expr_location(cond).0,
+        Stmt::LoopFor { cond, .. } => cond.as_ref().map(|c| expr_location(c).0).unwrap_or(0),
+        Stmt::Repeat { count, .. } => expr_location(count).0,
+        Stmt::Delay { delay, .. } => expr_location(delay).0,
+        Stmt::EventControl { events, .. } => events
+            .first()
+            .map(|e| match e {
+                maria_ast::SensitivityEvent::PosEdge(ex)
+                | maria_ast::SensitivityEvent::NegEdge(ex)
+                | maria_ast::SensitivityEvent::Level(ex) => expr_location(ex).0,
+                maria_ast::SensitivityEvent::Wildcard
+                | maria_ast::SensitivityEvent::Iff { .. } => 0,
+            })
+            .unwrap_or(0),
+        Stmt::Return(Some(e)) => expr_location(e).0,
+        _ => 0,
     }
 }
 

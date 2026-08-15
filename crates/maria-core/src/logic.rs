@@ -39,7 +39,13 @@ impl Default for LogicVec {
 
 impl LogicVec {
     pub fn new(width: usize) -> Self {
-        let w = if width > 1_000_000 { 1 } else { width };
+        // Guard OOM untuk lebar signal BOGUS (hasil width-computation yang
+        // salah / overflow param bisa berorder miliaran bit). Ambang 1<<27 bit
+        // (~134MB utk LogicVal 4-state) jauh di atas memory SRAM terbesar yang
+        // realistis (OpenTitan sram_ctrl dgn ECC: 65536 x 76 ≈ 4.98M bit) tapi
+        // tetap membatasi alokasi absurd. Ambang lama 1M bit memotong SRAM
+        // legal → full_init 1 bit → index-out-of-bounds saat init array.
+        let w = if width > (1 << 27) { 1 } else { width };
         // Try arena-backed allocation first (zero-deallocation path)
         if let Some(ctor) = get_logicvec_ctor() {
             if let Some(lv) = ctor(w, LogicVal::X) {

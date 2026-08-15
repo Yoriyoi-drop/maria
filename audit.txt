@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~157K LOC, 1834 test functions,
+Maria adalah simulator RTL berbasis Rust (~157K LOC, 1876 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -34,16 +34,20 @@ formal verification, LSP/IDE, compiled-code simulation,
 distributed/parallel simulation engine, coverage minimal,
 constraint solver inadequate, waveform database tidak ada, CI/CD ✅ sudah ada,
 tidak ada regression infrastructure, tidak ada VHDL/SystemC co-sim,
-dan pre-existing test failures (ALL FIXED ✅ — 1834 tests pass, 0 fail,
-update 2026-08-15: LANG-46 VPI e2e SV→C systf melalui interpreter ditutup
-(+1 test) + LANG-21 $urandom_seed bug statement-path diperbaiki (+1 test).
+dan pre-existing test failures (ALL FIXED ✅ — 1876 tests pass, 0 fail,
+update 2026-08-15: LANG-46 VHPI/PLI diimplementasikan sebagai ABI adapter
+(arsitektur masukan user: foreign/ + vhpi/ + pli/, +35 test) + e2e .so C
+sungguan via gcc (+2) + CLI --vhpi/--pli + ForeignEvent wiring + value-
+change callback VPI+VHPI ter-wire engine (+1) + konfigurasi [foreign] di
+.maria (+4) + LANG-46 VPI e2e SV→C systf (+1) + LANG-21 $urandom_seed
+bug statement-path (+1).
 Sebelumnya 2026-08-14: re-verifikasi 20 item LANG yang ternyata sudah
 timplementasi ditandai [x] + LANG-31 soft constraint, LANG-33
 constraint_mode() dan LANG-29 wait fork diimplementasikan baru).
 
 Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 ~18ms untuk 400 module, zero-deallocation sim arena, struktur
-kode terorganisir rapi, ✅ CI/CD aktif, ✅ 1834 tests pass 0 fail,
+kode terorganisir rapi, ✅ CI/CD aktif, ✅ 1876 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
 dan ✅ 57 item audit telah diperbaiki (termasuk monorepo workspace,
@@ -642,25 +646,49 @@ LANG-43: [x] function/task import from package — FIXED (2026-08-14):
          r2=30 (plain via import), r3=6 (nested qualified∘plain).
 LANG-44: ✅ DPI-C scope resolution — FIXED (svSetScope/svGetScope/svScopeName)
 LANG-45: ✅ DPI-C context functions — FIXED (thread-local scope + time state)
-LANG-46: [x] VPI/VHPI/PLI — PARSIAL→VPI LENGKAP + e2e (2026-08-15 update):
+LANG-46: [x] VPI/VHPI/PLI — PARSIAL→LENGKAP (2026-08-15 update):
          VPI API lengkap di crates/maria-simulator/src/vpi/
          (handle/iterate/get/get_str/get_value/put_value/callback/systf/
-         control/free_object/chk_error) + FFI export; VHPI/PLI belum
-         (integrasi EDA komersial besar, di luar scope).
-         Perbaikan sebelumnya: call_registered_systf membandingkan
-         task_function_type dengan konstanta vpiSysTask/vpiSysFunc (object
-         type) — bug — kini memakai konstanta vpiSystf* yang benar (IEEE
-         1800 §36.7). ROUND 36: unit test lengkap 20 (value.rs 9 + handle.rs
-         6 + callback.rs 5) + BUG fix handle positional-index (register
-         callback/systf pakai posisi registry → remove menggeser elemen →
-         handle kedua STALE; fix ke unique id AtomicU64 di callback.rs/
-         systf.rs/control.rs). BARU (ROUND 36): e2e SV→C systf melalui
-         INTERPRETER (bukan translasi penuh ke C ala Verilator) —
-         test_vpi_systf_e2e_sv_to_calltf (maria-tests): SV `$my_task()` →
-         engine → call_registered_systf → calltf extern "C" (ABI identik C
-         terkompilasi) dieksekusi; retry 32× utk toleransi clear_all_systfs
-         dari run paralel. Semua 21 test VPI lulus (20 unit + 1 e2e).
-         Sisa gap VHPI/PLI dicatat di Unknowns.
+         control/free_object/chk_error) + FFI export. Perbaikan sebelumnya:
+         call_registered_systf membandingkan task_function_type dengan
+         konstanta vpiSysTask/vpiSysFunc (object type) — bug — kini memakai
+         konstanta vpiSystf* yang benar (IEEE 1800 §36.7). ROUND 36: unit
+         test lengkap 20 (value.rs 9 + handle.rs 6 + callback.rs 5) + BUG
+         fix handle positional-index (handle = posisi registry → remove
+         menggeser → STALE; fix ke unique id AtomicU64) + e2e SV→C systf
+         via interpreter (test_vpi_systf_e2e_sv_to_calltf). Semua 21 test
+         VPI lulus (20 unit + 1 e2e).
+         BARU (ROUND 36 lanjutan, arsitektur masukan user): VHPI + PLI
+         sebagai ABI-compatible ADAPTER di atas kernel (bukan implementasi
+         event scheduler sendiri).
+         • foreign/ (Maria FFI unified): handle.rs (ForeignHandle u64 +
+           HandleRegistry Box<dyn Any> — library eksternal TIDAK pernah
+           menerima pointer internal Maria), loader.rs (candidate paths
+           libfoo.so/foo.so/libfoo.dylib/foo.dll + find_library +
+           resolve_symbol + AbiInfo, libloading feature "dpi").
+         • vhpi/ (IEEE 1076-2008, konstanta dari vhpi_user.h): object.rs
+           (vhpi_handle_by_name/vhpi_get/vhpi_get_str + engine hook
+           set_vhpi_engine), handle.rs (VhpiHandle u64 registry), value.rs
+           (vhpiIntVal/vhpiLogicVal/vhpiBinStrVal/vhpiRealVal ↔ LogicVec),
+           iterator.rs (vhpi_iterate/vhpi_scan), callback.rs (register/
+           remove dengan unique id + dispatch start/end/time-step/synch),
+           api.rs (#[no_mangle] extern "C" entry points vhpi_get_value/
+           vhpi_put_value/vhpi_control dll), loader.rs (load .so + ABI
+           validation + vhpi_startup).
+         • pli/ (IEEE 1364 PLI 1.0): tf.rs (tf_getinstance/tf_getp/
+           tf_putp/tf_getlongp/tf_strgetp/tf_sizep/tf_gettime — registry
+           argumen per-instance u32), acc.rs (acc_initialize/
+           acc_handle_signal/acc_fetch_value/acc_fetch_name/
+           acc_fetch_fullname/acc_fetch_type/acc_next), loader.rs
+           (load .so + veriusertfs/vpi_startup + ABI validation).
+         Engine hooks: set_vhpi_engine + dispatch start/end-of-sim di
+         core.rs run(), cleanup VHPI/PLI di akhir run.
+         Test: 33 unit murni Rust (foreign 7 + vhpi 18 + pli 8) + 2 e2e
+         maria-tests (test_vhpi_engine_hook_e2e — handle_by_name signal
+         saat start-of-sim; test_pli_tf_e2e_via_sim — sim tanpa crash +
+         tf_getinstance/tf_gettime). Sisa: e2e dengan .so C sungguhan
+         (butuh toolchain C, feature "dpi") + VHDL language parsing
+         (di luar scope — Maria simulator SystemVerilog).
 LANG-47: [x] real-time control ($realtime) — FIXED (2026-08-14, re-verifikasi):
          representasi real SUDAH ada — DataType::Real/Realtime (maria-ast
          types.rs:459), SignalInfo.is_real (elaborator/mod.rs:3906, lebar 64),
@@ -3800,6 +3828,106 @@ ditandai [x] dengan bukti:
    - Tetap open (ditandai [ ]): LANG-46 VPI/VHPI/PLI (VPI API teruji,
      e2e SV→C belum; VHPI/PLI belum)
 
+═══ ROUND 36 lanjutan — VHPI/PLI ADAPTER (arsitektur masukan user) ═══
+
+VHPI (IEEE 1076-2008) + PLI (IEEE 1364) diimplementasikan sebagai
+ABI-compatible adapter di atas simulation kernel Maria, mengikuti urutan
+yang disarankan user: foreign ABI infra → loader → handle registry → value
+→ callback/event → VHPI → PLI.
+
+1. foreign/ (Maria FFI unified — crates/maria-simulator/src/foreign/):
+   - handle.rs: ForeignHandle (u64 id + HandleKind) + HandleRegistry
+     (Box<dyn Any>) — library eksternal TIDAK pernah menerima pointer
+     internal Maria (poin 6 user); clear di end-of-sim.
+   - loader.rs: candidate_paths (libfoo.so/foo.so/libfoo.dylib/foo.dll),
+     find_library (cari di cwd/LD_LIBRARY_PATH//usr/lib...), resolve_symbol
+     (T: Copy), AbiInfo (arch/os/pointer_width) — poin 2, 9, 10.
+   - mod.rs: ForeignEvent (ValueChange/ReadWriteSync/ReadOnlySync/
+     NextTimeStep/Callback/EndOfSimulation) — semua callback foreign masuk
+     antrian scheduler utama (poin 5), bukan jalan sendiri.
+2. vhpi/ (IEEE 1076-2008, konstanta dari vhpi_user.h — ABI asli, bukan
+   versi Maria sendiri): object.rs (vhpi_handle_by_name/vhpi_get/
+   vhpi_get_str/vhpi_is_defined + engine hook set_vhpi_engine),
+   handle.rs (VhpiHandle u64 + registry + vhpi_release_handle),
+   value.rs (t_vhpi_value union + vhpiIntVal/LogicVal/BinStrVal ↔
+   LogicVec), iterator.rs (vhpi_iterate/vhpi_scan), callback.rs
+   (register/remove unique id + dispatch start/end/time-step/synch),
+   api.rs (#[no_mangle] extern "C": vhpi_handle_by_name/vhpi_get_value/
+   vhpi_put_value/vhpi_control/vhpi_register_cb...), loader.rs
+   (load_vhpi_library + call_vhpi_startup + vhpi_cleanup).
+3. pli/ (IEEE 1364 PLI 1.0): tf.rs (tf_getinstance/tf_getp/tf_putp/
+   tf_getlongp/tf_putlongp/tf_strgetp/tf_strputp/tf_sizep/tf_gettime +
+   plio_warning/plio_error — registry argumen per-instance u32),
+   acc.rs (acc_initialize/acc_handle_signal/acc_handle_tfarg/
+   acc_fetch_value/acc_fetch_name/acc_fetch_fullname/acc_fetch_type/
+   acc_next/acc_close), loader.rs (load_pli_library + veriusertfs/
+   vpi_startup + has_pli_entry_points + pli_cleanup).
+4. Engine hooks (core.rs run()): set_vhpi_engine + dispatch start-of-sim
+   di awal; dispatch end-of-sim + vhpi_cleanup + pli_cleanup di akhir.
+5. Test: 33 unit murni Rust (foreign 7: handle roundtrip/null/clear +
+   loader paths/find/abi; vhpi 18: object constants/is_defined/handle_by_
+   name-null, handle roundtrip/null/clear, value int/logic/binstr/
+   ptr/null, iterator scan, callback register/reason-filter/remove-
+   middle/remove-null, loader abi/missing; pli 8: tf getput/bitvec/
+   instance-time/bits_u64 + acc format/fetch-null + loader abi/missing)
+   + 2 e2e maria-tests (test_vhpi_engine_hook_e2e: vhpi_handle_by_name
+   menemukan signal "count" saat start-of-sim callback; test_pli_tf_e2e_
+   via_sim: sim tanpa crash PLI cleanup + tf_getinstance/tf_gettime).
+   Total +35 test.
+6. LANJUTAN: e2e .so C sungguhan + CLI flags + ForeignEvent wiring:
+   - BUG loader: dlopen TIDAK search cwd → `--vhpi libfoo.so` di direktori
+     kerja gagal load walau file ada. Fix: canonicalize ke path ABSOLUT di
+     foreign/loader.rs load_library.
+   - CLI flags (cli.rs + main.rs run & run_fast): `--vhpi <lib>` dan
+     `--pli <lib>` (multi, num_args=1, pola --dpi-lib) → load + ABI report
+     (arch/os/pointer-width) + call_vhpi_startup / call_pli_startup.
+     Library hilang → warning jelas, bukan panic.
+   - ForeignEvent wiring ke scheduler (poin 5 user): core.rs run() tiap
+     time step memanggil vhpi::api::dispatch_time_step() +
+     dispatch_synch() (ReadWrite/ReadOnly) di samping
+     vpi dispatch_read_write_synch — callback foreign masuk antrian
+     scheduler, bukan thread library.
+   - e2e gcc sungguhan: test_vhpi_loader_e2e_gcc_so + test_pli_loader_e2e_
+     gcc_so (maria-tests) — compile C → .so via gcc (skip bila gcc tidak
+     ada), load via foreign loader, verifikasi vhpi_startup / vpi_startup
+     (PLI) dari C terpanggil + ABI cocok + has_pli_entry_points. VERIFIED
+     manual: `maria --vhpi libvhpi_test.so` → "vhpi_startup called (C stub)".
+   Total +2 test (1871).
+7. LANJUTAN: value-change callback ter-wire ke engine (poin 5 arsitektur
+   user — ForeignEvent::ValueChange ke scheduler, bukan thread library):
+   - core.rs EventRegion::Reactive (setelah commit_changes): setiap signal
+     berubah di-fire vpi::callback::fire_value_change_callbacks (VPI
+     cbValueChange) + vhpi::callback::fire_value_change_callbacks (VHPI
+     vhpiCbValueChange). Sebelumnya VPI value-change callback TIDAK pernah
+     di-fire engine (hanya definisi) — kini keduanya hidup.
+   - vhpi/callback.rs fire_value_change_callbacks(sig_id, old, new): match
+     obj NULL (semua signal) atau Signal/Port dengan sig_id cocok;
+     clone-then-call (anti-deadlock).
+   - helper register_object_for_test (vhpi/handle.rs) utk test e2e.
+   - Test BARU: test_vhpi_value_change_callback_e2e — callback fire utk
+     signal cocok, tidak utk id beda, obj NULL fire semua. Total +1 test
+     (1872).
+8. LANJUTAN: konfigurasi `[foreign]` di file project .maria (poin 9
+   arsitektur user):
+   - maria-api: read_project_with_foreign → ProjectFile { files,
+     vhpi_libs, pli_libs, dpi_libs } — bagian `[foreign]` berformat
+     TOML-like `key = ["lib.so", ...]` (vhpi/pli/dpi), path library
+     di-resolve relatif ke direktori .maria (pola sama file .sv).
+   - read_project_file (lama) di-fix: baris `[foreign]` TIDAK lagi
+     diperlakukan sebagai file .sv (sebelumnya E0004 "entity not found").
+   - main.rs: load_project_foreign_libs dipanggil di run_fast (jalur
+     filelist) — load VHPI/PLI/DPI + startup; error → warning, bukan gagal.
+   - VERIFIED e2e: project .maria dgn `[foreign]` + C stub .so via gcc →
+     "[foreign] VHPI library loaded" + "vhpi_startup from [foreign]
+     project" + sim jalan normal.
+   - Test BARU: 4 unit project_file_tests (maria-api) — parse libs
+     terpisah per interface + path relatif, skip [foreign] di
+     read_project_file, kunci tak dikenal diabaikan, tanpa section.
+     Total +4 test (1876).
+Sisa (dicatat di Unknowns): VHDL language parsing (di luar scope — Maria
+simulator SystemVerilog), security sandbox foreign-worker (poin 11 user
+— roadmap).
+
 ═══ ROUND 36 — DUA BUG GLOBAL: LITERAL NEGATIF SIGNED + MICD IR CACHE STALE ═══
 
 ✅ BUG 1 — Literal negatif berperilaku unsigned di SEMUA jalur (temuan
@@ -3991,15 +4119,20 @@ ditandai [x] dengan bukti:
 
 📊 VERIFIKASI ROUND 36:
    - cargo build --workspace: 0 error
-   - cargo test --workspace: 1834 passed, 0 failed (42 suite)
-     — baseline sebelum round: 1804; +30 test (8 signed + 20 VPI + 1 e2e
-       SV→C systf + 1 LANG-21 urandom_seed determinism); 0 regresi
+   - cargo test --workspace: 1876 passed, 0 failed (42 suite)
+     — baseline sebelum round: 1804; +72 test (8 signed + 20 VPI + 1 e2e
+       SV→C systf + 1 LANG-21 urandom_seed determinism + 33 unit VHPI/PLI/
+       foreign + 2 e2e VHPI/PLI + 2 e2e .so C via gcc + 1 value-change
+       callback + 4 [foreign] project file); 0 regresi
    - Catatan JIT (feature-gated, bukan default): jit_eval/jit_cranelift
      menurunkan Div/Mod & Lt/Le/Gt/Ge ke hasil salah (iconst 0 / signed
      compare) — TIDAK aktif default (feature "jit" off, use_jit_expression=
      false → JITEvaluator stub no-op). Risiko hanya saat --features jit.
-   - LANG-46 VPI: TUTUP ✅ — 1834 test (20 unit VPI + 1 e2e SV→C systf
-     melalui interpreter). Open: VHPI/PLI (EDA komersial).
+   - LANG-46 VPI/VHPI/PLI: TUTUP ✅ — 1876 test (20 unit VPI + 1 e2e
+     SV→C systf + 33 unit VHPI/PLI/foreign + 2 e2e VHPI/PLI via
+     interpreter + 2 e2e .so C via gcc + 1 value-change callback + 4
+     [foreign] project file). Sisa: VHDL parsing (di luar scope) + sandbox
+     foreign-worker (roadmap).
    - LANG-21 $urandom_seed: TUTUP ✅ — bug statement-path (seed tidak
      diterapkan di evaluate_syscall) + test determinism full-scope.
 

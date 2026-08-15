@@ -262,16 +262,26 @@ impl Elaborator {
                             ), inst.line, inst.col));
                         }
                     }
-                    // Port type checking: inout must connect to tri
+                    // Port type checking: inout must connect to tri. Downgrade
+                    // ke warning (bukan error): pola Verilator/DV umum —
+                    // `chip_earlgrey_verilator` mengkoneksikan pad inout ke
+                    // signal `logic`, dan port inout TANPA `tri` (top_earlgrey
+                    // `inout flash_test_voltage_h_io`) ter-resolve ke Wire.
+                    // Check keras di sini memblokir desain valid (E3003 palsu).
                     if child.signals[child_sig].kind == SignalKind::Inout
                         && top.signals[parent_sig].net_type != NetType::Tri
                     {
-                        return Err(self.elab_diag_at(DiagCode::ParamMismatch, format!(
-                            "port type mismatch on instance '{}': inout port '{}' must connect to a tri signal, but '{}' has net type {:?}",
-                            inst.instance_name, port_name,
-                            top.signals[parent_sig].name,
-                            top.signals[parent_sig].net_type
-                        ), inst.line, inst.col));
+                        self.elab_warn_at(
+                            DiagCode::ParamMismatch,
+                            format!(
+                                "port type mismatch on instance '{}': inout port '{}' connects to '{}' with net type {:?} (expected tri; treated as net)",
+                                inst.instance_name, port_name,
+                                top.signals[parent_sig].name,
+                                top.signals[parent_sig].net_type
+                            ),
+                            inst.line,
+                            inst.col,
+                        );
                     }
                     sig_remap[child_sig] = Some(parent_sig);
                     // Add hierarchical alias: inst_name.port_name -> parent signal ID

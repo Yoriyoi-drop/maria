@@ -212,6 +212,17 @@ impl SimulationEngine {
         let pre_cb_method = format!("pre_{}", method);
         self.invoke_callbacks(class_name.as_str(), &pre_cb_method, args)?;
 
+        // Class UVM library tidak terdaftar (filelist tanpa library UVM, mis.
+        // objek `uvm_default_report_server`/`uvm_report_server`) — di UVM asli
+        // extends uvm_report_object → uvm_object. Dispatch ke builtin
+        // report_object (new/set_name/uvm_report_* dll) supaya tidak error
+        // RT8001 "method 'X' not found in class".
+        if !self.design.classes.contains_key(&Symbol::intern(class_name.as_str()))
+            && class_name.as_str().starts_with("uvm_")
+        {
+            return self.execute_uvm_report_object_method(obj_id, method, args);
+        }
+
         // Normal dispatch: find method in the full class hierarchy (virtual dispatch)
         let method_def = self.find_method_in_hierarchy(class_name.as_str(), method)?.clone();
         // Static methods don't receive `this`
