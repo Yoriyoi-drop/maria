@@ -71,8 +71,18 @@ pub use symbol::SymbolIndex;
 pub use txn::{Journal, read_journal, recover, write_journal};
 pub use verify::{CheckResult, VerifyCheckKind, VerifyResult, now_ns};
 
-/// Versi compiler yang menulis database.
-pub const COMPILER_VERSION: &str = "Maria 0.9";
+/// Versi compiler yang menulis database — bagian dari `project_id()`:
+/// berubah → pid baru → seluruh state/ + objects/ + cache/ project dibangun
+/// ulang dari kosong (tidak ada reuse antar versi).
+///
+/// Suffix **`-p<N>`** adalah revisi perilaku pipeline kompilasi: **NAIKKAN
+/// `<N>` setiap kali output kompilasi untuk source yang sama berubah**
+/// (elaborator/simulator/parser/const-fold semantics — mis. fix signedness,
+/// operator precedence). Versi crate tidak berubah antar build dev, jadi tanpa
+/// bump manual ini cache MICD akan me-restore hasil LAMA dari binary BARU
+/// (stale IR bug — ROUND 36). Kedua sisi enforcement hidup: schema check
+/// (bawah) dan `CacheManifest::valid()` membandingkan `compiler_version`.
+pub const COMPILER_VERSION: &str = concat!("Maria ", env!("CARGO_PKG_VERSION"), "-p1");
 
 /// Versi skema database (Kritik 3 db.md). Naikkan bila layout/format
 /// persistensi berubah (field struct, key store, semantik). Database lama
@@ -429,7 +439,14 @@ impl MicdDatabase {
             if let Some(manifest) = r.get(KEY_SINGLETON).and_then(|b| {
                 bincode::deserialize::<MetadataManifest>(&b).ok()
             }) {
-                if manifest.schema_version == SCHEMA_VERSION {
+                // compiler_version juga dibandingkan: versi pipeline berubah
+                // (PIPELINE_REV dinaikkan) → database lama dianggap tidak
+                // kompatibel → dibangun ulang. Sebelumnya hanya schema_version
+                // dicek; COMPILER_VERSION statis tak pernah berubah sehingga
+                // elaborasi hasil binary LAMA bisa di-restore binary BARU.
+                if manifest.schema_version == SCHEMA_VERSION
+                    && manifest.compiler_version == COMPILER_VERSION
+                {
                     schema_ok = true;
                     db.schema_version = manifest.schema_version;
                     db.flags_hash = manifest.flags_hash;
@@ -917,7 +934,10 @@ impl MicdDatabase {
         let Ok(bytes) = crate::micd::ast::serialize_ir(ir) else {
             return;
         };
-        let key = format!("ir:{}", ir.top.name.as_str());
+        // Key menyertakan IR_FORMAT_VERSION: skema IR berubah (tanpa bump
+        // PIPELINE_REV) → entry lama tidak pernah di-restore. Cache layer
+        // sendiri juga di-invalidasi via manifest.compiler_version.
+        let key = format!("ir:v{}:{}", crate::micd::ast::IR_FORMAT_VERSION, ir.top.name.as_str());
         let _ = layer.put(CacheCategory::Elaborate, &key, &bytes);
     }
 
@@ -926,7 +946,7 @@ impl MicdDatabase {
     pub fn restore_elaborate_ir(&mut self, top: &str) -> Option<maria_ir::IrDesign> {
         use crate::micd::cache::CacheCategory;
         let layer = self.cache_layer.as_mut()?;
-        let key = format!("ir:{}", top);
+        let key = format!("ir:v{}:{}", crate::micd::ast::IR_FORMAT_VERSION, top);
         let bytes = layer.get(CacheCategory::Elaborate, &key)?;
         let ir = crate::micd::ast::deserialize_ir(&bytes)?;
         if ir.top.name.as_str() != top {

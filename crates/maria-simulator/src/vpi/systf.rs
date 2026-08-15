@@ -5,25 +5,31 @@
 
 use super::types::*;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Registered system task/function
 pub(crate) struct RegisteredSystf {
+    /// Handle unik (bukan posisi — ROUND 36: handle posisi membuat remove
+    /// kedua STALE setelah elemen pertama dihapus).
+    pub id: u64,
     pub data: s_vpi_systf_data,
 }
 
 /// Global registry for system tasks/functions
 static VPI_SYSTFS: Mutex<Vec<RegisteredSystf>> = Mutex::new(Vec::new());
+static NEXT_SYSTF_ID: AtomicU64 = AtomicU64::new(1);
 
 /// vpi_register_systf(systf_data_p) — register a C system task/function.
 pub fn vpi_register_systf(systf_data_p: &s_vpi_systf_data) -> vpiHandle {
+    let id = NEXT_SYSTF_ID.fetch_add(1, Ordering::SeqCst);
     let entry = RegisteredSystf {
+        id,
         data: systf_data_p.clone(),
     };
     let mut registry = VPI_SYSTFS.lock().unwrap();
     registry.push(entry);
-    let idx = registry.len();
     vpiHandle {
-        ptr: idx as *mut std::ffi::c_void,
+        ptr: id as *mut std::ffi::c_void,
     }
 }
 
@@ -32,10 +38,10 @@ pub fn vpi_remove_systf(systf_handle: vpiHandle) -> i32 {
     if systf_handle.is_null() {
         return 0;
     }
-    let idx = systf_handle.ptr as usize - 1;
+    let id = systf_handle.ptr as u64;
     let mut registry = VPI_SYSTFS.lock().unwrap();
-    if idx < registry.len() {
-        registry.remove(idx);
+    if let Some(pos) = registry.iter().position(|e| e.id == id) {
+        registry.remove(pos);
         1
     } else {
         0

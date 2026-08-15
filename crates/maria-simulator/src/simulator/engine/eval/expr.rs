@@ -311,11 +311,27 @@ impl SimulationEngine {
                     Ok(LogicVec::from_u64(result.to_bits(), 64))
                 } else if matches!(
                     op,
-                    BinaryIrOp::Lt | BinaryIrOp::Le | BinaryIrOp::Gt | BinaryIrOp::Ge
+                    BinaryIrOp::Lt
+                        | BinaryIrOp::Le
+                        | BinaryIrOp::Gt
+                        | BinaryIrOp::Ge
+                        | BinaryIrOp::Div
+                        | BinaryIrOp::Mod
                 ) && (is_signed_expr(lhs.as_ref(), &self.design.top.signals)
-                    || is_signed_expr(rhs.as_ref(), &self.design.top.signals))
+                    && is_signed_expr(rhs.as_ref(), &self.design.top.signals))
                 {
                     Ok(eval_binary_signed(op.clone(), &lval, &rval))
+                } else if matches!(op, BinaryIrOp::Sshr) {
+                    // `>>>` (IEEE 1800 §11.4.10): ARITHMETIC bila lhs signed,
+                    // LOGICAL bila unsigned. eval_sshr_signed memakai lebar
+                    // ASLI lhs — extend_to selalu zero-extend sehingga Sshr
+                    // lama kehilangan sign bit (signed [7:0] -128 >>> 2 = 0x20
+                    // padahal harusnya 0xE0).
+                    if is_signed_expr(lhs.as_ref(), &self.design.top.signals) {
+                        Ok(eval_sshr_signed(&lval, &rval))
+                    } else {
+                        Ok(eval_binary(BinaryIrOp::Shr, &lval, &rval))
+                    }
                 } else {
                     // Try packed eval first (SIMD-ready bitmask ops for bitwise ops only)
                     if self.use_packed_eval && is_packable_binary_op(op) {

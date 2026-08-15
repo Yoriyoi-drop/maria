@@ -34,7 +34,7 @@ pub use maria_env::env;
 // ast → maria-ast, ir → maria-ir, parser → maria-parser, elaboration →
 // maria-elaboration, compiler → maria-compiler, simulator/waveform/scheduler/
 // debugger/vpi → maria-simulator (crates/) — lihat migrasi monorepo.
-pub use maria_simulator::{debugger, scheduler, simulator, vpi, waveform};
+pub use maria_simulator::{debugger, foreign, pli, scheduler, simulator, vhpi, vpi, waveform};
 
 // ── Maria HDL (.mv) — bahasa baru Maria, transpile ke SystemVerilog (MARIA-HDL.md) ──
 // pindah ke maria-mv (crates/) — lihat migrasi monorepo.

@@ -13,6 +13,9 @@ pub mod waveform;
 pub mod scheduler;
 pub mod debugger;
 pub mod vpi;
+pub mod foreign;
+pub mod vhpi;
+pub mod pli;
 
 #[cfg(test)]
 pub mod test_util;

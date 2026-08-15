@@ -201,3 +201,138 @@ fn hex_str(lv: &LogicVec) -> String {
         format!("{:016x}", val)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    #[test]
+    fn test_vpi_value_bin_str() {
+        // MSB-first, VPI style
+        let lv = LogicVec::from_u64(0b1011, 4);
+        assert_eq!(bin_str(&lv), "1011");
+        let lv = LogicVec::from_u64(0xA5, 8);
+        assert_eq!(bin_str(&lv), "10100101");
+        let lv = LogicVec::from_u64(0, 1);
+        assert_eq!(bin_str(&lv), "0");
+    }
+
+    #[test]
+    fn test_vpi_value_hex_str() {
+        // padding sesuai lebar (2 digit utk ≤8 bit, 4 utk ≤16, dst.)
+        let lv = LogicVec::from_u64(0x2A, 8);
+        assert_eq!(hex_str(&lv), "2a");
+        let lv = LogicVec::from_u64(0x1A2B, 16);
+        assert_eq!(hex_str(&lv), "1a2b");
+        let lv = LogicVec::from_u64(0xB, 4);
+        assert_eq!(hex_str(&lv), "b");
+    }
+
+    #[test]
+    fn test_vpi_value_to_logicvec_int() {
+        let mut value = t_vpi_value::default();
+        value.format = vpiIntVal;
+        value.value = vpi_value_union { integer: -5 };
+        let lv = value_to_logicvec(&value);
+        assert_eq!(lv.width, 32);
+        assert_eq!(lv.to_i64(), -5, "int -5 harus jadi i64 -5");
+    }
+
+    #[test]
+    fn test_vpi_value_to_logicvec_scalar() {
+        let mut value = t_vpi_value::default();
+        value.format = vpiScalarVal;
+        value.value = vpi_value_union { scalar: 1 };
+        let lv = value_to_logicvec(&value);
+        assert_eq!(lv.width, 1);
+        assert_eq!(lv.bits[0], LogicVal::One);
+
+        value.value = vpi_value_union { scalar: 0 };
+        let lv = value_to_logicvec(&value);
+        assert_eq!(lv.bits[0], LogicVal::Zero);
+
+        value.value = vpi_value_union { scalar: 2 };
+        let lv = value_to_logicvec(&value);
+        assert_eq!(lv.bits[0], LogicVal::X);
+
+        value.value = vpi_value_union { scalar: 3 };
+        let lv = value_to_logicvec(&value);
+        assert_eq!(lv.bits[0], LogicVal::Z);
+    }
+
+    #[test]
+    fn test_vpi_value_to_logicvec_vector() {
+        let mut value = t_vpi_value::default();
+        value.format = vpiVectorVal;
+        value.value = vpi_value_union {
+            vector: t_vpi_vector { aval: 0xDEAD, bval: 0 },
+        };
+        let lv = value_to_logicvec(&value);
+        assert_eq!(lv.to_u64(), 0xDEAD);
+        assert_eq!(lv.width, 32);
+    }
+
+    #[test]
+    fn test_vpi_value_to_logicvec_bin_str() {
+        // BinStrVal: MSB-first (karakter pertama = bit paling signifikan).
+        // internal bits[0] = LSB → bits di-reverse.
+        let cname = CString::new("1101").unwrap();
+        let mut value = t_vpi_value::default();
+        value.format = vpiBinStrVal;
+        value.value = vpi_value_union {
+            string: cname.as_ptr() as *mut c_char,
+        };
+        let lv = value_to_logicvec(&value);
+        assert_eq!(lv.width, 4);
+        // '1'(MSB) '1' '0' '1'(LSB) → bit3=1, bit2=1, bit1=0, bit0=1 = 13
+        assert_eq!(lv.to_u64(), 0b1101, "MSB-first '1101' = 0b1101 = 13");
+
+        // underscore di-skip: '1' '0' '0' '1' → bit3=1, bit0=1 = 9
+        let cname = CString::new("10_01").unwrap();
+        value.value = vpi_value_union {
+            string: cname.as_ptr() as *mut c_char,
+        };
+        let lv = value_to_logicvec(&value);
+        assert_eq!(lv.to_u64(), 0b1001);
+    }
+
+    #[test]
+    fn test_vpi_value_to_logicvec_hex_str() {
+        let cname = CString::new("0xFF").unwrap();
+        let mut value = t_vpi_value::default();
+        value.format = vpiHexStrVal;
+        value.value = vpi_value_union {
+            string: cname.as_ptr() as *mut c_char,
+        };
+        let lv = value_to_logicvec(&value);
+        assert_eq!(lv.width, 8);
+        assert_eq!(lv.to_u64(), 0xFF);
+    }
+
+    #[test]
+    fn test_vpi_value_to_logicvec_real() {
+        let mut value = t_vpi_value::default();
+        value.format = vpiRealVal;
+        value.value = vpi_value_union { real: 1.5 };
+        let lv = value_to_logicvec(&value);
+        assert_eq!(lv.width, 64);
+        assert_eq!(lv.to_u64(), 1.5f64.to_bits());
+    }
+
+    #[test]
+    fn test_vpi_value_roundtrip_via_cache_cstring() {
+        // LANG-46: bin_str/hex_str hasilnya harus bisa di-cache sebagai
+        // CString (dipakai vpi_get_value → vpiBinStrVal/vpiHexStrVal) dan
+        // di-decode ulang value_to_logicvec tanpa kehilangan nilai.
+        let lv = LogicVec::from_u64(0xA5, 8);
+        let s = bin_str(&lv);
+        let ptr = super::super::handle::cache_cstring(&s);
+        let mut value = t_vpi_value::default();
+        value.format = vpiBinStrVal;
+        value.value = vpi_value_union { string: ptr };
+        let back = value_to_logicvec(&value);
+        assert_eq!(back.to_u64(), lv.to_u64(), "bin_str roundtrip");
+    }
+}

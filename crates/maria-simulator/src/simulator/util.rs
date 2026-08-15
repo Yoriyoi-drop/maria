@@ -177,6 +177,22 @@ pub fn is_signed_expr(expr: &IrExpr, signals: &[SignalInfo]) -> bool {
         IrExpr::ArrayIndex { sig_id, .. } => {
             signals.get(*sig_id).map(|s| s.is_signed).unwrap_or(false)
         }
+        // ROUND 36: signedness PROPAGASI untuk ekspresi majemuk. Keputusan
+        // operasi di evaluator memakai `&&` (LRM §11.8.2: 'ada operand
+        // unsigned → hasil unsigned' → operasi signed hanya bila KEDUA
+        // operand signed). Literal desimal unsized (`5`) kini di-emit
+        // elaborator sebagai IrExpr::Signed (LRM §6.8.1) agar `a < 0` /
+        // `a / 2` tetap signed sedangkan `a < 8'hFF` unsigned.
+        IrExpr::BinaryOp(_, lhs, rhs) => {
+            is_signed_expr(lhs, signals) || is_signed_expr(rhs, signals)
+        }
+        IrExpr::UnaryOp(_, inner) => is_signed_expr(inner, signals),
+        IrExpr::Cond(_, t, f) => is_signed_expr(t, signals) || is_signed_expr(f, signals),
+        IrExpr::ExprRangeSelect(inner, ..) | IrExpr::ExprBitSelect(inner, ..) => {
+            is_signed_expr(inner, signals)
+        }
+        // Concat/Replicate menghasilkan nilai unsigned (LRM §11.8.1); Cast
+        // lebar, MemberAccess, Inside, SysFunc, dst. → unsigned (konservatif).
         _ => false,
     }
 }
@@ -247,9 +263,14 @@ impl SimulationEngine {
         // Evaluasi arg secara eager ke Vec: borrow &mut self (dari evaluate_expr)
         // harus berakhir sebelum akses self.state di bawah. `evaluate_expr` penuh
         // menangani semua IrExpr (Cast, BinaryOp, Concat, MemberAccess, ...).
-        let value_args: Vec<LogicVec> = ir_args[start_idx..]
+        // Signedness per-arg ikut dibawa agar `%d` mencetak negatif untuk
+        // ekspresi signed (`int a = -5` → "-5", bukan "4294967291").
+        let value_args: Vec<(LogicVec, bool)> = ir_args[start_idx..]
             .iter()
-            .filter_map(|a| self.evaluate_expr(a).ok())
+            .filter_map(|a| {
+                let signed = is_signed_expr(a, &self.design.top.signals);
+                self.evaluate_expr(a).ok().map(|v| (v, signed))
+            })
             .collect();
         self.format_display_fmt(fmt_str, value_args.into_iter())
     }
@@ -274,18 +295,24 @@ impl SimulationEngine {
             }
             return out;
         };
-        let value_args: Vec<LogicVec> = ast_args[start_idx..]
+        let value_args: Vec<(LogicVec, bool)> = ast_args[start_idx..]
             .iter()
-            .filter_map(|a| self.evaluate_ast_expr(a).ok())
+            .filter_map(|a| {
+                let signed = ast_expr_is_signed(a);
+                self.evaluate_ast_expr(a).ok().map(|v| (v, signed))
+            })
             .collect();
         self.format_display_fmt(fmt_str, value_args.into_iter())
     }
 
     /// Inti formatter `%d/%b/%h/%s/...` — dipakai jalur IR & AST (F17).
+    /// Setiap arg adalah `(LogicVec, is_signed)`; `%d` memakai signedness
+    /// untuk mencetak nilai negatif (jalur IR: dari ekspresi; jalur AST: dari
+    /// `-<literal>` — lihat `ast_expr_is_signed`).
     fn format_display_fmt(
         &mut self,
         fmt_str: &str,
-        value_args: impl Iterator<Item = LogicVec>,
+        value_args: impl Iterator<Item = (LogicVec, bool)>,
     ) -> String {
         let mut value_args = value_args;
         let mut result = String::with_capacity(fmt_str.len() + 8 * 16);
@@ -310,20 +337,34 @@ impl SimulationEngine {
             }
             match chars.next() {
                 Some('d') => {
-                    if let Some(val) = value_args.next() {
-                        let n = val.to_u64();
-                        let ndigits = u64_digits(n);
-                        if width > ndigits {
-                            let pad = if zero_fill { '0' } else { ' ' };
-                            for _ in 0..(width - ndigits) {
-                                result.push(pad);
+                    if let Some((val, is_signed)) = value_args.next() {
+                        if is_signed && val.width <= 64 {
+                            // Signed: cetak dua-complement sebagai negatif
+                            // (mis. int -5 = 0xFFFFFFFB → "-5").
+                            let n = val.to_i64();
+                            let ndigits = i64_digits(n);
+                            if width > ndigits {
+                                let pad = if zero_fill { '0' } else { ' ' };
+                                for _ in 0..(width - ndigits) {
+                                    result.push(pad);
+                                }
                             }
+                            let _ = write!(result, "{}", n);
+                        } else {
+                            let n = val.to_u64();
+                            let ndigits = u64_digits(n);
+                            if width > ndigits {
+                                let pad = if zero_fill { '0' } else { ' ' };
+                                for _ in 0..(width - ndigits) {
+                                    result.push(pad);
+                                }
+                            }
+                            let _ = write!(result, "{}", n);
                         }
-                        let _ = write!(result, "{}", n);
                     }
                 }
                 Some('b') => {
-                    if let Some(val) = value_args.next() {
+                    if let Some((val, _)) = value_args.next() {
                         // Tulis bit MSB-first, buang leading '0' (tanpa alokasi).
                         let mut seen_nonzero = false;
                         let mut trimmed_len = 0usize;
@@ -363,7 +404,7 @@ impl SimulationEngine {
                     }
                 }
                 Some('h') => {
-                    if let Some(val) = value_args.next() {
+                    if let Some((val, _)) = value_args.next() {
                         let n = val.to_u64();
                         let ndigits = u64_hex_digits(n);
                         if width > ndigits {
@@ -376,7 +417,7 @@ impl SimulationEngine {
                     }
                 }
                 Some('f') => {
-                    if let Some(val) = value_args.next() {
+                    if let Some((val, _)) = value_args.next() {
                         let _ = write!(result, "{}", f64::from_bits(val.to_u64()));
                     }
                 }
@@ -386,7 +427,7 @@ impl SimulationEngine {
                     // design `timescale (default 1ns = 10^-9 s).
                     let t = value_args
                         .next()
-                        .map(|v| v.to_u64() as f64)
+                        .map(|(v, _)| v.to_u64() as f64)
                         .unwrap_or(self.state.time as f64);
                     // Skala relatif terhadap basis sim-time, bukan hardcode -9.
                     // saturating_sub mencegah underflow i64 (panic di debug)
@@ -407,7 +448,7 @@ impl SimulationEngine {
                     result.push_str(&s);
                 }
                 Some('s') => {
-                    if let Some(val) = value_args.next() {
+                    if let Some((val, _)) = value_args.next() {
                         result.push_str(&logicvec_to_string(&val));
                     }
                 }
@@ -483,6 +524,30 @@ impl SimulationEngine {
                 self.running = false;
             }
         }
+    }
+}
+
+/// Signedness ekspresi di jalur AST (body method class): hanya
+/// `-<literal desimal>` (unary minus pada unsized integer literal = signed
+/// 32-bit, IEEE 1800 §6.8.1) yang dapat dipastikan signed tanpa info tipe
+/// field/local. Kasus lain dianggap unsigned (field class tidak menyimpan
+/// signedness — keterbatasan dicatat).
+fn ast_expr_is_signed(expr: &Expr) -> bool {
+    match expr {
+        Expr::UnaryOp {
+            op: UnaryOp::Minus,
+            expr: inner,
+        } => matches!(inner.as_ref(), Expr::Value(Value::Decimal(_))),
+        _ => false,
+    }
+}
+
+/// Jumlah karakter `%d` signed: digit abs + 1 untuk tanda '-' (0 → 1).
+fn i64_digits(n: i64) -> usize {
+    if n < 0 {
+        u64_digits(n.unsigned_abs()) + 1
+    } else {
+        u64_digits(n as u64)
     }
 }
 

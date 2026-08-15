@@ -1,6 +1,6 @@
 use maria_core::error::SimError;
-use maria_ir::{CaseType, IrExpr, IrLValue, IrStmt, LogicVal, LogicVec, SignalId};
-use crate::simulator::util::string_to_logicvec;
+use maria_ir::{BinaryIrOp, CaseType, IrExpr, IrLValue, IrStmt, LogicVal, LogicVec, SignalId, SignalInfo};
+use crate::simulator::util::{is_signed_expr, string_to_logicvec};
 use crate::simulator::value::*;
 
 /// Configuration for parallel execution
@@ -37,7 +37,14 @@ impl Default for ParallelConfig {
 // Simplified expression evaluation for parallel context.
 /// This version does NOT need &IrDesign, making it safe to use in rayon closures.
 /// It handles the common expression types found in combinational processes.
-pub fn evaluate_expr_simple(expr: &IrExpr, signals: &[LogicVec]) -> Result<LogicVec, SimError> {
+/// `sig_info` (SignalInfo per signal) dipakai `is_signed_expr` agar
+/// perbandingan/div/mod SIGNED konsisten dengan jalur serial (ROUND 36) —
+/// parallel eval default-on untuk Process::Combinational.
+pub fn evaluate_expr_simple(
+    expr: &IrExpr,
+    signals: &[LogicVec],
+    sig_info: &[SignalInfo],
+) -> Result<LogicVec, SimError> {
     match expr {
         IrExpr::Const(val) => Ok(val.clone()),
         IrExpr::FillLit(val) => Ok(LogicVec::fill(*val, 1)),
@@ -76,7 +83,7 @@ pub fn evaluate_expr_simple(expr: &IrExpr, signals: &[LogicVec]) -> Result<Logic
             })
         }
         IrExpr::ExprRangeSelect(inner, msb, lsb) => {
-            let val = evaluate_expr_simple(inner, signals)?;
+            let val = evaluate_expr_simple(inner, signals, sig_info)?;
             let (start, end) = if *msb > *lsb {
                 (*lsb, *msb)
             } else {
@@ -92,7 +99,7 @@ pub fn evaluate_expr_simple(expr: &IrExpr, signals: &[LogicVec]) -> Result<Logic
             })
         }
         IrExpr::ExprBitSelect(inner, idx) => {
-            let val = evaluate_expr_simple(inner, signals)?;
+            let val = evaluate_expr_simple(inner, signals, sig_info)?;
             let bit = val.bits.get(*idx).copied().unwrap_or(LogicVal::X);
             Ok(LogicVec {
                 bits: vec![bit],
@@ -100,9 +107,9 @@ pub fn evaluate_expr_simple(expr: &IrExpr, signals: &[LogicVec]) -> Result<Logic
             })
         }
         IrExpr::ExprPartSelect(inner, base_expr, width_expr) => {
-            let val = evaluate_expr_simple(inner, signals)?;
-            let base = evaluate_expr_simple(base_expr, signals)?.to_u64() as usize;
-            let width = evaluate_expr_simple(width_expr, signals)?.to_u64() as usize;
+            let val = evaluate_expr_simple(inner, signals, sig_info)?;
+            let base = evaluate_expr_simple(base_expr, signals, sig_info)?.to_u64() as usize;
+            let width = evaluate_expr_simple(width_expr, signals, sig_info)?.to_u64() as usize;
             if width == 0 || base >= val.width {
                 return Ok(LogicVec::new(1));
             }
@@ -118,7 +125,7 @@ pub fn evaluate_expr_simple(expr: &IrExpr, signals: &[LogicVec]) -> Result<Logic
             index,
             elem_width,
         } => {
-            let key_val = evaluate_expr_simple(index, signals)?;
+            let key_val = evaluate_expr_simple(index, signals, sig_info)?;
             let idx = key_val.to_u64() as usize;
             if let Some(array_val) = signals.get(*sig_id) {
                 let start = idx * elem_width;
@@ -138,13 +145,13 @@ pub fn evaluate_expr_simple(expr: &IrExpr, signals: &[LogicVec]) -> Result<Logic
         IrExpr::Concat(exprs) => {
             let mut result = LogicVec::new(0);
             for e in exprs.iter().rev() {
-                let part = evaluate_expr_simple(e, signals)?;
+                let part = evaluate_expr_simple(e, signals, sig_info)?;
                 result = result.extend(&part);
             }
             Ok(result)
         }
         IrExpr::Replicate(count, inner) => {
-            let val = evaluate_expr_simple(inner, signals)?;
+            let val = evaluate_expr_simple(inner, signals, sig_info)?;
             let mut result = LogicVec::new(0);
             for _ in 0..*count {
                 result = result.extend(&val);
@@ -152,32 +159,54 @@ pub fn evaluate_expr_simple(expr: &IrExpr, signals: &[LogicVec]) -> Result<Logic
             Ok(result)
         }
         IrExpr::UnaryOp(op, inner) => {
-            let val = evaluate_expr_simple(inner, signals)?;
+            let val = evaluate_expr_simple(inner, signals, sig_info)?;
             Ok(eval_unary(op.clone(), &val))
         }
         IrExpr::BinaryOp(op, lhs, rhs) => {
-            let lhs_val = evaluate_expr_simple(lhs, signals)?;
-            let rhs_val = evaluate_expr_simple(rhs, signals)?;
-            Ok(eval_binary(op.clone(), &lhs_val, &rhs_val))
-        }
-        IrExpr::Cond(cond, true_val, false_val) => {
-            let cond_val = evaluate_expr_simple(cond, signals)?;
-            if cond_val.to_bool().unwrap_or(false) {
-                evaluate_expr_simple(true_val, signals)
+            let lhs_val = evaluate_expr_simple(lhs, signals, sig_info)?;
+            let rhs_val = evaluate_expr_simple(rhs, signals, sig_info)?;
+            if matches!(
+                op,
+                BinaryIrOp::Lt
+                    | BinaryIrOp::Le
+                    | BinaryIrOp::Gt
+                    | BinaryIrOp::Ge
+                    | BinaryIrOp::Div
+                    | BinaryIrOp::Mod
+            ) && (is_signed_expr(lhs.as_ref(), sig_info)
+                && is_signed_expr(rhs.as_ref(), sig_info))
+            {
+                Ok(eval_binary_signed(op.clone(), &lhs_val, &rhs_val))
+            } else if matches!(op, BinaryIrOp::Sshr) {
+                // `>>>`: arithmetic bila lhs signed, logical bila unsigned
+                // (konsisten dengan jalur serial — ROUND 36).
+                if is_signed_expr(lhs.as_ref(), sig_info) {
+                    Ok(eval_sshr_signed(&lhs_val, &rhs_val))
+                } else {
+                    Ok(eval_binary(BinaryIrOp::Shr, &lhs_val, &rhs_val))
+                }
             } else {
-                evaluate_expr_simple(false_val, signals)
+                Ok(eval_binary(op.clone(), &lhs_val, &rhs_val))
             }
         }
-        IrExpr::Signed(inner) => evaluate_expr_simple(inner, signals),
+        IrExpr::Cond(cond, true_val, false_val) => {
+            let cond_val = evaluate_expr_simple(cond, signals, sig_info)?;
+            if cond_val.to_bool().unwrap_or(false) {
+                evaluate_expr_simple(true_val, signals, sig_info)
+            } else {
+                evaluate_expr_simple(false_val, signals, sig_info)
+            }
+        }
+        IrExpr::Signed(inner) => evaluate_expr_simple(inner, signals, sig_info),
         IrExpr::String(s) => Ok(string_to_logicvec(s)),
         IrExpr::Cast { width, expr } => {
-            let val = evaluate_expr_simple(expr, signals)?;
+            let val = evaluate_expr_simple(expr, signals, sig_info)?;
             Ok(val.resize(*width))
         }
         IrExpr::Inside { expr: inner, list } => {
-            let val = evaluate_expr_simple(inner, signals)?;
+            let val = evaluate_expr_simple(inner, signals, sig_info)?;
             for item in list {
-                let item_val = evaluate_expr_simple(item, signals)?;
+                let item_val = evaluate_expr_simple(item, signals, sig_info)?;
                 if val == item_val || val.casex_eq(&item_val) {
                     return Ok(LogicVec::from_u64(1, 1));
                 }
@@ -195,30 +224,31 @@ pub fn evaluate_stmt_block_parallel(
     stmts: &[IrStmt],
     signals: &mut Vec<LogicVec>,
     writes: &mut Vec<(SignalId, LogicVec)>,
+    sig_info: &[SignalInfo],
 ) -> Result<(), SimError> {
     for stmt in stmts {
         match stmt {
             IrStmt::Block { stmts: inner } => {
-                evaluate_stmt_block_parallel(inner, signals, writes)?;
+                evaluate_stmt_block_parallel(inner, signals, writes, sig_info)?;
             }
             IrStmt::BlockingAssign { lhs, rhs, delay: _ } => {
-                let val = eval_assign_rhs_simple(rhs, lhs, signals)?;
-                write_lvalue_simple(lhs, val, signals, writes)?;
+                let val = eval_assign_rhs_simple(rhs, lhs, signals, sig_info)?;
+                write_lvalue_simple(lhs, val, signals, writes, sig_info)?;
             }
             IrStmt::NonBlockingAssign { lhs, rhs, delay: _ } => {
-                let val = eval_assign_rhs_simple(rhs, lhs, signals)?;
-                write_lvalue_simple(lhs, val, signals, writes)?;
+                let val = eval_assign_rhs_simple(rhs, lhs, signals, sig_info)?;
+                write_lvalue_simple(lhs, val, signals, writes, sig_info)?;
             }
             IrStmt::If {
                 cond,
                 true_branch,
                 false_branch,
             } => {
-                let cond_val = evaluate_expr_simple(cond, signals)?;
+                let cond_val = evaluate_expr_simple(cond, signals, sig_info)?;
                 if cond_val.to_bool().unwrap_or(false) {
-                    evaluate_stmt_block_parallel(true_branch, signals, writes)?;
+                    evaluate_stmt_block_parallel(true_branch, signals, writes, sig_info)?;
                 } else if !false_branch.is_empty() {
-                    evaluate_stmt_block_parallel(false_branch, signals, writes)?;
+                    evaluate_stmt_block_parallel(false_branch, signals, writes, sig_info)?;
                 }
             }
             IrStmt::Case {
@@ -227,20 +257,20 @@ pub fn evaluate_stmt_block_parallel(
                 items,
                 default,
             } => {
-                let case_val = evaluate_expr_simple(case_expr, signals)?;
+                let case_val = evaluate_expr_simple(case_expr, signals, sig_info)?;
                 let mut matched = false;
                 for case_item in items {
                     let mut item_matched = false;
                     for pat in &case_item.labels {
                         let eq = match (case_type, pat) {
                             (CaseType::Inside, IrExpr::InsideRange { lo, hi, .. }) => {
-                                let lo_v = evaluate_expr_simple(lo, signals)?.to_u64();
-                                let hi_v = evaluate_expr_simple(hi, signals)?.to_u64();
+                                let lo_v = evaluate_expr_simple(lo, signals, sig_info)?.to_u64();
+                                let hi_v = evaluate_expr_simple(hi, signals, sig_info)?.to_u64();
                                 let v = case_val.to_u64();
                                 v >= lo_v.min(hi_v) && v <= lo_v.max(hi_v)
                             }
                             _ => {
-                                let pat_val = evaluate_expr_simple(pat, signals)?;
+                                let pat_val = evaluate_expr_simple(pat, signals, sig_info)?;
                                 match case_type {
                                     CaseType::CaseX => case_val.casex_eq(&pat_val),
                                     CaseType::CaseZ => case_val.casez_eq(&pat_val),
@@ -254,7 +284,7 @@ pub fn evaluate_stmt_block_parallel(
                             }
                         };
                         if eq {
-                            evaluate_stmt_block_parallel(&case_item.body, signals, writes)?;
+                            evaluate_stmt_block_parallel(&case_item.body, signals, writes, sig_info)?;
                             item_matched = true;
                             matched = true;
                             break;
@@ -265,7 +295,7 @@ pub fn evaluate_stmt_block_parallel(
                     }
                 }
                 if !matched && !default.is_empty() {
-                    evaluate_stmt_block_parallel(default, signals, writes)?;
+                    evaluate_stmt_block_parallel(default, signals, writes, sig_info)?;
                 }
             }
             IrStmt::LoopFor {
@@ -277,17 +307,17 @@ pub fn evaluate_stmt_block_parallel(
                 let mut iter_count = 0u64;
                 if let Some(init_stmt) = init {
                     let cloned: IrStmt = init_stmt.as_ref().clone();
-                    evaluate_stmt_block_parallel(&[cloned], signals, writes)?;
+                    evaluate_stmt_block_parallel(&[cloned], signals, writes, sig_info)?;
                 }
                 while iter_count < 1_000_000 {
-                    let cond_val = evaluate_expr_simple(cond, signals)?;
+                    let cond_val = evaluate_expr_simple(cond, signals, sig_info)?;
                     if !cond_val.to_bool().unwrap_or(false) {
                         break;
                     }
-                    evaluate_stmt_block_parallel(body, signals, writes)?;
+                    evaluate_stmt_block_parallel(body, signals, writes, sig_info)?;
                     if let Some(step_stmt) = step {
                         let cloned: IrStmt = step_stmt.as_ref().clone();
-                        evaluate_stmt_block_parallel(&[cloned], signals, writes)?;
+                        evaluate_stmt_block_parallel(&[cloned], signals, writes, sig_info)?;
                     }
                     iter_count += 1;
                 }
@@ -295,33 +325,33 @@ pub fn evaluate_stmt_block_parallel(
             IrStmt::LoopWhile { cond, body } => {
                 let mut iter_count = 0u64;
                 while iter_count < 1_000_000 {
-                    let cond_val = evaluate_expr_simple(cond, signals)?;
+                    let cond_val = evaluate_expr_simple(cond, signals, sig_info)?;
                     if !cond_val.to_bool().unwrap_or(false) {
                         break;
                     }
-                    evaluate_stmt_block_parallel(body, signals, writes)?;
+                    evaluate_stmt_block_parallel(body, signals, writes, sig_info)?;
                     iter_count += 1;
                 }
             }
             IrStmt::LoopDoWhile { cond, body } => {
                 let mut iter_count = 0u64;
                 loop {
-                    evaluate_stmt_block_parallel(body, signals, writes)?;
+                    evaluate_stmt_block_parallel(body, signals, writes, sig_info)?;
                     iter_count += 1;
                     if iter_count >= 1_000_000 {
                         break;
                     }
-                    let cond_val = evaluate_expr_simple(cond, signals)?;
+                    let cond_val = evaluate_expr_simple(cond, signals, sig_info)?;
                     if !cond_val.to_bool().unwrap_or(false) {
                         break;
                     }
                 }
             }
             IrStmt::Repeat { count, body } => {
-                let count_val = evaluate_expr_simple(count, signals)?;
+                let count_val = evaluate_expr_simple(count, signals, sig_info)?;
                 let n = count_val.to_u64().min(1_000_000);
                 for _ in 0..n {
-                    evaluate_stmt_block_parallel(body, signals, writes)?;
+                    evaluate_stmt_block_parallel(body, signals, writes, sig_info)?;
                 }
             }
             IrStmt::Foreach {
@@ -329,7 +359,7 @@ pub fn evaluate_stmt_block_parallel(
                 index_var: _,
                 body,
             } => {
-                let arr_val = evaluate_expr_simple(array_var, signals)?;
+                let arr_val = evaluate_expr_simple(array_var, signals, sig_info)?;
                 let elem_width = match array_var {
                     IrExpr::Signal(_, _) => {
                         // Try to estimate elem_width from signal array structure
@@ -343,7 +373,7 @@ pub fn evaluate_stmt_block_parallel(
                 signals.push(LogicVec::from_u64(0, 32));
                 for i in 0..num_elems.min(10_000) {
                     signals[idx_sig] = LogicVec::from_u64(i as u64, 32);
-                    evaluate_stmt_block_parallel(body, signals, writes)?;
+                    evaluate_stmt_block_parallel(body, signals, writes, sig_info)?;
                 }
             }
             IrStmt::SysCall { .. } | IrStmt::SysFinish | IrStmt::Null => {}
@@ -364,13 +394,14 @@ fn eval_assign_rhs_simple(
     expr: &IrExpr,
     lhs: &IrLValue,
     signals: &[LogicVec],
+    sig_info: &[SignalInfo],
 ) -> Result<LogicVec, SimError> {
     if let IrExpr::FillLit(v) = expr {
-        let w = get_lvalue_width_simple(lhs, signals);
+        let w = get_lvalue_width_simple(lhs, signals, sig_info);
         Ok(LogicVec::fill(*v, w))
     } else if let IrExpr::Signed(inner) = expr {
-        let mut val = evaluate_expr_simple(inner, signals)?;
-        let target_w = get_lvalue_width_simple(lhs, signals);
+        let mut val = evaluate_expr_simple(inner, signals, sig_info)?;
+        let target_w = get_lvalue_width_simple(lhs, signals, sig_info);
         if val.width < target_w {
             let msb = val.bits.last().copied().unwrap_or(LogicVal::Zero);
             val.bits.resize(target_w, msb);
@@ -378,12 +409,16 @@ fn eval_assign_rhs_simple(
         }
         Ok(val)
     } else {
-        evaluate_expr_simple(expr, signals)
+        evaluate_expr_simple(expr, signals, sig_info)
     }
 }
 
 /// Get lvalue width (no design reference)
-fn get_lvalue_width_simple(lvalue: &IrLValue, signals: &[LogicVec]) -> usize {
+fn get_lvalue_width_simple(
+    lvalue: &IrLValue,
+    signals: &[LogicVec],
+    sig_info: &[SignalInfo],
+) -> usize {
     match lvalue {
         IrLValue::Signal(id, _) => signals.get(*id).map(|s| s.width).unwrap_or(1),
         IrLValue::RangeSelect(_, msb, lsb) => {
@@ -415,7 +450,7 @@ fn get_lvalue_width_simple(lvalue: &IrLValue, signals: &[LogicVec]) -> usize {
         IrLValue::ObjectField { .. } => 64,
         IrLValue::Concat(items) => items
             .iter()
-            .map(|i| get_lvalue_width_simple(i, signals))
+            .map(|i| get_lvalue_width_simple(i, signals, sig_info))
             .sum(),
     }
 }
@@ -426,6 +461,7 @@ fn write_lvalue_simple(
     val: LogicVec,
     signals: &mut Vec<LogicVec>,
     writes: &mut Vec<(SignalId, LogicVec)>,
+    sig_info: &[SignalInfo],
 ) -> Result<(), SimError> {
     match lvalue {
         IrLValue::Signal(id, _) => {
@@ -477,7 +513,7 @@ fn write_lvalue_simple(
             index,
             elem_width,
         } => {
-            let idx_val = evaluate_expr_simple(index, signals)?;
+            let idx_val = evaluate_expr_simple(index, signals, sig_info)?;
             let idx_u64 = idx_val.to_u64() as usize;
             let mut existing = signals
                 .get(*sig_id)
@@ -499,7 +535,7 @@ fn write_lvalue_simple(
             base,
             width,
         } => {
-            let idx_val = evaluate_expr_simple(base, signals)?;
+            let idx_val = evaluate_expr_simple(base, signals, sig_info)?;
             let start = idx_val.to_u64() as usize;
             let mut existing = signals
                 .get(*sig_id)
@@ -524,7 +560,7 @@ fn write_lvalue_simple(
             // total concat (panic logic.rs:97 width=8 bits.len=7).
             let total: usize = items
                 .iter()
-                .map(|it| get_lvalue_width_simple(it, signals))
+                .map(|it| get_lvalue_width_simple(it, signals, sig_info))
                 .sum();
             let mut bits = val.bits.clone();
             if bits.len() < total {
@@ -534,13 +570,13 @@ fn write_lvalue_simple(
             }
             let mut offset = total;
             for item in items {
-                let item_w = get_lvalue_width_simple(item, signals);
+                let item_w = get_lvalue_width_simple(item, signals, sig_info);
                 offset -= item_w;
                 let sub_val = LogicVec {
                     width: item_w,
                     bits: bits[offset..offset + item_w].to_vec(),
                 };
-                write_lvalue_simple(item, sub_val, signals, writes)?;
+                write_lvalue_simple(item, sub_val, signals, writes, sig_info)?;
             }
         }
         _ => {}

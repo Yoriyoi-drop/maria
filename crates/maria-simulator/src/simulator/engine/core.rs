@@ -669,6 +669,10 @@ impl SimulationEngine {
         // ── VPI: Register engine for VPI callbacks ──
         crate::vpi::set_vpi_engine(self);
         crate::vpi::callback::dispatch_start_of_simulation();
+        // ── VHPI (IEEE 1076-2008): engine hook — library VHDL eksternal
+        // membutuhkan akses object Maria selama sim (vhpi_handle_by_name dll).
+        crate::vhpi::object::set_vhpi_engine(self);
+        crate::vhpi::api::dispatch_start_of_simulation();
 
         self.initialize_time_zero()?;
         // F19: auto-detect fase UVM HANYA bila source TIDAK memanggil
@@ -1267,6 +1271,11 @@ impl SimulationEngine {
         crate::vpi::callback::clear_all_callbacks();
         crate::vpi::systf::clear_all_systfs();
         crate::vpi::clear_vpi_engine();
+        // ── VHPI Cleanup (IEEE 1076-2008) ──
+        crate::vhpi::api::dispatch_end_of_simulation();
+        crate::vhpi::loader::vhpi_cleanup();
+        // ── PLI Cleanup (IEEE 1364 PLI 1.0/2.0) ──
+        crate::pli::loader::pli_cleanup();
 
         Ok(())
     }

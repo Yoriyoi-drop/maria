@@ -646,6 +646,40 @@ mod tests {
     }
 
     #[test]
+    fn test_compiler_version_mismatch_rebuilds_empty() {
+        // ROUND 36: cache yang ditulis binary LAMA (COMPILER_VERSION berbeda)
+        // tidak boleh di-restore binary BARU — stale IR bug. Manifest dengan
+        // compiler_version berbeda → rebuild kosong, walau schema_version sama.
+        let root = test_root("cver");
+        let cat = CacheCategory::Elaborate;
+        {
+            let mut st = CategoryStore::open(&root, cat, 0);
+            st.put("ir:v1:top", b"stale-ir").unwrap();
+            st.save().unwrap();
+            assert_eq!(st.len(), 1);
+        }
+        // Palsukan manifest seolah ditulis versi compiler lama.
+        {
+            let path = root.join("manifest.mdb");
+            let old = CacheManifest {
+                compiler_version: "Maria 0.0.0-p0-old".to_string(),
+                ..CacheManifest::fresh(0)
+            };
+            let mut w = MdbWriter::new();
+            w.put(
+                KEY_SINGLETON,
+                KIND_MANIFEST,
+                bincode::serialize(&old).unwrap(),
+            );
+            w.write_to(&path).unwrap();
+        }
+        let st = CategoryStore::open(&root, cat, 0);
+        assert!(st.rebuilt, "compiler_version mismatch → rebuilt");
+        assert_eq!(st.len(), 0, "entry IR lama tidak boleh di-restore");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn test_gc_lru_and_ttl() {
         let root = test_root("gc");
         let mut st = CategoryStore::open(&root, CacheCategory::Parser, 0);

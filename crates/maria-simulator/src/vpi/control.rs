@@ -49,11 +49,12 @@ pub fn vpi_get_cb_info(cb_handle: vpiHandle, cb_data_p: &mut t_cb_data) -> i32 {
     if cb_handle.is_null() {
         return 0;
     }
-    let idx = cb_handle.ptr as usize - 1;
-    // Callback info is stored in the VPI_CALLBACKS registry
+    let id = cb_handle.ptr as u64;
+    // Callback info is stored in the VPI_CALLBACKS registry — match by ID
+    // (handle unik, bukan posisi: ROUND 36).
     let registry = crate::vpi::callback::get_callback_registry();
-    if idx < registry.len() {
-        *cb_data_p = registry[idx].data.clone();
+    if let Some(entry) = registry.iter().find(|e| e.id == id) {
+        *cb_data_p = entry.data.clone();
         1
     } else {
         0

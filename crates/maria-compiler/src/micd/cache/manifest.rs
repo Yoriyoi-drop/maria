@@ -42,9 +42,13 @@ impl CacheManifest {
         }
     }
 
-    /// Apakah skema kompatibel dengan versi terkini.
+    /// Apakah skema kompatibel dengan versi terkini. compiler_version juga
+    /// dibandingkan: PIPELINE_REV dinaikkan (perilaku elaborator/parser/
+    /// simulator berubah) → seluruh kategori cache dibangun ulang, mencegah
+    /// restore hasil lama dari binary baru.
     pub fn valid(&self) -> bool {
         self.schema_version == CACHE_SCHEMA_VERSION
+            && self.compiler_version == COMPILER_VERSION
     }
 }
 

@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~157K LOC, 1804 test functions,
+Maria adalah simulator RTL berbasis Rust (~157K LOC, 1834 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -34,22 +34,27 @@ formal verification, LSP/IDE, compiled-code simulation,
 distributed/parallel simulation engine, coverage minimal,
 constraint solver inadequate, waveform database tidak ada, CI/CD ✅ sudah ada,
 tidak ada regression infrastructure, tidak ada VHDL/SystemC co-sim,
-dan pre-existing test failures (ALL FIXED ✅ — 1804 tests pass, 0 fail,
-update 2026-08-14: re-verifikasi 20 item LANG yang ternyata sudah terimplementasi
-ditandai [x] + LANG-31 soft constraint, LANG-33 constraint_mode() dan LANG-29
-wait fork diimplementasikan baru).
+dan pre-existing test failures (ALL FIXED ✅ — 1834 tests pass, 0 fail,
+update 2026-08-15: LANG-46 VPI e2e SV→C systf melalui interpreter ditutup
+(+1 test) + LANG-21 $urandom_seed bug statement-path diperbaiki (+1 test).
+Sebelumnya 2026-08-14: re-verifikasi 20 item LANG yang ternyata sudah
+timplementasi ditandai [x] + LANG-31 soft constraint, LANG-33
+constraint_mode() dan LANG-29 wait fork diimplementasikan baru).
 
 Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 ~18ms untuk 400 module, zero-deallocation sim arena, struktur
-kode terorganisir rapi, ✅ CI/CD aktif, ✅ 1804 tests pass 0 fail,
+kode terorganisir rapi, ✅ CI/CD aktif, ✅ 1834 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
-dan ✅ 54 item audit telah diperbaiki (termasuk monorepo workspace,
+dan ✅ 57 item audit telah diperbaiki (termasuk monorepo workspace,
 Arsitektur-08, LANG-31 soft constraint — ROUND 28, LANG-33 constraint_mode()
 dan LANG-29 wait fork — ROUND 29, LANG-43 qualified pkg func + LANG-50
 timing checks — ROUND 30, LANG-32 static constraint + LANG-34 randomize
 with inline — ROUND 31, LANG-47 $realtime re-verified — ROUND 32,
-LANG-30 disable fork — ROUND 33, LANG-40 let declaration — ROUND 34).
+LANG-30 disable fork — ROUND 33, LANG-40 let declaration — ROUND 34,
+LANG-46 VPI systf bug fix + test — ROUND 35, literal negatif signed +
+MICD IR cache stale versioning — ROUND 36, LANG-46 VPI e2e SV→C systf
+via interpreter — ROUND 36 lanjutan).
 
 ═══════════════════════════════════════════════════════════════════════════════
 2. ARCHITECTURE REVIEW
@@ -637,16 +642,25 @@ LANG-43: [x] function/task import from package — FIXED (2026-08-14):
          r2=30 (plain via import), r3=6 (nested qualified∘plain).
 LANG-44: ✅ DPI-C scope resolution — FIXED (svSetScope/svGetScope/svScopeName)
 LANG-45: ✅ DPI-C context functions — FIXED (thread-local scope + time state)
-LANG-46: [ ] VPI/VHPI/PLI — PARSIAL (2026-08-14 update): VPI API lengkap di
-         crates/maria-simulator/src/vpi/ (handle/iterate/get/get_str/
-         get_value/put_value/callback/systf/control/free_object/chk_error) +
-         FFI export; VHPI/PLI belum (integrasi EDA komersial besar).
-         Perbaikan baru: call_registered_systf membandingkan task_function_type
-         dengan konstanta vpiSysTask/vpiSysFunc (object type) — bug — kini
-         memakai konstanta vpiSystf* yang benar (IEEE 1800 §36.7); Test BARU:
-         test_vpi_systf_register_call_remove (maria-simulator vpi/systf.rs —
-         register → dispatch C callback → remove). Integrasi e2e SV→C systf
-         masih belum teruji.
+LANG-46: [x] VPI/VHPI/PLI — PARSIAL→VPI LENGKAP + e2e (2026-08-15 update):
+         VPI API lengkap di crates/maria-simulator/src/vpi/
+         (handle/iterate/get/get_str/get_value/put_value/callback/systf/
+         control/free_object/chk_error) + FFI export; VHPI/PLI belum
+         (integrasi EDA komersial besar, di luar scope).
+         Perbaikan sebelumnya: call_registered_systf membandingkan
+         task_function_type dengan konstanta vpiSysTask/vpiSysFunc (object
+         type) — bug — kini memakai konstanta vpiSystf* yang benar (IEEE
+         1800 §36.7). ROUND 36: unit test lengkap 20 (value.rs 9 + handle.rs
+         6 + callback.rs 5) + BUG fix handle positional-index (register
+         callback/systf pakai posisi registry → remove menggeser elemen →
+         handle kedua STALE; fix ke unique id AtomicU64 di callback.rs/
+         systf.rs/control.rs). BARU (ROUND 36): e2e SV→C systf melalui
+         INTERPRETER (bukan translasi penuh ke C ala Verilator) —
+         test_vpi_systf_e2e_sv_to_calltf (maria-tests): SV `$my_task()` →
+         engine → call_registered_systf → calltf extern "C" (ABI identik C
+         terkompilasi) dieksekusi; retry 32× utk toleransi clear_all_systfs
+         dari run paralel. Semua 21 test VPI lulus (20 unit + 1 e2e).
+         Sisa gap VHPI/PLI dicatat di Unknowns.
 LANG-47: [x] real-time control ($realtime) — FIXED (2026-08-14, re-verifikasi):
          representasi real SUDAH ada — DataType::Real/Realtime (maria-ast
          types.rs:459), SignalInfo.is_real (elaborator/mod.rs:3906, lebar 64),
@@ -3100,10 +3114,19 @@ END OF AUDIT REPORT
 
 ═══ ROUND 19 — LANG SYSCALL: TIMEFORMAT/PRINTTIMESCALE/SCOPE/DEPOSIT/RANDCOUNT ═══
 
-[ ] LANG-21: $urandom_seed/$srandom — WARNING: hanya sebagian (seed diterapkan
-     tetapi return value $srandom tidak menaikkan rand_call_count; seeding
-     $urandom_seed belum di-verifikasi full-scope). Alasan: perlu integrasi
-     seed-state per-thread; item lama, bukan prioritas.
+[x] LANG-21: $urandom_seed/$srandom — FIXED (2026-08-15). BUG NYATA ditemukan
+     saat verifikasi full-scope: statement `$urandom_seed(777);` di initial
+     block masuk ke evaluate_syscall (block_syscall.rs — jalur statement awal,
+     block.rs:424) yang TIDAK punya handler urandom_seed → seed TIDAK pernah
+     diterapkan (stream $urandom identik utk seed berbeda 777 vs 888) +
+     warning RT9003 "unknown system call ignored". Handler hanya ada di
+     evaluate_syscall_stmt (jalur lanjutan). Fix: tambah handler urandom_seed
+     di evaluate_syscall (set seed + rand_call_count). Verifikasi: seed 777 →
+     a1=157514539, seed 888 → a1=2276283976 (berbeda), warning hilang. Catatan:
+     poin lama "$srandom tidak menaikkan rand_call_count" adalah PERILAKU BENAR
+     per IEEE (LANG-22 — $srandom hanya set seed). Test BARU:
+     test_urandom_seed_full_scope_determinism (seed sama → stream identik,
+     seed beda → stream berubah, $urandom_range tetap dalam range).
 
 [x] LANG-22: $get_randcount / $get_randstate — FIXED
    - $get_randcount: kembalikan jumlah panggilan random (rand_call_count)
@@ -3776,6 +3799,209 @@ ditandai [x] dengan bukti:
      — baseline sebelum round: 1803; +1 test VPI systf; 0 regresi
    - Tetap open (ditandai [ ]): LANG-46 VPI/VHPI/PLI (VPI API teruji,
      e2e SV→C belum; VHPI/PLI belum)
+
+═══ ROUND 36 — DUA BUG GLOBAL: LITERAL NEGATIF SIGNED + MICD IR CACHE STALE ═══
+
+✅ BUG 1 — Literal negatif berperilaku unsigned di SEMUA jalur (temuan
+   ROUND 34, `compute(-5)` → 4294967291; `a=-5; a<0` → false):
+   Akar masalah 3 lapis, semuanya diperbaiki global (IR + AST):
+   1. is_signed_type (elaboration/util/type_util.rs) hanya true utk
+      DataType::Signed(_) — padahal IEEE 1800 §6.11: int/integer/byte/
+      shortint/longint intrinsik SIGNED. Signal `int a` jadi is_signed=
+      false → perbandingan memakai eval_binary unsigned → `a < 0` = false
+      (salah). Fix: matches! tambah Int/Integer/Byte/Shortint/Longint.
+   2. try_fold_const (elaboration/util/const_fold.rs) mem-fold `-5` jadi
+      IrExpr::Const(0xFFFFFFFB) TANPA Signed — signedness hilang saat
+      konstanta, sehingga `-5 < 0` di-fill unsigned. Fix: val<0 → bungkus
+      IrExpr::Signed(Const(...)) (konsisten dgn `32'sd-5`).
+   3. format_display %d (simulator/util.rs) selalu to_u64() — display tak
+      pernah negatif. Fix: signedness per-arg dibawa (is_signed_expr utk
+      jalur IR; ast_expr_is_signed utk jalur AST `-<literal>`) → %d signed
+      mencetak -5, bukan 4294967291.
+   Fix 1 memicu 1 regresi test (test_negative_const_width_warning_suppression:
+   RHS `-1` kini Signed(Const) bukan Const → suppression width warning tidak
+   match). Fix: check_width_mismatch (elaborator/stmt.rs) unwrap Signed(Const).
+   Test BARU: test_negative_literal_signed_semantics (maria-tests) — a<0
+   true, -5<0 true, compute(-5) bits benar, r1==-5 true.
+
+✅ BUG 1-lanjutan — Div/Mod SIGNED + parallel eval konsisten:
+   4. eval_binary_signed (simulator/value.rs) hanya menangani Lt/Le/Gt/Ge
+      — Div/Mod selalu eval_binary UNSIGNED: `int a=-7; a/2` = 2147483644
+      (harusnya -3), `-7%-2` = 0 (harusnya 3? -7%-2=-1). Fix: arm Div/Mod
+      memakai i64 wrapping_div/rem (truncate toward zero = semantik SV
+      §11.4.3) + evaluate_expr (eval/expr.rs) memasukkan Div/Mod ke kondisi
+      is_signed_expr. Verifikasi: -7/2=-3, -7%2=-1, -7/-2=3, 7%-2=-3/1.
+   5. Jalur parallel eval (parallel.rs, default ON utk Process::Combinational
+      ≥4 proses) memakai eval_binary langsung → signed div/mod TIDAK
+      konsisten dgn serial. Fix: evaluate_expr_simple / evaluate_stmt_block_
+      parallel / eval_assign_rhs_simple / get_lvalue_width_simple /
+      write_lvalue_simple kini menerima &[SignalInfo] dan memakai is_signed_
+      expr + eval_binary_signed (sama dgn jalur serial). Caller: event.rs
+      (parallel trigger) pass self.design.top.signals; sim_dag.rs (dead
+      code — exported tanpa caller) pass &[].
+   Test BARU: test_signed_division_modulo (maria-tests) — q1=-3, m1=-1,
+   q2=3, m2=-1, q3=-3, m3=1.
+
+✅ BUG 1-lanjutan — `>>>` (Sshr) semantik signed/unsigned:
+   6. eval_binary Sshr selalu arithmetic + extend_to ZERO-extend ke max_width
+      operand → sign bit lebar ASLI hilang: `logic signed [7:0] s = -128;
+      s >>> 2` = 0x20 (harus 0xE0). IEEE 1800 §11.4.10: >>> arithmetic bila
+      lhs SIGNED, logical bila unsigned. Fix: eval_sshr_signed (value.rs)
+      memakai lebar asli lhs + pemilihan di evaluate_expr (eval/expr.rs) &
+      parallel path (parallel.rs): signed → eval_sshr_signed, unsigned →
+      eval_binary(Shr). Verifikasi: signed -128>>>2=0xE0, unsigned 0x80>>>2=
+      0x20, >> selalu logical, shift≥width → sign fill 0xFF, int -8>>>2=-2
+      (parallel juga).
+   Test BARU: test_arithmetic_shift_right_signedness (maria-tests).
+
+✅ BUG 1-lanjutan — signedness PROPAGASI ke ekspresi majemuk:
+   7. is_signed_expr (simulator/util.rs) hanya true utk Signal/Signed wrapper
+      — `int a; (a+1) < 0` memakai unsigned compare (a=-5 → a+1=-4 < 0 =
+      false, salah). Fix: rekursi BinaryOp/UnaryOp/Cond/ExprRangeSelect/
+      ExprBitSelect — hasil operasi signed bila salah satu operand signed
+      (aturan `||` eksisting; catatan LRM §11.8.2 'ada operand unsigned →
+      hasil unsigned' TIDAK diterapkan karena IR Const tidak menyimpan info
+      literal signed/unsized — keterbatasan dicatat). Berlaku juga utk
+      div/mod, `>>>`, dan %d display pd ekspresi majemuk.
+   Test BARU: test_compound_expr_signedness_propagation (maria-tests) —
+   (a+1)<0=true, (a*2)<0=true, (-a)<0=false, (a+1)/2=-3, (a*2)>>>2=-4.
+
+✅ BUG 1-lanjutan — aturan LRM §11.8.2 PENUH (any-unsigned → unsigned):
+   8. Keputusan operasi di evaluator diganti `||` → `&&` (signed hanya bila
+      KEDUA operand signed). Dua prasyarat baru:
+      a. Literal desimal UNSIZED (`0`, `127`, `2`) di-emit elaborator sebagai
+         IrExpr::Signed (LRM §6.8.1: unsized constant numbers signed) —
+         sebelumnya selalu Const unsigned.
+      b. eval_binary_signed kini SIGN-extend operan dari lebar ASLINYA
+         (helper sign_extend_to; extend_to lama zero-extend) —
+         `logic signed [7:0] s = -1; s < 0` = -1 < 0 = true, bukan 255 < 0
+         (bug pra-ada yang tersembunyi karena int/int sama lebar).
+      Efek: `s < 8'h7F` → UNSIGNED (hex sized tanpa suffix s) = 0xFF < 0x7F
+      = false (LRM benar; sebelumnya signed = -1 < 127 = true).
+      `a / 8'h02` → unsigned division. `a < 0` dan `a / 2` tetap signed
+      (0 dan 2 desimal → Signed). Parallel path konsisten (&& + sign-extend
+      via eval_binary_signed). Full suite 1809 → tanpa regresi.
+   Test BARU: test_lrm_signedness_any_unsigned_rule (maria-tests) — 7 kasus
+   (s<0, s<8'h7F, s<127, u>8'hFE, a<0, a<8'h02, s/8'h02).
+
+✅ BUG 1-lanjutan — signedness hasil CONST-FOLD (operand asli):
+   9. try_fold_const (const_fold.rs) membungkus fold NEGATIF saja (`val < 0`)
+      — hasil fold POSITIF selalu Const unsigned → `int a; a < (2+3)` salah
+      unsigned (2+3 fold → Const(5) unsigned → 0xFFFFFFFB < 5 = false).
+      Fix: helper const_expr_is_signed(expr) — signed bila SEMUA literal
+      operand signed (desimal unsized §6.8.1 / suffix s), unsigned bila ada
+      satu Binary/Hex/Octal tanpa s (any-unsigned §11.8.2); Ident/param tidak
+      dilacak → konservatif unsigned (keterbatasan dicatat).
+      `a < (2+3)` → signed ✓; `a < (8'h01+8'h05)` → unsigned ✓; sekaligus
+      memperbaiki kasus `8'h01 - 8'h05` (sebelumnya `val<0` salah bungkus
+      Signed padahal operand unsigned).
+   Test BARU: test_const_fold_signedness_propagation (maria-tests).
+   KETERBATASAN dicatat: ekspresi konstanta yang SELURUHNYA ter-fold
+   dievaluasi const_eval_with_params di domain i64 tanpa sadar-lebar/sign
+   (mis. `(8'h01-8'h05) < 0` = -4 < 0 = 1, padahal LRM: 8'hFC=252 < 0 = 0;
+   `8'h06 / 8'h02` hasil -3 utk negatif). Butuh evaluator konstanta
+   sadar-lebar — di luar scope round ini.
+
+✅ BUG 1-lanjutan — SOLVER CONSTRAINT signed (UVM randomize):
+   10. Solver (uvm/constraint_solver.rs) memakai u64 & masking tanpa
+       signedness — `rand int x; constraint { x < 0; }` domain narrowing
+       dan validasi salah utk nilai negatif:
+       a. `a as i64` pd bit MASKED (0xFFFFFFFB utk -5) memberi 4294967291
+          BUKAN -5 → inside RangeSelect `[-5:5]` diurutkan lo=5 hi=
+          0xFFFFFFFB (interval kontigu 4-miliar, praktis mustahil dipenuhi
+          guided). Fix: helper sign_extend(bits, width) + urutan min/max
+          via sign_extend di arm RangeSelect/BinaryOp/Dist-Range; hasil
+          InsideRange WRAP (lo > hi) = [lo, max] ∪ [0, hi].
+       b. merge_min/merge_max membandingkan `c as i64` pd masked bits →
+          salah utk signed. Fix: terima width, bandingkan via sign_extend.
+       c. signed_range full_max = (1<<W)-1 = 0xFF..F yang di-domain signed
+          = -1, BUKAN +2^(W-1)-1 → `x > -10` menge-cap max ke -1 → nilai
+          positif tak pernah bisa dipilih utk x. Fix: full_max =
+          (1<<(W-1))-1 = 0x7F..F (BUG PRA-ADA tersembunyi).
+       d. generate() tidak menangani interval WRAP (lo > hi) utk inside &
+          bounds → total/offset salah (underflow u64). Fix: interval_count/
+          interval_value baru (wrap = [lo, max] ∪ [0, hi]).
+       e. Validasi `x dist {[-5:5] := 1, ...}` memakai to_u64 range →
+          z=-3 (0xFFFFFFFD) > 4294967291 = false → dist negatif tak pernah
+          valid di combined constraints. Fix: signed → to_i64 range check.
+       f. try_extract_u64 TIDAK bisa parse hex `8'hF0` (bits.parse::<u64>()
+          desimal) → domain `u > 8'hF0` KOSONG → rejection 32-bit praktis
+          mustahil di combined. Fix: u64::from_str_radix per radix literal.
+       g. Single value NEGATIF `w inside {7, -3, 42}` — `-3` (UnaryOp
+          Minus) jatuh ke `_ => return false` → analisis di-putus di tengah
+          (domain parsial). Fix: arm UnaryOp via extract_bits.
+   Verifikasi e2e: 6 constraint digabung 1 class — x∈(-10,100) signed
+   (mixed bound), y∈[-200,-100], z∈dist{-5..5,100}, w∈{7,-3,42}, u>8'hF0,
+   v∈[0x20,0x30] → randomize()=1 semua nilai valid (serial + guided).
+   Test BARU: test_constraint_signed_domains (maria-tests) — 6 kasus,
+   nilai diverifikasi via to_i64/to_u64 di sisi test.
+
+✅ LANG-46-lanjutan — VPI unit test LENGKAP + FIX handle positional-index:
+   11. Modul vpi/ (~1700 LOC: handle/value/callback/control/systf/types/ffi)
+       hanya systf.rs yang punya test — sisanya TANPA test sama sekali.
+       Tambah 20 unit test (murni Rust, tanpa C compiler / engine):
+       - value.rs (9): bin_str (MSB-first), hex_str (padding per lebar),
+         value_to_logicvec utk Int/Scalar/Vector/BinStr(underscore)/HexStr/
+         Real, roundtrip bin_str via cache_cstring.
+       - handle.rs (6): object registry roundtrip (register→lookup→get→free→
+         double-free 0), vpi_handle passthrough (vpiReg/vpiNet/vpiScope),
+         free_object null, clear_all, vpi_get_str vpiName, chk_error
+         set/clear, scan non-iterator → NULL. (Serialkan via TEST_LOCK —
+         VPI_OBJECTS global static, reset satu test menghapus objek test
+         lain yang berjalan paralel.)
+       - callback.rs (5): register/fire/remove, reason filter, multi-fire
+         semua, remove null, regresi remove-tengah.
+   BUG NYATA ditemukan test: handle callback/systf = `registry.len()`
+   (POSISI) → `remove(idx)` menggeser elemen → handle kedua/ketiga STALE
+   (remove balik 0 walau masih terdaftar). Fix global: handle = unique ID
+   (AtomicU64) di callback.rs (vpi_register_cb/vpi_remove_cb),
+   systf.rs (vpi_register_systf/vpi_remove_systf), control.rs
+   (vpi_get_cb_info match by id).
+   Test BARU: test_vpi_callback_remove_middle_keeps_later_handle (regresi:
+   3 callback, hapus tengah+pertama, handle ketiga tetap valid).
+   KEMUDIAN (lanjutan): e2e SV→C systf TUTUP via interpreter —
+   test_vpi_systf_e2e_sv_to_calltf (maria-tests): SV `$my_task()` → engine
+   (interpreter event-driven, BUKAN translasi penuh ke C ala Verilator) →
+   call_registered_systf → calltf `extern "C"` (ABI identik fungsi C
+   terkompilasi gcc) dieksekusi — verifikasi counter calltf naik saat
+   simulasi. Retry 32× karena registry systf GLOBAL di-clear
+   `clear_all_systfs()` di akhir run engine test PARALEL lain. Tetap open:
+   VHPI/PLI (integrasi EDA komersial, di luar scope).
+
+✅ BUG 2 — MICD IR cache STALE: hasil elaborasi binary LAMA di-restore
+   binary BARU (ditemukan saat verifikasi BUG 1: setelah fix, run pertama
+   masih `a=4294967291` karena restore_elaborate_ir memakai key `ir:<top>`
+   tanpa versi):
+   - COMPILER_VERSION = "Maria 0.9" statis — bagian dari project_id() tapi
+     TIDAK PERNAH berubah → pid sama antar build → state/ + objects/ +
+     cache/ (termasuk IR elaborate) di-reuse walau binary berbeda.
+   - Enforce di-dua sisi sekarang HIDUP:
+     1. MicdDatabase::open schema check (micd/mod.rs): manifest
+        compiler_version != COMPILER_VERSION → schema_ok=false → seluruh
+        DB dibangun ulang (Kritik 3 db.md).
+     2. CacheManifest::valid() (micd/cache/manifest.rs): compiler_version
+        ikut dibandingkan → kategori cache di-rebuild.
+   - COMPILER_VERSION kini = concat!("Maria ", CARGO_PKG_VERSION, "-p<N>");
+     <N> WAJIB dinaikkan tiap output kompilasi utk source sama berubah
+     (dokumentasi di konstanta). Versi crate tidak berubah antar build dev.
+   - Key IR cache menyertakan IR_FORMAT_VERSION: `ir:v<N>:<top>` — skema IR
+     berubah (tanpa bump -p) → entry lama tidak pernah di-restore.
+   Test BARU: test_compiler_version_mismatch_rebuilds_empty
+   (micd/cache/store.rs) — manifest versi lama + schema sama → rebuilt kosong.
+
+📊 VERIFIKASI ROUND 36:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1834 passed, 0 failed (42 suite)
+     — baseline sebelum round: 1804; +30 test (8 signed + 20 VPI + 1 e2e
+       SV→C systf + 1 LANG-21 urandom_seed determinism); 0 regresi
+   - Catatan JIT (feature-gated, bukan default): jit_eval/jit_cranelift
+     menurunkan Div/Mod & Lt/Le/Gt/Ge ke hasil salah (iconst 0 / signed
+     compare) — TIDAK aktif default (feature "jit" off, use_jit_expression=
+     false → JITEvaluator stub no-op). Risiko hanya saat --features jit.
+   - LANG-46 VPI: TUTUP ✅ — 1834 test (20 unit VPI + 1 e2e SV→C systf
+     melalui interpreter). Open: VHPI/PLI (EDA komersial).
+   - LANG-21 $urandom_seed: TUTUP ✅ — bug statement-path (seed tidak
+     diterapkan di evaluate_syscall) + test determinism full-scope.
 
 //=======================================================================\\
 ATURAN

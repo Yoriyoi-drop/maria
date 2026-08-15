@@ -25,10 +25,10 @@ pub fn is_2state_type(dtype: &DataType) -> bool {
     )
 }
 
-/// Cek apakah tipe data adalah signed.
-pub fn is_signed_type(dtype: &DataType) -> bool {
-    matches!(dtype, DataType::Signed(_))
-}
+// is_signed_type dipindah ke maria-ast (single source of truth — dipakai
+// elaborator + simulator). Re-export agar pemanggil lama (util::is_signed_type)
+// tetap berfungsi.
+pub use maria_ast::types::is_signed_type;
 
 /// Parse string tipe spec (misal: "bit", "logic", "signed int") ke DataType.
 /// Digunakan oleh width.rs dan eval.rs untuk resolusi tipe dari string literal.

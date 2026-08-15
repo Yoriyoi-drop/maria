@@ -2473,6 +2473,231 @@ endmodule
 }
 
 #[test]
+fn test_constraint_signed_domains() {
+    // ROUND 36: solver constraint signed — domain narrowing memakai signedness
+    // field class (`rand int`): mixed-sign relational bounds, inside negatif,
+    // dist rentang negatif, single value negatif, unsigned tetap. Sebelum fix:
+    // `x > -10; x < 100` cuma bisa memenuhi rejection sampling (praktis gagal
+    // utk 32-bit), `y inside {[-5:5]}` domain wrap salah (lo=5 hi=0xFFFFFFFB
+    // dianggap interval kontigu 4-miliar), `-3` tunggal di-return false.
+    let source = r#"
+class C;
+    rand int x;
+    rand int y;
+    rand int z;
+    rand int w;
+    rand logic [7:0] u;
+    rand logic [7:0] v;
+    constraint c1 { x > -10; x < 100; }        // mixed-sign relational bounds
+    constraint c2 { y inside { [-200:-100] }; } // negative-only inside
+    constraint c3 { z dist { [-5:5] := 1, 100 := 1 }; } // dist negative range
+    constraint c4 { w inside { 7, -3, 42 }; }   // single values mixed
+    constraint c5 { u > 8'hF0; }                // unsigned tetap
+    constraint c6 { v inside { [8'h20:8'h30] }; } // unsigned inside
+endclass
+
+module tb;
+    C c;
+    int result;
+    int xv, yv, zv, wv, uv, vv;
+    initial begin
+        c = new();
+        if (c.randomize()) begin
+            result = 1;
+            xv = c.x;
+            yv = c.y;
+            zv = c.z;
+            wv = c.w;
+            uv = c.u;
+            vv = c.v;
+        end else begin
+            result = 0;
+        end
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let get = |name: &str| sigs.iter().find(|(n, _)| n == name).map(|(_, v)| v.to_i64()).unwrap_or(0);
+    let getu = |name: &str| sigs.iter().find(|(n, _)| n == name).map(|(_, v)| v.to_u64()).unwrap_or(0);
+    assert_eq!(get("result"), 1, "randomize with signed domains should succeed");
+    let x = get("xv");
+    assert!(x > -10 && x < 100, "x in (-10, 100), got {}", x);
+    let y = get("yv");
+    assert!(y >= -200 && y <= -100, "y in [-200, -100], got {}", y);
+    let z = get("zv");
+    assert!((z >= -5 && z <= 5) || z == 100, "z in dist [-5..5, 100], got {}", z);
+    let w = get("wv");
+    assert!(w == 7 || w == -3 || w == 42, "w in [7, -3, 42], got {}", w);
+    let u = getu("uv");
+    assert!(u > 0xF0, "u > 8'hF0 unsigned, got {:#x}", u);
+    let v = getu("vv");
+    assert!(v >= 0x20 && v <= 0x30, "v in [0x20, 0x30] unsigned, got {:#x}", v);
+}
+
+#[test]
+fn test_vpi_systf_e2e_sv_to_calltf() {
+    // LANG-46 e2e: SV → calltf melalui INTERPRETER (bukan translasi penuh ke
+    // C ala Verilator). SV memanggil `$my_task()` → engine dispatch
+    // `call_registered_systf("$my_task")` → calltf `extern "C"` (ABI identik
+    // dengan fungsi C yang dikompilasi gcc) dieksekusi. Calltf di-Rust dengan
+    // ABI extern "C" — setara dengan fungsi C sungguhan, tanpa butuh toolchain
+    // C di test. Verifikasi: counter calltf naik saat simulasi berjalan.
+    use maria_api::vpi::systf::vpi_register_systf;
+    use maria_api::vpi::types::{s_vpi_systf_data, vpiSystfTask};
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    static CALLED: AtomicI32 = AtomicI32::new(0);
+
+    extern "C" fn stub_calltf(_user_data: *mut std::ffi::c_void) -> i32 {
+        CALLED.fetch_add(1, Ordering::SeqCst);
+        0
+    }
+
+    let source = r#"
+module top;
+    initial begin
+        $my_task();
+        #1 $finish;
+    end
+endmodule
+"#;
+    // Compile sekali (lambat), lalu loop engine: registry systf GLOBAL di-clear
+    // `clear_all_systfs()` di akhir run engine test PARALEL lain — retry agar
+    // test tidak flaky saat registrasi terhapus sebelum dispatch.
+    let design = compile_str(source).expect("compile SV dengan $my_task");
+    let mut fired = false;
+    for _ in 0..32 {
+        CALLED.store(0, Ordering::SeqCst);
+        let cname = CString::new("$my_task").unwrap();
+        let data = s_vpi_systf_data {
+            task_function_type: vpiSystfTask,
+            tfname: cname.as_ptr() as *mut c_char,
+            calltf: Some(stub_calltf),
+            compiletf: None,
+            sizetf: None,
+            user_data: std::ptr::null_mut(),
+        };
+        let _h = vpi_register_systf(&data);
+        let mut engine = maria_api::simulator::SimulationEngine::new(design.clone(), 10);
+        engine.run().expect("simulasi berjalan");
+        if CALLED.load(Ordering::SeqCst) >= 1 {
+            fired = true;
+            break;
+        }
+    }
+    assert!(fired, "calltf harus terpanggil saat SV memanggil $my_task");
+}
+
+#[test]
+fn test_vhpi_engine_hook_e2e() {
+    // VHPI (IEEE 1076-2008): engine hook terpanggil saat sim — `set_vhpi_engine`
+    // di run() memungkinkan vhpi_handle_by_name mengakses object Maria.
+    // Verifikasi: handle_by_name signal setelah sim (engine di-clear di akhir
+    // run, jadi jalankan di dalam run via callback start-of-simulation).
+    use maria_api::vhpi::callback::{t_vhpi_cb_data, vhpi_register_cb, vhpiCbStartOfSimulation};
+    use maria_api::vhpi::object::{vhpi_handle_by_name, vhpi_get, vhpiKind, vhpiSignal};
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    static FOUND: AtomicI32 = AtomicI32::new(0);
+    static KINDTEST: AtomicI32 = AtomicI32::new(0);
+
+    extern "C" fn start_cb(data: *mut t_vhpi_cb_data) -> i32 {
+        // Jalur callback start-of-sim: engine SUDAH di-set oleh run().
+        let h = vhpi_handle_by_name("count", unsafe { &*data }.obj);
+        if !h.is_null() {
+            FOUND.store(1, Ordering::SeqCst);
+            let k = vhpi_get(vhpiKind, h);
+            if k == vhpiSignal {
+                KINDTEST.store(1, Ordering::SeqCst);
+            }
+        }
+        0
+    }
+
+    let source = r#"
+module top;
+    logic [7:0] count;
+    initial begin
+        count = 8'h2A;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).expect("compile");
+    let mut engine = maria_api::simulator::SimulationEngine::new(design, 10);
+    let cb = t_vhpi_cb_data {
+        reason: vhpiCbStartOfSimulation,
+        cb_rtn: Some(start_cb),
+        user_data: std::ptr::null_mut(),
+        obj: maria_api::vhpi::handle::VhpiHandle::NULL,
+        time: std::ptr::null_mut(),
+    };
+    let _h = vhpi_register_cb(&cb);
+    // run() memanggil set_vhpi_engine + dispatch_start_of_simulation —
+    // callback start-of-sim melihat engine ter-set.
+    engine.run().expect("simulasi");
+    // Registry global di-clear di akhir run engine paralel lain — retry.
+    let mut ok = FOUND.load(Ordering::SeqCst) == 1 && KINDTEST.load(Ordering::SeqCst) == 1;
+    if !ok {
+        for _ in 0..32 {
+            FOUND.store(0, Ordering::SeqCst);
+            KINDTEST.store(0, Ordering::SeqCst);
+            let cb2 = t_vhpi_cb_data {
+                reason: vhpiCbStartOfSimulation,
+                cb_rtn: Some(start_cb),
+                user_data: std::ptr::null_mut(),
+                obj: maria_api::vhpi::handle::VhpiHandle::NULL,
+                time: std::ptr::null_mut(),
+            };
+            let _h2 = vhpi_register_cb(&cb2);
+            let design2 = compile_str(source).expect("compile ulang");
+            let mut engine2 = maria_api::simulator::SimulationEngine::new(design2, 10);
+            engine2.run().expect("simulasi ulang");
+            if FOUND.load(Ordering::SeqCst) == 1 && KINDTEST.load(Ordering::SeqCst) == 1 {
+                ok = true;
+                break;
+            }
+        }
+    }
+    assert!(ok, "VHPI handle_by_name harus menemukan signal 'count' saat sim");
+}
+
+#[test]
+fn test_pli_tf_e2e_via_sim() {
+    // PLI tf (IEEE 1364): engine memanggil tf_set_current_instance + time
+    // saat task PLI dieksekusi — verifikasi tf_getinstance/tf_gettime
+    // konsisten setelah simulate_signals (engine di-clear, tapi thread-local
+    // tf current di-set ulang tiap run).
+    use maria_api::pli::tf::{tf_getinstance, tf_gettime, tf_set_current_instance, tf_set_current_time};
+
+    // Jalankan sim nyata — pastikan tidak ada panic saat engine cleanup
+    // memanggil pli_cleanup (tf_clear_all + acc_close).
+    let source = r#"
+module top;
+    logic [7:0] q;
+    initial begin
+        q = 8'h01;
+        #1 q = 8'h02;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).expect("simulasi berjalan tanpa crash PLI");
+    let (_, v) = sigs.iter().find(|(n, _)| n == "q").unwrap();
+    assert_eq!(v.to_u64(), 2, "q harus 2 setelah dua cycle");
+
+    // PLI tf API tetap berfungsi setelah sim (murni Rust, tidak bergantung
+    // engine).
+    tf_set_current_instance(42);
+    assert_eq!(tf_getinstance(), 42);
+    tf_set_current_time(99);
+    assert_eq!(tf_gettime(), 99);
+}
+
+#[test]
 fn test_randomize_soft_constraint_satisfied() {
     // LANG-31: `soft` constraint — best-effort. Soft yang TIDAK bertentangan
     // dengan hard constraint: randomize harus sukses (soft boleh terpenuhi
@@ -6118,6 +6343,261 @@ endmodule
 }
 
 #[test]
+fn test_negative_literal_signed_semantics() {
+    // ROUND 36 — literal negatif harus berperilaku signed di SEMUA jalur:
+    //   1. `int a = -5` → signal is_signed=true (IEEE 1800 §6.11: int/
+    //      integer/byte/shortint/longint intrinsik signed) → `a < 0` = true
+    //      (sebelumnya unsigned compare → false, bug ROUND 34)
+    //   2. `-5` const-fold dibungkus Signed → perbandingan konstanta benar
+    //   3. argumen literal negatif di method class `compute(-5)` → -5
+    //      (sebelumnya 4294967291)
+    // Bits tetap two's complement (0xFFFFFFFB); signedness menentukan
+    // interpretasi perbandingan/display, bukan bit yang disimpan.
+    let source = r#"
+class Cls;
+    function int compute(input int v);
+        return v;
+    endfunction
+endclass
+
+module tb;
+    Cls c;
+    int a;
+    int b;
+    int c1;
+    int r1;
+    int r2;
+    int r3;
+    initial begin
+        a = -5;
+        b = (a < 0) ? 1 : 0;
+        c1 = (-5 < 0) ? 1 : 0;
+        c = new();
+        r1 = c.compute(-5);
+        r2 = c.compute(5);
+        r3 = (r1 == -5) ? 1 : 0;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_u64())
+            .unwrap_or(0)
+    };
+    assert_eq!(get("a"), 0xFFFF_FFFB, "int -5 = two's complement 32-bit");
+    assert_eq!(get("b"), 1, "a < 0 true — int signal signed");
+    assert_eq!(get("c1"), 1, "-5 < 0 true — const fold signed");
+    assert_eq!(get("r1"), 0xFFFF_FFFB, "compute(-5) mempertahankan bits");
+    assert_eq!(get("r2"), 5, "compute(5) = 5");
+    assert_eq!(get("r3"), 1, "r1 == -5 true — signed equality");
+}
+
+#[test]
+fn test_signed_division_modulo() {
+    // ROUND 36 lanjutan: Div/Mod dengan operand SIGNED harus menghitung
+    // dengan semantik i64 (truncate toward zero, IEEE 1800 §11.4.3):
+    //   -7/2 = -3, -7%2 = -1, -7/-2 = 3, 7%-2 = 1
+    // Sebelumnya eval_binary selalu unsigned → -7/2 = 2147483644, -7%-2 = 0.
+    let source = r#"
+module tb;
+    int a, b, c, d;
+    int q1, m1, q2, m2, q3, m3;
+    initial begin
+        a = -7; b = 2;
+        c = -7; d = -2;
+        q1 = a / b;
+        m1 = a % b;
+        q2 = c / d;
+        m2 = c % d;
+        q3 = 7 / -2;
+        m3 = 7 % -2;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_i64())
+            .unwrap_or(0)
+    };
+    assert_eq!(get("q1"), -3, "-7 / 2 = -3 (signed)");
+    assert_eq!(get("m1"), -1, "-7 % 2 = -1 (tanda ikut dividen)");
+    assert_eq!(get("q2"), 3, "-7 / -2 = 3 (signed)");
+    assert_eq!(get("m2"), -1, "-7 % -2 = -1");
+    assert_eq!(get("q3"), -3, "7 / -2 = -3 (const fold signed)");
+    assert_eq!(get("m3"), 1, "7 % -2 = 1");
+}
+
+#[test]
+fn test_arithmetic_shift_right_signedness() {
+    // ROUND 36 lanjutan — `>>>` (IEEE 1800 §11.4.10): ARITHMETIC bila lhs
+    // signed, LOGICAL bila unsigned. Dua bug lama:
+    //   1. extend_to zero-extend ke max_width operand menghilangkan sign bit
+    //      asli → `logic signed [7:0] s = -128; s >>> 2` = 0x20 (harus 0xE0)
+    //   2. semantik >>> selalu arithmetic padahal harus logical utk unsigned
+    // Fix: eval_sshr_signed (lebar asli lhs) + pemilihan di evaluate_expr
+    // dan parallel path.
+    let source = r#"
+module tb;
+    logic signed [7:0] s;
+    logic [7:0] u;
+    logic [7:0] rs_signed;
+    logic [7:0] rs_shift_ge_width;
+    logic [7:0] ru_unsigned;
+    logic [7:0] ru_logical_op;
+    int si;
+    int ri;
+    initial begin
+        s = -128;
+        u = 8'h80;
+        rs_signed = s >>> 2;        // arithmetic → 8'hE0 (-32)
+        rs_shift_ge_width = s >>> 10; // shift >= width → semua sign bit 0xFF
+        ru_unsigned = u >>> 2;      // logical → 8'h20
+        ru_logical_op = s >> 2;     // `>>` selalu logical → 8'h20
+        si = -8;
+        ri = si >>> 2;              // int signed → -2
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_u64())
+            .unwrap_or(0)
+    };
+    assert_eq!(get("rs_signed"), 0xE0, "signed >>> 2 = arithmetic 0xE0");
+    assert_eq!(get("rs_shift_ge_width"), 0xFF, "shift >= width → sign fill");
+    assert_eq!(get("ru_unsigned"), 0x20, "unsigned >>> = logical 0x20");
+    assert_eq!(get("ru_logical_op"), 0x20, ">> selalu logical 0x20");
+    assert_eq!(get("ri"), 0xFFFF_FFFE, "int signed >>> 2 = -2");
+}
+
+#[test]
+fn test_compound_expr_signedness_propagation() {
+    // ROUND 36 lanjutan — is_signed_expr di-rekursi ke ekspresi majemuk:
+    // `int a; (a+1) < 0` harus signed compare (a=-5 → a+1=-4 < 0 = true).
+    // Sebelumnya is_signed_expr(BinaryOp) = false → unsigned compare → false.
+    // Berlaku juga utk div/mod, `>>>`, dan %d display pada ekspresi majemuk.
+    let source = r#"
+module tb;
+    int a;
+    int b1, b2, b3;
+    int q, s;
+    initial begin
+        a = -5;
+        b1 = ((a + 1) < 0) ? 1 : 0;   // -4 < 0 → 1
+        b2 = ((a * 2) < 0) ? 1 : 0;   // -10 < 0 → 1
+        b3 = ((-a) < 0) ? 1 : 0;      // 5 < 0 → 0
+        a = -7;
+        q = (a + 1) / 2;   // -6 / 2 = -3
+        s = (a * 2) >>> 2; // -14 >>> 2 = -4 (arithmetic)
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_i64())
+            .unwrap_or(0)
+    };
+    assert_eq!(get("b1"), 1, "(a+1) < 0 signed compare");
+    assert_eq!(get("b2"), 1, "(a*2) < 0 signed compare");
+    assert_eq!(get("b3"), 0, "(-a) < 0 → false (5 < 0)");
+    assert_eq!(get("q"), -3, "(a+1)/2 signed division");
+    assert_eq!(get("s"), -4, "(a*2) >>> 2 arithmetic shift");
+}
+
+#[test]
+fn test_lrm_signedness_any_unsigned_rule() {
+    // ROUND 36 — aturan LRM §11.8.2 PENUH: operasi signed hanya bila KEDUA
+    // operand signed ('ada operand unsigned → hasil unsigned'). Dua prasyarat
+    // di-emit elaborator:
+    //   - literal desimal UNSIZED (`0`, `127`) → IrExpr::Signed (LRM §6.8.1)
+    //   - eval_binary_signed SIGN-extend operan dari lebar aslinya
+    //     (`logic signed [7:0] s = -1; s < 0` → -1 < 0, bukan 255 < 0)
+    // Kasus uji: signed-signal vs literal desimal = signed; vs literal
+    // hex/bin = unsigned (hex/biner sized tidak punya suffix s).
+    let source = r#"
+module tb;
+    logic signed [7:0] s;
+    logic [7:0] u;
+    int a;
+    int r1, r2, r3, r4, r5, r6, r7;
+    initial begin
+        s = -1;          // 0xFF
+        u = 8'hFF;
+        a = -5;
+        r1 = (s < 0) ? 1 : 0;          // signed vs desimal(signed) → -1<0 → 1
+        r2 = (s < 8'h7F) ? 1 : 0;      // signed vs hex(unsigned) → 0xFF<0x7F → 0
+        r3 = (s < 127) ? 1 : 0;        // signed vs desimal(signed) → -1<127 → 1
+        r4 = (u > 8'hFE) ? 1 : 0;      // unsigned vs hex → 0xFF>0xFE → 1
+        r5 = (a < 0) ? 1 : 0;          // int vs desimal → -5<0 → 1
+        r6 = (a < 8'h02) ? 1 : 0;      // int vs hex(unsigned) → 0xFFFFFFFB<2 → 0
+        r7 = (s / 8'h02) ? 1 : 0;      // signed / hex(unsigned) → unsigned: 0xFF/2 ≠ 0
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_u64())
+            .unwrap_or(0)
+    };
+    assert_eq!(get("r1"), 1, "s<0 signed (sign-extend 8-bit -1)");
+    assert_eq!(get("r2"), 0, "s<8'h7F unsigned (any-unsigned)");
+    assert_eq!(get("r3"), 1, "s<127 signed (-1 < 127)");
+    assert_eq!(get("r4"), 1, "u>8'hFE unsigned");
+    assert_eq!(get("r5"), 1, "a<0 signed");
+    assert_eq!(get("r6"), 0, "a<8'h02 unsigned");
+    assert_eq!(get("r7"), 1, "s/8'h02 unsigned div → 0xFF/2 = 127 ≠ 0");
+}
+
+#[test]
+fn test_const_fold_signedness_propagation() {
+    // ROUND 36 — const-fold mempertahankan signedness OPERAND ASLI:
+    //   `a < (2+3)` — 2+3 = desimal unsized → SIGNED → a=-5 < 5 = true
+    //   `a < (8'h01+8'h05)` — operand hex sized (unsigned) → hasil unsigned
+    // Sebelumnya try_fold_const selalu menghasilkan Const UNSIGNED untuk
+    // fold positif → `a < (2+3)` memakai unsigned compare (a=-5:
+    // 0xFFFFFFFB < 5 = false, salah). Keterbatasan dicatat: ekspresi konstanta
+    // yang SEMUA ter-fold dievaluasi const_eval dengan i64 (mis.
+    // `(8'h01-8'h05) < 0` = -4 < 0 = 1, padahal LRM: 8'hFC=252 < 0 = 0) —
+    // butuh evaluator konstanta sadar-lebar, di luar scope.
+    let source = r#"
+module tb;
+    int a;
+    int r1, r2;
+    initial begin
+        a = -5;
+        r1 = (a < (2 + 3)) ? 1 : 0;          // signed: -5 < 5 → 1
+        r2 = (a < (8'h01 + 8'h05)) ? 1 : 0;  // unsigned: 0xFFFFFFFB < 6 → 0
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 2).unwrap();
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_u64())
+            .unwrap_or(0)
+    };
+    assert_eq!(get("r1"), 1, "a < (2+3) signed compare (fold desimal signed)");
+    assert_eq!(get("r2"), 0, "a < (8'h01+8'h05) unsigned compare (any-unsigned)");
+}
+
+#[test]
 fn test_port_unpacked_array_end_to_end() {
     // Verifikasi dukungan port unpacked-array:
     //   - parser menerima `output logic [7:0] arr[0:3]` (sebelumnya error
@@ -7289,6 +7769,57 @@ endmodule
     // $srandom does NOT increment rand_call_count (per IEEE)
     assert_eq!(cnt1, 0, "$get_randcount after $srandom should be 0, got {}", cnt1);
     assert_eq!(cnt2, 0, "$get_randcount after two $srandom should be 0, got {}", cnt2);
+}
+
+#[test]
+fn test_urandom_seed_full_scope_determinism() {
+    // LANG-21 (gap tersisa): seeding $urandom_seed harus mengendalikan aliran
+    // $urandom/$urandom_range secara DETERMINISTIK full-scope — seed yang sama
+    // → stream identik (reproducible), seed berbeda → stream berbeda. Sebelumnya
+    // hanya return value prev_seed yang diuji; efek pada stream belum diverifikasi.
+    let source = r#"
+module tb;
+    reg [31:0] a1, a2, a3, r1, r2;
+    initial begin
+        $urandom_seed(777);
+        a1 = $urandom;
+        a2 = $urandom;
+        a3 = $urandom;
+        r1 = $urandom_range(1000, 1);
+        r2 = $urandom_range(1000, 1);
+        #1 $finish;
+    end
+endmodule
+"#;
+    // Run 1 & 2: seed SAMA → stream IDENTIK (determinism / reproducibility).
+    let run = |src: &str| -> Vec<u64> {
+        let sigs = simulate_signals(src, 5).unwrap();
+        ["a1", "a2", "a3", "r1", "r2"]
+            .iter()
+            .map(|n| {
+                sigs.iter()
+                    .find(|(name, _)| name == n)
+                    .map(|(_, v)| v.to_u64())
+                    .unwrap_or(0)
+            })
+            .collect()
+    };
+    let s1 = run(source);
+    let s2 = run(source);
+    assert_eq!(s1, s2, "seed sama → stream $urandom harus identik antar run");
+
+    // Run 3: seed BERBEDA → stream harus berubah (tidak kebetulan sama).
+    let src_diff = source.replace("$urandom_seed(777);", "$urandom_seed(888);");
+    let s3 = run(&src_diff);
+    assert_ne!(
+        s1, s3,
+        "seed berbeda → stream $urandom harus berubah (seeding tidak efektif?)"
+    );
+
+    // $urandom_range dalam [1, 1000] — validasi range tetap bekerja setelah seed.
+    for v in &s1[3..] {
+        assert!((1..=1000).contains(v), "$urandom_range harus dalam [1,1000], got {}", v);
+    }
 }
 
 #[test]

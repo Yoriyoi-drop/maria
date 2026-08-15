@@ -533,7 +533,10 @@ pub fn evaluate_process_body(
         signals_mut.push(LogicVec::new(1));
     }
 
-    crate::simulator::parallel::evaluate_stmt_block_parallel(body, &mut signals_mut, writes)?;
+    // sig_info kosong (scheduler ini tidak punya SignalInfo; jalur tak
+    // terpakai — exported tapi tidak ada caller) → is_signed_expr false →
+    // perilaku unsigned default seperti sebelumnya.
+    crate::simulator::parallel::evaluate_stmt_block_parallel(body, &mut signals_mut, writes, &[])?;
     Ok(())
 }
 
@@ -573,7 +576,7 @@ pub fn evaluate_layer_parallel(
 
             let mut writes: Vec<(SignalId, LogicVec)> = Vec::new();
             let mut signals_mut: Vec<LogicVec> = signals.to_vec();
-            crate::simulator::parallel::evaluate_stmt_block_parallel(body, &mut signals_mut, &mut writes)?;
+            crate::simulator::parallel::evaluate_stmt_block_parallel(body, &mut signals_mut, &mut writes, &[])?;
             Ok(writes)
         })
         .collect();
@@ -611,7 +614,7 @@ pub fn evaluate_bodies_parallel(
 
             let mut writes: Vec<(SignalId, LogicVec)> = Vec::new();
             let mut signals_mut: Vec<LogicVec> = signals.to_vec();
-            crate::simulator::parallel::evaluate_stmt_block_parallel(body, &mut signals_mut, &mut writes)?;
+            crate::simulator::parallel::evaluate_stmt_block_parallel(body, &mut signals_mut, &mut writes, &[])?;
             Ok(writes)
         })
         .collect();

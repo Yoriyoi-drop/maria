@@ -253,11 +253,32 @@ pub fn eval_unary(op: UnaryIrOp, val: &LogicVec) -> LogicVec {
     }
 }
 
+/// Sign-extend `val` ke `width` (isi bit di atas lebar asli dengan msb).
+/// `extend_to` selalu ZERO-extend — untuk operasi SIGNED (perbandingan,
+/// div/mod) nilai 8-bit 0xFF harus jadi -1 (0xFFFFFFFF), bukan 255.
+fn sign_extend_to(val: &LogicVec, width: usize) -> LogicVec {
+    if val.width >= width {
+        return val.clone();
+    }
+    let mut bits = val.bits.clone();
+    let msb = val.bits.last().copied().unwrap_or(LogicVal::Zero);
+    let fill = match msb {
+        LogicVal::Zero => LogicVal::Zero,
+        LogicVal::One => LogicVal::One,
+        LogicVal::X | LogicVal::Z => LogicVal::X,
+    };
+    bits.resize(width, fill);
+    LogicVec { bits, width }
+}
+
 /// Evaluate a binary operation on logic vectors
 pub fn eval_binary_signed(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
     let max_width = lhs.width.max(rhs.width);
-    let lhs_ext = extend_to(lhs, max_width);
-    let rhs_ext = extend_to(rhs, max_width);
+    // ROUND 36: operan SIGNED di-sign-extend dari lebar ASLI-nya (bukan
+    // zero-extend) — `logic signed [7:0] s = -1; s < 0` harus -1 < 0 = true,
+    // bukan 255 < 0.
+    let lhs_ext = sign_extend_to(lhs, max_width);
+    let rhs_ext = sign_extend_to(rhs, max_width);
     match op {
         BinaryIrOp::Lt => {
             let l = lhs_ext.to_i64();
@@ -278,6 +299,35 @@ pub fn eval_binary_signed(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> Log
             let l = lhs_ext.to_i64();
             let r = rhs_ext.to_i64();
             LogicVec::from_u64(if l >= r { 1 } else { 0 }, 1)
+        }
+        BinaryIrOp::Div => {
+            let l = lhs_ext.to_i64();
+            let r = rhs_ext.to_i64();
+            if r == 0 {
+                LogicVec {
+                    bits: vec![LogicVal::X; max_width],
+                    width: max_width,
+                }
+            } else {
+                // i64 div truncates toward zero — sama dengan semantik SV
+                // (IEEE 1800 §11.4.3): -7/2 = -3, -7/-2 = 3. wrapping_ div
+                // menghindari panic i64::MIN / -1.
+                LogicVec::from_u64(l.wrapping_div(r) as u64, max_width)
+            }
+        }
+        BinaryIrOp::Mod => {
+            let l = lhs_ext.to_i64();
+            let r = rhs_ext.to_i64();
+            if r == 0 {
+                LogicVec {
+                    bits: vec![LogicVal::X; max_width],
+                    width: max_width,
+                }
+            } else {
+                // i64 rem truncates toward zero (tanda mengikuti dividen,
+                // SV §11.4.3): -7 % 2 = -1.
+                LogicVec::from_u64(l.wrapping_rem(r) as u64, max_width)
+            }
         }
         _ => eval_binary(op, lhs, rhs),
     }
@@ -658,6 +708,48 @@ fn extend_to(val: &LogicVec, width: usize) -> LogicVec {
         };
         bits.resize(width, fill);
         LogicVec { bits, width }
+    }
+}
+
+/// Arithmetic shift right pada nilai ber-LEBAR ASLINYA (bukan max_width
+/// operand). ROUND 36: `a >>> b` (IEEE 1800 §11.4.10) arithmetic bila `a`
+/// SIGNED, logical bila unsigned. `extend_to` selalu zero-extend — Sshr lama
+/// menghitung sign_bit dari nilai yang sudah di-extend ke max_width sehingga
+/// `logic signed [7:0] s = -128; s >>> 2` = 0x20 (harusnya 0xE0). Di sini
+/// sign bit diambil dari msb lebar asli lhs; hasil berlebar lhs.width.
+pub fn eval_sshr_signed(lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
+    let shift = rhs.to_u64() as usize;
+    let lw = lhs.width;
+    if lw == 0 {
+        return LogicVec::new(0);
+    }
+    let has_xz = lhs.bits.iter().any(|b| matches!(b, LogicVal::X | LogicVal::Z));
+    if lw <= 64 && !has_xz {
+        let val = lhs.to_u64();
+        let sign_bit = (val >> (lw - 1)) & 1;
+        let shifted = if shift >= 64 {
+            if sign_bit == 1 { !0u64 } else { 0 }
+        } else {
+            let sv = val >> shift;
+            if sign_bit == 1 {
+                let fill_bits = (!0u64) << (lw.saturating_sub(shift).min(64));
+                sv | fill_bits
+            } else {
+                sv
+            }
+        };
+        LogicVec::from_u64(shifted, lw)
+    } else {
+        // Slow path per-bit dari lebar asli (sign bit = msb asli).
+        let msb = lhs.bits.last().copied().unwrap_or(LogicVal::Zero);
+        let mut result = lhs.clone();
+        for _ in 0..shift.min(result.width) {
+            for i in 0..(result.width - 1) {
+                result.bits[i] = result.bits[i + 1];
+            }
+            *result.bits.last_mut().unwrap() = msb;
+        }
+        result
     }
 }
 

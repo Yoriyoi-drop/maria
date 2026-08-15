@@ -230,7 +230,17 @@ impl Elaborator {
             // nilainya muat di lebar LHS (mis. `result = COEFFS[2]` di mana
             // COEFFS[2] = 3 dalam reg [7:0]). Konstanta fold default 32-bit
             // sehingga tanpa cek nilai akan memicu false-positive.
-            if let IrExpr::Const(lv) = rhs {
+            // Konstanta NEGATIF di-fold sebagai `Signed(Const)` (ROUND 36) —
+            // unwrap lapisan Signed agar suppression nilai tetap bekerja.
+            let const_lv = match rhs {
+                IrExpr::Const(lv) => Some(lv),
+                IrExpr::Signed(inner) => match inner.as_ref() {
+                    IrExpr::Const(lv) => Some(lv),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(lv) = const_lv {
                 let cw = lv.width.min(64);
                 let cw_mask = if cw >= 64 { u64::MAX } else { (1u64 << cw) - 1 };
                 let raw = lv.to_u64() & cw_mask;

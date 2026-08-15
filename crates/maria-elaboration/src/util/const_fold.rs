@@ -130,9 +130,47 @@ pub fn try_fold_const(
                 };
                 min_width.max(32)
             });
-            Ok(Some(IrExpr::Const(LogicVec::from_u64(val as u64, width))))
+            let lv = LogicVec::from_u64(val as u64, width);
+            // ROUND 36: signedness hasil fold mengikuti SIGNEDNESS OPERAND
+            // ASLI (LRM §11.8.2 'ada operand unsigned → hasil unsigned'),
+            // bukan sekadar `val < 0` (yang salah utk `8'h01 - 8'h05` =
+            // -4 padahal operand unsigned):
+            //   - `-5` / `2 + 3` (desimal unsized) → Signed → `a < -5`,
+            //     `a < (2+3)` signed compare benar
+            //   - `8'h01 - 8'h05` → unsigned → compare unsigned (LRM)
+            // Konsisten dengan `Expr::Value` di elaborate_expr.
+            if const_expr_is_signed(expr) {
+                Ok(Some(IrExpr::Signed(Box::new(IrExpr::Const(lv)))))
+            } else {
+                Ok(Some(IrExpr::Const(lv)))
+            }
         }
         Err(_) => Ok(None),
+    }
+}
+
+/// Signedness ekspresi KONSTAN — signed bila SEMUA literal operand signed
+/// (desimal unsized = signed §6.8.1, atau suffix `s`); ada satu literal
+/// unsigned (Binary/Hex/Octal tanpa `s`) → hasil unsigned (any-unsigned
+/// §11.8.2). `Ident`/param/`$system` dll. tidak dilacak → konservatif
+/// unsigned (keterbatasan: `localparam int P=5; a < P` dianggap unsigned).
+pub fn const_expr_is_signed(expr: &Expr) -> bool {
+    match expr {
+        Expr::Value(Value::Decimal(_)) => true,
+        Expr::Value(Value::Binary { is_signed, .. })
+        | Expr::Value(Value::Hex { is_signed, .. })
+        | Expr::Value(Value::Octal { is_signed, .. }) => *is_signed,
+        Expr::Paren(inner) => const_expr_is_signed(inner),
+        Expr::UnaryOp { expr: inner, .. } => const_expr_is_signed(inner),
+        Expr::BinaryOp { lhs, rhs, .. } => {
+            const_expr_is_signed(lhs) && const_expr_is_signed(rhs)
+        }
+        Expr::TernaryOp {
+            true_expr,
+            false_expr,
+            ..
+        } => const_expr_is_signed(true_expr) && const_expr_is_signed(false_expr),
+        _ => false,
     }
 }
 

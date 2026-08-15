@@ -166,6 +166,22 @@ impl SimulationEngine {
                     self.rand_seed = seed;
                 }
             }
+        } else if name == "urandom_seed" {
+            // $urandom_seed as system task: sets seed for $urandom/$urandom_range,
+            // increments rand_call_count. Sebelumnya hanya ada di
+            // evaluate_syscall_stmt (jalur statement lanjutan) — statement
+            // `$urandom_seed(777);` di initial block masuk ke evaluate_syscall
+            // (jalur statement awal, block.rs) → seed TIDAK pernah diterapkan
+            // (stream $urandom identik utk seed berbeda) + warning RT9003
+            // "unknown system call ignored". LANG-21.
+            if let Some(seed_arg) = ir_args.first() {
+                if let Ok(seed_val) = self.evaluate_expr(seed_arg) {
+                    let seed = seed_val.to_u64();
+                    self.rng = rand::rngs::StdRng::seed_from_u64(seed);
+                    self.rand_seed = seed;
+                    self.rand_call_count += 1;
+                }
+            }
         } else if name == "urandom" {
             self.rand_call_count += 1;
             let val: u32 = self.rng.gen();

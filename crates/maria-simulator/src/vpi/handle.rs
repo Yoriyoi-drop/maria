@@ -510,3 +510,108 @@ pub fn vpi_chk_error() -> i32 {
         vpiNoError
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // VPI_OBJECTS adalah global static — semua test di modul ini berbagi
+    // registry yang sama dan berjalan PARALEL. reset_registry() satu test
+    // menghapus objek test lain yang sedang berjalan → race. Serialkan semua
+    // test handle.rs dengan lock bersama (test unit murni, tidak ada locking
+    // lain yang terlibat).
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn reset_registry() {
+        vpi_clear_all_objects();
+        *VPI_ERROR.lock().unwrap() = None;
+    }
+
+    #[test]
+    fn test_vpi_object_registry_roundtrip() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_registry();
+        // register → lookup → get tipe → free → lookup none → free ganda 0
+        let obj = VpiObject::new(VpiObjectKind::Module(0, Symbol::intern("top")));
+        let h = vpi_register_object(obj);
+        assert!(h.is_valid(), "handle harus valid");
+        let got = vpi_lookup_object(h).expect("objek harus ada");
+        assert!(matches!(got.kind, VpiObjectKind::Module(0, _)));
+        assert_eq!(vpi_get(vpiType, h), vpiModule, "tipe Module");
+        assert_eq!(vpi_free_object(h), 1, "free sukses");
+        assert!(vpi_lookup_object(h).is_none(), "setelah free tidak ada");
+        assert_eq!(vpi_free_object(h), 0, "free ganda → 0");
+        reset_registry();
+    }
+
+    #[test]
+    fn test_vpi_handle_passthrough() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_registry();
+        // vpiReg/vpiNet/vpiScope pd Signal/Module → handle sama (ref_handle)
+        let sig = VpiObject::new(VpiObjectKind::Signal(0, 0));
+        let h = vpi_register_object(sig);
+        let reg = vpi_handle(vpiReg, h);
+        assert_eq!(reg.ptr, h.ptr, "vpiReg → handle yang sama");
+        let net = vpi_handle(vpiNet, h);
+        assert_eq!(net.ptr, h.ptr, "vpiNet → handle yang sama");
+        let modu = VpiObject::new(VpiObjectKind::Module(0, Symbol::intern("top")));
+        let mh = vpi_register_object(modu);
+        let sc = vpi_handle(vpiScope, mh);
+        assert_eq!(sc.ptr, mh.ptr, "vpiScope pd Module → handle yang sama");
+        // handle null → vpiHandle::NULL
+        assert!(vpi_handle(vpiReg, vpiHandle::NULL).is_null());
+        reset_registry();
+    }
+
+    #[test]
+    fn test_vpi_free_object_null_and_clear() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_registry();
+        assert_eq!(vpi_free_object(vpiHandle::NULL), 0, "null → 0");
+        for _ in 0..3 {
+            let o = VpiObject::new(VpiObjectKind::Scope("s".to_string()));
+            let _ = vpi_register_object(o);
+        }
+        assert!(!vpi_objects().lock().unwrap().is_empty());
+        reset_registry();
+        assert!(vpi_objects().lock().unwrap().is_empty(), "clear semua objek");
+    }
+
+    #[test]
+    fn test_vpi_get_str_module_name() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_registry();
+        let m = VpiObject::new(VpiObjectKind::Module(0, Symbol::intern("counter")));
+        let h = vpi_register_object(m);
+        let name = vpi_get_str(vpiName, h);
+        assert!(!name.is_null(), "vpi_get_str vpiName harus non-null");
+        assert_eq!(unsafe { cstr_to_str(name) }, "counter");
+        // nama tidak terdaftar → null
+        assert!(vpi_get_str(vpiName, vpiHandle::NULL).is_null());
+        reset_registry();
+    }
+
+    #[test]
+    fn test_vpi_chk_error_set_clear() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_registry();
+        assert_eq!(vpi_chk_error(), vpiNoError, "awal tanpa error");
+        vpi_set_error("signal not found");
+        assert_eq!(vpi_chk_error(), vpiError, "setelah set → vpiError");
+        *VPI_ERROR.lock().unwrap() = None;
+        assert_eq!(vpi_chk_error(), vpiNoError, "setelah clear → vpiNoError");
+    }
+
+    #[test]
+    fn test_vpi_scan_iterator_empty() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_registry();
+        // scan pd handle bukan iterator → NULL
+        let m = VpiObject::new(VpiObjectKind::Module(0, Symbol::intern("top")));
+        let h = vpi_register_object(m);
+        assert!(vpi_scan(h).is_null(), "scan non-iterator → NULL");
+        assert!(vpi_scan(vpiHandle::NULL).is_null(), "scan null → NULL");
+        reset_registry();
+    }
+}

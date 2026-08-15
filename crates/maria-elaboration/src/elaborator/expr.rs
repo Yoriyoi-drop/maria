@@ -80,19 +80,26 @@ impl Elaborator {
             Expr::Ident { name, .. } if name == "this" => Ok(IrExpr::This),
             Expr::Value(v) => {
                 let lv = value_to_logicvec(v);
-                let is_signed = matches!(
-                    v,
-                    Value::Binary {
-                        is_signed: true,
-                        ..
-                    } | Value::Hex {
-                        is_signed: true,
-                        ..
-                    } | Value::Octal {
-                        is_signed: true,
-                        ..
-                    }
-                );
+                // ROUND 36 (LRM §6.8.1 + §11.8.2): literal desimal UNSIZED
+                // (`5`, `2`) bersifat SIGNED di SV. Tanpa ini `a < 0` dan
+                // `a / 2` (a int) bergantung pada aturan `||` yang salah utk
+                // operand unsigned (`a < 8'hFF` jadi signed padahal LRM
+                // bilang unsigned). Sized literal tetap unsigned kecuali
+                // suffix `s` (is_signed: true).
+                let is_signed = matches!(v, Value::Decimal(_))
+                    || matches!(
+                        v,
+                        Value::Binary {
+                            is_signed: true,
+                            ..
+                        } | Value::Hex {
+                            is_signed: true,
+                            ..
+                        } | Value::Octal {
+                            is_signed: true,
+                            ..
+                        }
+                    );
                 if is_signed {
                     Ok(IrExpr::Signed(Box::new(IrExpr::Const(lv))))
                 } else {

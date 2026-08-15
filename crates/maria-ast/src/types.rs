@@ -262,6 +262,22 @@ impl DeclKind {
     }
 }
 
+/// Cek apakah tipe data signed (single source of truth — dipakai elaborator
+/// utk is_signed signal/field dan simulator utk perbandingan/div/mod signed).
+/// IEEE 1800 §6.11: int/integer/byte/shortint/longint intrinsik signed;
+/// `Signed(_)` eksplisit; sisanya unsigned (bit/logic/time/real/...).
+pub fn is_signed_type(dtype: &DataType) -> bool {
+    matches!(
+        dtype,
+        DataType::Signed(_)
+            | DataType::Int
+            | DataType::Integer
+            | DataType::Byte
+            | DataType::Shortint
+            | DataType::Longint
+    )
+}
+
 /// A range whose bounds are expressions (may reference parameters).
 /// Resolved during elaboration once parameter values are known.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

@@ -518,6 +518,7 @@ impl SimulationEngine {
                             body,
                             &mut local_signals,
                             &mut writes,
+                            &self.design.top.signals,
                         ) {
                             Ok(()) => {
                                 // Apply writes from parallel eval
