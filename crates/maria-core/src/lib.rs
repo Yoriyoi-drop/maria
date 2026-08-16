@@ -13,6 +13,7 @@ pub mod diagnostics;
 pub mod error;
 pub mod intern;
 pub mod logic;
+pub mod template;
 
 /// Tipe nilai logika inti — dipakai langsung (`maria_core::LogicVec`) dan
 /// di-reexport oleh `maria-ir` agar `maria_ir::LogicVec` tetap valid.

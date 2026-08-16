@@ -422,6 +422,338 @@ impl SimulationEngine {
         Ok(())
     }
 
+    /// SIM-06/07/08/10: evaluasi timing checks dari SDF (TIMINGCHECK) yang
+    /// disimpan `annotate_sdf` (`sdf_timing_checks`) — sebelumnya di-parse dan
+    /// disimpan TAPI tidak pernah dievaluasi. Dipanggil sekali per time step
+    /// (postponed region, setelah `check_timing_constraints` specify-block).
+    ///
+    /// - SIM-07: min:typ:max via `get_timing_mode()` (sama dengan net delay).
+    /// - SIM-08: delay NEGATIF didukung — setup negatif = window meluas SETELAH
+    ///   ref edge (violation dicek saat data berubah); hold negatif = window
+    ///   meluas SEBELUM ref edge (violation dicek saat ref edge).
+    /// - SIM-10: SETUPHOLD di-parse penuh (signal/ref_signal + setup & hold).
+    ///   Dedupe via `timing_reported` (key check-type + signal id) agar width/
+    ///   period/recovery tidak spam — konsisten dengan specify-block (SIM-24).
+    pub(crate) fn check_sdf_timing_constraints(&mut self) -> Result<(), SimError> {
+        if self.sdf_timing_checks.is_empty() {
+            return Ok(());
+        }
+        let current_time = self.state.time;
+        let mode = crate::simulator::sdf::get_timing_mode();
+        let signal_names: Vec<(String, usize)> = self
+            .design
+            .top
+            .signals
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.name.to_string(), i))
+            .collect();
+        // SDF memakai hierarchical names (`u1.d`) — exact match dulu, lalu
+        // suffix match setelah titik terakhir (mirip net delay annotation).
+        let resolve_id = |sig_names: &[(String, usize)], name: &str| -> Option<usize> {
+            if let Some((_, id)) = sig_names.iter().find(|(n, _)| n.as_str() == name) {
+                return Some(*id);
+            }
+            let suffix = format!(".{}", name.trim_start_matches('.'));
+            sig_names
+                .iter()
+                .find(|(n, _)| n.as_str().ends_with(&suffix))
+                .map(|(_, id)| *id)
+        };
+        let checks = self.sdf_timing_checks.clone();
+        for check in &checks {
+            let tname = check.type_name().to_string();
+            match check {
+                crate::simulator::sdf::TimingCheck::Setup { signal, ref_signal, delay } => {
+                    let limit = delay.get(mode);
+                    let (Some(dsid), Some(rsid)) = (
+                        resolve_id(&signal_names, signal),
+                        resolve_id(&signal_names, ref_signal),
+                    ) else {
+                        continue;
+                    };
+                    let (Some(&data_chg), Some(&ref_chg)) = (
+                        self.signal_last_change.get(&dsid),
+                        self.signal_last_change.get(&rsid),
+                    ) else {
+                        continue;
+                    };
+                    let (Some(&data_chg), Some(&ref_chg)) = (
+                        self.signal_last_change.get(&dsid),
+                        self.signal_last_change.get(&rsid),
+                    ) else {
+                        continue;
+                    };
+                    if limit < 0.0 {
+                        // Setup negatif (SIM-08): window meluas setelah ref edge —
+                        // violation saat data berubah dalam |limit| setelah ref.
+                        let win = (-limit) as u64;
+                        if data_chg == current_time
+                            && ref_chg < data_chg
+                            && data_chg - ref_chg <= win
+                        {
+                            let key = (format!("{}-neg", tname), dsid);
+                            if self.timing_reported.get(&key) != Some(&data_chg) {
+                                self.timing_reported.insert(key, data_chg);
+                                self.emit_warning(
+                                    maria_core::diagnostics::DiagCode::TimingViolation,
+                                    format!("{} violation (negative setup): data '{}' changed {}ns after ref '{}' (window={}ns)",
+                                        tname, signal, data_chg - ref_chg, ref_signal, win),
+                                );
+                            }
+                        }
+                    } else {
+                        let limit_u = limit as u64;
+                        if ref_chg == current_time && data_chg < ref_chg && ref_chg - data_chg <= limit_u {
+                            let key = (tname.clone(), rsid);
+                            if self.timing_reported.get(&key) != Some(&ref_chg) {
+                                self.timing_reported.insert(key, ref_chg);
+                                self.emit_warning(
+                                    maria_core::diagnostics::DiagCode::TimingViolation,
+                                    format!("{} violation: data '{}' changed {}ns before ref '{}' (limit={}ns)",
+                                        tname, signal, ref_chg - data_chg, ref_signal, limit_u),
+                                );
+                            }
+                        }
+                    }
+                }
+                crate::simulator::sdf::TimingCheck::Hold { signal, ref_signal, delay } => {
+                    let limit = delay.get(mode);
+                    let (Some(dsid), Some(rsid)) = (
+                        resolve_id(&signal_names, signal),
+                        resolve_id(&signal_names, ref_signal),
+                    ) else {
+                        continue;
+                    };
+                    let (Some(&data_chg), Some(&ref_chg)) = (
+                        self.signal_last_change.get(&dsid),
+                        self.signal_last_change.get(&rsid),
+                    ) else {
+                        continue;
+                    };
+                    if limit < 0.0 {
+                        // Hold negatif (SIM-08): window meluas SEBELUM ref edge —
+                        // violation saat ref edge terjadi, data berubah dalam
+                        // |limit| sebelum ref.
+                        let win = (-limit) as u64;
+                        if ref_chg == current_time && data_chg < ref_chg && ref_chg - data_chg <= win {
+                            let key = (format!("{}-neg", tname), rsid);
+                            if self.timing_reported.get(&key) != Some(&ref_chg) {
+                                self.timing_reported.insert(key, ref_chg);
+                                self.emit_warning(
+                                    maria_core::diagnostics::DiagCode::TimingViolation,
+                                    format!("{} violation (negative hold): data '{}' changed {}ns before ref '{}' (window={}ns)",
+                                        tname, signal, ref_chg - data_chg, ref_signal, win),
+                                );
+                            }
+                        }
+                    } else {
+                        let limit_u = limit as u64;
+                        if data_chg == current_time && ref_chg < data_chg && data_chg - ref_chg <= limit_u {
+                            let key = (tname.clone(), dsid);
+                            if self.timing_reported.get(&key) != Some(&data_chg) {
+                                self.timing_reported.insert(key, data_chg);
+                                self.emit_warning(
+                                    maria_core::diagnostics::DiagCode::TimingViolation,
+                                    format!("{} violation: data '{}' changed {}ns after ref '{}' (limit={}ns)",
+                                        tname, signal, data_chg - ref_chg, ref_signal, limit_u),
+                                );
+                            }
+                        }
+                    }
+                }
+                crate::simulator::sdf::TimingCheck::Setuphold { signal, ref_signal, setup, hold } => {
+                    let setup_l = setup.get(mode);
+                    let hold_l = hold.get(mode);
+                    let (Some(dsid), Some(rsid)) = (
+                        resolve_id(&signal_names, signal),
+                        resolve_id(&signal_names, ref_signal),
+                    ) else {
+                        continue;
+                    };
+                    let (Some(&data_chg), Some(&ref_chg)) = (
+                        self.signal_last_change.get(&dsid),
+                        self.signal_last_change.get(&rsid),
+                    ) else {
+                        continue;
+                    };
+                    // Setup component (negatif → window setelah ref edge)
+                    if setup_l < 0.0 {
+                        let win = (-setup_l) as u64;
+                        if data_chg == current_time && ref_chg < data_chg && data_chg - ref_chg <= win {
+                            let key = ("$setuphold-setup-neg".to_string(), dsid);
+                            if self.timing_reported.get(&key) != Some(&data_chg) {
+                                self.timing_reported.insert(key, data_chg);
+                                self.emit_warning(
+                                    maria_core::diagnostics::DiagCode::TimingViolation,
+                                    format!("$setuphold (setup, negative) violation: data '{}' changed {}ns after ref '{}' (window={}ns)",
+                                        signal, data_chg - ref_chg, ref_signal, win),
+                                );
+                            }
+                        }
+                    } else {
+                        let limit_u = setup_l as u64;
+                        if ref_chg == current_time && data_chg < ref_chg && ref_chg - data_chg <= limit_u {
+                            let key = ("$setuphold-setup".to_string(), rsid);
+                            if self.timing_reported.get(&key) != Some(&ref_chg) {
+                                self.timing_reported.insert(key, ref_chg);
+                                self.emit_warning(
+                                    maria_core::diagnostics::DiagCode::TimingViolation,
+                                    format!("$setuphold (setup) violation: data '{}' changed {}ns before ref '{}' (setup={}ns)",
+                                        signal, ref_chg - data_chg, ref_signal, limit_u),
+                                );
+                            }
+                        }
+                    }
+                    // Hold component (negatif → window sebelum ref edge)
+                    if hold_l < 0.0 {
+                        let win = (-hold_l) as u64;
+                        if ref_chg == current_time && data_chg < ref_chg && ref_chg - data_chg <= win {
+                            let key = ("$setuphold-hold-neg".to_string(), rsid);
+                            if self.timing_reported.get(&key) != Some(&ref_chg) {
+                                self.timing_reported.insert(key, ref_chg);
+                                self.emit_warning(
+                                    maria_core::diagnostics::DiagCode::TimingViolation,
+                                    format!("$setuphold (hold, negative) violation: data '{}' changed {}ns before ref '{}' (window={}ns)",
+                                        signal, ref_chg - data_chg, ref_signal, win),
+                                );
+                            }
+                        }
+                    } else {
+                        let limit_u = hold_l as u64;
+                        if data_chg == current_time && ref_chg < data_chg && data_chg - ref_chg <= limit_u {
+                            let key = ("$setuphold-hold".to_string(), dsid);
+                            if self.timing_reported.get(&key) != Some(&data_chg) {
+                                self.timing_reported.insert(key, data_chg);
+                                self.emit_warning(
+                                    maria_core::diagnostics::DiagCode::TimingViolation,
+                                    format!("$setuphold (hold) violation: data '{}' changed {}ns after ref '{}' (hold={}ns)",
+                                        signal, data_chg - ref_chg, ref_signal, limit_u),
+                                );
+                            }
+                        }
+                    }
+                }
+                crate::simulator::sdf::TimingCheck::Width { signal, delay, threshold: _ } => {
+                    let limit = delay.get(mode);
+                    let Some(sid) = resolve_id(&signal_names, signal) else { continue };
+                    let (Some(&last_change), Some(&prev_change)) = (
+                        self.signal_last_change.get(&sid),
+                        self.signal_prev_change.get(&sid),
+                    ) else {
+                        continue;
+                    };
+                    if last_change == current_time && prev_change < last_change {
+                        let pulse = last_change - prev_change;
+                        if pulse < limit as u64 {
+                            // SIM-09 pulse control: bila signal punya (PULSE ...)
+                            // di SDF, pulse pendek di-REJECT — nilai di-rollback
+                            // ke commit sebelum pulse (pulse di-filter, bukan
+                            // violation).
+                            if let Some(&pc_limit) = self.sdf_pulse_controls.get(&sid) {
+                                if let Some(prev_val) = self.signal_prev_value.get(&sid).cloned() {
+                                    let key = (format!("{}-pc", tname), sid);
+                                    if self.timing_reported.get(&key) != Some(&last_change) {
+                                        self.timing_reported.insert(key, last_change);
+                                        // Rollback: nilai commit sebelum pulse.
+                                        self.state.write_signal(sid, prev_val);
+                                        self.signal_last_change.insert(sid, prev_change);
+                                        self.signal_prev_change.remove(&sid);
+                                        self.emit_warning(
+                                            maria_core::diagnostics::DiagCode::SignalGlitch,
+                                            format!("pulse control: pulse {}ns on '{}' rejected (min {}ns, pulse control {:.1}ns) — value rolled back",
+                                                pulse, signal, limit as u64, pc_limit),
+                                        );
+                                    }
+                                    continue;
+                                }
+                            }
+                            let key = (tname.clone(), sid);
+                            if self.timing_reported.get(&key) != Some(&last_change) {
+                                self.timing_reported.insert(key, last_change);
+                                self.emit_warning(
+                                    maria_core::diagnostics::DiagCode::TimingViolation,
+                                    format!("{} violation: signal '{}' pulse width {}ns < minimum {}ns",
+                                        tname, signal, pulse, limit as u64),
+                                );
+                            }
+                        }
+                    }
+                }
+                crate::simulator::sdf::TimingCheck::Period { signal, delay } => {
+                    let limit = delay.get(mode);
+                    let Some(sid) = resolve_id(&signal_names, signal) else { continue };
+                    let (Some(&last_change), Some(&prev_change)) = (
+                        self.signal_last_change.get(&sid),
+                        self.signal_prev_change.get(&sid),
+                    ) else {
+                        continue;
+                    };
+                    if last_change == current_time && prev_change < last_change {
+                        let period = last_change - prev_change;
+                        if period < limit as u64 {
+                            let key = (tname.clone(), sid);
+                            if self.timing_reported.get(&key) != Some(&last_change) {
+                                self.timing_reported.insert(key, last_change);
+                                self.emit_warning(
+                                    maria_core::diagnostics::DiagCode::TimingViolation,
+                                    format!("{} violation: signal '{}' period {}ns < minimum {}ns",
+                                        tname, signal, period, limit as u64),
+                                );
+                            }
+                        }
+                    }
+                }
+                crate::simulator::sdf::TimingCheck::Recovery { signal, ref_signal: _, delay }
+                | crate::simulator::sdf::TimingCheck::Removal { signal, ref_signal: _, delay } => {
+                    let limit = delay.get(mode);
+                    let Some(sid) = resolve_id(&signal_names, signal) else { continue };
+                    if let Some(&last_change) = self.signal_last_change.get(&sid) {
+                        let delta = current_time - last_change;
+                        if delta > 0 && delta <= limit as u64 {
+                            let key = (tname.clone(), sid);
+                            if self.timing_reported.get(&key) != Some(&last_change) {
+                                self.timing_reported.insert(key, last_change);
+                                self.emit_warning(
+                                    maria_core::diagnostics::DiagCode::TimingViolation,
+                                    format!("{} violation: signal '{}' changed {}ns before ref (limit={}ns)",
+                                        tname, signal, delta, limit as u64),
+                                );
+                            }
+                        }
+                    }
+                }
+                crate::simulator::sdf::TimingCheck::Skew { signal, ref_signal, delay } => {
+                    let limit = delay.get(mode);
+                    let (Some(sid), Some(rsid)) = (
+                        resolve_id(&signal_names, signal),
+                        resolve_id(&signal_names, ref_signal),
+                    ) else {
+                        continue;
+                    };
+                    if let (Some(&data_change), Some(&ref_change)) = (
+                        self.signal_last_change.get(&sid),
+                        self.signal_last_change.get(&rsid),
+                    ) {
+                        let skew = data_change.abs_diff(ref_change);
+                        if skew > limit as u64 && (data_change == current_time || ref_change == current_time) {
+                            let key = (tname.clone(), sid);
+                            if self.timing_reported.get(&key) != Some(&current_time) {
+                                self.timing_reported.insert(key, current_time);
+                                self.emit_warning(
+                                    maria_core::diagnostics::DiagCode::TimingViolation,
+                                    format!("{} violation: skew {}ns > max {}ns between '{}' and '{}'",
+                                        tname, skew, limit as u64, signal, ref_signal),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
 
     pub(crate) fn evaluate_dpi_call(
         &mut self,

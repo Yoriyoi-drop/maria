@@ -237,8 +237,59 @@ impl SimulationEngine {
                     LogicVec::new(1)
                 };
                 self.uvm_config_db_data
-                    .insert((inst_name, field_name), value);
+                    .insert((inst_name.clone(), field_name.clone()), value);
+                // VERIF-06: wait_modified ter-blokir menunggu key ini → bangun.
+                self.config_db_release_waiters(&inst_name, &field_name)?;
                 Ok(LogicVec::from_u64(1, 1))
+            }
+            // VERIF-06: uvm_config_db::exists(inst, field) → 1/0 (non-blocking).
+            Expr::FuncCall { name, args, .. } if name == "uvm_config_db::exists" => {
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
+                    .map(|a| self.evaluate_ast_expr(a))
+                    .collect::<Result<_, _>>()?;
+                let mut inst_name = if arg_vals.len() > 1 {
+                    logicvec_to_string(&arg_vals[1])
+                } else {
+                    String::new()
+                };
+                let field_name = if arg_vals.len() > 2 {
+                    logicvec_to_string(&arg_vals[2])
+                } else {
+                    String::new()
+                };
+                if inst_name.is_empty() {
+                    if let Some(oid) = self.current_this {
+                        inst_name = self.uvm_object_full_path(oid);
+                    }
+                }
+                Ok(LogicVec::from_u64(
+                    if self.config_db_exists(&inst_name, &field_name) { 1 } else { 0 },
+                    1,
+                ))
+            }
+            // VERIF-06: uvm_config_db::wait_modified(inst, field) — BLOCKING;
+            // di-intercept block.rs (waiter keyed by (inst,field), release oleh
+            // set). Di sini (konteks non-blocking/ekspresi) cek kondisi terkini.
+            Expr::FuncCall { name, args, .. } if name == "uvm_config_db::wait_modified" => {
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
+                    .map(|a| self.evaluate_ast_expr(a))
+                    .collect::<Result<_, _>>()?;
+                let inst_name = if arg_vals.len() > 1 {
+                    logicvec_to_string(&arg_vals[1])
+                } else {
+                    String::new()
+                };
+                let field_name = if arg_vals.len() > 2 {
+                    logicvec_to_string(&arg_vals[2])
+                } else {
+                    String::new()
+                };
+                Ok(LogicVec::from_u64(
+                    if self.config_db_exists(&inst_name, &field_name) { 1 } else { 0 },
+                    1,
+                ))
             }
             Expr::FuncCall { name, args, .. } if name == "uvm_config_db::get" => {
                 let arg_vals: Vec<LogicVec> = args

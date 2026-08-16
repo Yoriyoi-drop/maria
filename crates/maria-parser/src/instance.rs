@@ -1063,16 +1063,18 @@ impl Parser {
 
                         if self.peek() == &Token::LParen {
                             self.advance();
-                            let expr = if self.peek() != &Token::RParen {
-                                self.parse_expr(0)?
+                            if self.peek() != &Token::RParen {
+                                let expr = self.parse_expr(0)?;
+                                self.expect(Token::RParen)?;
+                                port_conns.push(PortConnection::Named {
+                                    port: port_name,
+                                    expr,
+                                });
                             } else {
-                                Expr::Value(Value::Decimal(0))
-                            };
-                            self.expect(Token::RParen)?;
-                            port_conns.push(PortConnection::Named {
-                                port: port_name,
-                                expr,
-                            });
+                                // `.port()` kosong = UNCONNECTED (bukan 0!).
+                                self.expect(Token::RParen)?;
+                                port_conns.push(PortConnection::Unconnected { port: port_name });
+                            }
                         } else {
                             port_conns.push(PortConnection::Named {
                                 port: port_name,
@@ -1120,13 +1122,16 @@ impl Parser {
                 };
                 let expr = if self.peek() == &Token::LParen {
                     self.advance();
-                    let e = if self.peek() != &Token::RParen {
-                        self.parse_expr(0)?
+                    if self.peek() != &Token::RParen {
+                        let e = self.parse_expr(0)?;
+                        self.expect(Token::RParen)?;
+                        e
                     } else {
-                        Expr::Value(Value::Decimal(0))
-                    };
-                    self.expect(Token::RParen)?;
-                    e
+                        // `.port()` kosong = UNCONNECTED (bukan 0!).
+                        self.expect(Token::RParen)?;
+                        port_conns.push(PortConnection::Unconnected { port: port_name });
+                        continue;
+                    }
                 } else {
                     // `.port` tanpa `(expr)` = koneksi ke signal senama.
                     Expr::Ident { name: port_name, line: 0, col: 0 }

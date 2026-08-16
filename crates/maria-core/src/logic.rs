@@ -100,7 +100,7 @@ impl LogicVec {
     pub fn to_u64(&self) -> u64 {
         let mut result = 0u64;
         for i in 0..self.width.min(64) {
-            if self.bits[i] == LogicVal::One {
+            if self.bits.get(i).copied().unwrap_or(LogicVal::X) == LogicVal::One {
                 result |= 1 << i;
             }
         }

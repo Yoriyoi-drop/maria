@@ -48,6 +48,12 @@ pub enum MariaCmd {
     /// Nama lama: `msynth` (alias)
     #[command(name = "synth", alias = "msynth")]
     Synth(SynthArgs),
+
+    // ── Emulator (EMULATOR.md) — Hardware-Software Emulator ──
+    /// emu — Maria emulator; R0: MHIR extraction (device/register/clock/
+    /// reset/memory + back-pointer) dan memory map dump
+    #[command(name = "emu")]
+    Emu(EmuArgs),
 }
 
 /// minspect — Maria Inspect.
@@ -142,6 +148,10 @@ pub struct MelabArgs {
     /// Cetak sinyal per module
     #[arg(long)]
     pub signals: bool,
+
+    /// SIM-22: analisis reset-domain crossing (RDC)
+    #[arg(long = "reset-domain")]
+    pub reset_domain: bool,
 
     /// Baca hasil elaborasi dari cache pipeline (db.md "5. elaborate/",
     /// "16. generate/") tanpa menjalankan elaborator — instance + port
@@ -293,6 +303,36 @@ pub enum MwaveCmd {
         #[arg(short = 'o', long = "output")]
         output: Option<String>,
     },
+    /// Bandingkan dua VCD (perbedaan nilai per signal)
+    Compare {
+        /// VCD pertama
+        #[arg(required = true)]
+        a: String,
+        /// VCD kedua
+        #[arg(required = true)]
+        b: String,
+    },
+    /// Cari sinyal by pola wildcard (* dan ?)
+    Search {
+        /// VCD input
+        #[arg(required = true)]
+        input: String,
+        /// Pola (koma/space terpisah, dukung * dan ?)
+        #[arg(required = true)]
+        patterns: Vec<String>,
+    },
+    /// Index hierarki scope + sinyal
+    Tree {
+        /// VCD input
+        #[arg(required = true)]
+        input: String,
+    },
+    /// Statistik aktivitas per sinyal (toggle, transitions, activity%)
+    Stats {
+        /// VCD input
+        #[arg(required = true)]
+        input: String,
+    },
 }
 
 /// mfmt — Formatter.
@@ -416,6 +456,11 @@ pub struct McheckArgs {
     /// Check: inkonsistensi timescale
     #[arg(long)]
     pub timescale: bool,
+
+    /// PARSER-13: bandingkan AST file pertama dgn file kedua (structural
+    /// diff utk regression) — `mcheck a.sv --ast-diff b.sv`.
+    #[arg(long = "ast-diff")]
+    pub ast_diff: Option<String>,
 }
 
 /// mbench — Benchmark Tool.
@@ -520,6 +565,75 @@ pub struct SynthArgs {
     /// Suppress output
     #[arg(short = 'q', long)]
     pub quiet: bool,
+}
+
+/// emu — Maria emulator (EMULATOR.md). R0: MHIR extraction + memory map dump.
+#[derive(clap::Args, Clone)]
+pub struct EmuArgs {
+    /// Target input: file .sv, direktori, atau file list (.f/.maria)
+    #[arg(required = true)]
+    pub targets: Vec<String>,
+
+    /// Tambahkan include search path
+    #[arg(short = 'I', long = "incdir", num_args = 1)]
+    pub incdirs: Vec<String>,
+
+    /// Define preprocessor macro
+    #[arg(short = 'D', long = "define", num_args = 1)]
+    pub defines: Vec<String>,
+
+    /// Top module name
+    #[arg(short = 't', long = "top")]
+    pub top: Option<String>,
+
+    /// File konfigurasi emulator TOML (`.meu`) — top/mode/accuracy/cpu/ram/
+    /// devices/seed. File TERPISAH dari project `.maria` (MICD memakai
+    /// ekstensi/direktori .maria — tidak boleh bentrok).
+    #[arg(long = "config")]
+    pub config: Option<String>,
+
+    /// Cetak MHIR lengkap (device/register/clock/reset/memory + back-pointer)
+    #[arg(long)]
+    pub dump_mhir: bool,
+
+    /// Cetak memory map (region ber-alamat; tanpa --addr, region TBD)
+    #[arg(long)]
+    pub dump_memory_map: bool,
+
+    /// Assign alamat region: NAME=BASE:SIZE (hex, bisa diulang).
+    /// Cocok dengan nama instance device, nama module device, atau nama
+    /// memory — mis. `--addr u_uart=0x10000000:0x1000`.
+    #[arg(long = "addr", value_name = "NAME=BASE:SIZE")]
+    pub addr: Vec<String>,
+
+    /// Muat kernel ELF ke memory map (butuh `[emu] ram` di project file .maria).
+    /// Cetak entry point + isi region.
+    #[arg(long = "load-elf", value_name = "PATH")]
+    pub load_elf: Option<String>,
+
+    /// Hex dump memori guest: ADDR:LEN (hex) — mis. `0x80000000:64`.
+    #[arg(long = "dump-memory", value_name = "ADDR:LEN")]
+    pub dump_memory: Option<String>,
+
+    /// Jalankan CPU dari RTL (.sv/.v) — Direct RTL CPU (EMULATOR.md §7.2
+    /// mode 3), BUKAN interpreter Rust. Flag diulang per file (wrapper + core,
+    /// mis. `--rtl-cpu rv32_bus_wrapper.sv --rtl-cpu picorv32.v`). RTL wajib
+    /// memenuhi kontrak bus picorv32-style: clk/resetn/mem_valid/mem_instr/
+    /// mem_addr/mem_wdata/mem_wstrb/mem_ready/mem_rdata/trap.
+    #[arg(long = "rtl-cpu", value_name = "FILE", action = clap::ArgAction::Append)]
+    pub rtl_cpu: Vec<String>,
+
+    /// Top module CPU RTL (default: rv32_bus_wrapper)
+    #[arg(long = "rtl-cpu-top", value_name = "TOP")]
+    pub rtl_cpu_top: Option<String>,
+
+    /// Jalankan mesin (CPU RTL + RAM) sampai trap / --max-steps
+    #[arg(long)]
+    pub run: bool,
+
+    /// Batas langkah instruksi mesin (default 10000)
+    #[arg(long = "max-steps", value_name = "N")]
+    pub max_steps: Option<u64>,
 }
 
 #[derive(ClapParser, Clone)]
@@ -755,6 +869,15 @@ pub struct Cli {
     /// Restore simulation checkpoint from file (overrides initial state)
     #[arg(long = "restore")]
     pub restore: Option<String>,
+
+    /// SIM-18: auto-checkpoint (crash recovery) — simpan state tiap interval
+    /// cycle ke file; run yang crash bisa di-resume dari titik terakhir.
+    #[arg(long = "auto-checkpoint")]
+    pub auto_checkpoint: Option<String>,
+
+    /// Interval (cycle) auto-checkpoint (default 1000)
+    #[arg(long = "checkpoint-interval", default_value_t = 1000)]
+    pub checkpoint_interval: u64,
 
     /// Enable signal history disk spill (path to spill file)
     #[arg(long = "signal-history-spill")]

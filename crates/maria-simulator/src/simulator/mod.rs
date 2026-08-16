@@ -2,6 +2,31 @@ pub mod arena;
 pub mod checkpoint;
 pub mod cosim;
 pub mod distributed;
+
+/// Debug mode simulasi via env var `DBG_SIM` (analog `DBG_ELAB` untuk
+/// elaborator). Di-aktifkan saat `DBG_SIM` di-set (nilai apa pun); nilai
+/// `DBG_SIM=1` saja menampilkan proses. `DBG_SIM=2` menambah detail per-delta.
+/// Cache OnceLock — nol overhead saat tidak dipakai.
+pub fn dbg_sim_level() -> u8 {
+    use std::sync::OnceLock;
+    static LEVEL: OnceLock<u8> = OnceLock::new();
+    *LEVEL.get_or_init(|| {
+        std::env::var("DBG_SIM")
+            .map(|v| v.parse::<u8>().unwrap_or(1))
+            .unwrap_or(0)
+    })
+}
+
+#[macro_export]
+/// Cetak baris debug simulasi `[DBG-SIM]` bila `DBG_SIM` aktif pada level
+/// yang diminta. Pemakaian: `dbg_sim!(1, "t={} pid={}", t, pid)`.
+macro_rules! dbg_sim {
+    ($lvl:expr, $($arg:tt)*) => {
+        if ($crate::simulator::dbg_sim_level() as u32) >= ($lvl as u32) {
+            eprintln!("[DBG-SIM] {}", format!($($arg)*));
+        }
+    };
+}
 #[cfg(feature = "dpi")]
 pub mod dpi;
 pub mod liberty;

@@ -14,6 +14,7 @@ maria-simulator = { path = "../maria-simulator" }
 maria-mv = { path = "../maria-mv" }
 maria-env = { path = "../maria-env" }
 maria-tools = { path = "../maria-tools" }
+maria-emu = { path = "../maria-emu" }
 maria-formal = { path = "../maria-formal", optional = true }
 maria-gui = { path = "../maria-gui", optional = true }
 

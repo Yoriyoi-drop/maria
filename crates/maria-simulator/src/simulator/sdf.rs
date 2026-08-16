@@ -170,12 +170,23 @@ impl TimingCheck {
     }
 }
 
+/// Pulse control (SIM-09): `(PULSE (PULSE_WIDTH (PORT "x") (1.0:2.0:3.0)))` —
+/// lebar pulse minimum yang diterima pada port. Pulse lebih pendek dari
+/// batas di-reject (di-filter) bila pulse control aktif — implementasi
+/// engine: nilai sinyal di-rollback ke nilai sebelum pulse (bukan violation).
+#[derive(Debug, Clone)]
+pub struct PulseControl {
+    pub signal: String,
+    pub width: MinTypMax,
+}
+
 /// SDF (Standard Delay Format) data container.
 #[derive(Debug, Clone)]
 pub struct SdfData {
     pub cell_delays: HashMap<String, CellDelay>,
     pub net_delays: HashMap<String, NetDelay>,
     pub timing_checks: Vec<TimingCheck>,
+    pub pulse_controls: HashMap<String, PulseControl>,
     pub sdf_version: Option<String>,
     pub design_name: Option<String>,
     pub date: Option<String>,
@@ -195,6 +206,7 @@ impl SdfData {
             cell_delays: HashMap::new(),
             net_delays: HashMap::new(),
             timing_checks: Vec::new(),
+            pulse_controls: HashMap::new(),
             sdf_version: None,
             design_name: None,
             date: None,
@@ -227,7 +239,7 @@ impl SdfData {
                         pos = parse_delayfile_header(&tokens, pos, &mut sdf);
                     }
                     "CELL" | "DELAYCELL" => {
-                        pos = match parse_cell(&tokens, pos) {
+                        pos = match parse_cell(&tokens, pos, &mut sdf.pulse_controls) {
                             Ok((name, delay, cell_checks, new_pos)) => {
                                 sdf.cell_delays.insert(name, delay);
                                 sdf.timing_checks.extend(cell_checks);
@@ -246,6 +258,9 @@ impl SdfData {
                                 pos
                             }
                         };
+                    }
+                    "PULSE" => {
+                        pos = parse_pulse_construct(&tokens, pos, &mut sdf.pulse_controls);
                     }
                     "NET" | "DELAYNET" => {
                         pos = match parse_net(&tokens, pos) {
@@ -536,7 +551,73 @@ fn parse_delayfile_header(tokens: &[String], mut pos: usize, sdf: &mut SdfData) 
 
 /// Parse a CELL/DELAYCELL construct.
 /// Returns (cell_name, cell_delay, timing_checks, new_pos).
-fn parse_cell(tokens: &[String], mut pos: usize) -> Result<(String, CellDelay, Vec<TimingCheck>, usize), String> {
+/// Parse `(PULSE (PULSE_WIDTH (PORT "x") (1.0:2.0:3.0)))` — SIM-09.
+/// Port bisa dikutip (`"x"`) atau bare; delay skalar/triple. Satu PULSE
+/// construct bisa berisi banyak PULSE_WIDTH (per-port).
+fn parse_pulse_construct(tokens: &[String], mut pos: usize, out: &mut HashMap<String, PulseControl>) -> usize {
+    // Struktur: `( PULSE ( PULSE_WIDTH ( PORT "q" ) ( 1.0:2.0:3.0 ) ) )`.
+    // Scan semua PULSE_WIDTH child; kembalikan pos SETELAH `)` penutup PULSE
+    // (depth balance eksplisit — hindari menelan construct berikutnya).
+    pos += 2; // skip ( PULSE
+    let mut depth = 1;
+    while pos < tokens.len() && depth > 0 {
+        let tok = tokens[pos].clone();
+        if tok == "(" {
+            depth += 1;
+            if pos + 1 < tokens.len() && tokens[pos + 1] == "PULSE_WIDTH" {
+                // Scan isi PULSE_WIDTH sampai paren penutupnya.
+                let mut p = pos + 2;
+                let mut inner = 1;
+                let mut signal = String::new();
+                let mut width = MinTypMax::single(0.0);
+                while p < tokens.len() && inner > 0 {
+                    if tokens[p] == "(" { inner += 1; }
+                    if tokens[p] == ")" { inner -= 1; }
+                    if inner == 0 { break; }
+                    let trimmed = tokens[p].trim_matches('"');
+                    if trimmed == "PORT" {
+                        // Struktur `( PORT q )` — nama signal ada di p+1.
+                        if p + 1 < tokens.len() {
+                            signal = tokens[p + 1].trim_matches('"').to_string();
+                        }
+                    } else if let Some(mtm) = parse_triple_token(&tokens[p]) {
+                        width = mtm;
+                    } else if tokens[p].parse::<f64>().is_ok() && width.min == 0.0 && width.typ == 0.0 {
+                        width = MinTypMax::single(tokens[p].parse::<f64>().unwrap_or(0.0));
+                    }
+                    p += 1;
+                }
+                if !signal.is_empty() {
+                    out.insert(signal.clone(), PulseControl { signal, width });
+                }
+                // p menunjuk `)` penutup PULSE_WIDTH (inner==0 saat decrement).
+                // p+1 = token setelahnya; depth sudah naik utk `(` — turunkan utk `)`.
+                pos = p + 1;
+                depth -= 1;
+                continue;
+            }
+            pos += 1;
+            continue;
+        }
+        if tok == ")" {
+            depth -= 1;
+            if depth == 0 {
+                break; // pos di `)` penutup PULSE
+            }
+            pos += 1;
+            continue;
+        }
+        pos += 1;
+    }
+    if pos < tokens.len() { pos += 1; }
+    pos
+}
+
+fn parse_cell(
+    tokens: &[String],
+    mut pos: usize,
+    pulse_controls: &mut HashMap<String, PulseControl>,
+) -> Result<(String, CellDelay, Vec<TimingCheck>, usize), String> {
     pos += 2; // skip (CELL or (DELAYCELL
     let mut name = "unknown".to_string();
 
@@ -554,6 +635,10 @@ fn parse_cell(tokens: &[String], mut pos: usize) -> Result<(String, CellDelay, V
 
         if tokens[pos] == "(" && pos + 1 < tokens.len() {
             match tokens[pos + 1].as_str() {
+                "PULSE" => {
+                    pos = parse_pulse_construct(tokens, pos, pulse_controls);
+                    continue;
+                }
                 "INSTANCE" => {
                     pos += 2;
                     if pos < tokens.len() && tokens[pos] != "(" {
@@ -729,36 +814,11 @@ fn parse_timing_checks(tokens: &[String], mut pos: usize) -> Result<(Vec<TimingC
                     }
                 }
                 "SETUPHOLD" => {
-                    let signal = String::new();
-                    let ref_signal = String::new();
-                    let setup = MinTypMax::single(0.0);
-                    let hold = MinTypMax::single(0.0);
-                    let mut inner = 0;
-                    let mut p = pos + 2;
-                    while p < tokens.len() {
-                        if tokens[p] == "(" { inner += 1; }
-                        if tokens[p] == ")" { inner -= 1; }
-                        if inner < 0 { break; }
-                        p += 1;
-                        if inner == 0 { break; }
-                        if tokens[p] == "(" && p + 3 < tokens.len() {
-                            let _label = &tokens[p + 1];
-                            // Collect signal name or delay value
-                            // Skip over inner constructs
-                            let mut skip = 0;
-                            while p < tokens.len() {
-                                if tokens[p] == "(" { skip += 1; }
-                                if tokens[p] == ")" { skip -= 1; }
-                                if skip < 0 { break; }
-                                p += 1;
-                                if skip == 0 { break; }
-                            }
-                            continue;
-                        }
+                    if let Ok((check, new_pos)) = parse_setuphold_check(tokens, pos) {
+                        checks.push(check);
+                        pos = new_pos;
+                        continue;
                     }
-                    checks.push(TimingCheck::Setuphold { signal, ref_signal, setup, hold });
-                    pos = p + 1;
-                    continue;
                 }
                 "WIDTH" => {
                     if let Ok((check, new_pos)) = parse_simple_timing_check(tokens, pos, TimingCheck::Width {
@@ -825,7 +885,93 @@ fn parse_timing_checks(tokens: &[String], mut pos: usize) -> Result<(Vec<TimingC
     Ok((checks, pos))
 }
 
+/// Parse a SETUPHOLD timing check — bedanya dari check sederhana: dua delay
+/// (setup, hold) dalam satu construct `(SETUPHOLD (posedge clk) (data)
+/// (setup_delay hold_delay))`. SIM-06/10: versi lama menyimpan signal/ref_signal
+/// kosong dan kedua delay 0 sehingga check tidak pernah bisa dievaluasi.
+fn parse_setuphold_check(tokens: &[String], mut pos: usize) -> Result<(TimingCheck, usize), String> {
+    pos += 2; // skip (SETUPHOLD
+    let mut signal = String::new();
+    let mut ref_signal = String::new();
+    let mut delays: Vec<MinTypMax> = Vec::new();
+    let mut in_delay_construct = false;
+
+    let mut depth = 1;
+    while pos < tokens.len() && depth > 0 {
+        if tokens[pos] == "(" { depth += 1; }
+        if tokens[pos] == ")" { depth -= 1; }
+        if depth == 0 { break; }
+
+        // Delay construct `(1.5:2.0:2.5 0.5:1.0:1.5)` — isi sampai tutup paren.
+        if tokens[pos] == "(" && pos + 1 < tokens.len() {
+            let nxt = &tokens[pos + 1];
+            if parse_triple_token(nxt).is_some() || nxt.parse::<f64>().is_ok() {
+                in_delay_construct = true;
+                let mut inner = 1;
+                let mut p = pos + 1;
+                while p < tokens.len() {
+                    if tokens[p] == "(" { inner += 1; }
+                    if tokens[p] == ")" {
+                        inner -= 1;
+                        if inner == 0 { break; }
+                    }
+                    if let Some(mtm) = parse_triple_token(&tokens[p]) {
+                        delays.push(mtm);
+                    } else if let Ok(val) = tokens[p].parse::<f64>() {
+                        delays.push(MinTypMax::single(val));
+                    }
+                    p += 1;
+                }
+                pos = p + 1;
+                continue;
+            }
+            if !in_delay_construct {
+                // Inner signal construct: `(posedge clk)`, `(data)`, `(PORT clk)`.
+                // Ambil quoted string (nama signal) di dalamnya.
+                let mut p = pos + 2;
+                let mut inner = 1;
+                while p < tokens.len() && inner > 0 {
+                    if tokens[p] == "(" { inner += 1; }
+                    if tokens[p] == ")" { inner -= 1; }
+                    if inner == 0 { break; }
+                    let trimmed = tokens[p].trim_matches('"');
+                    if !trimmed.is_empty()
+                        && trimmed.parse::<f64>().is_err()
+                        && trimmed != "posedge"
+                        && trimmed != "negedge"
+                        && trimmed != "PORT"
+                        && trimmed != "DATA"
+                        && trimmed != "COND"
+                    {
+                        if ref_signal.is_empty() {
+                            ref_signal = trimmed.to_string();
+                        } else if signal.is_empty() {
+                            signal = trimmed.to_string();
+                        }
+                        break;
+                    }
+                    p += 1;
+                }
+                pos = p + 1;
+                continue;
+            }
+        }
+        pos += 1;
+    }
+    if pos < tokens.len() { pos += 1; }
+
+    let setup = delays.first().copied().unwrap_or(MinTypMax::single(0.0));
+    let hold = delays.get(1).copied().unwrap_or(setup);
+    Ok((TimingCheck::Setuphold { signal, ref_signal, setup, hold }, pos))
+}
+
 /// Parse a simple timing check (SETUP, HOLD, WIDTH, PERIOD, etc.)
+///
+/// Format: `(CHECKNAME (posedge ref) (data d) (delay))` — nama signal boleh
+/// dikutip (`"d"`) atau bare (`d`); delay boleh skalar (`5.0`) atau triple
+/// (`1.0:1.5:2.0`). SIM-06: versi lama tidak pernah mengekstrak nilai dari
+/// construct `(POSEDGE clk)`/`(DATA d)` (loop inner salah mulai `inner=0`),
+/// sehingga signal malah terisi token `(`/`)`.
 fn parse_simple_timing_check(
     tokens: &[String],
     mut pos: usize,
@@ -837,90 +983,130 @@ fn parse_simple_timing_check(
     let mut delay = MinTypMax::single(0.0);
     let mut delay_found = false;
 
+    const RESERVED: &[&str] = &["posedge", "negedge", "port", "data", "cond", "edge"];
+    let is_reserved = |s: &str| RESERVED.contains(&s.to_lowercase().as_str());
+    // Construct nilai: `(POSEDGE clk)`, `(DATA d)`, `(PORT x)` — ambil nama
+    // signal pertama di dalamnya.
+    let is_value_construct = |k: &str| {
+        matches!(k, "PORT" | "DATA" | "POSEDGE" | "NEGEDGE" | "EDGE")
+    };
+
     let mut depth = 1;
     while pos < tokens.len() && depth > 0 {
-        if tokens[pos] == "(" { depth += 1; }
-        if tokens[pos] == ")" { depth -= 1; }
-        if depth == 0 { break; }
-
-        // Only enter inner-loop extraction for known timing-check sub-keywords.
-        // Random `(` constructs like delay triples (1.0:1.5:2.0) must NOT enter this
-        // path — the inner loop's depth tracking breaks when `inner` goes negative.
-        if tokens[pos] == "(" && pos + 2 < tokens.len() {
-            let keyword = &tokens[pos + 1];
-            const KNOWN_SUBKEYWORDS: &[&str] = &[
-                "PORT", "DATA", "POSEDGE", "NEGEDGE", "EDGE", "COND",
-            ];
-            if KNOWN_SUBKEYWORDS.contains(&keyword.as_str()) && pos + 3 < tokens.len() {
-                // Extract value from the inner construct
-                let mut inner = 0;
-                let mut inner_pos = pos + 2;
-                while inner_pos < tokens.len() {
-                    if tokens[inner_pos] == "(" { inner += 1; }
-                    if tokens[inner_pos] == ")" { inner -= 1; }
-                    // Safety: prevent infinite loop if depth goes negative
-                    if inner < 0 { break; }
-                    inner_pos += 1;
-                    if inner == 0 { break; }
-
-                    // The value is usually a quoted string inside
-                    if tokens[inner_pos].starts_with('"') || tokens[inner_pos] == ")" {
-                        break;
+        let tok = tokens[pos].clone();
+        if tok == "(" {
+            depth += 1;
+            if pos + 1 < tokens.len() {
+                let keyword = &tokens[pos + 1];
+                if keyword == "COND" {
+                    // `(COND (reset == 1) (DATA d))` — ekspresi kondisi (bukan
+                    // port). Lompati seluruh construct agar token `==`/`1` di
+                    // dalamnya tidak terambil sebagai signal/delay (SIM-06).
+                    let mut p = pos + 2;
+                    let mut inner = 1;
+                    while p < tokens.len() && inner > 0 {
+                        if tokens[p] == "(" { inner += 1; }
+                        if tokens[p] == ")" { inner -= 1; }
+                        p += 1;
                     }
-                    let trimmed = tokens[inner_pos].trim_matches('"');
-                    if signal.is_empty() {
-                        signal = trimmed.to_string();
-                    } else if ref_signal.is_empty() && trimmed.parse::<f64>().is_err() {
-                        ref_signal = trimmed.to_string();
-                    }
+                    // Paren penutup COND sudah dikonsumsi — balance depth.
+                    pos = p;
+                    depth -= 1;
+                    continue;
                 }
-                // Skip to end of inner
-                pos = inner_pos;
-                continue;
+                if is_value_construct(keyword) {
+                    // Scan sampai paren penutup construct, ambil token nilai
+                    // pertama yang bukan keyword/angka → nama signal.
+                    let mut p = pos + 2;
+                    let mut inner = 1;
+                    while p < tokens.len() && inner > 0 {
+                        if tokens[p] == "(" { inner += 1; }
+                        if tokens[p] == ")" {
+                            inner -= 1;
+                            if inner == 0 { break; }
+                        }
+                        let trimmed = tokens[p].trim_matches('"');
+                        if !trimmed.is_empty()
+                            && trimmed.parse::<f64>().is_err()
+                            && !is_reserved(trimmed)
+                        {
+                            if signal.is_empty() {
+                                signal = trimmed.to_string();
+                            } else if ref_signal.is_empty() {
+                                ref_signal = trimmed.to_string();
+                            }
+                            break;
+                        }
+                        p += 1;
+                    }
+                    // Loncat ke akhir construct
+                    pos = p + 1;
+                    continue;
+                }
             }
+            pos += 1;
+            continue;
+        }
+        if tok == ")" {
+            depth -= 1;
+            if depth == 0 {
+                // Paren penutup check — pos menunjuk `)`, biarkan `pos += 1`
+                // di akhir menunjuk token berikutnya (hindari double-increment
+                // yang membuat parse_timing_checks melompati check berikutnya).
+                break;
+            }
+            pos += 1;
+            continue;
         }
 
-        // Try to parse as delay value
+        // Delay: `5.0` atau triple `1.0:1.5:2.0`
         if !delay_found {
-            if let Some(mtm) = parse_triple_token(&tokens[pos]) {
+            if let Some(mtm) = parse_triple_token(&tok) {
                 delay = mtm;
                 delay_found = true;
                 pos += 1;
                 continue;
             }
-            if let Ok(val) = tokens[pos].parse::<f64>() {
+            if let Ok(val) = tok.parse::<f64>() {
                 delay = MinTypMax::single(val);
                 delay_found = true;
                 pos += 1;
                 continue;
             }
-            // Try as quoted string (signal name)
-            let trimmed = tokens[pos].trim_matches('"');
-            if !trimmed.is_empty() && trimmed.parse::<f64>().is_err() {
-                if signal.is_empty() {
-                    signal = trimmed.to_string();
-                } else if ref_signal.is_empty() {
-                    ref_signal = trimmed.to_string();
-                }
-                pos += 1;
-                continue;
+        }
+        // Nama signal bare (SDF tanpa kutip): `clk`, `d`, `top.sig`
+        let trimmed = tok.trim_matches('"');
+        if !trimmed.is_empty()
+            && trimmed.parse::<f64>().is_err()
+            && !is_reserved(trimmed)
+        {
+            if signal.is_empty() {
+                signal = trimmed.to_string();
+            } else if ref_signal.is_empty() {
+                ref_signal = trimmed.to_string();
             }
         }
         pos += 1;
     }
     if pos < tokens.len() { pos += 1; }
 
-    // Reconstruct the check based on template type
+    // Reconstruct the check based on template type.
+    // Catatan SDF (IEEE 1497): SETUP/HOLD/RECOVERY/REMOVAL menulis port REF
+    // lebih dulu, lalu port DATA: `(SETUP (posedge clk) (DATA d) (limit))`.
+    // Ekstraksi di atas menempatkan nama pertama ke `signal` — TUKAR agar
+    // field TimingCheck konsisten dengan specify-block: signal = data,
+    // ref_signal = clock/ref (SIM-06: tanpa swap, check membandingkan clk
+    // sebagai data dan d sebagai ref → tidak pernah fire).
     use TimingCheck::*;
     let check = match template {
-        Setup { .. } => Setup { signal, ref_signal, delay },
-        Hold { .. } => Hold { signal, ref_signal, delay },
+        Setup { .. } => Setup { signal: ref_signal, ref_signal: signal, delay },
+        Hold { .. } => Hold { signal: ref_signal, ref_signal: signal, delay },
         Width { .. } => Width { signal, delay, threshold: None },
         Period { .. } => Period { signal, delay },
-        Recovery { .. } => Recovery { signal, ref_signal, delay },
-        Removal { .. } => Removal { signal, ref_signal, delay },
-        Skew { .. } => Skew { signal, ref_signal, delay },
-        Setuphold { .. } => Setuphold { signal, ref_signal, setup: delay, hold: delay },
+        Recovery { .. } => Recovery { signal: ref_signal, ref_signal: signal, delay },
+        Removal { .. } => Removal { signal: ref_signal, ref_signal: signal, delay },
+        Skew { .. } => Skew { signal: ref_signal, ref_signal: signal, delay },
+        Setuphold { .. } => Setuphold { signal: ref_signal, ref_signal: signal, setup: delay, hold: delay },
     };
 
     Ok((check, pos))
@@ -1160,5 +1346,90 @@ mod tests {
         "#;
         let sdf = SdfData::parse(sdf_source).unwrap();
         assert!(sdf.cell_delays.contains_key("u_mux"));
+    }
+
+    #[test]
+    fn test_setuphold_parse_full() {
+        // SIM-06/10: SETUPHOLD harus menangkap signal/ref_signal + setup & hold
+        // (sebelumnya signal/ref_signal kosong dan kedua delay = 0).
+        let sdf_source = r#"
+        (DELAYFILE (SDFVERSION "3.0"))
+        (CELL (CELLTYPE "DFF")
+            (INSTANCE u_dff)
+            (TIMINGCHECK
+                (SETUPHOLD (POSEDGE clk) (DATA d) (1.5:2.0:2.5) (0.5:1.0:1.5))
+            )
+        )
+        "#;
+        let sdf = SdfData::parse(sdf_source).unwrap();
+        assert_eq!(sdf.timing_checks.len(), 1, "satu SETUPHOLD ter-parse");
+        match &sdf.timing_checks[0] {
+            TimingCheck::Setuphold { signal, ref_signal, setup, hold } => {
+                assert_eq!(signal, "d", "signal data harus ter-ekstrak: got '{:?}'", signal);
+                assert_eq!(ref_signal, "clk", "ref signal harus ter-ekstrak: got '{:?}'", ref_signal);
+                assert!((setup.get(TimingMode::Typ) - 2.0).abs() < 1e-9, "setup=2.0");
+                assert!((setup.get(TimingMode::Min) - 1.5).abs() < 1e-9, "setup min=1.5");
+                assert!((hold.get(TimingMode::Typ) - 1.0).abs() < 1e-9, "hold=1.0");
+                assert!((hold.get(TimingMode::Max) - 1.5).abs() < 1e-9, "hold max=1.5");
+            }
+            other => panic!("bukan Setuphold: {}", other.type_name()),
+        }
+    }
+
+    #[test]
+    fn test_setuphold_parse_negative() {
+        // SIM-08: delay negatif harus ter-parse (setup -1ns, hold 0.5ns).
+        let sdf_source = r#"
+        (DELAYFILE (SDFVERSION "3.0"))
+        (CELL (CELLTYPE "DFF")
+            (INSTANCE u_dff)
+            (TIMINGCHECK
+                (SETUPHOLD (POSEDGE clk) (DATA d) (-1.0) (0.5))
+            )
+        )
+        "#;
+        let sdf = SdfData::parse(sdf_source).unwrap();
+        match &sdf.timing_checks[0] {
+            TimingCheck::Setuphold { signal, ref_signal, setup, hold } => {
+                assert_eq!(signal, "d");
+                assert_eq!(ref_signal, "clk");
+                assert!(setup.get(TimingMode::Typ) < 0.0, "setup negatif: {}", setup.get(TimingMode::Typ));
+                assert!(hold.get(TimingMode::Typ) > 0.0);
+            }
+            other => panic!("bukan Setuphold: {}", other.type_name()),
+        }
+    }
+
+    #[test]
+    fn test_pulse_control_parse() {
+        // SIM-09: (PULSE (PULSE_WIDTH (PORT "x") (1.0:2.0:3.0))) harus
+        // menghasilkan pulse_controls per-port dengan lebar min/typ/max.
+        // Bisa di dalam CELL maupun top-level.
+        let sdf_source = r#"
+        (DELAYFILE (SDFVERSION "3.0"))
+        (CELL (CELLTYPE "DFF")
+            (INSTANCE u_dff)
+            (PULSE (PULSE_WIDTH (PORT "q") (1.0:2.0:3.0)))
+        )
+        (PULSE (PULSE_WIDTH (PORT "clk") (2.0)))
+        "#;
+        let sdf = SdfData::parse(sdf_source).unwrap();
+        assert_eq!(sdf.pulse_controls.len(), 2, "dua pulse control ter-parse");
+        let q = sdf.pulse_controls.get("q").expect("port q");
+        assert!((q.width.get(TimingMode::Typ) - 2.0).abs() < 1e-9, "typ=2.0");
+        assert!((q.width.get(TimingMode::Max) - 3.0).abs() < 1e-9, "max=3.0");
+        let clk = sdf.pulse_controls.get("clk").expect("port clk");
+        assert!((clk.width.get(TimingMode::Typ) - 2.0).abs() < 1e-9, "scalar 2.0");
+    }
+
+    #[test]
+    fn test_pulse_control_parse_quoted_signal() {
+        // Nama port dikutip (`"q"`) atau bare (`q`) harus sama-sama ter-parse.
+        let sdf_source = r#"
+        (DELAYFILE (SDFVERSION "3.0"))
+        (PULSE (PULSE_WIDTH (PORT "q" ) (5.0)))
+        "#;
+        let sdf = SdfData::parse(sdf_source).unwrap();
+        assert!(sdf.pulse_controls.contains_key("q"), "port q terdaftar");
     }
 }

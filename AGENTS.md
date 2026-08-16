@@ -40,13 +40,13 @@ jawab). Pindah dari `src/tools/` ke crate `maria-tools` (migrasi monorepo crate
 |------|------|--------|
 | `minspect` | `inspect.rs` | X-ray project: `stats`, `modules`, `hierarchy`, `packages`, `classes`, `interfaces`, `parameters`, `deps`. Subcommand boleh di posisi pertama (`minspect stats rtl/`) |
 | `mlint` | `lint.rs` | Static linter: unused signal, width mismatch, latch, combinational loop, FSM |
-| `melab` | `elab.rs` | Elaborasi saja: hierarchy tree, param, signal top |
+| `melab` | `elab.rs` | Elaborasi saja: hierarchy tree, param, signal top, RDC (`--reset-domain`, SIM-22) |
 | `msim` | `sim.rs` | Simulasi: VCD (+FST), ringkasan assertion/coverage |
 | `mcov` | `cov.rs` | Coverage → `coverage.json` + `coverage.html` (via CoverageDatabase) |
-| `mwave` | `wave.rs` | Utility VCD: `merge` (offset kumulatif), `export` (csv/txt), `filter` (subset sinyal) |
+| `mwave` | `wave.rs` | Utility VCD: `merge` (offset kumulatif), `export` (csv/txt), `filter` (subset sinyal), `compare` (diff 2 VCD per signal), `search` (cari sinyal by wildcard `*`/`?`), `tree` (index hierarki scope), `stats` (toggle/transitions/activity% + stuck detection) |
 | `mfmt` | `fmt.rs` | Formatter SV/Verilog berbasis lexer (stdout/--inplace/--check) |
 | `mprof` | `prof.rs` | Profiler pipeline: timing per fase + bottleneck + hint |
-| `mcheck` | `check.rs` | Health check: missing `include, circular include, unresolved deps, cycle module, timescale |
+| `mcheck` | `check.rs` | Health check: missing `include, circular include, unresolved deps, cycle module, timescale + `--ast-diff b.sv` (AST differential, PARSER-13) |
 | `mbench` | `bench.rs` | Benchmark: compile speed, throughput, peak RSS (VmHWM), cache hit |
 | `synth` | `synth.rs` | Synthesis (SYNTHESIS.md): SYN check (SYN-1..9), lowering RTL→SIR (`maria-sir`, `--dump-sir`), inferensi FF, netlist `.mvnet`, report utilisasi. Nama lama `msynth` = alias |
 

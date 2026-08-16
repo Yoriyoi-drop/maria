@@ -1,0 +1,24 @@
+[package]
+name = "maria-emu"
+version = "0.1.0"
+edition = "2021"
+description = "Maria emulator — Hardware-Software Emulator (EMULATOR.md). R0: MHIR (Maria Hardware IR) extraction dari IrDesign + memory map dump."
+
+[dependencies]
+maria-core = { path = "../maria-core" }
+maria-ir = { path = "../maria-ir" }
+# RTL-linked CPU (EMULATOR.md §7.2 mode 3): kompilasi RTL CPU user
+# (.sv/.v) via parser+elaborator dan jalankan via SimulationEngine.
+maria-parser = { path = "../maria-parser" }
+maria-elaboration = { path = "../maria-elaboration" }
+maria-simulator = { path = "../maria-simulator" }
+# Backend RAM host (R1): anonymous mmap, hugepages-ready.
+memmap2 = "0.9"
+# Konfigurasi emulator: file TOML terpisah (`.meu`), bukan section di `.maria`.
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[dev-dependencies]
+# Test ekstraksi memakai pipeline parse+elaborasi penuh (compile → IrDesign).
+maria-parser = { path = "../maria-parser" }
+maria-elaboration = { path = "../maria-elaboration" }

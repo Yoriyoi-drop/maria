@@ -1,6 +1,7 @@
 use super::super::SimulationEngine;
 use maria_core::error::SimError;
 use maria_ir::*;
+use crate::simulator::types::*;
 use crate::simulator::util::*;
 use maria_core::Symbol;
 use std::collections::HashMap;
@@ -21,6 +22,9 @@ impl SimulationEngine {
         }
         if let Some(prev) = self.signal_last_change.get(&id) {
             self.signal_prev_change.insert(id, *prev);
+            // Nilai commit sebelum pulse terakhir (SIM-09 pulse control):
+            // nilai yang sedang digantikan oleh transisi ini.
+            self.signal_prev_value.insert(id, old.clone());
         }
         self.signal_last_change.insert(id, self.state.time);
         let old_lsb = old.bits.first().copied();
@@ -147,6 +151,42 @@ impl SimulationEngine {
                         val
                     }
                 };
+                // ── SDF delay (WAV-13): signal ber-annotasi delay dari
+                // `annotate_sdf` (`IrSignal.delay_rise/delay_fall`, ps) — commit
+                // ditunda ke t+delay via event terjadwal (rise utk 0→1, fall utk
+                // 1→0, min utk transisi lain). Sebelumnya delay disimpan tapi
+                // TIDAK pernah dibaca → SDF tidak mempengaruhi timing sim.
+                if let Some(sig) = self.design.top.signals.get(*id) {
+                    if sig.delay_rise.is_some() || sig.delay_fall.is_some() {
+                        let old = self.state.read_signal(*id).clone();
+                        if old.bits != resized.bits {
+                            let delay_ps = match (old.bits.first(), resized.bits.first()) {
+                                (Some(LogicVal::Zero), Some(LogicVal::One)) => {
+                                    sig.delay_rise.unwrap_or(0)
+                                }
+                                (Some(LogicVal::One), Some(LogicVal::Zero)) => {
+                                    sig.delay_fall.unwrap_or(0)
+                                }
+                                _ => sig
+                                    .delay_rise
+                                    .unwrap_or(0)
+                                    .min(sig.delay_fall.unwrap_or(0)),
+                            };
+                            let delay_units = self.sdf_ps_to_time_units(delay_ps);
+                            if delay_units > 0 {
+                                let t = self.state.time + delay_units;
+                                self.push_event(t as usize, RegionEvent {
+                                    region: EventRegion::Active,
+                                    event: EventKind::SdfDelayedWrite {
+                                        sig_id: *id,
+                                        value: resized,
+                                    },
+                                });
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
                 // Apply resolution for multi-driver nets
                 if let Some(ref info) = sig_info {
                     if info.multi_driver
@@ -746,6 +786,68 @@ impl SimulationEngine {
             0,
             0,
         );
+        Ok(())
+    }
+
+    /// WAV-13: konversi delay SDF (ps) ke time unit desain (`state.time`).
+    /// `design.timescale` = (unit, precision) mis. ("1ns", "1ps") → unit
+    /// exponent -9 → 1 unit = 1ns → 1000ps = 1 unit. Tanpa timescale, asumsi
+    /// default 1ns (sama dengan `TimeFormat::default`).
+    fn sdf_ps_to_time_units(&self, ps: u64) -> u64 {
+        let exp = self
+            .design
+            .timescale
+            .as_ref()
+            .and_then(|(unit, _)| crate::simulator::types::TimeFormat::unit_exponent(unit))
+            .unwrap_or(-9);
+        if exp >= -12 {
+            // Unit >= ps (ps, ns, us, ...): bagi 10^(12+exp).
+            ps / 10u64.pow((12 + exp) as u32)
+        } else {
+            // Unit < ps (fs): kali 10^(-(12+exp)).
+            ps.saturating_mul(10u64.pow((-12 - exp) as u32))
+        }
+    }
+
+    /// WAV-13: commit write tertunda dari event `EventKind::SdfDelayedWrite` —
+    /// sanitize + resize + resolusi multi-driver + write + record_signal_change
+    /// (sama dengan jalur write langsung di `write_lvalue`, minus race/glitch/
+    /// force — commit terjadi dari event handler, bukan dari proses).
+    pub(crate) fn commit_delayed_signal_write(
+        &mut self,
+        sig_id: usize,
+        mut val: LogicVec,
+    ) -> Result<(), SimError> {
+        sanitize_for_2state(&self.design.top.signals, sig_id, &mut val);
+        let sig_info = self.design.top.signals.get(sig_id).cloned();
+        let is_str = sig_info.as_ref().map(|s| s.is_string).unwrap_or(false);
+        let is_dyn = sig_info
+            .as_ref()
+            .map(|s| s.is_dynamic || s.is_queue)
+            .unwrap_or(false);
+        let resized = if is_str || is_dyn {
+            val
+        } else {
+            let target_width = self.state.read_signal(sig_id).width;
+            if val.width != target_width {
+                val.resize(target_width)
+            } else {
+                val
+            }
+        };
+        if let Some(ref info) = sig_info {
+            if info.multi_driver
+                && (info.kind == SignalKind::Wire || info.kind == SignalKind::Inout)
+            {
+                let current = self.state.read_signal(sig_id).clone();
+                let resolved = resolve_net_values(info.net_type, &current, &resized);
+                self.state.write_signal(sig_id, resolved);
+                return Ok(());
+            }
+        }
+        let old_val = self.state.read_signal(sig_id).clone();
+        self.state.write_signal(sig_id, resized.clone());
+        self.record_signal_change(sig_id, &old_val, &resized);
         Ok(())
     }
 

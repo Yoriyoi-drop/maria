@@ -539,6 +539,7 @@ pub fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, v
                         );
                         *expr = substitute_loop_var_in_expr(&old, var_name, value);
                     }
+                    PortConnection::Unconnected { .. } => {}
                 }
             }
         }
@@ -1153,6 +1154,7 @@ fn scope_rename_module_item(item: &mut ModuleItem, map: &HashMap<Symbol, Symbol>
                         );
                         *expr = scope_rename_expr(&old, map);
                     }
+                    PortConnection::Unconnected { .. } => {}
                 }
             }
         }

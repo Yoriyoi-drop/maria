@@ -11,6 +11,7 @@
 
 pub mod cdc;
 pub mod clock_domain;
+pub mod reset_domain;
 pub mod sim_dag;
 
 pub use clock_domain::{ClockDomainAnalysis, ClockDomain, ClockEdgeType};

@@ -411,7 +411,11 @@ impl SimulationEngine {
 
         // Step 4: Guided generation with bounded backtracking
         let max_attempts = 10_000u32;
-        let mut seed = self.current_time;
+        // VERIF-35: seed per-instance (lihat randomize_rejection_fallback).
+        let mut seed = self
+            .current_time
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add((obj_id as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9));
 
         for attempt_n in 0..max_attempts {
             // Generate values for rand fields in order

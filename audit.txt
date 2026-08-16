@@ -10,7 +10,7 @@
 1. EXECUTIVE SUMMARY
 ═══════════════════════════════════════════════════════════════════════════════
 
-Maria adalah simulator RTL berbasis Rust (~157K LOC, 1876 test functions,
+Maria adalah simulator RTL berbasis Rust (~157K LOC, 1939 test functions,
 0 failing ✅). Arsitektur modern dengan arena allocator, SIMD lexer,
 Cranelift JIT, cache manager, dan 12-region IEEE 1800 scheduler.
 
@@ -34,7 +34,33 @@ formal verification, LSP/IDE, compiled-code simulation,
 distributed/parallel simulation engine, coverage minimal,
 constraint solver inadequate, waveform database tidak ada, CI/CD ✅ sudah ada,
 tidak ada regression infrastructure, tidak ada VHDL/SystemC co-sim,
-dan pre-existing test failures (ALL FIXED ✅ — 1876 tests pass, 0 fail,
+dan pre-existing test failures (ALL FIXED ✅ — 1939 tests pass, 0 fail,
+update 2026-08-16: ROUND 58 VERIF-30 coverpoint bins + bug fix multi-bin
+update 2026-08-16: ROUND 57 SIM-13/15/17 race + multi-driver + checkpoint
+update 2026-08-16: ROUND 56 WAV-13 SDF delay diterapkan ke timing + bug fix
+update 2026-08-16: ROUND 55 PARSER-13 mcheck --ast-diff AST comparison
+update 2026-08-16: ROUND 54 PARSER-11 lexical edge cases + bug fix Unicode
+update 2026-08-16: ROUND 53 VERIF-06 uvm_config_db exists + wait_modified
+update 2026-08-16: ROUND 52 SIM-11 X-prop mode test + bug fix pessimistic
+update 2026-08-16: ROUND 51 VERIF-35 per-instance random seed
+update 2026-08-16: ROUND 50 VERIF-15 uvm_heartbeat
+update 2026-08-16: ROUND 49 VERIF-13 uvm_comparator in-order
+update 2026-08-16: ROUND 48 SIM-18 auto-checkpoint crash recovery
+update 2026-08-16: ROUND 47 ELAB-12 elab-time assertion evaluation
+(assert immediate parameter-dependent di-eval saat elaborasi, +2 test);
+ROUND 46 WAV-17 mwave stats (toggle/transitions/activity% + stuck
+detection, +2 test); ROUND 45 VERIF-12
+uvm_printer/uvm_table_printer (print_object string tabel +
+obj.print(printer), +3 test); ROUND 44 SIM-09 SDF pulse control (pulse
+reject + rollback nilai, +4 test); ROUND 43 SIM-06/07/08/10 SDF timing
+checks dievaluasi (8 tipe check + negatif timing + min:typ:max +
+SETUPHOLD parse fix, +7 test); ROUND 42 VERIF-03 uvm_cmdline_processor
+(singleton plusarg reader, +2 test); ROUND 41 WAV-08 mwave tree (index hierarki
+scope, +1 test); ROUND 40 SIM-22 reset-domain crossing detection (melab
+--reset-domain, +4 test); ROUND 39 WAV-10 mwave search (wildcard
+sinyal, +2 unit test); ROUND 38 WAV-09 mwave compare (diff 2 VCD, +2 test);
+ROUND 37 nested struct chain rvalue + typedef struct width + package
+dedup last-wins (fix OpenTitan, +2 test).
 update 2026-08-15: LANG-46 VHPI/PLI diimplementasikan sebagai ABI adapter
 (arsitektur masukan user: foreign/ + vhpi/ + pli/, +35 test) + e2e .so C
 sungguan via gcc (+2) + CLI --vhpi/--pli + ForeignEvent wiring + value-
@@ -47,7 +73,7 @@ constraint_mode() dan LANG-29 wait fork diimplementasikan baru).
 
 Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 ~18ms untuk 400 module, zero-deallocation sim arena, struktur
-kode terorganisir rapi, ✅ CI/CD aktif, ✅ 1876 tests pass 0 fail,
+kode terorganisir rapi, ✅ CI/CD aktif, ✅ 1939 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
 dan ✅ 57 item audit telah diperbaiki (termasuk monorepo workspace,
@@ -729,12 +755,20 @@ PARSER-08:[] FastLexer belum digabung dengan parser baru — hanya
 PARSER-09:[] Tidak ada parser for SVA properties full syntax (High)
 PARSER-10:[] Tidak ada parser for module/interface parameter type
            list edge cases (Medium)
-PARSER-11:[] Tidak ada lexical edge case tests for Unicode/escaped
+PARSER-11: ✅ lexical edge case tests (ROUND 54) — 5 test baru: escaped
+           ident module name, escaped signal + port connect, escaped dgn $
+           + spasi ganda, Unicode di string/komentar (ok), Unicode ident
+           (ditolak bersih — BUG FIX: Token::Error di-skip parser).
            identifiers (Low)
-PARSER-12:[] Parser recursive descent — potential stack overflow for
+PARSER-12: ✅ recursion depth guard — lib.rs recursion_depth > 4096 →
+           error (bukan stack overflow diam-diam).
            deeply nested expressions (Medium)
-PARSER-13:[] Tidak ada AST comparison tool for regression (High)
-PARSER-14:[] Tidak ada AST differential between versions (Medium)
+PARSER-13: ✅ AST comparison tool (ROUND 55) — mcheck `--ast-diff b.sv`:
+           compare_ir_designs (module/signal width/signed/process/class/
+           covergroup) di check.rs; exit 0 identik / 1 berbeda (regression
+           gate).
+PARSER-14: ✅ AST differential — maria-api compare_asts (design_a vs
+           design_b → Vec<String> diff) + test_compare_asts (regresi AST).
 PARSER-15:[] Tidak ada concrete syntax tree (CST) untuk LSP (High)
 
 4.3 ELABORATOR GAPS
@@ -751,10 +785,17 @@ ELAB-07:[] Tidak ada cross-module parameter dependency tracking (High)
 ELAB-08:[] Tidak ada config/libraray mapping full implementation (Medium)
 ELAB-09:[] Tidak ada instance array with parameter override per
          instance path (High)
-ELAB-10:[] Tidak ada parameter type override checking (Medium)
-ELAB-11:[] Tidak ada elaborated database persistence (High)
-ELAB-12:[] Tidak ada elab-time assertion evaluation for
-         parameter-dependent assertions (Medium)
+ELAB-10: ✅ parameter type override — flatten.rs (name + param override +
+           type param override sorted) + test_parameter_type_override.
+ELAB-11: ✅ elaborated database persistence — MICD elaborate/ cache:
+           store_elaborate_ir/restore_elaborate_ir (compile_session.rs,
+           micd/mod.rs) — IrDesign LENGKAP di-serialize (bincode) key
+           `ir:<top>`, warm run melewati elaborator; test_ir_roundtrip +
+           test_deserialize_ir_garbage_returns_none.
+ELAB-12: ✅ Elab-time assertion evaluation (ROUND 47) — assert immediate
+           dgn kondisi parameter-dependent di-evaluasi saat elaborasi
+           (const_eval_with_params); false → warning RT7001 assertion
+           failed di elab-time (lebih awal daripada simulasi).
 
 4.4 COMPILER GAPS
 
@@ -798,23 +839,69 @@ SIM-05: ✅ Liberty .lib cell library parser implemented (Critical)
            delay tables, templates, FF. Tokenizer handles LIberty ident/string/number/
            block syntax. 8 unit tests. 0 compilation errors.
            LIMITATION: Parser only — belum diintegrasikan ke simulation engine.
-SIM-06:[] No timing-aware SDF back-annotation fully (High)
-SIM-07:[] No SDF min:typ:max handling (High)
-SIM-08:[] No negative timing check (Medium)
-SIM-09:[] No pulse filtering / pulse control (High)
-SIM-10:[] No timing checks with conditional (setuphold context) (Medium)
-SIM-11:[] No X propagation mode (3-state / 4-state selectable) (Critical)
+SIM-06: ✅ SDF timing checks dievaluasi (ROUND 43) — 8 tipe (Setup/Hold/
+           Setuphold/Width/Period/Recovery/Removal/Skew) via
+           check_sdf_timing_constraints tiap cycle + parse_simple_timing_check
+           rewrite (signal/ref dari construct POSEDGE/DATA, skip COND).
+SIM-07: ✅ SDF min:typ:max (ROUND 43) — TimingMode (MARIA_TIMING env, default
+           Max) dipakai check_sdf_timing_constraints (sebelumnya parse saja).
+SIM-08: ✅ Negative timing check (ROUND 43) — delay < 0 tidak di-fire
+           (SETUPHOLD dgn negatif setup/hold), sisanya dievaluasi normal.
+SIM-09: ✅ Pulse filtering / pulse control (ROUND 44) — SDF (PULSE
+           (PULSE_WIDTH (PORT "x") (...))) di-parse → PulseControl; engine
+           WIDTH check: pulse < limit + pulse control → REJECT (nilai
+           di-rollback, SignalGlitch bukan TimingViolation).
+SIM-10: ✅ Timing checks setuphold context (ROUND 43) — parse_setuphold_check
+           (signal/ref_signal/setup/hold terisi, sebelumnya kosong/0) +
+           COND construct di-skip (conditional setup).
+SIM-11: ✅ X propagation mode — types.rs XPropagationMode (Optimistic /
+           Pessimistic / XAnywhere) + value.rs set_xprop_mode/get_xprop_mode
+           (BitAnd/BitOr/compare/eq dll menerapkan mode) + CLI --xprop
+           (main.rs:1582) + env maria-env/verification/xprop.rs.
 SIM-12:[] No RTL locking for race detection (High)
-SIM-13:[] No race condition detection (always_comb vs always) (Critical)
+SIM-13: ✅ Race condition detection (ROUND 57) — signal_writers
+           (mod.rs) + Write-Write check di write_lvalue (lvalue.rs:67): dua
+           proses berbeda menulis signal sama dalam satu delta → warning
+           SignalContention (multi-driver net di-skip → tanpa false positive).
+           2 e2e test: test_race_write_write_detected +
+           test_race_no_false_positive_single_driver.
 SIM-14:[] No write-in-progress detection for NBA (High)
-SIM-15:[] No multiple driver detection (beyond wire resolution) (High)
-SIM-16:[] No force/release all levels (High)
-SIM-17:[] No simulation save/restore (checkpoint) (Critical)
-SIM-18:[] No simulation crash recovery (Medium)
+SIM-15: ✅ Multiple driver detection (ROUND 57) — detect_multi_driver_signals
+           (ext.rs, dipanggil elaborator mod.rs:1755): hitung driver per signal
+           dari semua proses → count>1 → `multi_driver=true` (Wire/Reg/Inout).
+           Dipakai engine utk skip race false-positive + aktifkan resolusi net
+           (wand/wor/tri). +1 e2e test test_multi_driver_detection (w 2 driver
+           → flag true, s 1 driver → false).
+SIM-16: ✅ force/release — forced_signals (mod.rs:151) + write_lvalue guard
+           (lvalue.rs:60) + $force/$release (block_syscall.rs:902-910) +
+           test_force_statement, test_release_deassign, test_force_overrides_
+           blocking_assign, test_force_release_unblocks, test_deposit_forces_
+           value, test_assign_forces_value.
+SIM-17: ✅ Simulation save/restore checkpoint (ROUND 57) — checkpoint.rs
+           save_checkpoint/load_checkpoint (state, time, objects, RNG,
+           memory, signal_history, UVM data) + CLI `--save <path>` (main.rs)
+           + `--restore <path>` (flag cli.rs:795 SEBELUMNYA TIDAK DI-WIRE —
+           kini di-load sebelum run di kedua jalur main.rs). 4 unit test
+           checkpoint.rs (basic/uvm/cover/file roundtrip) + 2 e2e
+           (auto_checkpoint_writes_file, auto_checkpoint_restore_continues).
+SIM-18: ✅ Simulation crash recovery (ROUND 48) — auto-checkpoint berkala
+           (--auto-checkpoint <path> --checkpoint-interval <N>, default
+           1000): engine.set_auto_checkpoint + save di postponed region tiap
+           interval cycle (core.rs), resume via --restore + --max-time
+           lanjutan.
 SIM-19:[] No out-of-order simulation (Medium)
 SIM-20:[] No cycle-based simulation mode (beyond cycle-fusion claim) (High)
 SIM-21:[] No clock-domain crossing (CDC) awareness (Critical)
-SIM-22:[] No reset-domain crossing detection (High)
+SIM-22: ✅ Reset-domain crossing detection (ROUND 40)
+           crates/maria-simulator/src/scheduler/reset_domain.rs —
+           ResetDomainAnalysis::analyze(design): kelompokkan proses
+           Sequential per (reset signal, polaritas); petakan sinyal → domain
+           penulis terbanyak; deteksi sinyal yang ditulis domain reset A dan
+           dibaca proses Sequential domain B (A≠B) → crossing dengan severity
+           (multi-bit → CRITICAL, 1-bit → HIGH, pembaca tanpa reset → MEDIUM;
+           reset signal sendiri & input tidak dihitung). Report text + wire ke
+           `maria melab --reset-domain`. 4 unit test (single domain no-
+           crossing, 2-domain crossing q_a, async reader, multi-bit critical).
 SIM-23: ✅ Glitch detection implemented (High)
            Deteksi pulse A→B→A dalam window configurable (--glitch-window N,
            default 0 = nonaktif). Hanya untuk full-signal write (bukan partial
@@ -849,20 +936,17 @@ SIM-28: ✅ Power-aware simulation (UPF) end-to-end verified (Critical)
            baca X) dan test_upf_isolation_clamp_end_to_end (set_isolation
            -clamp_value 0 → terbaca 0). 14 test inline upf.rs sebelumnya
            menutup parse/state/mapping.
-SIM-29: ⚠️ Coverage exclusion macros — PARTIAL (High)
-           `` `coverage_off ``/`` `coverage_on `` kini dikenali preprocessor
-           (tidak lagi jatuh ke unknown-directive), range baris (1-based,
-           koordinat output preprocessed) di-track ke Preprocessor.coverage_exclusions
-           → plumb ke IrDesign.coverage_exclusions (compile_str) → engine
-           (field + is_line_excluded API). Test: test_coverage_exclusion_macros
-           (range terisi, is_line_excluded benar, kode tetap dieksekusi).
-           ⚠️ REASON: filtering per-statement di record_line_hit BELUM aktif —
-           IrStmt/ast::Stmt TIDAK membawa info baris (menambah `line` ke semua
-           varian = ~250 situs edit manual, risiko tinggi melanggar aturan
-           AGENTS.md anti mass-edit). record_line_hit masih keyed
-           process_name+discriminant. API is_line_excluded dicadangkan
-           (#[allow(dead_code)] + doc note) untuk wiring line-aware saat
-           plumbing baris tersedia.
+SIM-29: ✅ Coverage exclusion macros — TUTUP (ROUND 37)
+           `` `coverage_off ``/`` `coverage_on `` dikenali preprocessor, range
+           baris di-track ke Preprocessor.coverage_exclusions → plumb ke
+           IrDesign.coverage_exclusions (compile_str) → engine (is_line_excluded).
+           Filtering per-statement di record_line_hit AKTIF via side-table
+           `IrDesign.stmt_lines` (key `(process, discrim)` → line pertama,
+           di-populate elaborator via `stmt_source_line`/`expr_location`, tanpa
+           menambah `line` ke semua varian IrStmt = 540 situs). record_line_hit
+           skip statement yang barisnya dalam region exclude. Test:
+           test_coverage_exclusion_macros + test_coverage_exclusion_filters_line_hits
+           (statement di region coverage_off TIDAK dihitung line hit).
 SIM-30: ✅ $coverage_control all modes implemented (Medium)
            apply_coverage_control(bitmask): bit0=Line, bit1=Toggle, bit2=Branch,
            bit3=FSM, bit4=Covergroup. Kedua handler block_syscall kini memanggilnya.
@@ -885,12 +969,39 @@ WAV-06: ✅ Waveform streaming to disk — periodic flush + CLI
            src/cli.rs + src/main.rs — --waveform-stream flag (flush every delta)
            STATUS: ✅ FIXED (VCD streaming; FST: wavefst crate doesn't expose flush)
 WAV-07:[] No waveform random access for debugger (High)
-WAV-08:[] No hierarchical signal indexing in waveform (High)
-WAV-09:[] No waveform comparison tool (Critical)
-WAV-10:[] No signal search (name, pattern, wildcard) (Medium)
+WAV-08: ✅ Hierarchical signal indexing — mwave tree (ROUND 41)
+           crates/maria-tools/src/wave.rs — tree(input): kelompokkan signal
+           per scope ($scope/$upscope), cetak pohon hierarki (indentasi per
+           kedalaman) + lebar tiap signal. CLI: `maria mwave tree t.vcd`.
+           1 unit test (2 scope top/top.sub ter-index benar).
+WAV-09: ✅ Waveform comparison tool — mwave compare (ROUND 38)
+           crates/maria-tools/src/wave.rs — compare(a, b): parse 2 VCD,
+           timeline per signal (last-change ≤ t), sample per unit waktu,
+           lapor first mismatch + jumlah sample berbeda + sinyal hanya di
+           A/B. CLI: `maria mwave compare a.vcd b.vcd`. 2 unit test
+           (identik → 0 mismatch; beda → mismatch t=5 + only_b).
+WAV-10: ✅ Signal search — mwave search (ROUND 39)
+           crates/maria-tools/src/wave.rs — search(input, patterns): wildcard
+           match DP (`*` any run, `?` satu char) terhadap nama polos + nama
+           penuh (scope.name); output nama + lebar + scope. CLI: `maria mwave
+           search t.vcd "c*"`. 2 unit test (wildcard_match DP + search by
+           pola).
 WAV-11:[] No waveform reload for post-sim debugging (High)
 WAV-12:[] No multi-session waveform merge (High)
-WAV-13:[] No waveform annotation from SDF (Medium)
+WAV-13: ✅ SDF delay diterapkan ke timing sinyal + BUG FIX (ROUND 56)
+           crates/maria-simulator/src/simulator/engine/eval/lvalue.rs —
+           `write_lvalue` (IrLValue::Signal): signal ber-annotasi
+           delay_rise/delay_fall (diisi annotate_sdf) → commit ditunda via
+           EventKind::SdfDelayedWrite (scheduler/event.rs) + helper
+           commit_delayed_signal_write (multi-driver resolution +
+           record_signal_change di waktu commit). Delay ps → time unit desain
+           via sdf_ps_to_time_units (timescale unit exponent; default 1ns).
+           Rise delay utk 0→1, fall utk 1→0, min utk transisi lain.
+           ⚠️ BUG: delay_rise/delay_fall SEBELUMNYA disimpan tapi TIDAK pernah
+           dibaca → `assign b = a` berubah di waktu yang sama dengan a, SDF
+           tidak mempengaruhi timing sama sekali. Test probe: t=11 b masih 0
+           (rise 2ns), t=13 b=1, t=17 b=0 (fall 1ns) — tanpa fix probe11=1.
+           STATUS: ✅ FIXED — 1 e2e test (test_sdf_delay_applied_to_signal_timing)
 WAV-14: ✅ HTML self-contained waveform viewer (High)
            src/waveform/html_viewer.rs — standalone HTML+CSS+JS, filter/zoom/reset
            CLI: --html-waveform <path> — generate viewer linked to CSV
@@ -907,9 +1018,13 @@ WAV-17: ✅ Signal statistics (toggle/rise/fall/X/Z) (Low)
            src/waveform/statistics.rs — SignalStats collector, per-signal report
            CLI: --signal-stats <path>
            STATUS: ✅ FIXED — 4 tests
-WAV-15:[] No waveform export to other formats (Medium)
+WAV-15: ✅ Waveform export (VERIF batch ROUND 58) — mwave `export`
+           (VCD → CSV/TXT, wave.rs export/export_csv/export_txt) +
+           CsvWaveWriter --waveform-csv (daftar lama ✅).
 WAV-16:[] No protocol-aware waveform decode (AHB, AXI, APB) (High)
-WAV-17:[] No waveform statistics (toggle rate, transitions) (Medium)
+WAV-17: ✅ No waveform statistics (ROUND 46) — mwave stats (toggle count,
+           transitions, first/last change, activity%, stuck detection)
+           + src/waveform/statistics.rs (--signal-stats, daftar lama ✅).
 WAV-18:[] No value change dump at end of sim (blocking) (Medium)
 WAV-19:[] VCD writer single-threaded, blocking sim during dump (High)
 
@@ -917,42 +1032,109 @@ WAV-19:[] VCD writer single-threaded, blocking sim during dump (High)
 
 VERIF-01:[] No full UVM 1.2 class library (Critical)
 VERIF-02:[] No uvm_reg (register layer) (Critical)
-VERIF-03:[] No uvm_cmdline_processor (Medium)
+VERIF-03: ✅ uvm_cmdline_processor (ROUND 42)
+           crates/maria-simulator/src/simulator/engine/uvm/cmdline.rs —
+           singleton (get() → obj_id sama), has_plusarg/has_arg (prefix
+           match, pola $test$plusargs), get_arg_value (bit found + nilai
+           disimpan utk get_arg_value_out), get_plusargs/get_arg_values
+           (daftar nilai), get_args. Dispatch via is_uvm_cmdline_hierarchy
+           (extends chain) + SysFunc `uvm_cmdline_processor::get` di
+           elaborator + BUILTIN_UVM_CLASSES. 2 test e2e (found=1/got=1
+           dgn plusarg MODE=42; NOSUCH → 0).
 VERIF-04:[] No uvm_root/get_top/run_test all variants (Medium)
 VERIF-05:[] No uvm_phase jumping/objection full (High)
-VERIF-06:[] No uvm_config_db full (get, set, exists, wait_modified) (High)
+VERIF-06: ✅ uvm_config_db full (ROUND 53) — get/set sudah ada (F19
+           wildcard path); kini + exists (config_db_exists, ast.rs + expr.rs)
+           + wait_modified BLOCKING (block.rs intercept: waiter keyed by
+           (inst,field) di uvm_config_db_waiters, release oleh set via
+           config_db_release_waiters → ContinueAstBlock t+1).
 VERIF-07:[] No uvm_resource_db full (High)
-VERIF-08:[] No uvm_event / uvm_event_pool (Medium)
-VERIF-09:[] No uvm_barrier / uvm_barrier_pool (Medium)
+VERIF-08: ✅ uvm_event / uvm_event_pool — sync.rs (is_uvm_event_hierarchy,
+           uvm_event_data, wait_trigger/wait_on/wait_for blocking, F21) +
+           test_uvm_event_sync + test_uvm_event_subclass_override.
+VERIF-09: ✅ uvm_barrier / uvm_barrier_pool — sync.rs (uvm_barrier_data,
+           threshold/count, F21) + test_uvm_barrier_sync.
 VERIF-10:[] No uvm_callback (Critical — used in all commercial VIP)
 VERIF-11:[] No uvm_report_handler full (High)
-VERIF-12:[] No uvm_printer / uvm_table_printer (Medium)
-VERIF-13:[] No uvm_comparator / uvm_in_order_comparator (Medium)
-VERIF-14:[] No uvm_subscriber (Medium)
-VERIF-15:[] No uvm_heartbeat (Medium)
-VERIF-16:[] No uvm_tlm_fifo / uvm_tlm_queue (High)
+VERIF-12: ✅ uvm_printer / uvm_table_printer (ROUND 45) — printer.rs
+           (new + print_object → string tabel Name/Type/Size/Value per
+           field), is_uvm_printer_hierarchy, obj.print(printer) delegasi.
+VERIF-13: ✅ uvm_comparator / uvm_in_order_comparator (ROUND 49) —
+           types.rs UvmComparatorData (antrian expected + counter match/
+           mismatch); comparator.rs execute_uvm_comparator_method (new →
+           analysis_imp internal + field analysis_imp; write → pop head &
+           compare; write_expected; get_match_count/get_mismatch_count) +
+           compare_transactions (compare() user pada transaksi dulu,
+           fallback kesetaraan field object); dispatch method.rs + arm
+           super.new builtin.rs + mapping/inject/BUILTIN elaborator.
+VERIF-14: ✅ uvm_subscriber — component.rs execute_uvm_subscriber_method
+           (F22: analysis_imp internal auto-buat, write override user,
+           connect broadcast) + test_uvm_subscriber_analysis_broadcast.
+VERIF-15: ✅ uvm_heartbeat (ROUND 50) — types.rs UvmHeartbeatData
+           (required/received per object); heartbeat.rs execute_uvm_heartbeat_
+           method (new; set_heartbeat(obj,count); heartbeat(obj); check() →
+           1/0 + UVM_ERROR bila kurang; get_heartbeat_count); dispatch
+           method.rs + arm super.new builtin.rs + mapping/inject/BUILTIN
+           elaborator.
+VERIF-16: ✅ uvm_tlm_fifo / uvm_tlm_queue — fifo.rs (F23: blocking put/get/
+           peek + analysis_export internal) + 3 test (blocking, export, full).
 VERIF-17:[] No uvm_transaction recording (High)
 VERIF-18:[] No uvm_tr_database (High)
 VERIF-19:[] No uvm_recorded_item / uvm_tr_stream (Medium)
 VERIF-20:[] No full OVM compatibility (Medium)
 VERIF-21:[] No functional coverage integration with coverage database (High)
 VERIF-22:[] No code coverage (line, toggle, branch, condition, FSM) (Critical)
-VERIF-23:[] No coverage HTML report (Medium)
+VERIF-23: ✅ coverage HTML report — main.rs --coverage-html (CoverageDatabase
+           export_html) + cli.rs.
 VERIF-24:[] No coverage merge across multiple runs (High)
-VERIF-25:[] No coverage exclusion (cover pragmas) (Medium)
+VERIF-25: ✅ coverage exclusion (cover pragmas) — `` `coverage_off `` /
+           `` `coverage_on `` di preprocessor (coverage_exclusions) →
+           engine.is_line_excluded (SIM-29) + test_coverage_exclusion_macros
+           + test_coverage_exclusion_filters_line_hits.
 VERIF-26:[] No coverage gap analysis (High)
 VERIF-27:[] No assertion coverage metrics (High)
 VERIF-28:[] No covergroup type_option weight/per_instance (Medium)
 VERIF-29:[] No cross coverage auto-binning (Medium)
-VERIF-30:[] No coverpoint ignore_bins / illegal_bins beyond basic (Medium)
+VERIF-30: ✅ Coverpoint ignore_bins / illegal_bins + BUG FIX (ROUND 58)
+           Bin eksplisit SEBELUMNYA di-parse parser (stmt.rs) tapi di-drop
+           elaborator (IrCoverpoint tak punya bins) dan diabaikan sampler
+           (coverage.rs hanya auto-binning default). Sekarang:
+           - AST types.rs: BinDef.range_list Vec<Expr> → Vec<BinRange>
+             {low, high: Option<Expr>} — [lo:hi] tidak ambigu dgn {1, 2}.
+           - IR ir.rs: IrBin {name, ranges, bin_type} + IrCoverpoint.bins.
+           - Elab ext.rs: turunkan bins.
+           - Sim coverage.rs sample_covergroup: ignore_bins → sampel
+             dikecualikan (total tidak naik); illegal_bins → laporan
+             AssertionFailed "coverage illegal_bins hit" + tidak dihitung;
+             bins normal → hit dicatat ke bin tsb (bukan auto-bin).
+           ⚠️ BUG parser lama: range-list `{...}` ditutup `}` yang TIDAK
+           dikonsumsi → skip_semi tidak melihat `;` → bins loop break di `}`
+           → hanya bin PERTAMA coverpoint yang ter-parse (bin ke-2+ di-skip
+           diam-diam). Fix: konsumsi `}` di akhir range-list (stmt.rs).
+           STATUS: ✅ FIXED — 3 e2e test (ignore/illegal/list-values)
 VERIF-31:[] No transition coverage (High)
 VERIF-32:[] No sequence coverage (Medium)
 VERIF-33:[] No SVA assertion coverage (High)
-VERIF-34:[] No random stability (StdRng seed from u64) (High)
-VERIF-35:[] No random seeding per-instance for predictability (Medium)
-VERIF-36:[] No constraint distribution biasing (Medium)
-VERIF-37:[] No dynamic constraint modification (Medium)
-VERIF-38:[] No solve-before full ordering (Medium)
+VERIF-34: ✅ random stability — $urandom/$random seed reproducible
+           (rand_seed engine, seed_from_u64) + test_random_seed_reproducible
+           (seed sama → nilai sama).
+VERIF-35: ✅ random seeding per-instance (ROUND 51) — seed = current_time*
+           0x9E3779B97F4A7C15 + obj_id*0xBF58476D1CE4E5B9 di solve_
+           constraints + randomize_rejection_fallback: dua instance yang
+           di-randomize bersamaan mendapat deret BERBEDA (sebelumnya
+           identik — seed hanya current_time), tetap deterministik per
+           (instance, waktu).
+VERIF-36: ✅ constraint distribution biasing — `x dist {...}` di
+           constraint_solver.rs (nilai/range distribusi := / :/ dengan
+           weight) sebagai membership + weighted random.
+VERIF-37: ✅ dynamic constraint modification — constraint_mode(0/1) per
+           block (LANG-33) + static (LANG-32), constraint_modes/
+           static_constraint_modes + test_constraint_mode_disable_enables_
+           randomize + test_constraint_mode_query_and_reenable.
+VERIF-38: ✅ solve-before full ordering — method.rs before_map/ordered_fields
+           (randomize_rejection_fallback) + constraint_solver.rs
+           extract_before_order/order_fields + test_randomize_dist_if_solve_
+           constraint (`solve addr before data`).
 
 4.8 FORMAL VERIFICATION GAPS
 
@@ -3363,8 +3545,10 @@ END OF AUDIT REPORT
        → `out = data` baca 0 (clamp), bukan X.
    - Files: src/tests/mod.rs.
 
-⚠️ SIM-29: Coverage exclusion macros — PARTIAL (High, warning + alasan)
-   DONE:
+⚠️ SIM-29: Coverage exclusion macros — PARTIAL → TUTUP di ROUND 37
+   (filtering per-statement aktif via side-table IrDesign.stmt_lines — lihat
+   ROUND 37; catatan di bawah adalah status saat ROUND 23).
+   DONE (ROUND 23):
    - src/parser/preprocessor.rs: `` `coverage_off `` / `` `coverage_on ``
      dikenali sebagai direktif resmi; cov_start di-set saat coverage_off
      (baris output berikutnya), range (start,end) 1-based di-push ke
@@ -4135,6 +4319,662 @@ simulator SystemVerilog), security sandbox foreign-worker (poin 11 user
      foreign-worker (roadmap).
    - LANG-21 $urandom_seed: TUTUP ✅ — bug statement-path (seed tidak
      diterapkan di evaluate_syscall) + test determinism full-scope.
+
+═══ ROUND 37 — NESTED STRUCT CHAIN + PACKAGE DEDUP (fix OpenTitan) ═══
+
+BUG 1 — Nested struct member access (rvalue + width typedef struct):
+   Gejala (OpenTitan `hw2reg.phy_status.init_wip.de`): rvalue `a.b.c`
+   menjadi MemberAccess{obj:RangeSelect} yang di-interpretasi engine sbg
+   object handle (E9001 / sim hang di time 0); `hw2reg` signal di-size
+   9-bit (harusnya 13 = 5+8) karena member bertipe typedef struct TANPA
+   range eksplisit dihitung 1-bit (`resolve_typedef_width_dims` jatuh ke
+   `DataType::width()` yang map member tanpa range → 1).
+   Fix (2 lapis):
+   1. expr.rs `resolve_typedef_width_dims`: StructType/UnionType dihitung
+      dari `compute_struct_fields` (lebar per member via range→typedef→
+      nested struct), bukan `dtype.width()`. → `hw2reg` 13-bit, offset
+      struct benar.
+   2. expr.rs `Expr::MemberAccess` rvalue: chain PENUH (collect_member_chain
+      + resolve_struct_chain) → `IrExpr::RangeSelect(sid, msb, lsb)` —
+      konsisten dgn lvalue. Konvensi argumen `(msb, lsb)` (sempat terbalik
+      → width mismatch WR0102 rhs=1 palsu).
+   Test: test_nested_struct_member_access — lvalue+rvalue struct bersarang,
+   verifikasi NILAI aktual (r_wip=1, r_err=4'hA width 4) + lebar signal.
+
+BUG 2 — Package dedup first-wins vs module dedup last-wins:
+   OpenTitan: `tl_main_pkg` didefinisikan per-top (darjeeling/earlgrey/
+   englishbreakfast) dengan item BERBEDA; module di-dedup "tie → definisi
+   TERAKHIR" tapi package_symbols MERGE first-wins → package = varian top
+   PERTAMA (darjeeling) sedangkan module = varian TERAKHIR → struct field
+   yang hanya ada di varian terakhir (`io_div4_measure_err.d`) tidak
+   ter-resolve (E2001). Fix: `pkg_items.insert(k, v)` (last-wins) konsisten
+   dgn pilihan module. Test: test_duplicate_package_last_wins — dua definisi
+   package `p` dalam satu file, field `extra` hanya di varian kedua;
+   first-wins → E3001 "field not found" (diverifikasi), last-wins → resolve.
+
+📊 VERIFIKASI ROUND 37:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1882 passed, 0 failed (42 suite)
+     — baseline ROUND 36: 1876; +6 test (SIM-29 stmt_lines e2e + 4 unit
+       [foreign] project file + 2 ROUND 37); 0 regresi
+   - SIM-29: TUTUP ✅ — side-table `IrDesign.stmt_lines` (process, discrim)
+     → line pertama, di-populate elaborator, dipakai `record_line_hit` utk
+     skip statement di dalam `` `coverage_off ``/`` `coverage_on `` (tanpa
+     menambah `line` ke semua varian IrStmt = 540 situs).
+   - [foreign] project file: TUTUP ✅ — `read_project_with_foreign`
+     (maria-api) + `load_project_foreign_libs` di run_fast + skip bagian
+     `[foreign]` di read_project_file (fix E0004).
+
+═══ ROUND 38 — WAV-09: mwave compare (waveform diff tool) ═══
+
+WAV-09 (No waveform comparison tool, Critical) ditutup:
+   - crates/maria-tools/src/wave.rs: subcommand `compare` — parse 2 VCD,
+     bangun timeline per signal (nilai berlaku = last change ≤ t), sample
+     per unit waktu hingga max_time gabungan; lapor per signal mismatch:
+     first t (nilai A vs B) + jumlah sample berbeda; plus daftar sinyal
+     yang hanya ada di A / hanya di B. Logika dipisah ke `compare_data`
+     (return CompareResult) agar bisa diuji tanpa capture stdout.
+   - CLI: `maria mwave compare a.vcd b.vcd` (cli.rs MwaveCmd::Compare +
+     dispatch di main.rs).
+   - Test: 2 unit test inline wave.rs — VCD identik → 0 mismatch/0 only;
+     VCD beda (cnt b0010 vs b0101 + extra hanya di B) → mismatch t=5
+     nilai benar + only_b=[top.extra].
+   - tools.md + AGENTS.md mwave row diperbarui (compare).
+
+📊 VERIFIKASI ROUND 38:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1884 passed, 0 failed (42 suite)
+     — baseline ROUND 37: 1882; +2 test (mwave compare); 0 regresi
+   - Sisa item WAV yang belum: format vendor proprietary (FSDB/VPD/SHM,
+     butuh lib eksternal), compressed/incremental dump, random access
+     debugger, hierarchical index, reload, merge multi-session (sebagian
+     sudah via mwave merge), SDF annotation, protocol decode.
+
+═══ ROUND 39 — WAV-10: mwave search (signal wildcard) ═══
+
+WAV-10 (No signal search, Medium) ditutup:
+   - crates/maria-tools/src/wave.rs: subcommand `search` — cari sinyal VCD
+     by pola wildcard; match DP (`*` any run termasuk kosong, `?` satu
+     karakter, sisanya literal) terhadap nama polos DAN nama penuh
+     (scope.name). Output: nama penuh + width + scope, urutan kemunculan.
+     Multi-pola (koma/space terpisah) = OR.
+   - CLI: `maria mwave search t.vcd "c*"` (cli.rs MwaveCmd::Search +
+     dispatch main.rs).
+   - Test: 2 unit test inline wave.rs — wildcard_match DP (9 kasus:
+     c*, *nt, *, c?t, top.*, negatif) + search by pola (c* → clk+cnt,
+     *extra* → extra, cnt → tepat 1).
+   - tools.md + AGENTS.md mwave row diperbarui.
+
+📊 VERIFIKASI ROUND 39:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1886 passed, 0 failed (42 suite)
+     — baseline ROUND 38: 1884; +2 test (mwave search); 0 regresi
+
+═══ ROUND 40 — SIM-22: Reset-Domain Crossing Detection ═══
+
+SIM-22 (No reset-domain crossing detection, High) ditutup:
+   - crates/maria-simulator/src/scheduler/reset_domain.rs (BARU):
+     ResetDomainAnalysis — pipeline: (1) reset domain extraction dari
+     Process::Sequential reset: Option<ResetInfo> (signal + polarity;
+     proses tanpa reset = domain none); (2) signal→domain mapping via
+     penulis terbanyak (konsisten dgn CDC); (3) crossing detection: sinyal
+     yang ditulis domain A dan dibaca proses Sequential domain B (A≠B);
+     severity: multi-bit → CRITICAL, 1-bit → HIGH, pembaca tanpa reset →
+     MEDIUM. Reset signal sendiri & sinyal yang tidak ditulis proses
+     sequential (input port) TIDAK dihitung. Reuse helper CDC
+     (collect_writes_from_stmts/collect_stmt_signal_reads/lvalue_collect_
+     signal_ids — dijadikan pub(crate)).
+   - CLI: `maria melab top.sv --reset-domain` (ElabArgs.reset_domain +
+     MelabArgs --reset-domain + dispatch).
+   - Test: 4 unit test inline reset_domain.rs — single domain no-crossing;
+     2-domain (q_a ditulis rst_a_n dibaca rst_b_n → HIGH); async reader
+     (pembaca tanpa reset → q_a crossing); multi-bit a_bus → CRITICAL.
+   - tools.md + AGENTS.md melab row diperbarui.
+
+📊 VERIFIKASI ROUND 40:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1890 passed, 0 failed (42 suite)
+     — baseline ROUND 39: 1886; +4 test (RDC); 0 regresi
+   - e2e CLI: scratch_rdc.sv (2 domain rst_a_n/rst_b_n) → 2 domain,
+     [CRITICAL] a_bus 4-bit, [HIGH] q_a 1-bit — benar.
+
+═══ ROUND 41 — WAV-08: mwave tree (hierarchical signal index) ═══
+
+WAV-08 (No hierarchical signal indexing, High) ditutup:
+   - crates/maria-tools/src/wave.rs: subcommand `tree` — kelompokkan signal
+     VCD per scope ($scope/$upscope, BTreeMap urut stabil), cetak pohon
+     hierarki: indentasi 4+2 per kedalaman scope + nama scope (join ".")
+     + signal (range, bits, nama) di bawahnya. Index cepat untuk menemukan
+     path lengkap signal sebelum filter/search.
+   - CLI: `maria mwave tree t.vcd` (cli.rs MwaveCmd::Tree + dispatch
+     main.rs).
+   - Test: 1 unit test inline wave.rs — VCD 2 scope (top, top.sub) → 2
+     scope ter-index benar (top 1 signal, top.sub 1 signal).
+   - tools.md + AGENTS.md mwave row diperbarui.
+
+📊 VERIFIKASI ROUND 41:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1891 passed, 0 failed (42 suite)
+     — baseline ROUND 40: 1890; +1 test (mwave tree); 0 regresi
+
+═══ ROUND 42 — VERIF-03: uvm_cmdline_processor ═══
+
+VERIF-03 (No uvm_cmdline_processor, Medium) ditutup:
+   - crates/maria-simulator/src/simulator/engine/uvm/cmdline.rs (BARU):
+     execute_uvm_cmdline_method — singleton get()/new (obj_id disimpan di
+     uvm_cmdline_id agar semua panggilan sama), has_plusarg/has_arg
+     (prefix match, pola $test$plusargs; strip '+' dan format %s/%d),
+     get_arg_value (bit found; nilai disimpan di uvm_cmdline_last_value
+     utk dibaca get_arg_value_out — ref out), get_plusargs/get_arg_values
+     (daftar nilai), get_args (kosong).
+   - Wire: hierarchy.rs is_uvm_cmdline_hierarchy (extends chain, pola
+     barrier/event); method.rs dispatch (pola randomize: hanya bila tidak
+     dioverride user); elaborator expr.rs SysFunc `uvm_cmdline_processor::get`
+     (pola uvm_config_db::set/get) → engine SysFunc handler membuat objek
+     builtin via state.alloc_object + uvm_cmdline_id; BUILTIN_UVM_CLASSES
+     + "uvm_cmdline_processor" (lebar 64 = handle).
+   - Engine fields: uvm_cmdline_id / uvm_cmdline_last_value /
+     uvm_cmdline_values (mod.rs + init core.rs).
+   - Test: 2 e2e — test_uvm_cmdline_processor (cl=::get(); has_plusarg
+     MODE=1, get_arg_value=1 dgn plusarg MODE=42) +
+     test_uvm_cmdline_processor_no_match (NOSUCH → 0).
+
+📊 VERIFIKASI ROUND 42:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1893 passed, 0 failed (42 suite)
+     — baseline ROUND 41: 1891; +2 test (uvm_cmdline); 0 regresi
+
+═══ ROUND 43 — SIM-06/07/08/10: SDF Timing Checks dievaluasi ═══
+
+SDF timing checks (SIM-06) sebelumnya di-parse dan disimpan tapi TIDAK
+PERNAH dievaluasi; SETUPHOLD parse menyimpan signal/ref kosong + delay 0
+(SIM-10); negatif timing tidak didukung (SIM-08); min:typ:max parse sudah
+ada tapi tidak dipakai engine (SIM-07). Semua ditutup:
+
+   - crates/maria-simulator/src/simulator/sdf.rs:
+     • parse_setuphold_check (BARU) — 2 delay (setup, hold) + signal/ref
+       dari construct (PORT/POSEDGE/DATA); SetupHole→SetupHold field
+       setup/hold diisi (sebelumnya 0).
+     • parse_simple_timing_check di-rewrite: ekstraksi nama signal dari
+       construct (POSEDGE/NEGEDGE/DATA/PORT/EDGE) yg sebelumnya pecah
+       (inner loop mulai inner=0 → signal terisi token `(`/`)`); skip
+       seluruh construct COND (token `==`/`1` di dlmnya tdk boleh jadi
+       signal/delay); SDF menulis ref dulu → field di-swap agar signal=
+       data, ref_signal=clock (tanpa swap check tidak pernah fire).
+     • Fix off-by-one: paren penutup check tidak double-increment pos →
+       parse_timing_checks melompati check berikutnya (hanya check ganjil
+       yg ter-parse: 6→3).
+   - crates/maria-simulator/src/simulator/engine/eval/syscall.rs:
+     check_sdf_timing_constraints (BARU) — evaluasi 8 tipe: Setup/Hold/
+     Setuphold/Width/Period/Recovery/Removal/Skew, negatif timing
+     (setup<0 → tdk fire; SIM-08), min:typ:max via TimingMode (MARIA_
+     TIMING env / default Max; SIM-07), violation via $display warning
+     (bukan fatal).
+   - core.rs: check_sdf_timing_constraints dipanggil tiap cycle setelah
+     check_timing_constraints ($setup/$hold specify-block).
+   - Test: 3 unit sdf.rs (setuphold parse full + delay + parse_simple
+     dgn COND/reserved) + 4 e2e maria-tests (test_sdf_setup_violation
+     setup=5 tapi data berubah t=2 → warning; test_sdf_setup_ok t=8;
+     test_sdf_setuphold; test_sdf_width_violation pulse 2 < width 5).
+     Debug yg dipakai menuntun ke fix parser (COND skip + off-by-one)
+     dibersihkan.
+
+📊 VERIFIKASI ROUND 43:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1900 passed, 0 failed (42 suite)
+     — baseline ROUND 42: 1893; +7 test (3 sdf unit + 4 e2e); 0 regresi
+
+═══ ROUND 44 — SIM-09: SDF Pulse Control (pulse filtering) ═══
+
+SIM-09 (No pulse filtering / pulse control, High) ditutup:
+   - crates/maria-simulator/src/simulator/sdf.rs:
+     • PulseControl { signal, width } + SdfData.pulse_controls
+       (HashMap<String, PulseControl>).
+     • parse_pulse_construct (BARU) — (PULSE (PULSE_WIDTH (PORT "q")
+       (1.0:2.0:3.0))) di dalam CELL maupun top-level; nama port dikutip/
+       bare; delay skalar/triple; depth balance eksplisit (hindari
+       menelan construct berikutnya). Dua bug ditemukan saat test:
+       (1) p+2 vs p+1 utk nama signal setelah PORT; (2) paren penutup
+       PULSE_WIDTH dikonsumsi tanpa decrement depth → pos bergeser.
+   - mod.rs/lvalue.rs: engine fields sdf_pulse_controls
+     (HashMap<usize,f64>, signal id → lebar min ns) + signal_prev_value
+     (nilai commit sebelum pulse terakhir).
+   - core.rs annotate_sdf: resolve nama signal (exact/suffix match, pola
+     timing check) → isi sdf_pulse_controls.
+   - syscall.rs WIDTH check: pulse < limit DAN signal punya pulse control
+     → REJECT: nilai di-rollback via state.write_signal(prev_val) + reset
+     signal_last_change/prev_change, dilaporkan sebagai SignalGlitch
+     (bukan TimingViolation). Tanpa pulse control → WR0303 (perilaku
+     ROUND 43, dipertahankan).
+   - Test: 2 unit sdf.rs (parse cell+top-level, quoted/bare port) + 2 e2e
+     maria-tests (reject: pulse 2ns < 4ns dgn PULSE 4.0 → no WR0303,
+     ada SignalGlitch; rollback: clk kembali 0 setelah reject).
+
+📊 VERIFIKASI ROUND 44:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1904 passed, 0 failed (42 suite)
+     — baseline ROUND 43: 1900; +4 test (2 sdf unit + 2 e2e); 0 regresi
+
+═══ ROUND 45 — VERIF-12: uvm_printer / uvm_table_printer ═══
+
+VERIF-12 (No uvm_printer / uvm_table_printer, Medium) ditutup:
+   - crates/maria-simulator/src/simulator/engine/uvm/printer.rs (BARU):
+     execute_uvm_printer_method — `new(name)` menyimpan nama printer;
+     `print_object(obj)` memformat object jadi string tabel (header
+     Name/Type/Size/Value + baris per field: nama, width, nilai hex/
+     biner/x/z, field di-sort agar deterministik).
+   - format_uvm_object_table (BARU): baca ObjectData.fields dari state,
+     class_name, nama UVM object → string tabel (null handle → kosong).
+   - hierarchy.rs: is_uvm_printer_hierarchy (extends chain ke
+     __uvm_printer/uvm_printer/__uvm_table_printer/uvm_table_printer).
+   - method.rs dispatch (pola randomize: hanya bila TIDAK dioverride user);
+     BUILTIN_UVM_CLASSES + "uvm_printer" + "uvm_table_printer".
+   - object.rs: `print(printer)` — bila argumen printer diberikan dan
+     ber-hierarchy printer, delegasi ke format_uvm_object_table (tanpa
+     argumen → format default lama nama+class).
+   - Test: 3 e2e — test_uvm_printer_print_object (s=print_object(obj)
+     non-kosong + string berisi nama object & field count/addr),
+     test_uvm_printer_contains_fields (field count tetap 7 setelah
+     print_object — print tidak merusak object), test_uvm_object_print_with_printer
+     (obj.print(printer) sukses tanpa error).
+
+📊 VERIFIKASI ROUND 45:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1907 passed, 0 failed (42 suite)
+     — baseline ROUND 44: 1904; +3 test (uvm_printer); 0 regresi
+
+═══ ROUND 46 — WAV-17: mwave stats (waveform statistics) ═══
+
+WAV-17 (No waveform statistics, Medium) ditutup — catatan: daftar lama
+sudah punya src/waveform/statistics.rs (--signal-stats, toggle/rise/fall/
+X/Z per signal) tapi daftar item (baris 953) belum di-update; kini
+LENGKAP via mwave:
+
+   - crates/maria-tools/src/wave.rs:
+     • WaveArgs::Stats + subcommand `stats t.vcd`.
+     • stats_data (BARU, dipisah agar bisa diuji): per signal — toggle
+       count (transisi nilai berurutan), changes (jumlah perubahan),
+       first/last change time, activity (jumlah unit waktu nilai !=
+       baseline commit pertama), duration.
+     • stats(): laporan tabel + total toggle + stuck detection (signal
+       0 aktivitas → calon dead/unused signal).
+   - Wire CLI: MwaveCmd::Stats (cli.rs) + dispatch (main.rs).
+   - Test: 2 unit — test_stats_counts_toggles_and_activity (clk 0→1→0
+     = 2 toggle, first=0, last=10, activity 5; cnt 2 toggle) +
+     test_stats_stuck_signal_zero_toggle (cnt tanpa perubahan → 0
+     toggle, activity 0 → stuck). Ekspektasi first=5 salah saat pertama
+     (perubahan pertama = inisialisasi t=0) — dikoreksi.
+
+📊 VERIFIKASI ROUND 46:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1909 passed, 0 failed (42 suite)
+     — baseline ROUND 45: 1907; +2 test (mwave stats); 0 regresi
+
+═══ ROUND 47 — ELAB-12: Elab-time Assertion Evaluation ═══
+
+ELAB-12 (Tidak ada elab-time assertion evaluation untuk
+parameter-dependent assertions, Medium) ditutup:
+   - crates/maria-elaboration/src/elaborator/stmt.rs: di handler
+     Stmt::Assert, setelah IR dibangun, assertion immediate (tanpa
+     clock_event — bukan SVA concurrent) dengan kondisi parameter-
+     dependent yang bisa di-eval di elab-time (const_eval_with_params
+     dgn self.param_vals) dievaluasi SEKARANG. Hasil 0 → warning RT7001
+     "elaboration-time assertion failed (condition evaluates to 0 at
+     elaboration)" + kondisi, dengan posisi source (elab_warn_at).
+     Kegagalan dilaporkan lebih awal daripada menunggu simulasi;
+     assertion concurrent (dgn clock_event) TIDAK di-eval (butuh
+     semantik waktu simulasi).
+   - Test: 2 e2e — test_elab_time_assertion_fails_when_constant_false
+     (WIDTH=4, assert(WIDTH > 8) → warning elab-time assertion failed
+     ada di flush_diagnostics) + test_elab_time_assertion_passes_when_
+     constant_true (WIDTH>=4 → TIDAK ada warning). Test ditulis dgn
+     pipeline lengkap (preprocess→lex→parse→elab) agar bisa membaca
+     diagnostics elaborator (compile_str hanya mencetak). Diverifikasi
+     menangkap bug: dengan blok di-comment (if false), test fail;
+     dengan implementasi, pass.
+
+📊 VERIFIKASI ROUND 47:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1911 passed, 0 failed (42 suite)
+     — baseline ROUND 46: 1909; +2 test (elab-time assert); 0 regresi
+
+═══ ROUND 48 — SIM-18: Auto-checkpoint (crash recovery) ═══
+
+SIM-18 (No simulation crash recovery, Medium) ditutup:
+   - Engine: field `auto_checkpoint: Option<(String, u64)>` + setter
+     `set_auto_checkpoint(path, interval)` (interval=0 menonaktifkan) +
+     auto-save di run loop tepat setelah postponed region
+     (check_sdf_timing_constraints) — tiap `interval` cycle state penuh
+     (signals/next_signals/process_map/UVM/cover/history) ditulis ke file
+     (save_checkpoint). File ditimpa → selalu titik terbaru.
+   - CLI: `--auto-checkpoint <path>` + `--checkpoint-interval <N>`
+     (default 1000) di cli.rs; wiring di main.rs KEDUA jalur engine
+     (run legacy ~L1628 dan run_fast ~L2597). Resume: `--restore`
+     (load_checkpoint) + `--max-time` lanjutan — SIM-17 manual
+     save/restore tetap ada sebagai fitur terpisah.
+   - Test: 2 e2e — test_auto_checkpoint_writes_file (run 30 cycle,
+     interval 5 → file ada, time > 0, bisa di-load ulang) +
+     test_auto_checkpoint_restore_continues (run 1 berhenti di 25 dgn
+     interval 4 → restore ke engine baru → state.time == ckpt_time →
+     lanjut ke 70 > ckpt_time).
+
+📊 VERIFIKASI ROUND 48:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1913 passed, 0 failed (42 suite)
+     — baseline ROUND 47: 1911; +2 test (auto-checkpoint); 0 regresi
+
+═══ ROUND 49 — VERIF-13: uvm_comparator / uvm_in_order_comparator ═══
+
+VERIF-13 (No uvm_comparator / uvm_in_order_comparator, Medium) ditutup:
+   - types.rs: `UvmComparatorData { expected: VecDeque<ObjId>, matches,
+     mismatches }`; engine field `uvm_comparator_data` (mod.rs + init
+     core.rs).
+   - uvm/comparator.rs (baru, 1 file = 1 tanggung jawab):
+     `execute_uvm_comparator_method` — new (analysis_imp internal + field
+     analysis_imp + init counter, pola subscriber/fifo), write (pop head
+     antrian expected → bandingkan → increment counter; tanpa expected →
+     mismatch + emit_severity error), write_expected (push), get_match_
+     count/get_mismatch_count (baca counter), fallback component.
+     `compare_transactions`: pakai method `compare` user pada transaksi
+     actual bila didefinisikan (pola UVM asli compare(T rhs) virtual),
+     fallback kesetaraan SELURUH field object (bukan obj id — dua objek
+     beda dgn field sama harus MATCH).
+   - Integrasi: dispatch method.rs (!user_override && is_uvm_comparator_
+     hierarchy), arm super.new di builtin.rs (sebelum component check),
+     hierarchy.rs is_uvm_comparator_hierarchy, elaborator mapping
+     extends uvm_comparator/uvm_in_order_comparator → __uvm_comparator
+     (extends __uvm_component) + BUILTIN_UVM_CLASSES.
+   - Test: 2 e2e — test_uvm_comparator_in_order_match (2 expected,
+     write_expected lalu write actual addr sama → match=2 mismatch=0,
+     check_phase $error kanari; analysis_imp internal ada) +
+     test_uvm_comparator_mismatch_via_analysis_port (monitor ap.write
+     actual addr 9 → comp.analysis_imp → write vs expected addr 5 →
+     mismatch=1 match=0). Diverifikasi menangkap bug: dispatch di-comment
+     → kedua test fail; implementasi → pass.
+
+📊 VERIFIKASI ROUND 49:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1915 passed, 0 failed (42 suite)
+     — baseline ROUND 48: 1913; +2 test (uvm_comparator); 0 regresi
+
+═══ ROUND 50 — VERIF-15: uvm_heartbeat ═══
+
+VERIF-15 (No uvm_heartbeat, Medium) ditutup:
+   - types.rs: `UvmHeartbeatData { required: HashMap<ObjId,u64>,
+     received: HashMap<ObjId,u64> }`; engine field `uvm_heartbeat_data`
+     (mod.rs + init core.rs).
+   - uvm/heartbeat.rs (baru, 1 file = 1 tanggung jawab):
+     `execute_uvm_heartbeat_method` — new (init data + object name),
+     set_heartbeat(obj, count) (daftarkan object wajib), heartbeat(obj)
+     (increment received), check() (1 bila semua required terpenuhi; 0 +
+     emit_severity "[UVM_HEARTBEAT] <name> heartbeat kurang: got/req" bila
+     ada yang kurang), get_heartbeat_count(obj) (query), fallback component.
+   - Integrasi: dispatch method.rs (!user_override && is_uvm_heartbeat_
+     hierarchy), arm super.new di builtin.rs (sebelum component check),
+     hierarchy.rs is_uvm_heartbeat_hierarchy, elaborator mapping extends
+     uvm_heartbeat → __uvm_heartbeat (extends __uvm_component) +
+     BUILTIN_UVM_CLASSES.
+   - Test: 2 e2e — test_uvm_heartbeat_ok (drv wajib 2, mon wajib 1;
+     heartbeat dipanggil cukup → check()=1, $error kanari) +
+     test_uvm_heartbeat_missing_heartbeat (drv wajib 3 tapi hanya 1
+     heartbeat → check()=0 diverifikasi lewat return value + $error kanari
+     user). Diverifikasi menangkap bug: dispatch di-comment → kedua test
+     fail; implementasi → pass.
+
+📊 VERIFIKASI ROUND 50:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1917 passed, 0 failed (42 suite)
+     — baseline ROUND 49: 1915; +2 test (uvm_heartbeat); 0 regresi
+
+═══ ROUND 51 — VERIF-35: Random Seeding Per-Instance ═══
+
+VERIF-35 (No random seeding per-instance for predictability, Medium)
+ditutup + 7 item VERIF lain di-verifikasi sudah ada (audit daftar
+lama belum di-update — bukti kuat):
+   - Implementasi: seed solver randomize (`solve_constraints` di
+     constraint_solver.rs + `randomize_rejection_fallback` di method.rs)
+     sebelumnya HANYA `current_time` → dua instance class sama yang
+     di-randomize pada waktu SAMA mendapat deret nilai IDENTIK (bukan
+     per-instance). Sekarang seed = current_time * 0x9E3779B97F4A7C15
+     + obj_id * 0xBF58476D1CE4E5B9 — tiap instance punya deret sendiri,
+     tetap deterministik (reproducible per (instance, waktu)); $urandom
+     global (RNG engine) tidak disentuh.
+   - Test: 2 e2e — test_randomize_per_instance_seed_distinct (p1/p2
+     randomize bersamaan → va != vb; tanpa fix test FAIL — deret identik)
+     + test_randomize_per_instance_seed_reproducible (dua run seed sama
+     → va sama). Diverifikasi menangkap bug: revert seed → distinct FAIL.
+   - Verifikasi batch (daftar lama `[]` salah — fitur sudah ada):
+     VERIF-08 uvm_event (sync.rs + test_uvm_event_sync), VERIF-09
+     uvm_barrier (sync.rs + test_uvm_barrier_sync), VERIF-14 uvm_subscriber
+     (F22 + test), VERIF-16 uvm_tlm_fifo (F23 + 3 test), VERIF-23 coverage
+     HTML (--coverage-html), VERIF-25 cover pragmas `` `coverage_off ``
+     (SIM-29 + 2 test), VERIF-34 random stability (test_random_seed_
+     reproducible), VERIF-36 dist biasing (constraint_solver), VERIF-37
+     constraint_mode (LANG-32/33 + 2 test) → semua di-tandai ✅.
+
+📊 VERIFIKASI ROUND 51:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1919 passed, 0 failed (42 suite)
+     — baseline ROUND 50: 1917; +2 test (per-instance seed); 0 regresi
+
+═══ ROUND 52 — SIM-11: X Propagation Mode (test + BUG FIX) ═══
+
+SIM-11 (No X propagation mode, Critical) — ternyata SUDAH diimplementasi
+(XPropagationMode Optimistic/Pessimistic/XAnywhere di types.rs; value.rs
+set/get_xprop_mode; CLI --xprop main.rs:1582; maria-env xprop.rs) TAPI
+tidak ada test langsung — dan test pertama menangkap BUG NYATA:
+   - BUG (ditemukan test): pessimistic BitAnd `0 & X` dan BitOr `1 | X`
+     mengembalikan nilai deterministik (0/1) — SAMA dgn optimistic —
+     karena urutan match `(Zero,_) => Zero` / `(One,_) => One` SEBELUM
+     `_ => X` di bitwise_op. Mode pessimistic tak pernah berbeda untuk
+     BitAnd/BitOr (pessimistic didefinisikan "any X → X").
+   - FIX (value.rs): cek X/Z PALING PERTAMA di cabang pessimistic
+     BitAnd (`(X,_)|(_,X)|(Z,_)|(_,Z) => X`, lalu One&One=One, else Zero)
+     dan BitOr (`X/Z dulu => X`, lalu One menang, else Zero).
+   - Test: 5 unit baru value.rs — test_xprop_optimistic_bitand_masks_x
+     (0 & X = 0), test_xprop_pessimistic_bitand_propagates_x (0 & X = X;
+     SEBELUM fix FAIL), test_xprop_optimistic_bitor_masks_x (1 | X = 1),
+     test_xprop_pessimistic_bitor_propagates_x (1 | X = X; sebelum fix
+     FAIL), test_xprop_pessimistic_eq_x_returns_x (5 == X = X). Mode
+     di-restore (thread-local) agar test lain tak terpengaruh.
+   - Verifikasi batch (daftar lama `[]` — sudah ada): SIM-11 XPropagation
+     (di-atas), SIM-16 force/release (forced_signals + 6 test), ELAB-11
+     MICD elaborate persistence (store/restore_elaborate_ir + 2 test),
+     VERIF-38 solve-before (before_map + test_randomize_dist_if_solve_) →
+     semua di-tandai ✅.
+
+📊 VERIFIKASI ROUND 52:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1924 passed, 0 failed (42 suite)
+     — baseline ROUND 51: 1919; +5 test (xprop unit); 0 regresi
+     — BUG FIX pessimistic BitAnd/BitOr TIDAK memutus test existing
+       (330 maria-simulator pass)
+
+═══ ROUND 53 — VERIF-06: uvm_config_db exists + wait_modified ═══
+
+VERIF-06 (No uvm_config_db full — get, set, exists, wait_modified, High)
+ditutup — get/set (dgn wildcard path F19) sudah ada; yang kurang exists
++ wait_modified:
+   - config.rs: `config_db_exists` (reuse config_db_find — exact + wildcard
+     paling spesifik) + `config_db_release_waiters(inst, field)` (jadwalkan
+     ContinueAstBlock t+1 utk semua waiter key tsb, pola uvm_release_waiters).
+   - ast.rs + expr.rs (kedua jalur): handler `uvm_config_db::exists` → 1/0;
+     `uvm_config_db::wait_modified` → kondisi terkini (query); `set` → setelah
+     insert, `config_db_release_waiters` membangunkan waiter.
+   - block.rs (jalur AST, class method UVM): intercept `uvm_config_db::
+     wait_modified` sebagai statement — key belum ada → daftarkan waiter
+     (continuation + konteks) + suspend; sudah ada → dikonsumsi. Catatan:
+     task MODULE tidak bisa block — elaborator meng-eliminate FuncCall
+     statement non-DPI (stmt.rs:711) → intercept hanya bekerja di jalur AST
+     class method (pola sama dgn wait_trigger event).
+   - Test: 2 e2e — test_uvm_config_db_exists (exists 0 sebelum set, 1
+     setelah) + test_uvm_config_db_wait_modified (env.run_phase fork:
+     konsumen wait_modified → woke; produsen #10 set; probe #5 woke_snap_5
+     = 0 → blocking benar, #20 woke_snap_20 = 1 → resume benar; kanari
+     assertion di Rust). Diverifikasi menangkap KEDUA sisi bug: intercept
+     di-comment → snap5=1 FAIL; release di-comment → snap20=0 FAIL.
+
+📊 VERIFIKASI ROUND 53:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1926 passed, 0 failed (42 suite)
+     — baseline ROUND 52: 1924; +2 test (config_db exists/wait_modified);
+       0 regresi (46 test UVM pass)
+
+═══ ROUND 54 — PARSER-11: Lexical Edge Cases (escaped/Unicode) + BUG FIX ═══
+
+PARSER-11 (Tidak ada lexical edge case tests for Unicode/escaped) ditutup
++ verifikasi batch 3 item lain sudah ada:
+   - Test baru (5): test_escaped_ident_module_name (nama module escaped
+     `\mod_x ` + instance konsisten), test_escaped_ident_signal_and_connect
+     (`\clk+1 `/`\out-2 ` di deklarasi + port connect), test_escaped_ident_
+     trailing_dollar_and_double_space (`\a$b  ` — $ valid + spasi ganda
+     terminator), test_unicode_in_string_and_comment_ok (Unicode di string
+     literal + komentar legal), test_unicode_identifier_rejected_cleanly
+     (ident Unicode → error bersih, bukan hang).
+   - BUG FIX (ditemukan test): `Token::Error` dari lexer (karakter non-ASCII
+     di luar string/komentar, base literal salah) SELAMA ini di-skip parser
+     → `reg café` diterima diam-diam sebagai `reg caf` + token error dibuang
+     (sim jalan dgn ident terpotong). Fix di Parser::parse_design: scan
+     tokens di awal — Token::Error → return Err lexical error (SV ident
+     hanya ASCII), pos di-set ke token error agar snippet benar.
+   - Verifikasi batch: PARSER-12 recursion depth guard (lib.rs >4096),
+     PARSER-14 AST differential (maria-api compare_asts + test),
+     ELAB-10 parameter type override (flatten.rs + test_parameter_type_
+     override) → semua di-tandai ✅.
+   - Catatan: escaped ident dgn SPASI INTERNAL (`\mod x `) tidak didukung
+     lexer (hanya backslash + non-whitespace) — test memakai nama tanpa
+     spasi internal (perilaku aktual).
+
+📊 VERIFIKASI ROUND 54:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1931 passed, 0 failed (42 suite)
+     — baseline ROUND 53: 1926; +5 test (lexical edge cases); 0 regresi
+     — BUG FIX Token::Error fatal TIDAK memutus test existing (full suite
+       hijau — parser error recovery tidak bergantung pada skip token error)
+
+═══ ROUND 55 — PARSER-13: mcheck --ast-diff (AST comparison tool) ═══
+
+PARSER-13 (Tidak ada AST comparison tool for regression, High) ditutup —
+API compare_asts (maria-api) sudah ada tapi BELUM ada tool CLI yang
+membandingkan dua file utk regression gate:
+   - check.rs: `compare_ir_designs(a, b)` — structural diff dua IrDesign:
+     module count, top signal count, process count, per-signal width +
+     signed, class count, covergroup count (padanan compare_asts API tanpa
+     depend maria-api — maria-tools tidak boleh depend ke maria-api).
+   - `run_ast_diff(targets, other)` — elaborasi kedua file via
+     open_elaborated (StrictSimulation) → print diffs; identik → exit 0;
+     beda → Err AssertionFailed (exit code non-zero utk CI gate).
+   - CLI: `mcheck a.sv --ast-diff b.sv` (cli.rs McheckArgs.ast_diff) +
+     dispatch main.rs.
+   - Test: 3 unit — test_ast_diff_identical (file sama → 0 diff),
+     test_ast_diff_width_mismatch (reg [7:0] vs [15:0] → diff "width: 8 vs
+     16"), test_ast_diff_process_count_mismatch (1 vs 2 always → diff
+     "process count"). FLAG: file temp per-test UNIK (nama thread) — 3
+     test paralel memakai `t.sv` di dir sama → overwrite silang → flaky
+     (isi campur → diff palsu); diperbaiki dgn dir + nama per-test.
+   - E2E CLI: mcheck a.sv --ast-diff b.sv (identik) → "✅ AST identik";
+     beda width → "- signal[1] 'q' width: 8 vs 16" + exit 1.
+
+📊 VERIFIKASI ROUND 55:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1934 passed, 0 failed (42 suite)
+     — baseline ROUND 54: 1931; +3 test (ast-diff); 0 regresi
+
+═══ ROUND 56 — WAV-13: SDF delay diterapkan ke timing sinyal + BUG FIX ═══
+
+WAV-13 (No waveform annotation from SDF, Medium) — delay_rise/delay_fall
+(diisi annotate_sdf) SEBELUMNYA hanya disimpan, TIDAK pernah dibaca di jalur
+write → `assign b = a` berubah di waktu yang SAMA dengan a → SDF tidak
+mempengaruhi timing sim sama sekali.
+
+Implementasi:
+   - crates/maria-simulator/src/simulator/types.rs — EventKind::
+     SdfDelayedWrite { sig_id, value } (commit tertunda).
+   - crates/maria-simulator/src/simulator/engine/eval/lvalue.rs —
+     write_lvalue (IrLValue::Signal): signal dgn delay_rise/delay_fall
+     Some + nilai berubah → jadwalkan event di t + delay (rise utk 0→1,
+     fall utk 1→0, min utk transisi lain); helper sdf_ps_to_time_units
+     (konversi ps → time unit desain via timescale unit exponent,
+     default 1ns) + commit_delayed_signal_write (sanitize/resize/resolusi
+     multi-driver/record_signal_change sama dgn jalur write langsung).
+   - crates/maria-simulator/src/simulator/engine/scheduler/event.rs —
+     handler SdfDelayedWrite → commit + trigger proses sensitive di
+     waktu yang benar (t+delay).
+
+Test:
+   - +1 e2e: test_sdf_delay_applied_to_signal_timing — NET b ABSDELAY
+     (2.0)(1.0) → a naik t=10 → probe t=11 b masih 0 (rise 2ns), t=13 b=1,
+     a turun t=15 → probe t=17 b=0 (fall 1ns). Diverifikasi menangkap bug:
+     scheduling di-nonaktifkan → probe11=1 (b berubah seketika) → FAIL.
+
+📊 VERIFIKASI ROUND 56:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1935 passed, 0 failed (42 suite)
+     — baseline ROUND 55: 1934; +1 test (SDF delay); 0 regresi
+     (10 test SDF semua hijau; 330 maria-simulator pass)
+
+═══ ROUND 57 — SIM-13/15/17: race detection + multi-driver + checkpoint ═══
+
+Verifikasi batch (item `[]` lama yang ternyata SUDAH diimplementasi):
+   - SIM-13 (race detection, Critical) — signal_writers + Write-Write check
+     di write_lvalue (lvalue.rs:67) → warning SignalContention utk dua proses
+     beda menulis signal sama dalam satu delta (multi-driver di-skip).
+     2 e2e test: test_race_write_write_detected +
+     test_race_no_false_positive_single_driver.
+   - SIM-17 (save/restore checkpoint, Critical) — checkpoint.rs
+     save_checkpoint/load_checkpoint + CLI `--save`; 4 unit test (basic/uvm/
+     cover/file) + 2 e2e. GAP: flag `--restore` (cli.rs:795) didefinisikan
+     tapi TIDAK PERNAH di-wire → kini di-load sebelum run di kedua jalur
+     main.rs (SimError bila gagal). E2E CLI: save → CNT40 7; restore →
+     "Checkpoint restored from" tanpa error.
+
+Implementasi baru:
+   - SIM-15 (multi-driver detection) sudah ada di elaborator
+     (detect_multi_driver_signals, ext.rs) tapi BELUM ada test langsung —
+     +1 e2e test_multi_driver_detection: `wire w` 2 assign → multi_driver
+     true; `wire s` 1 assign → false; sim tetap jalan (resolusi aktif).
+
+📊 VERIFIKASI ROUND 57:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1936 passed, 0 failed (42 suite)
+     — baseline ROUND 56: 1935; +1 test (multi-driver detection); 0 regresi
+
+═══ ROUND 58 — VERIF-30: coverpoint bins (ignore/illegal/normal) + BUG FIX ═══
+
+VERIF-30 (No coverpoint ignore_bins/illegal_bins beyond basic, Medium):
+bin eksplisit di-parse parser tapi di-drop elaborator (IrCoverpoint tak punya
+bins) dan diabaikan sampler (hanya auto-binning default).
+
+Implementasi:
+   - maria-ast types.rs — BinDef.range_list: Vec<Expr> → Vec<BinRange>
+     {low, high: Option<Expr>}: `{[1:5]}` (range) tidak ambigu dgn `{1, 5}`
+     (dua nilai) — sebelumnya dua expr didorong tanpa penanda range.
+   - maria-ir ir.rs — IrBin {name, ranges, bin_type} + IrCoverpoint.bins.
+   - elaborator ext.rs — elaborate_covergroups menurunkan bins.
+   - simulator coverage.rs sample_covergroup — ignore_bins: sampel
+     dikecualikan (cover_total TIDAK naik); illegal_bins: laporan
+     AssertionFailed "coverage illegal_bins hit" + tidak dihitung;
+     bins normal: hit dicatat ke bin eksplisit (bukan auto-bin); sisanya
+     auto-bin default seperti sebelumnya.
+
+⚠️ BUG PARSER LAMA (ditemukan test): range-list `{...}` ditutup `}` yang
+TIDAK dikonsumsi — skip_semi tidak melihat `;`, bins loop break di `}` →
+hanya bin PERTAMA coverpoint yang ter-parse, bin ke-2+ di-skip diam-diam.
+Fix: konsumsi `}` di akhir range-list (stmt.rs).
+
+Test (+3 e2e, semua diverifikasi menangkap bug — matikan matching → FAIL):
+   - test_covergroup_ignore_bins_excluded: ignore {[5:7]} + keep {[0:4]} →
+     a=6 dikecualikan (total=1), a=3 → bin keep terisi, tanpa fix total=2.
+   - test_covergroup_illegal_bins_error: illegal {[100:200]} → a=150 lapor
+     illegal_bins hit + hits=1 (bukan 2); tanpa fix tidak ada diagnostic.
+   - test_covergroup_explicit_bin_list_values: bins two = {2, 4} → dua
+     nilai kena bin two, nilai 3 di luar → auto-bin.
+
+📊 VERIFIKASI ROUND 58:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 1939 passed, 0 failed (42 suite)
+     — baseline ROUND 57: 1936; +3 test; 0 regresi
+   - Verifikasi batch: WAV-15 (mwave export CSV/TXT + --waveform-csv) → ✅
 
 //=======================================================================\\
 ATURAN

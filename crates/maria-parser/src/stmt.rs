@@ -268,7 +268,8 @@ impl Parser {
                                                     let _ = self.expect(Token::RBrack);
                                                 }
                                                 self.expect(Token::BlockingAssign)?;
-                                                let mut range_list = Vec::new();
+                                                let mut range_list: Vec<BinRange> = Vec::new();
+                                                let mut transitions: Vec<Vec<Expr>> = Vec::new();
                                                 // Cek apakah rhs adalah binsof(...) atau {range_list}
                                                 let is_binsof = if let Token::Ident(s) = self.peek() {
                                                     s.as_str() == "binsof" || s.as_str() == "default"
@@ -289,6 +290,30 @@ impl Parser {
                                                             _ => { self.advance(); }
                                                         }
                                                     }
+                                                } else if self.peek() == &Token::LParen {
+                                                    // Transition bin `(a => b => ...)` (VERIF-31) — bisa list
+                                                    // `(a=>b), (c=>d)` dipisah koma. Satu sekuens = deret nilai
+                                                    // yang dipisah `=>`.
+                                                    self.advance();
+                                                    loop {
+                                                        let mut seq = Vec::new();
+                                                        loop {
+                                                            let v = self.parse_expr(0)?;
+                                                            seq.push(v);
+                                                            if self.peek() == &Token::FatArrow {
+                                                                self.advance();
+                                                            } else {
+                                                                break;
+                                                            }
+                                                        }
+                                                        transitions.push(seq);
+                                                        if self.peek() == &Token::Comma {
+                                                            self.advance();
+                                                        } else {
+                                                            break;
+                                                        }
+                                                    }
+                                                    self.expect(Token::RParen)?;
                                                 } else if self.peek() == &Token::LBrace {
                                                     self.advance();
                                                     loop {
@@ -299,10 +324,10 @@ impl Parser {
                                                             self.expect(Token::Colon)?;
                                                             let high = self.parse_expr(0)?;
                                                             self.expect(Token::RBrack)?;
-                                                            range_list.push(low);
-                                                            range_list.push(high);
+                                                            range_list.push(BinRange { low, high: Some(high) });
                                                         } else {
-                                                            range_list.push(self.parse_expr(0)?);
+                                                            let low = self.parse_expr(0)?;
+                                                            range_list.push(BinRange { low, high: None });
                                                         }
                                                         if self.peek() == &Token::Comma {
                                                             let ahead = self.peek_ahead(1).clone();
@@ -312,11 +337,20 @@ impl Parser {
                                                                 || (matches!(&ahead, Token::Ident(_))
                                                                     && matches!(self.peek_ahead(2), Token::Scope));
                                                             if !is_new_port { self.advance(); } else { break; }
-                                                        } else { break; }
+                                                        } else {
+                                                            // BUG VERIF-30: range-list `{...}` ditutup `}` — loop sebelumnya
+                                                            // break TANPA mengonsumsi `}` sehingga skip_semi tidak melihat
+                                                            // `;` dan bins loop break di `}` → hanya bin PERTAMA yang
+                                                            // ter-parse (bin kedua+ di-skip diam-diam).
+                                                            if self.peek() == &Token::RBrace {
+                                                                self.advance();
+                                                            }
+                                                            break;
+                                                        }
                                                     }
                                                 }
                                                 self.skip_semi();
-                                                bins.push(BinDef { name: bin_name, range_list, bin_type });
+                                                bins.push(BinDef { name: bin_name, range_list, bin_type, transitions });
                                             }
                                             // `default` bin — skip sampai ';'
                                             Token::Default => {

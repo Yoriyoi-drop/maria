@@ -404,25 +404,126 @@ impl SimulationEngine {
             for cp in &cg.coverpoints {
                 let key = format!("{}.{}", cg.name, cp.name);
                 let key_sym = Symbol::intern(&key);
-                let total = self.cover_total.entry(key_sym).or_insert(0);
-                *total += 1;
                 let val = self
                     .evaluate_expr(&cp.expr)
                     .unwrap_or(LogicVec::from_u64(0, 32));
-                cp_values.insert(cp.name.as_str().to_string(), val.to_u64());
+                let val_u = val.to_u64();
+                cp_values.insert(cp.name.as_str().to_string(), val_u);
 
-                // Default bin: record the actual value — cap jumlah bin unik
-                // per coverpoint (anti-leak untuk nilai acak).
-                let bin_key = format!("{}={}", cp.name, val.to_u64());
-                let bin_key_sym = Symbol::intern(&bin_key);
-                let bins = self
-                    .cover_bins
-                    .entry(key_sym)
-                    .or_default();
-                if bins.contains_key(&bin_key_sym) {
-                    *bins.get_mut(&bin_key_sym).unwrap() += 1;
-                } else if bins.len() < MAX_DEFAULT_BINS {
-                    bins.insert(bin_key_sym, 1);
+                // ── VERIF-30/31: bin eksplisit (bins/illegal_bins/ignore_bins)
+                // + transition bins `(a => b)`. Sebelumnya hanya auto-binning
+                // default. Semantik IEEE 1800: ignore_bins = nilai yang
+                // dikecualikan (tidak dihitung); illegal_bins = nilai yang
+                // TIDAK BOLEH muncul (error saat kena); bins normal = dihitung.
+                let prev_key = Symbol::intern(&format!("{}.{}", cg.name, cp.name));
+                let prev = self.covergroup_prev.get(&prev_key).copied();
+                let mut ignored = false;
+                let mut illegal = false;
+                let mut normal_hit: Option<Symbol> = None;
+                'bins: for bin in &cp.bins {
+                    if !bin.transitions.is_empty() {
+                        // Transition bin: cocokkan (prev => curr). Sekuens
+                        // panjang 2 = kasus umum; >2 belum didukung (tidak
+                        // match → auto-bin).
+                        if let Some(p) = prev {
+                            for seq in &bin.transitions {
+                                if seq.len() == 2 {
+                                    let v1 = self
+                                        .evaluate_expr(&seq[0])
+                                        .unwrap_or(LogicVec::from_u64(0, 32))
+                                        .to_u64();
+                                    let v2 = self
+                                        .evaluate_expr(&seq[1])
+                                        .unwrap_or(LogicVec::from_u64(0, 32))
+                                        .to_u64();
+                                    if p == v1 && val_u == v2 {
+                                        match bin.bin_type {
+                                            maria_ast::types::BinType::Ignore => {
+                                                ignored = true;
+                                                break 'bins;
+                                            }
+                                            maria_ast::types::BinType::Illegal => {
+                                                illegal = true;
+                                                break 'bins;
+                                            }
+                                            maria_ast::types::BinType::Normal => {
+                                                normal_hit = Some(bin.name);
+                                                break 'bins;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        for rng in &bin.ranges {
+                            let low = self
+                                .evaluate_expr(&rng.low)
+                                .unwrap_or(LogicVec::from_u64(0, 32))
+                                .to_u64();
+                            let high = match &rng.high {
+                                Some(h) => self
+                                    .evaluate_expr(h)
+                                    .unwrap_or(LogicVec::from_u64(0, 32))
+                                    .to_u64(),
+                                None => low,
+                            };
+                            if val_u >= low && val_u <= high {
+                                match bin.bin_type {
+                                    maria_ast::types::BinType::Ignore => {
+                                        ignored = true;
+                                        break 'bins;
+                                    }
+                                    maria_ast::types::BinType::Illegal => {
+                                        illegal = true;
+                                        break 'bins;
+                                    }
+                                    maria_ast::types::BinType::Normal => {
+                                        normal_hit = Some(bin.name);
+                                        break 'bins;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Catat nilai kini untuk transisi berikutnya (setelah semua
+                // decision) — berlaku walau sampel ini di-ignore.
+                self.covergroup_prev.insert(prev_key, val_u);
+                // ignore_bins: sampel dikecualikan — tidak dihitung sama sekali.
+                if ignored {
+                    continue;
+                }
+                let total = self.cover_total.entry(key_sym).or_insert(0);
+                *total += 1;
+                if illegal {
+                    // illegal_bins: nilai yang tidak boleh muncul — laporkan.
+                    self.emit_warning(
+                        maria_core::diagnostics::DiagCode::AssertionFailed,
+                        format!(
+                            "coverage illegal_bins hit: coverpoint '{}.{}' value {}",
+                            cg.name, cp.name, val_u
+                        ),
+                    );
+                    continue;
+                }
+                if let Some(bname) = normal_hit {
+                    // Bin eksplisit normal: hit dicatat ke bin tersebut.
+                    let bin_key = format!("{}={}", cp.name, bname.as_str());
+                    let bin_key_sym = Symbol::intern(&bin_key);
+                    let bins = self.cover_bins.entry(key_sym).or_default();
+                    *bins.entry(bin_key_sym).or_insert(0) += 1;
+                } else {
+                    // Default bin: record the actual value — cap jumlah bin unik
+                    // per coverpoint (anti-leak untuk nilai acak).
+                    let bin_key = format!("{}={}", cp.name, val_u);
+                    let bin_key_sym = Symbol::intern(&bin_key);
+                    let bins = self.cover_bins.entry(key_sym).or_default();
+                    if bins.contains_key(&bin_key_sym) {
+                        *bins.get_mut(&bin_key_sym).unwrap() += 1;
+                    } else if bins.len() < MAX_DEFAULT_BINS {
+                        bins.insert(bin_key_sym, 1);
+                    }
                 }
                 let hits = self.cover_hits.entry(key_sym).or_insert(0);
                 *hits += 1;

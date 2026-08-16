@@ -1,0 +1,740 @@
+//! RTL-linked CPU — EMULATOR.md §7.2 mode 3.
+//!
+//! CPU berasal dari **RTL user** (.sv/.v), bukan model software Rust. Mesin
+//! (register file, ALU, control) dijalankan oleh maria RTL engine (Tier A);
+//! sisi Rust hanya menyediakan memori (`MemoryPort`) + orkestrasi bus.
+//!
+//! Kontrak antarmuka bus (picorv32-style) yang wajib dipenuhi module CPU:
+//! ```systemverilog
+//! module cpu (
+//!     input  clk, resetn,
+//!     output mem_valid, mem_instr, [31:0] mem_addr,
+//!     output [31:0] mem_wdata, output [3:0] mem_wstrb,
+//!     input  mem_ready, input [31:0] mem_rdata,
+//!     output trap
+//! );
+//! ```
+//! - `mem_valid` di-assert CPU (registered) sampai transaksi selesai.
+//! - Host menjawab dengan `mem_ready=1` (+ `mem_rdata` untuk read) selama
+//!   fase high; CPU men-sampling di posedge berikutnya (`mem_xfer` =
+//!   `mem_valid && mem_ready`) → transaksi selesai, `mem_valid` turun.
+//! - `trap` tinggi saat ebreak/ecall/instruksi ilegal → `CpuStep::Trap`.
+
+use maria_ir::{IrDesign, LogicVec, SignalId};
+use maria_simulator::debugger::Debugger;
+use maria_simulator::simulator::{
+    DebugMode, EventKind, EventRegion, RegionEvent, SimulationEngine, SimulationLimit, StepMode,
+};
+
+use crate::mem::MemoryPort;
+use super::{CpuCore, CpuFault, CpuStep, Isa};
+
+/// Batas cycle RTL per `step()` (guard: CPU macet / reset tidak selesai).
+const MAX_CYCLES_PER_STEP: u64 = 10_000;
+/// Trap cause untuk ecall (mode machine) — sama dengan interpreter.
+const CAUSE_ECALL_M: u64 = 11;
+
+/// Id sinyal port bus CPU RTL (di-resolve dari module top flattened).
+#[derive(Debug, Clone)]
+struct CpuPorts {
+    clk: SignalId,
+    resetn: SignalId,
+    mem_valid: SignalId,
+    mem_instr: SignalId,
+    mem_addr: SignalId,
+    mem_wdata: SignalId,
+    mem_wstrb: SignalId,
+    mem_ready: SignalId,
+    mem_rdata: SignalId,
+    trap: SignalId,
+    /// Direct RTL Device: decode MMIO di RTL (opsional — None = RAM-only).
+    mmio_sel: Option<SignalId>,
+    /// Console UART RTL (opsional): tx_done pulse + byte untuk host.
+    uart_tx_done: Option<SignalId>,
+    uart_tx_byte: Option<SignalId>,
+}
+
+/// CPU RTL-linked: eksekusi instruksi terjadi di RTL (`.sv`/`.v`), bukan .rs.
+pub struct RtlLinkedCpu {
+    /// Design RTL CPU (wrapper + file CPU) hasil elaborasi.
+    design: IrDesign,
+    /// Engine RTL dengan mode step (1 time unit per `step_cycle`).
+    dbg: Debugger,
+    ports: CpuPorts,
+    /// Total time unit RTL yang sudah dikonsumsi.
+    cycle: u64,
+    /// PC instruksi terakhir yang selesai di-fetch (fetch terakhir).
+    last_pc: u64,
+    /// Transaksi bus yang sedang dilayani (menunggu posedge berikutnya).
+    served: bool,
+    served_instr: bool,
+    served_addr: u64,
+    /// Byte yang ditulis CPU ke Direct RTL Device (UART console) selama run.
+    pub console_out: Vec<u8>,
+}
+
+/// Compile file RTL CPU (bisa lebih dari satu — wrapper + picorv32.v) → IrDesign.
+fn compile_cpu_rtl(files: &[String], top: &str) -> Result<IrDesign, String> {
+    if files.is_empty() {
+        return Err("--rtl-cpu: tidak ada file RTL CPU".into());
+    }
+    let mut combined = String::new();
+    for path in files {
+        let mut pp = maria_parser::preprocessor::Preprocessor::new();
+        let processed = pp.preprocess_file(path).map_err(|e| format!("{}: {}", path, e))?;
+        combined.push_str(&format!("`line 1 \"{}\"\n", path));
+        combined.push_str(&processed);
+        combined.push('\n');
+    }
+    let mut pp = maria_parser::preprocessor::Preprocessor::new();
+    let preprocessed = pp
+        .preprocess(&combined, None)
+        .map_err(|e| format!("preprocessor: {}", e))?;
+    let mut lexer = maria_parser::lexer::Lexer::new(&preprocessed);
+    let mut tokens = Vec::new();
+    loop {
+        let (tok, line, col) = lexer.next_token();
+        if tok == maria_parser::lexer::Token::Eof {
+            break;
+        }
+        tokens.push((tok, line, col));
+    }
+    let file_line_map = lexer.file_line_map.clone();
+    let first_source = if file_line_map.is_empty() {
+        "<rtl-cpu>".to_string()
+    } else {
+        file_line_map[0].1.clone()
+    };
+    let mut parser = maria_parser::Parser::new(tokens, &first_source)
+        .with_source_lines(&preprocessed)
+        .with_file_line_map(file_line_map);
+    let design = parser.parse_design().map_err(|e| e.to_string())?;
+    let source_lines: Vec<String> = preprocessed.lines().map(|s| s.to_string()).collect();
+    let mut elaborator = maria_elaboration::Elaborator::with_source(design, source_lines, first_source);
+    let ir = elaborator
+        .elaborate(Some(top), maria_elaboration::ElaborateMode::StrictSimulation)
+        .map_err(|e| e.to_string())?;
+    Ok(ir)
+}
+
+/// Resolve id sinyal port bus dari module top.
+fn resolve_ports(design: &IrDesign) -> Result<CpuPorts, String> {
+    let find = |name: &str| {
+        design
+            .top
+            .signals
+            .iter()
+            .position(|s| s.name.as_str() == name)
+    };
+    macro_rules! need {
+        ($($f:ident = $n:literal),* $(,)?) => {
+            $(
+                let $f = find($n).ok_or_else(|| {
+                    format!(
+                        "port '{}' tidak ditemukan di module top '{}' — CPU RTL harus punya antarmuka bus (clk, resetn, mem_valid, mem_instr, mem_addr, mem_wdata, mem_wstrb, mem_ready, mem_rdata, trap)",
+                        $n, design.top.name.as_str()
+                    )
+                })?;
+            )*
+        };
+    }
+    need!(
+        clk = "clk",
+        resetn = "resetn",
+        mem_valid = "mem_valid",
+        mem_instr = "mem_instr",
+        mem_addr = "mem_addr",
+        mem_wdata = "mem_wdata",
+        mem_wstrb = "mem_wstrb",
+        mem_ready = "mem_ready",
+        mem_rdata = "mem_rdata",
+        trap = "trap",
+    );
+    Ok(CpuPorts {
+        clk,
+        resetn,
+        mem_valid,
+        mem_instr,
+        mem_addr,
+        mem_wdata,
+        mem_wstrb,
+        mem_ready,
+        mem_rdata,
+        trap,
+        // Opsional: Direct RTL Device (MMIO decode + UART console di RTL).
+        // Tidak ada di top → None (perilaku RAM-only, kompatibel ke belakang).
+        mmio_sel: find("mmio_sel"),
+        uart_tx_done: find("uart_tx_done"),
+        uart_tx_byte: find("uart_tx_byte"),
+    })
+}
+
+impl RtlLinkedCpu {
+    /// Kompilasi file RTL CPU + resolve port bus. Belum reset — panggil
+    /// `reset()` sebelum `step()`.
+    pub fn from_files(files: &[String], top: &str) -> Result<Self, String> {
+        let design = compile_cpu_rtl(files, top)?;
+        let ports = resolve_ports(&design)?;
+        let mut cpu = Self {
+            design,
+            dbg: Debugger {
+                engine: SimulationEngine::new_with_limit(
+                    // placeholder — diganti di reset()
+                    maria_ir::IrDesign::default(),
+                    SimulationLimit::Unlimited,
+                ),
+            },
+            ports,
+            cycle: 0,
+            last_pc: 0,
+            served: false,
+            served_instr: false,
+            served_addr: 0,
+            console_out: Vec::new(),
+        };
+        cpu.recreate_engine();
+        Ok(cpu)
+    }
+
+    /// Baca sinyal internal CPU RTL (debug/probe). Nama hierarkis (`u_cpu.reg_pc`).
+    pub fn read_signal(&self, name: &str) -> Option<u64> {
+        let id = self.design.top.signals.iter().position(|s| s.name.as_str() == name)?;
+        Some(self.dbg.engine.state.read_signal(id).to_u64())
+    }
+
+    /// Satu tick clock (high+low) DENGAN layanan bus — untuk probing manual
+    /// per cycle. Tidak menunggu fetch selesai (beda dari `step()`).
+    pub fn debug_tick(&mut self, mem: &mut dyn MemoryPort) -> Result<(), CpuFault> {
+        self.tick(Some(mem))
+    }
+
+    /// Engine baru + zero-kan SEMUA sinyal (hindari X di input bus / regfile).
+    fn recreate_engine(&mut self) {
+        let mut engine = SimulationEngine::new_with_limit(self.design.clone(), SimulationLimit::Unlimited);
+        engine.debug_mode = DebugMode::Debug;
+        engine.step_mode = StepMode::StepCycle;
+        for id in 0..engine.state.signals.len() {
+            let width = engine.design.top.signals[id].width;
+            engine.state.write_signal(id, LogicVec::from_u64(0, width));
+        }
+        self.dbg = Debugger { engine };
+        self.cycle = 0;
+        self.served = false;
+        self.last_pc = 0;
+        self.console_out.clear();
+    }
+
+    /// Reset: engine baru, resetn aktif-rendah beberapa cycle, lalu lepas.
+    fn drive_reset(&mut self) {
+        for _ in 0..4 {
+            let _ = self.tick(None);
+        }
+        self.poke(self.ports.resetn, 1);
+    }
+
+    /// Tulis sinyal 1-bit (level input: resetn/mem_ready — nilai dibaca saat
+    /// posedge berikutnya; tidak perlu event karena tidak mendeteksi edge).
+    fn poke(&mut self, id: SignalId, val: u64) {
+        self.dbg.engine.state.write_signal(id, LogicVec::from_u64(val, 1));
+    }
+
+    /// Tulis sinyal DI DALAM time step via event terjadwal (`SdfDelayedWrite`
+    /// — jalur commit write tertunda engine). PENTING untuk clock: tulis
+    /// langsung (`state.write_signal`) SEBELUM `step_cycle()` tidak pernah
+    /// terdeteksi sebagai edge — engine mengambil snapshot Preponed di AWAL
+    /// time step (nilai sudah berubah) sehingga `@(posedge clk)` tidak pernah
+    /// membangunkan proses Sequential. Event yang diproses di region Active
+    /// menulis nilai saat delta berjalan; snapshot awal delta masih nilai lama
+    /// → transisi 0→1/1→0 terdeteksi benar (pola sama dengan `#1 clk = ~clk`).
+    fn schedule_write(&mut self, id: SignalId, val: LogicVec) {
+        let t = self.dbg.engine.state.time as usize;
+        self.dbg.engine.push_event(
+            t,
+            RegionEvent {
+                region: EventRegion::Active,
+                event: EventKind::SdfDelayedWrite { sig_id: id, value: val },
+            },
+        );
+    }
+
+    fn poke_val(&mut self, id: SignalId, val: u64) {
+        let width = self.dbg.engine.design.top.signals[id].width;
+        self.dbg.engine.state.write_signal(id, LogicVec::from_u64(val, width));
+    }
+
+    /// Baca sinyal 1-bit sebagai bool (X → false).
+    fn bit(&self, id: SignalId) -> bool {
+        self.dbg.engine.state.read_signal(id).to_bool().unwrap_or(false)
+    }
+
+    /// Baca sinyal sebagai u64 (X → 0).
+    fn val(&self, id: SignalId) -> u64 {
+        self.dbg.engine.state.read_signal(id).to_u64()
+    }
+
+    /// Satu langkah engine RTL (1 time unit; posedge/negedge dipicu oleh poke).
+    fn step_once(&mut self) -> Result<(), CpuFault> {
+        self.cycle += 1;
+        self.dbg
+            .step_cycle()
+            .map_err(|e| CpuFault { pc: self.pc(), reason: format!("rtl step: {}", e) })
+    }
+
+    /// Satu cycle clock penuh (high + low). Bila `mem` diberikan, layani
+    /// transaksi bus yang sedang di-assert CPU.
+    fn tick(&mut self, mem: Option<&mut dyn MemoryPort>) -> Result<(), CpuFault> {
+        // ── High phase (posedge): CPU men-sampling mem_ready/mem_rdata ──
+        self.schedule_write(self.ports.clk, LogicVec::from_u64(1, 1));
+        self.step_once()?;
+        // Transaksi baru di-assert di posedge ini → layani (balas di posedge
+        // berikutnya).
+        if let Some(mem) = mem {
+            if self.bit(self.ports.mem_valid) && !self.served {
+                self.serve(mem)?;
+            }
+        }
+        // ── Low phase ──
+        self.schedule_write(self.ports.clk, LogicVec::from_u64(0, 1));
+        self.step_once()?;
+        Ok(())
+    }
+
+    /// Layani transaksi bus CPU: baca → mem_rdata; tulis → mem.write per strobe.
+    /// Transaksi MMIO (decode di RTL, `mmio_sel`) TIDAK dijawab host — decoder
+    /// RTL memberi ack (`mem_ready` OR internal); host hanya menandai txn agar
+    /// completion logic tahu kapan selesai.
+    fn serve(&mut self, mem: &mut dyn MemoryPort) -> Result<(), CpuFault> {
+        let addr = self.val(self.ports.mem_addr);
+        let wstrb = self.val(self.ports.mem_wstrb) as u32;
+        self.served_instr = self.bit(self.ports.mem_instr);
+        self.served_addr = addr;
+        self.served = true;
+        let is_mmio = self.ports.mmio_sel.map(|id| self.bit(id)).unwrap_or(false);
+        if is_mmio {
+            // Direct RTL Device: RTL decoder yang ack. Host tidak men-drive
+            // mem_ready/mem_rdata (hindari multi-driver). Byte UART ditangkap
+            // di step() via uart_tx_done/uart_tx_byte.
+            return Ok(());
+        }
+        if wstrb == 0 {
+            // Read (fetch / load): 4 byte word-aligned.
+            let data = mem.read(addr, 4).unwrap_or(0);
+            self.poke_val(self.ports.mem_rdata, data);
+        } else {
+            // Write (store): strobe byte-enable.
+            let wdata = self.val(self.ports.mem_wdata);
+            for i in 0..4u32 {
+                if (wstrb >> i) & 1 != 0 {
+                    let _ = mem.write(addr + i as u64, 1, (wdata >> (8 * i)) & 0xff);
+                }
+            }
+        }
+        self.poke(self.ports.mem_ready, 1);
+        Ok(())
+    }
+
+    /// Tangkap byte UART RTL (tx_done pulse) → console host.
+    fn capture_console(&mut self) {
+        let done = self.ports.uart_tx_done.map(|id| self.bit(id)).unwrap_or(false);
+        if done {
+            if let Some(byte_id) = self.ports.uart_tx_byte {
+                let b = self.val(byte_id) as u8;
+                self.console_out.push(b);
+            }
+        }
+    }
+}
+
+impl Default for RtlLinkedCpu {
+    fn default() -> Self {
+        // Hanya untuk test-token; `from_files` adalah konstruktor utama.
+        let mut cpu = Self {
+            design: maria_ir::IrDesign::default(),
+            dbg: Debugger {
+                engine: SimulationEngine::new_with_limit(
+                    maria_ir::IrDesign::default(),
+                    SimulationLimit::Unlimited,
+                ),
+            },
+            ports: CpuPorts {
+                clk: 0,
+                resetn: 0,
+                mem_valid: 0,
+                mem_instr: 0,
+                mem_addr: 0,
+                mem_wdata: 0,
+                mem_wstrb: 0,
+                mem_ready: 0,
+                mem_rdata: 0,
+                trap: 0,
+                mmio_sel: None,
+                uart_tx_done: None,
+                uart_tx_byte: None,
+            },
+            cycle: 0,
+            last_pc: 0,
+            served: false,
+            served_instr: false,
+            served_addr: 0,
+            console_out: Vec::new(),
+        };
+        cpu.recreate_engine();
+        cpu
+    }
+}
+
+impl CpuCore for RtlLinkedCpu {
+    fn reset(&mut self) {
+        self.recreate_engine();
+        self.drive_reset();
+    }
+
+    fn step(&mut self, mem: &mut dyn MemoryPort) -> Result<CpuStep, CpuFault> {
+        let start = self.cycle;
+        for _ in 0..MAX_CYCLES_PER_STEP {
+            self.tick(Some(mem))?;
+            // Direct RTL Device: byte UART RTL → console host.
+            self.capture_console();
+            // Trap (ebreak/ecall/ilegal) — CPU berhenti.
+            if self.bit(self.ports.trap) {
+                return Ok(CpuStep::Trap { cause: CAUSE_ECALL_M, tval: self.last_pc });
+            }
+            // Transaksi yang dilayani selesai di posedge barusan (mem_valid turun).
+            if self.served && !self.bit(self.ports.mem_valid) {
+                let was_fetch = self.served_instr;
+                let addr = self.served_addr;
+                self.served = false;
+                self.poke(self.ports.mem_ready, 0);
+                self.poke_val(self.ports.mem_rdata, 0);
+                if was_fetch {
+                    // Fetch instruksi selesai = satu instruksi dieksekusi RTL.
+                    self.last_pc = addr;
+                    return Ok(CpuStep::InstructionExecuted { cycles: self.cycle - start });
+                }
+            }
+        }
+        Err(CpuFault { pc: self.pc(), reason: "RTL CPU tidak progress (max cycle per step)".into() })
+    }
+
+    fn pc(&self) -> u64 {
+        self.last_pc
+    }
+
+    fn set_pc(&mut self, _addr: u64) {
+        // PC dikontrol RTL (PROGADDR_RESET / PROGADDR_IRQ) — tidak bisa
+        // di-set dari host pada CPU RTL.
+    }
+
+    fn raise_interrupt(&mut self, _irq: u32, _level: bool) {
+        // R4: wire ke port `irq` RTL. Belum diimplementasikan.
+    }
+
+    fn read_reg(&self, _idx: usize) -> u64 {
+        // Register file internal RTL; tanpa RVFI port tidak bisa dibaca.
+        0
+    }
+
+    fn isa(&self) -> Isa {
+        Isa::RiscV32
+    }
+
+    /// Byte yang ditulis CPU RTL ke Direct RTL Device (UART console).
+    fn console_output(&self) -> &[u8] {
+        &self.console_out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mem::{MemoryMap, RamRegion, RegionKind};
+    use maria_core::intern::Symbol;
+
+    /// Elaborasi picorv32.v rekursif dalam — sama seperti main.rs / maria-tests,
+    /// compile design besar butuh stack jauh di atas 2MB default thread test.
+    fn with_big_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    fn root_of(rel: &str) -> String {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .unwrap()
+            .to_path_buf();
+        root.join(rel).to_string_lossy().to_string()
+    }
+
+    fn cpu_files() -> Vec<String> {
+        vec![root_of("examples/rtl/rv32_bus_wrapper.sv"), root_of("examples/rtl/picorv32.v")]
+    }
+
+    fn map() -> MemoryMap {
+        let mut m = MemoryMap::new();
+        m.add(RamRegion::new(Symbol::intern("ram"), 0x8000_0000, 0x1_0000, RegionKind::Ram, false).unwrap()).unwrap();
+        m
+    }
+
+    /// Bangun ELF64 LE minimal (1 segmen PT_LOAD) di 0x80000000.
+    fn make_elf(payload: &[u8]) -> Vec<u8> {
+        let entry = 0x8000_0000u64;
+        let vaddr = 0x8000_0000u64;
+        let mut d = vec![0u8; 64 + 56];
+        d[0..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
+        d[4] = 2; // ELF64
+        d[5] = 1; // LE
+        d[6] = 1;
+        d[18..20].copy_from_slice(&243u16.to_le_bytes()); // RISC-V
+        d[24..32].copy_from_slice(&entry.to_le_bytes());
+        d[32..40].copy_from_slice(&64u64.to_le_bytes());
+        d[54..56].copy_from_slice(&56u16.to_le_bytes());
+        d[56..58].copy_from_slice(&1u16.to_le_bytes());
+        let po = 64usize;
+        d[po..po + 4].copy_from_slice(&1u32.to_le_bytes()); // PT_LOAD
+        d[po + 8..po + 16].copy_from_slice(&(64u64 + 56).to_le_bytes());
+        d[po + 16..po + 24].copy_from_slice(&vaddr.to_le_bytes());
+        d[po + 32..po + 40].copy_from_slice(&(payload.len() as u64).to_le_bytes());
+        d[po + 40..po + 48].copy_from_slice(&(payload.len() as u64).to_le_bytes());
+        d.extend_from_slice(payload);
+        d
+    }
+
+    // ── Encoder RV32I (sama dengan interpreter) ──
+    fn r(f7: u8, rs2: u8, rs1: u8, f3: u8, rd: u8, op: u32) -> u32 {
+        ((f7 as u32) << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15) | ((f3 as u32) << 12) | ((rd as u32) << 7) | op
+    }
+    fn i(imm: i32, rs1: u8, f3: u8, rd: u8, op: u32) -> u32 {
+        ((imm as u32 & 0xfff) << 20) | ((rs1 as u32) << 15) | ((f3 as u32) << 12) | ((rd as u32) << 7) | op
+    }
+    fn s(imm: i32, rs2: u8, rs1: u8, f3: u8, op: u32) -> u32 {
+        let imm = imm as u32 & 0xfff;
+        ((imm >> 5) << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15) | ((f3 as u32) << 12) | ((imm & 0x1f) << 7) | op
+    }
+    const ADDI: u32 = 0x13;
+    const LUI: u32 = 0x37;
+    const SW: u32 = 0x23;
+    const LW: u32 = 0x03;
+    const OP: u32 = 0x33;
+
+    fn code_bytes(words: &[u32]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(words.len() * 4);
+        for w in words {
+            v.extend_from_slice(&w.to_le_bytes());
+        }
+        v
+    }
+
+    #[test]
+    fn test_rtl_cpu_compile_and_ports() {
+        with_big_stack(|| {
+            let cpu = RtlLinkedCpu::from_files(&cpu_files(), "rv32_bus_wrapper").expect("compile");
+            assert_eq!(cpu.design.top.name.as_str(), "rv32_bus_wrapper");
+            assert_eq!(cpu.ports.clk, cpu.ports.clk); // resolved tanpa panic
+            assert!(cpu.ports.mem_addr > 0);
+        });
+    }
+
+    /// E2E: CPU (dari picorv32.v) mengeksekusi program bare-metal yang dimuat
+    /// via ELF loader — bukan interpreter Rust. Verifikasi hasil di RAM.
+    #[test]
+    fn test_rtl_cpu_runs_elf_program() {
+        with_big_stack(|| {
+            // t0=42; a0=0x80000000; sw t0,0(a0); lw a1,0(a0); a2=a1+t0; sw a2,4(a0); ebreak
+            let code = [
+                i(42, 0, 0, 5, ADDI),                       // t0 = 42
+                (0x80000u32 << 12) | (10u32 << 7) | LUI,   // a0 = 0x80000000
+                s(0, 5, 10, 2, SW),                        // mem[a0+0] = t0
+                i(0, 10, 2, 11, LW),                       // a1 = mem[a0]
+                r(0, 5, 11, 0, 12, OP),                    // a2 = a1 + t0 = 84
+                s(4, 12, 10, 2, SW),                       // mem[a0+4] = a2
+                0x0010_0073,                                // ebreak
+            ];
+            let elf = make_elf(&code_bytes(&code));
+            let mut mem = map();
+            crate::elf::load_elf(&elf, &mut mem).expect("load elf");
+
+            let mut cpu = RtlLinkedCpu::from_files(&cpu_files(), "rv32_bus_wrapper").expect("compile");
+            cpu.reset();
+            let mut machine = crate::machine::Machine::new(Box::new(cpu), mem, 5000);
+            let result = machine.run().expect("machine run");
+            assert!(result.halted, "CPU RTL harus trap (ebreak): {:?}", result);
+            // pc() = alamat fetch terakhir = ebreak (instruksi terakhir program).
+            assert_eq!(result.pc & !3, 0x8000_0018, "PC terakhir harus di ebreak (0x18)");
+            // Hasil komputasi RTL: a2 = 84 tersimpan di 0x80000004.
+            let out = machine.mem.read(0x8000_0004, 4).expect("read");
+            assert_eq!(out, 84, "CPU RTL harus menyimpan hasil 42+42=84");
+            let stored = machine.mem.read(0x8000_0000, 4).expect("read");
+            assert_eq!(stored, 42);
+        });
+    }
+
+    /// E2E Direct RTL Device (R4): top `rv32_soc` = picorv32 + `uart_console`
+    /// (decode MMIO 0x10000000 di RTL). CPU menulis 'A','B','C' ke UART RTL
+    /// → byte ditangkap host (console); store lain tetap ke RAM host.
+    #[test]
+    fn test_rtl_cpu_mmio_uart_console() {
+        with_big_stack(|| {
+            let soc_files = vec![
+                root_of("examples/rtl/rv32_soc.sv"),
+                root_of("examples/rtl/uart_console.sv"),
+                root_of("examples/rtl/picorv32.v"),
+            ];
+            // t0='A'/'B'/'C' → sw ke 0x10000000 (UART RTL); t0=42 → sw ke
+            // 0x80000004 (RAM host); ebreak.
+            let code = [
+                i(0x41, 0, 0, 5, ADDI),                  // t0 = 'A'
+                (0x10000u32 << 12) | (10u32 << 7) | LUI, // a0 = 0x10000000 (UART)
+                s(0, 5, 10, 2, SW),                     // uart 'A'
+                i(0x42, 0, 0, 5, ADDI),                  // t0 = 'B'
+                s(0, 5, 10, 2, SW),                     // uart 'B'
+                i(0x43, 0, 0, 5, ADDI),                  // t0 = 'C'
+                s(0, 5, 10, 2, SW),                     // uart 'C'
+                i(42, 0, 0, 5, ADDI),                    // t0 = 42
+                (0x80000u32 << 12) | (11u32 << 7) | LUI, // a1 = 0x80000000 (RAM)
+                s(4, 5, 11, 2, SW),                     // mem[0x80000004] = 42
+                0x0010_0073,                              // ebreak
+            ];
+            let elf = make_elf(&code_bytes(&code));
+            let mut mem = map();
+            crate::elf::load_elf(&elf, &mut mem).expect("load elf");
+
+            let mut cpu = RtlLinkedCpu::from_files(&soc_files, "rv32_soc").expect("compile");
+            cpu.reset();
+            let mut machine = crate::machine::Machine::new(Box::new(cpu), mem, 5000);
+            let result = machine.run().expect("machine run");
+            assert!(result.halted, "CPU RTL harus trap (ebreak): {:?}", result);
+            assert_eq!(result.pc & !3, 0x8000_0028, "PC terakhir = ebreak (0x28)");
+            // Byte UART RTL ditangkap host, urut.
+            assert_eq!(result.console, b"ABC", "console dari UART RTL: {:?}", result.console);
+            // Store non-MMIO tetap ke RAM host.
+            let stored = machine.mem.read(0x8000_0004, 4).expect("read");
+            assert_eq!(stored, 42, "store RAM biasa harus tetap bekerja");
+        });
+    }
+
+    /// E2E Direct RTL Device — MMIO READ: `uart_console` punya status register
+    /// (tx_count di UART_BASE+4, mux mem_rdata DI RTL). CPU baca status sebelum/
+    /// sesudah tiap tulis, simpan hasil ke RAM host → verifikasi nilai read.
+    #[test]
+    fn test_rtl_cpu_mmio_read_status() {
+        with_big_stack(|| {
+            let soc_files = vec![
+                root_of("examples/rtl/rv32_soc.sv"),
+                root_of("examples/rtl/uart_console.sv"),
+                root_of("examples/rtl/picorv32.v"),
+            ];
+            // a0 = UART (0x10000000), a1 = RAM (0x80000000).
+            // baca tx_count awal (0) → ram[0]; tulis 'A' → baca (1) → ram[4];
+            // tulis 'B' → baca (2) → ram[8]; ebreak.
+            let code = [
+                (0x10000u32 << 12) | (10u32 << 7) | LUI, // a0 = UART base
+                (0x80000u32 << 12) | (11u32 << 7) | LUI, // a1 = RAM base
+                i(4, 10, 2, 5, LW),                     // t0 = status (0)
+                s(0, 5, 11, 2, SW),                     // ram[0] = t0
+                i(0x41, 0, 0, 5, ADDI),                  // t0 = 'A'
+                s(0, 5, 10, 2, SW),                     // uart 'A'
+                i(4, 10, 2, 6, LW),                     // t1 = status (1)
+                s(4, 6, 11, 2, SW),                     // ram[4] = t1
+                i(0x42, 0, 0, 5, ADDI),                  // t0 = 'B'
+                s(0, 5, 10, 2, SW),                     // uart 'B'
+                i(4, 10, 2, 7, LW),                     // t2 = status (2)
+                s(8, 7, 11, 2, SW),                     // ram[8] = t2
+                0x0010_0073,                              // ebreak
+            ];
+            let elf = make_elf(&code_bytes(&code));
+            let mut mem = map();
+            crate::elf::load_elf(&elf, &mut mem).expect("load elf");
+
+            let mut cpu = RtlLinkedCpu::from_files(&soc_files, "rv32_soc").expect("compile");
+            cpu.reset();
+            let mut machine = crate::machine::Machine::new(Box::new(cpu), mem, 5000);
+            let result = machine.run().expect("machine run");
+            assert!(result.halted, "CPU RTL harus trap (ebreak): {:?}", result);
+            assert_eq!(result.pc & !3, 0x8000_0030, "PC terakhir = ebreak (0x30)");
+            assert_eq!(result.console, b"AB", "console UART RTL: {:?}", result.console);
+            // Status register UART RTL yang dibaca CPU (disimpan ke RAM):
+            // tx_count sebelum tulis = 0, setelah tulis 'A' = 1, 'B' = 2.
+            let read = |off: u64| machine.mem.read(0x8000_0000 + off, 4).expect("read");
+            assert_eq!(read(0), 0, "tx_count awal");
+            assert_eq!(read(4), 1, "tx_count setelah 'A'");
+            assert_eq!(read(8), 2, "tx_count setelah 'B'");
+        });
+    }
+
+    #[test]
+    fn test_rtl_cpu_reset_pc_starts_at_reset_vector() {
+        with_big_stack(|| {
+            let mut cpu = RtlLinkedCpu::from_files(&cpu_files(), "rv32_bus_wrapper").expect("compile");
+            cpu.reset();
+            // Belum ada fetch → pc() = 0; setelah 1 step, fetch pertama di 0x80000000.
+            let mut mem = map();
+            let step = cpu.step(&mut mem).expect("step");
+            assert!(matches!(step, CpuStep::InstructionExecuted { .. }));
+            assert_eq!(cpu.pc() & !3, 0x8000_0000, "fetch pertama = PROGADDR_RESET");
+        });
+    }
+
+    /// E2E R4 — Direct RTL Device INTERRUPT: `uart_console` menaikkan `irq_tx`
+    /// (bit 3, level) setelah tulis byte; picorv32 (ENABLE_IRQ) masuk handler
+    /// di PROGADDR_IRQ=0x80000100, handler menulis 'B' + maskirq + retirq,
+    /// main lanjut ke ebreak. Verifikasi: console "AB" (byte dari UART RTL
+    /// biasa + dari handler IRQ) + trap di alamat benar (retirq pulang ke
+    /// instruksi setelah waitirq).
+    #[test]
+    fn test_rtl_cpu_irq_uart_tx() {
+        with_big_stack(|| {
+            let soc_files = vec![
+                root_of("examples/rtl/rv32_soc.sv"),
+                root_of("examples/rtl/uart_console.sv"),
+                root_of("examples/rtl/picorv32.v"),
+            ];
+            // main @0x80000000: unmask IRQ 3 (maskirq), tulis 'A' ke UART,
+            // waitirq (blokir sampai IRQ), ebreak.
+            let main = [
+                0xFFFFF2B7u32, // lui t0, 0xFFFFF
+                0xFF728293u32, // addi t0, t0, -9          → t0 = 0xFFFFFFF7
+                0x0602800Bu32, // maskirq t0               → unmask bit 3
+                0x10000537u32, // lui a0, 0x10000          → a0 = UART base
+                0x04100313u32, // addi t1, zero, 0x41      → t1 = 'A'
+                0x06500023u32, // sb t1, 0(a0)             → UART 'A'
+                0x0800000Bu32, // waitirq                  (0x80000018)
+                0x00100073u32, // ebreak                   (0x8000001C)
+            ];
+            // handler @0x80000100: tulis 'B', mask semua IRQ, retirq.
+            let handler = [
+                0x10000537u32, // lui a0, 0x10000
+                0x04200313u32, // addi t1, zero, 0x42      → t1 = 'B'
+                0x06500023u32, // sb t1, 0(a0)             → UART 'B'
+                0xFFFFF3B7u32, // lui t2, 0xFFFFF
+                0xFFF38393u32, // addi t2, t2, -1          → t2 = 0xFFFFFFFF
+                0x0603800Bu32, // maskirq t2               → mask semua IRQ
+                0x0400000Bu32, // retirq                   → pulang ke 0x8000001C
+            ];
+            let mut payload = vec![0u8; 0x11c]; // main 0x00..0x20, pad, handler 0x100..0x11c
+            for (i, w) in main.iter().enumerate() {
+                payload[i * 4..i * 4 + 4].copy_from_slice(&w.to_le_bytes());
+            }
+            for (i, w) in handler.iter().enumerate() {
+                let off = 0x100 + i * 4;
+                payload[off..off + 4].copy_from_slice(&w.to_le_bytes());
+            }
+            let elf = make_elf(&payload);
+            let mut mem = map();
+            crate::elf::load_elf(&elf, &mut mem).expect("load elf");
+
+            let mut cpu = RtlLinkedCpu::from_files(&soc_files, "rv32_soc").expect("compile");
+            cpu.reset();
+            let mut machine = crate::machine::Machine::new(Box::new(cpu), mem, 5000);
+            let result = machine.run().expect("machine run");
+            assert!(result.halted, "CPU RTL harus trap setelah retirq ke ebreak: {:?}", result);
+            assert_eq!(result.pc & !3, 0x8000_001c, "retirq harus pulang ke ebreak (0x1C)");
+            // Byte dari main ('A') + handler IRQ ('B') — keduanya dari UART RTL.
+            assert_eq!(result.console, b"AB", "console dari UART RTL (main + handler IRQ): {:?}", result.console);
+        });
+    }
+}

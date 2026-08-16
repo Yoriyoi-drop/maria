@@ -24,8 +24,11 @@ pub fn get_xprop_mode() -> XPropagationMode {
 fn to_bitmasks(lv: &LogicVec) -> (u64, u64) {
     let mut known = 0u64;
     let mut value = 0u64;
+    // Defensif: bit yang hilang (bits.len() < width) dianggap X (LRM:
+    // bit tak terinisialisasi = unknown). Mencegah panic index-out-of-bounds
+    // di jalur eval manapun bila nilai korup (width>0, bits kosong) bocor.
     for i in 0..lv.width.min(64) {
-        match lv.bits[i] {
+        match lv.bits.get(i).copied().unwrap_or(LogicVal::X) {
             LogicVal::Zero => { known |= 1 << i; }
             LogicVal::One => { known |= 1 << i; value |= 1 << i; }
             LogicVal::X | LogicVal::Z => {}
@@ -553,11 +556,16 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     _ => LogicVal::X,
                 })
             } else {
-                // Pessimistic: any X → X
+                // Pessimistic: any X → X — BUG FIX (SIM-11): urutan match lama
+                // `(Zero, _) | (_, Zero) => Zero` SEBELUM `_ => X` membuat
+                // pessimistic 0 & X = 0 (identik dgn optimistic — mode tak
+                // pernah berbeda utk BitAnd). X/Z harus dicek PERTAMA.
                 bitwise_op(&lhs_ext, &rhs_ext, |a, b| match (a, b) {
+                    (LogicVal::X, _) | (_, LogicVal::X) | (LogicVal::Z, _) | (_, LogicVal::Z) => {
+                        LogicVal::X
+                    }
                     (LogicVal::One, LogicVal::One) => LogicVal::One,
-                    (LogicVal::Zero, _) | (_, LogicVal::Zero) => LogicVal::Zero,
-                    _ => LogicVal::X,
+                    _ => LogicVal::Zero,
                 })
             }
         }
@@ -571,11 +579,16 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     _ => LogicVal::X,
                 })
             } else {
-                // Pessimistic: any X → X
+                // Pessimistic: any X → X — BUG FIX (SIM-11): urutan match lama
+                // `(One, _) | (_, One) => One` SEBELUM `_ => X` membuat
+                // pessimistic 1 | X = 1 (identik dgn optimistic). X/Z harus
+                // dicek PERTAMA.
                 bitwise_op(&lhs_ext, &rhs_ext, |a, b| match (a, b) {
-                    (LogicVal::Zero, LogicVal::Zero) => LogicVal::Zero,
+                    (LogicVal::X, _) | (_, LogicVal::X) | (LogicVal::Z, _) | (_, LogicVal::Z) => {
+                        LogicVal::X
+                    }
                     (LogicVal::One, _) | (_, LogicVal::One) => LogicVal::One,
-                    _ => LogicVal::X,
+                    _ => LogicVal::Zero,
                 })
             }
         }
@@ -859,5 +872,93 @@ mod tests {
         let a = LogicVec::from_u64(0, 1);
         let r = eval_unary(UnaryIrOp::Not, &a);
         assert_eq!(r.to_u64(), 1);
+    }
+
+    // ─── SIM-11: X propagation mode ────────────────────────────────────
+    // XPropagationMode menentukan perilaku operator thd X: Optimistic
+    // (0 & X = 0, 1 | X = 1), Pessimistic (0 & X = X). Mode thread-local —
+    // restore ke default agar test lain tidak terpengaruh.
+    fn x_vec() -> LogicVec {
+        LogicVec { bits: vec![LogicVal::X], width: 1 }
+    }
+
+    #[test]
+    fn test_xprop_optimistic_bitand_masks_x() {
+        let prev = get_xprop_mode();
+        set_xprop_mode(XPropagationMode::Optimistic);
+        let r = eval_binary(BinaryIrOp::BitAnd, &LogicVec::from_u64(0, 1), &x_vec());
+        set_xprop_mode(prev);
+        assert_eq!(r.bits[0], LogicVal::Zero, "optimistic: 0 & X harus 0");
+    }
+
+    #[test]
+    fn test_xprop_pessimistic_bitand_propagates_x() {
+        let prev = get_xprop_mode();
+        set_xprop_mode(XPropagationMode::Pessimistic);
+        let r = eval_binary(BinaryIrOp::BitAnd, &LogicVec::from_u64(0, 1), &x_vec());
+        set_xprop_mode(prev);
+        assert_eq!(r.bits[0], LogicVal::X, "pessimistic: 0 & X harus X");
+    }
+
+    #[test]
+    fn test_xprop_optimistic_bitor_masks_x() {
+        let prev = get_xprop_mode();
+        set_xprop_mode(XPropagationMode::Optimistic);
+        let r = eval_binary(BinaryIrOp::BitOr, &LogicVec::from_u64(1, 1), &x_vec());
+        set_xprop_mode(prev);
+        assert_eq!(r.bits[0], LogicVal::One, "optimistic: 1 | X harus 1");
+    }
+
+    #[test]
+    fn test_xprop_pessimistic_bitor_propagates_x() {
+        let prev = get_xprop_mode();
+        set_xprop_mode(XPropagationMode::Pessimistic);
+        let r = eval_binary(BinaryIrOp::BitOr, &LogicVec::from_u64(1, 1), &x_vec());
+        set_xprop_mode(prev);
+        assert_eq!(r.bits[0], LogicVal::X, "pessimistic: 1 | X harus X");
+    }
+
+    #[test]
+    fn test_xprop_pessimistic_eq_x_returns_x() {
+        let prev = get_xprop_mode();
+        set_xprop_mode(XPropagationMode::Pessimistic);
+        let r = eval_binary(BinaryIrOp::Eq, &LogicVec::from_u64(5, 8), &x_vec());
+        set_xprop_mode(prev);
+        assert_eq!(r.bits[0], LogicVal::X, "pessimistic: 5 == X harus X");
+    }
+
+    // ─── Defensif: LogicVec korup (width>0, bits kosong) — PANIC-13 ───
+    // Index OOB pada array unpacked pernah menghasilkan `bits` kosong dengan
+    // width>0 → panic index-out-of-bounds di to_bitmasks (value.rs:28).
+    // Fast path harus memperlakukan bit yang hilang sebagai X.
+    fn corrupt_vec(width: usize) -> LogicVec {
+        LogicVec { bits: Vec::new(), width }
+    }
+
+    #[test]
+    fn test_to_bitmasks_empty_bits_does_not_panic() {
+        let (known, _) = to_bitmasks(&corrupt_vec(8));
+        assert_eq!(known, 0, "bit hilang = X → known mask kosong");
+    }
+
+    #[test]
+    fn test_eval_unary_on_empty_bits_does_not_panic() {
+        let v = corrupt_vec(8);
+        let bn = eval_unary(UnaryIrOp::BitNot, &v);
+        assert_eq!(bn.bits[0], LogicVal::X, "BitNot X = X");
+        let ra = eval_unary(UnaryIrOp::RedAnd, &v);
+        assert_eq!(ra.bits[0], LogicVal::X, "RedAnd X = X");
+        let ro = eval_unary(UnaryIrOp::RedOr, &v);
+        assert_eq!(ro.bits[0], LogicVal::X, "RedOr X = X");
+    }
+
+    #[test]
+    fn test_eval_binary_eq_on_empty_bits_does_not_panic() {
+        let v = corrupt_vec(4);
+        let other = LogicVec::from_u64(0, 4);
+        let eq = eval_binary(BinaryIrOp::Eq, &v, &other);
+        assert_eq!(eq.bits[0], LogicVal::X, "X == 0 → X (pessimistic)");
+        let neq = eval_binary(BinaryIrOp::Neq, &v, &other);
+        assert_eq!(neq.bits[0], LogicVal::X, "X != 0 → X (pessimistic)");
     }
 }

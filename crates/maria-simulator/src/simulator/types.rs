@@ -83,6 +83,13 @@ pub enum EventKind {
     EvalProcess(usize),
     ContinueBlock(Continuation),
     ContinueAstBlock(Vec<maria_ast::Stmt>, Option<usize>, Option<ObjId>, Option<Symbol>),
+    /// WAV-13: commit tertunda dari write signal ber-annotasi SDF delay.
+    /// `annotate_sdf` mengisi `IrSignal.delay_rise/delay_fall` (ps) tapi
+    /// sebelumnya tidak pernah dibaca — write langsung commit di t, padahal
+    /// harus muncul di t + delay. `write_lvalue` menjadwalkan event ini;
+    /// handler (`process_event`) commit dengan resolusi multi-driver +
+    /// record_signal_change seperti write normal.
+    SdfDelayedWrite { sig_id: usize, value: LogicVec },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -376,6 +383,30 @@ pub struct UvmAnalysisPortData {
 pub struct UvmAnalysisImpData {
     pub parent: Option<ObjId>,
     pub name: String,
+}
+
+/// Data internal `uvm_comparator` / `uvm_in_order_comparator` (VERIF-13):
+/// antrian expected (in-order) + counter match/mismatch. `write(actual)`
+/// dipanggil analysis_imp → pop expected head → compare → increment counter.
+/// `get_match_count()` / `get_mismatch_count()` membaca counter.
+#[derive(Debug, Clone)]
+pub struct UvmComparatorData {
+    /// Antrian expected (obj id) — in-order: head dibandingkan dengan actual.
+    pub expected: std::collections::VecDeque<ObjId>,
+    pub matches: u64,
+    pub mismatches: u64,
+}
+
+/// Data internal `uvm_heartbeat` (VERIF-15): object yang di-monitor wajib
+/// memanggil `heartbeat(obj)` minimal `required` kali sebelum `check()`
+/// (biasanya di check_phase/report_phase). `check()` mengembalikan 0 dan
+/// emit error bila ada object yang heartbeat-nya kurang.
+#[derive(Debug, Clone, Default)]
+pub struct UvmHeartbeatData {
+    /// Object terdaftar → jumlah heartbeat yang wajib dipenuhi.
+    pub required: std::collections::HashMap<ObjId, u64>,
+    /// Object → jumlah heartbeat yang sudah diterima.
+    pub received: std::collections::HashMap<ObjId, u64>,
 }
 
 /// UVM register field data: bit position within a register, width, access policy.

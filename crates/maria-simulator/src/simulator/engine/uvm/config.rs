@@ -6,6 +6,7 @@
 //! 1 file = 1 tanggung jawab: hanya path matching + lookup config db.
 
 use super::super::SimulationEngine;
+use maria_core::error::SimError;
 use maria_compiler::hir::{LogicVec, ObjId};
 use crate::simulator::types::*;
 use crate::simulator::util::*;
@@ -87,6 +88,44 @@ impl SimulationEngine {
             }
         }
         best.map(|(_, v)| v)
+    }
+
+    /// VERIF-06: `uvm_config_db::exists` — 1 bila key (inst, field) punya
+    /// nilai (exact atau wildcard paling spesifik), 0 bila tidak ada.
+    pub(crate) fn config_db_exists(&self, inst_name: &str, field_name: &str) -> bool {
+        self.config_db_find(inst_name, field_name).is_some()
+    }
+
+    /// VERIF-06: release SEMUA waiter blocking `wait_modified` untuk key
+    /// (inst, field) — dipanggil `set` setelah insert. Menjadwalkan
+    /// `ContinueAstBlock` t+1 (pola uvm_release_waiters).
+    pub(crate) fn config_db_release_waiters(
+        &mut self,
+        inst_name: &str,
+        field_name: &str,
+    ) -> Result<(), SimError> {
+        let key = (inst_name.to_string(), field_name.to_string());
+        let waiters = self.uvm_config_db_waiters.remove(&key).unwrap_or_default();
+        if waiters.is_empty() {
+            return Ok(());
+        }
+        let t = self.state.time as usize + 1;
+        self.ensure_events(t);
+        for w in waiters {
+            self.push_event(
+                t,
+                crate::simulator::types::RegionEvent {
+                    region: crate::simulator::types::EventRegion::Active,
+                    event: crate::simulator::types::EventKind::ContinueAstBlock(
+                        w.continuation,
+                        w.fork_id,
+                        w.this,
+                        w.method,
+                    ),
+                },
+            );
+        }
+        Ok(())
     }
 
     /// Path hierarki penuh objek UVM (`uvm_test_top.env.agent`), dipakai

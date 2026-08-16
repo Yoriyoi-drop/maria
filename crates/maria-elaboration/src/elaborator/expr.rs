@@ -803,6 +803,22 @@ impl Elaborator {
                         return Ok(IrExpr::Signal(sig_id, 0));
                     }
                 }
+                // Nested struct member access (`hw2reg.phy_status.init_wip.de`):
+                // resolve offset PENUH via chain (konsisten dgn lvalue path).
+                // Tanpa ini `a.b.c` rvalue jadi MemberAccess { obj:
+                // RangeSelect(...) } yang runtime salah di-interpretasi sebagai
+                // object handle (E9001 object id OOB → sim hang di time 0).
+                if let Some((base_name, chain)) =
+                    Self::collect_member_chain(obj, *field, &self.param_vals)
+                {
+                    if let Some(&base_sid) = signal_map.get(&Symbol::intern(&base_name)) {
+                        if let Some((msb, lsb)) =
+                            self.resolve_struct_chain(base_sid, &chain, signals)
+                        {
+                            return Ok(IrExpr::RangeSelect(base_sid, msb, lsb));
+                        }
+                    }
+                }
                 // Try struct/union member access: resolve obj signal, check struct_fields
                 match self.elaborate_expr(obj, signal_map, signals) {
                     Ok(IrExpr::Signal(sig_id, _)) => {
@@ -1132,7 +1148,8 @@ impl Elaborator {
                 if name == "uvm_config_db::set"
                     || name == "uvm_config_db::get"
                     || name == "uvm_resource_db::set"
-                    || name == "uvm_resource_db::get" =>
+                    || name == "uvm_resource_db::get"
+                    || name == "uvm_cmdline_processor::get" =>
             {
                 let ir_args: Result<Vec<IrExpr>, SimError> = args
                     .iter()
@@ -2170,6 +2187,26 @@ impl Elaborator {
         match dtype {
             DataType::UserDefined(name) => self.typedef_map.get(name).copied().unwrap_or(64),
             DataType::Signed(inner) => self.resolve_typedef_width(inner, None),
+            DataType::StructType { .. } | DataType::UnionType { .. } => {
+                // Lebar typedef struct/union harus dihitung dari MEMBER, bukan
+                // `dtype.width()` — yang menganggap member tanpa range eksplisit
+                // (termasuk nested typedef struct seperti `phy_status_t
+                // phy_status;`) sebagai 1-bit. Akibatnya `typedef struct {
+                // phy_status_t phy_status; logic [7:0] other; } hw2reg_t;`
+                // di-size 1+8=9 (harus 5+8=13) → bit-select member struct
+                // bersarang OOB / salah. `compute_struct_fields` menghitung
+                // lebar per member via `struct_field_from_member` (range →
+                // typedef → nested struct), jadi konsisten dgn struct_fields
+                // yang dipakai member access.
+                let fields = self.compute_struct_fields(dtype);
+                if fields.is_empty() {
+                    dtype.width()
+                } else if matches!(dtype, DataType::UnionType { .. }) {
+                    fields.iter().map(|f| f.width).max().unwrap_or(1)
+                } else {
+                    fields.iter().map(|f| f.width).sum()
+                }
+            }
             _ => dtype.width(),
         }
     }

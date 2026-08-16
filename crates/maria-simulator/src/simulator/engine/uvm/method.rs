@@ -53,10 +53,35 @@ impl SimulationEngine {
         if !user_override && self.is_uvm_barrier_hierarchy(class_name.as_str()) {
             return self.execute_uvm_barrier_method(obj_id, method, args);
         }
+        // VERIF-03: uvm_cmdline_processor — singleton pembaca plusarg.
+        if self.is_uvm_cmdline_hierarchy(class_name.as_str()) {
+            let has_override = self
+                .find_method_in_hierarchy(class_name.as_str(), method)
+                .is_ok();
+            if !has_override {
+                return self.execute_uvm_cmdline_method(obj_id, method, args);
+            }
+        }
+        // VERIF-12: uvm_printer / uvm_table_printer — print_object memformat
+        // object jadi string tabel; `new` builtin. User override → normal.
+        if !user_override && self.is_uvm_printer_hierarchy(class_name.as_str()) {
+            return self.execute_uvm_printer_method(obj_id, method, args);
+        }
         // F22: uvm_subscriber — `new` builtin (auto-buat analysis_imp child +
         // field analysis_imp); `write`/method lain dioverride user → normal.
         if !user_override && self.is_uvm_subscriber_hierarchy(class_name.as_str()) {
             return self.execute_uvm_subscriber_method(obj_id, method, args);
+        }
+        // VERIF-13: uvm_comparator / uvm_in_order_comparator — `new` builtin
+        // (analysis_imp internal + antrian expected); write/write_expected/
+        // get_match_count/get_mismatch_count builtin; override user → normal.
+        if !user_override && self.is_uvm_comparator_hierarchy(class_name.as_str()) {
+            return self.execute_uvm_comparator_method(obj_id, method, args);
+        }
+        // VERIF-15: uvm_heartbeat — `new` builtin; set_heartbeat/heartbeat/
+        // check/get_heartbeat_count builtin; override user → normal.
+        if !user_override && self.is_uvm_heartbeat_hierarchy(class_name.as_str()) {
+            return self.execute_uvm_heartbeat_method(obj_id, method, args);
         }
         // F23: uvm_tlm_fifo — `new` builtin (queue + analysis_export internal);
         // put/get/peek blocking di block.rs; query lain dioverride user → normal.
@@ -350,7 +375,14 @@ impl SimulationEngine {
         }
 
         let max_attempts = 10_000;
-        let mut seed = self.current_time;
+        // VERIF-35: seed per-instance — waktu saja membuat dua instance yang
+        // di-randomize bersamaan mendapat deret nilai IDENTIK. Campur obj_id
+        // (dan konstanta tetap) agar tiap instance punya deret sendiri,
+        // tetap deterministik/reproducible per (instance, waktu).
+        let mut seed = self
+            .current_time
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add((obj_id as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9));
         for _ in 0..max_attempts {
             // Generate random values for each rand field
             for fname in &ordered_fields {

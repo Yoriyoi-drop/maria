@@ -199,6 +199,21 @@ impl SimulationEngine {
                 Ok(string_to_logicvec(class_name.as_str()))
             }
             "print" => {
+                // VERIF-12: `print(printer)` memakai uvm_table_printer bila
+                // argumen printer diberikan; tanpa argumen → format default
+                // (nama + class) seperti sebelumnya.
+                if let Some(printer_arg) = args.first() {
+                    let printer_id = printer_arg.to_u64() as ObjId;
+                    if printer_id > 0 && self.is_uvm_printer_hierarchy(
+                        self.state.get_object(printer_id)
+                            .map(|o| o.class_name.as_str())
+                            .unwrap_or_default(),
+                    ) {
+                        let s = self.format_uvm_object_table(obj_id);
+                        println!("{}", s);
+                        return Ok(LogicVec::from_u64(1, 1));
+                    }
+                }
                 let data = self
                     .uvm_object_data
                     .get(&obj_id)

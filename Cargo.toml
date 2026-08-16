@@ -18,6 +18,7 @@ members = [
     "crates/maria-tech",
     "crates/maria-synth",
     "crates/maria-env",
+    "crates/maria-emu",
     "crates/maria-tools",
     "crates/maria-gui",
     "crates/maria-api",
@@ -75,6 +76,7 @@ maria-timing = { path = "crates/maria-timing" }
 maria-tech = { path = "crates/maria-tech" }
 maria-synth = { path = "crates/maria-synth" }
 maria-env = { path = "crates/maria-env" }
+maria-emu = { path = "crates/maria-emu" }
 maria-tools = { path = "crates/maria-tools" }
 maria-api = { path = "crates/maria-api" }
 

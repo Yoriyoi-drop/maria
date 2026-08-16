@@ -321,6 +321,28 @@ impl Parser {
     }
 
     pub fn parse_design(&mut self) -> Result<Design, SimError> {
+        // PARSER-11 bug fix: `Token::Error` dari lexer (mis. karakter
+        // non-ASCII/Unicode di luar string/komentar, base literal salah)
+        // SELAMA ini di-skip parser → `reg café` diterima diam-diam sebagai
+        // `reg caf` + token error yang dibuang (sim berjalan dgn ident
+        // terpotong). Identifier SV hanya ASCII [a-zA-Z_][a-zA-Z0-9_$]* —
+        // token error harus membuat parse GAGAL, bukan diabaikan.
+        for (i, (tok, line, col)) in self.tokens.iter().enumerate() {
+            // BUG FIX (PARSER-11): token `Token::Error` dari lexer (karakter
+            // non-ASCII di luar string/komentar, base literal salah) SELAMA ini
+            // di-skip parser → `reg café` diterima diam-diam sebagai `reg caf`
+            // + token error dibuang (sim jalan dgn ident terpotong). Identifier
+            // SV hanya ASCII — token error harus membuat parse GAGAL. pos di-set
+            // ke token error agar lokasi source snippet benar.
+            let _ = (line, col);
+            if let Token::Error(msg) = tok {
+                self.pos.set(i);
+                return Err(self.err(format!(
+                    "lexical error: {} (SV identifier hanya ASCII; karakter non-ASCII harus di dalam string/komentar)",
+                    msg
+                )));
+            }
+        }
         self.class_names.clear();
         self.class_names.insert(Symbol::intern("process"));
         self.class_names.insert(Symbol::intern("uvm_object"));

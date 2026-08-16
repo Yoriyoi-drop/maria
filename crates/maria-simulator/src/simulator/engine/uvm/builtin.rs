@@ -102,6 +102,18 @@ impl SimulationEngine {
         if self.is_uvm_seq_item_port_hierarchy(parent.as_str()) {
             return self.execute_uvm_seq_item_port_method(obj_id, method, args);
         }
+        // VERIF-13: `super.new` di subclass comparator (`my_comp extends
+        // uvm_in_order_comparator`) — analysis_imp internal + antrian expected
+        // dibangun di sini (sebelum component check — comparator extends
+        // component).
+        if self.is_uvm_comparator_hierarchy(parent.as_str()) {
+            return self.execute_uvm_comparator_method(obj_id, method, args);
+        }
+        // VERIF-15: `super.new` di subclass heartbeat (`my_hb extends
+        // uvm_heartbeat`) — data heartbeat di-insert di sini.
+        if self.is_uvm_heartbeat_hierarchy(parent.as_str()) {
+            return self.execute_uvm_heartbeat_method(obj_id, method, args);
+        }
         // Check if parent is uvm_component hierarchy
         if parent == "__uvm_component" || self.is_uvm_component_hierarchy(parent.as_str()) {
             return self.execute_uvm_component_method(obj_id, method, args);

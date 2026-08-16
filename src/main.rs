@@ -418,6 +418,7 @@ fn real_main() {
             crate::cli::MariaCmd::Check(a) => dispatch_check(a),
             crate::cli::MariaCmd::Bench(a) => dispatch_bench(a),
             crate::cli::MariaCmd::Synth(a) => dispatch_synth(a),
+            crate::cli::MariaCmd::Emu(a) => dispatch_emu(a),
         }
     }
 
@@ -1665,6 +1666,15 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
         println!("Body-level MIR JIT enabled (compiled-code simulation path)");
     }
 
+    // ── SIM-18: auto-checkpoint berkala (crash recovery) ──
+    if let Some(ref cp_path) = cli.auto_checkpoint {
+        let interval = cli.checkpoint_interval.max(1);
+        engine.set_auto_checkpoint(cp_path, interval);
+        if !cli.quiet {
+            println!("Auto-checkpoint setiap {} cycle → '{}'", interval, cp_path);
+        }
+    }
+
     // ── Co-simulation (VHDL/SystemVerilog bridge) ──
     if let Some(cosim_port) = cli.cosim_port {
         // Build signal mapping from --cosim-signals or auto-detect
@@ -1884,6 +1894,25 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
 
     // ── Simulation ──
     let mut debugger = Debugger::new(engine);
+
+    // SIM-17: restore checkpoint sebelum sim — `--restore <path>` melanjutkan
+    // sim dari state tersimpan (`--save` / auto-checkpoint). Sebelumnya flag
+    // --restore didefinisikan di cli.rs tapi tidak pernah di-wire.
+    if let Some(restore_path) = &cli.restore {
+        let path = std::path::Path::new(restore_path);
+        debugger
+            .engine
+            .load_checkpoint(path)
+            .map_err(|e| {
+                SimError::with_diag(
+                    DiagCode::IoError,
+                    format!("checkpoint restore failed: {}", e),
+                )
+            })?;
+        if !cli.quiet {
+            println!("Checkpoint restored from '{}'", restore_path);
+        }
+    }
 
     if cli.print_tree {
         println!("\n{}", debugger.hierarchy_tree());
@@ -2618,6 +2647,15 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
         println!("Glitch detection enabled (window = {} time units)", cli.glitch_window);
     }
 
+    // ── SIM-18: auto-checkpoint berkala (crash recovery) ──
+    if let Some(ref cp_path) = cli.auto_checkpoint {
+        let interval = cli.checkpoint_interval.max(1);
+        engine.set_auto_checkpoint(cp_path, interval);
+        if !cli.quiet {
+            println!("Auto-checkpoint setiap {} cycle → '{}'", interval, cp_path);
+        }
+    }
+
     // Configure signal history disk spill
     if let Some(ref spill_path) = cli.signal_history_spill {
         engine.signal_history.enable_spill(std::path::PathBuf::from(spill_path));
@@ -2793,6 +2831,25 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
     }
 
     let mut debugger = Debugger::new(engine);
+
+    // SIM-17: restore checkpoint sebelum sim — `--restore <path>` melanjutkan
+    // sim dari state tersimpan (`--save` / auto-checkpoint). Sebelumnya flag
+    // --restore didefinisikan di cli.rs tapi tidak pernah di-wire.
+    if let Some(restore_path) = &cli.restore {
+        let path = std::path::Path::new(restore_path);
+        debugger
+            .engine
+            .load_checkpoint(path)
+            .map_err(|e| {
+                SimError::with_diag(
+                    DiagCode::IoError,
+                    format!("checkpoint restore failed: {}", e),
+                )
+            })?;
+        if !cli.quiet {
+            println!("Checkpoint restored from '{}'", restore_path);
+        }
+    }
 
     if cli.print_tree {
         println!("\n{}", debugger.hierarchy_tree());
@@ -3032,6 +3089,7 @@ fn dispatch_elab(a: &crate::cli::MelabArgs) -> ! {
         tree: a.tree,
         params: a.params,
         signals: a.signals,
+        reset_domain: a.reset_domain,
         from_cache: a.from_cache,
     };
     exit_tool(maria_api::tools::elab::run(&args));
@@ -3087,6 +3145,22 @@ fn dispatch_wave(a: &crate::cli::MwaveArgs) -> ! {
                 output: output.clone(),
             }
         }
+        crate::cli::MwaveCmd::Compare { a, b } => maria_api::tools::wave::WaveArgs::Compare {
+            a: a.clone(),
+            b: b.clone(),
+        },
+        crate::cli::MwaveCmd::Search { input, patterns } => {
+            maria_api::tools::wave::WaveArgs::Search {
+                input: input.clone(),
+                patterns: patterns.clone(),
+            }
+        }
+        crate::cli::MwaveCmd::Tree { input } => maria_api::tools::wave::WaveArgs::Tree {
+            input: input.clone(),
+        },
+        crate::cli::MwaveCmd::Stats { input } => maria_api::tools::wave::WaveArgs::Stats {
+            input: input.clone(),
+        },
     };
     exit_tool(maria_api::tools::wave::run(&args));
 }
@@ -3136,6 +3210,7 @@ fn dispatch_check(a: &crate::cli::McheckArgs) -> ! {
         deps: a.deps,
         cycles: a.cycles,
         timescale: a.timescale,
+        ast_diff: a.ast_diff.as_deref(),
     };
     exit_tool(maria_api::tools::check::run(&args));
 }
@@ -3172,6 +3247,222 @@ fn dispatch_synth(a: &crate::cli::SynthArgs) -> ! {
         quiet: a.quiet,
     };
     exit_tool(maria_api::tools::synth::run(&args));
+}
+
+fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
+    use maria_api::emu::config::EmuConfig;
+    use maria_api::emu::cpu::{CpuCore, RtlLinkedCpu};
+    use maria_api::emu::machine::Machine;
+    use maria_api::emu::mem::{MemoryMap, MemoryPort, RamRegion, RegionKind};
+    use maria_api::emu::mhir::types::AddressRegion;
+    use maria_core::intern::Symbol;
+    use maria_elaboration::elaborator::ElaborateMode;
+
+    let result: Result<(), SimError> = (|| {
+        // ── Konfigurasi emulator dari file TOML terpisah (`--config`, .meu) ──
+        // BUKAN section di project .maria — ekstensi .maria dipakai MICD
+        // dan file list; konfigurasi emulator hidup di file sendiri.
+        let cfg: EmuConfig = match &a.config {
+            Some(path) => EmuConfig::load_file(std::path::Path::new(path)).map_err(|e| {
+                SimError::with_diag(DiagCode::InvalidSyntax, e)
+            })?,
+            None => EmuConfig::default(),
+        };
+        // Top untuk open_elaborated (targets): --top > config > --rtl-cpu-top
+        // (saat mesin dijalankan dari RTL, top SoC sudah jelas dari flag CPU).
+        let top = a.top.as_deref().or(cfg.top.as_deref()).or(a.rtl_cpu_top.as_deref());
+        let (_session, _design, ir) = maria_api::tools::open_elaborated(
+            &a.targets,
+            &a.incdirs,
+            &a.defines,
+            top,
+            ElaborateMode::StrictSimulation,
+        )?;
+        let mut mhir = maria_api::emu::mhir::extract(&ir);
+
+        // ── Address map: --addr + [emu] devices (Direct RTL Device) ──
+        let mut entries: Vec<(Symbol, AddressRegion)> = Vec::new();
+        for s in &a.addr {
+            let Some((name, rest)) = s.split_once('=') else {
+                eprintln!("warning: --addr '{}': format NAME=BASE:SIZE", s);
+                continue;
+            };
+            let Some((base_s, size_s)) = rest.split_once(':') else {
+                eprintln!("warning: --addr '{}': format NAME=BASE:SIZE", s);
+                continue;
+            };
+            let parse_hex = |v: &str| u64::from_str_radix(v.trim_start_matches("0x"), 16);
+            match (parse_hex(base_s), parse_hex(size_s)) {
+                (Ok(base), Ok(size)) => {
+                    entries.push((Symbol::intern(name.trim()), AddressRegion { base, size }));
+                }
+                _ => eprintln!("warning: --addr '{}': base/size harus hex (0x...)", s),
+            }
+        }
+        for d in &cfg.devices {
+            if let (Some(base), Some(size)) = (d.mmio, d.size) {
+                let name = d.name.as_deref().unwrap_or("device");
+                entries.push((Symbol::intern(name), AddressRegion { base, size }));
+            }
+        }
+        maria_api::emu::mhir::extract::apply_address_map(&mut mhir, &entries);
+
+        // ── Memory map (R1): config ram → region RAM host (mmap) ──
+        let mut memmap = MemoryMap::new();
+        if let Some(ram) = cfg.ram {
+            let (base, size) = (ram.base, ram.size);
+            let region = RamRegion::new(
+                Symbol::intern("ram"),
+                base,
+                size,
+                RegionKind::Ram,
+                true,
+            )
+            .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+            memmap
+                .add(region)
+                .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
+        }
+
+        let mut out = String::new();
+        if a.dump_memory_map {
+            out.push_str(&maria_api::emu::dump::dump_memory_map(&mhir));
+            if !memmap.regions.is_empty() {
+                out.push_str(&format!("\nMemory regions (host):\n"));
+                for r in &memmap.regions {
+                    out.push_str(&format!(
+                        "  0x{:08x}-0x{:08x}  {:<12} {} ({})\n",
+                        r.base,
+                        r.base + r.size - 1,
+                        r.name.as_str(),
+                        match r.kind {
+                            RegionKind::Ram => "ram",
+                            RegionKind::Rom => "rom",
+                            RegionKind::Mmio => "mmio",
+                        },
+                        r.size
+                    ));
+                }
+            }
+        }
+        // Tanpa flag → default MHIR; `--dump-memory-map` saja → map saja.
+        if a.dump_mhir || !a.dump_memory_map {
+            out.push_str(&maria_api::emu::dump::dump_mhir(&mhir));
+        }
+
+        // ── ELF loader (R1): muat kernel/bare-metal ke memory map ──
+        if let Some(path) = &a.load_elf {
+            if memmap.regions.is_empty() {
+                return Err(SimError::with_diag(
+                    DiagCode::InvalidSyntax,
+                    "--load-elf butuh region RAM — definisikan [emu] ram = { base, size } di project file .maria",
+                ));
+            }
+            let bytes = std::fs::read(path)
+                .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", path, e)))?;
+            let entry = maria_api::emu::elf::load_elf(&bytes, &mut memmap)
+                .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("ELF '{}': {}", path, e)))?;
+            out.push_str(&format!(
+                "\nELF loaded: '{}' entry=0x{:x} ({} region(s))\n",
+                path,
+                entry,
+                memmap.regions.len()
+            ));
+        }
+
+        // ── Direct RTL CPU (EMULATOR.md §7.2 mode 3): jalankan mesin dari
+        // RTL .sv/.v user, BUKAN model software Rust. Rust hanya menyediakan
+        // memori + orkestrasi bus; register file/ALU/control dieksekusi engine
+        // RTL maria (picorv32-style kontrak bus). ──
+        let mem_final: MemoryMap;
+        if a.run || !a.rtl_cpu.is_empty() {
+            if a.rtl_cpu.is_empty() {
+                return Err(SimError::with_diag(
+                    DiagCode::InvalidSyntax,
+                    "--run butuh --rtl-cpu <file.sv> — CPU dijalankan dari RTL (bukan interpreter)",
+                ));
+            }
+            if memmap.regions.is_empty() {
+                return Err(SimError::with_diag(
+                    DiagCode::InvalidSyntax,
+                    "--rtl-cpu butuh region RAM — definisikan [emu] ram = { base, size } di file .meu",
+                ));
+            }
+            let top = a.rtl_cpu_top.as_deref().unwrap_or("rv32_bus_wrapper");
+            let mut cpu = RtlLinkedCpu::from_files(&a.rtl_cpu, top)
+                .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
+            cpu.reset();
+            let max_steps = a.max_steps.unwrap_or(10_000);
+            let mut machine = Machine::new(Box::new(cpu), memmap, max_steps);
+            match machine.run() {
+                Ok(result) => out.push_str(&format!("\n{}", result.summary())),
+                Err(e) => {
+                    return Err(SimError::with_diag(
+                        DiagCode::InvalidSyntax,
+                        format!("RTL CPU fault: {:?}", e),
+                    ))
+                }
+            }
+            mem_final = machine.mem;
+        } else {
+            mem_final = memmap;
+        }
+
+        // ── Hex dump memori guest ──
+        if let Some(dm) = &a.dump_memory {
+            let Some((addr_s, len_s)) = dm.split_once(':') else {
+                return Err(SimError::with_diag(
+                    DiagCode::InvalidSyntax,
+                    "--dump-memory format ADDR:LEN (hex)",
+                ));
+            };
+            let parse_hex = |v: &str| u64::from_str_radix(v.trim_start_matches("0x"), 16);
+            let (Ok(addr), Some(len)) = (
+                parse_hex(addr_s),
+                parse_hex(len_s).ok().and_then(|l| usize::try_from(l).ok()),
+            ) else {
+                return Err(SimError::with_diag(
+                    DiagCode::InvalidSyntax,
+                    "--dump-memory: ADDR dan LEN harus hex",
+                ));
+            };
+            out.push_str(&format!("\nMemory @0x{:x} ({} bytes):\n", addr, len));
+            let mut cur = addr;
+            let mut remain = len;
+            while remain > 0 {
+                let n = remain.min(16);
+                let mut line = format!("0x{:08x}: ", cur);
+                let mut hexs: Vec<String> = Vec::new();
+                let mut ascii = String::new();
+                for i in 0..n {
+                    match mem_final.read(cur + i as u64, 1) {
+                        Ok(b) => {
+                            hexs.push(format!("{:02x}", b));
+                            ascii.push(if (32..=126).contains(&(b as u8)) {
+                                b as u8 as char
+                            } else {
+                                '.'
+                            });
+                        }
+                        Err(_) => {
+                            hexs.push("??".into());
+                            ascii.push('?');
+                        }
+                    }
+                }
+                line.push_str(&hexs.join(" "));
+                line.push_str(&format!("  {}", ascii));
+                out.push_str(&line);
+                out.push('\n');
+                cur += n as u64;
+                remain -= n;
+            }
+        }
+
+        print!("{}", out);
+        Ok(())
+    })();
+    exit_tool(result);
 }
 
 /// Jalankan tool, cetak error via TerminalEmitter, exit dengan kode.

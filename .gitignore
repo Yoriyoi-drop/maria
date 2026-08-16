@@ -33,6 +33,7 @@
 *.v
 *.mcs
 *.lib
+*.iso
 # Artifact laporan coverage (mcov/msim) — dihasilkan saat testing
 /covtest.coverage.html
 /covtest.ucis.xml

@@ -247,6 +247,8 @@ pub fn resolve_expr_signal(
         Expr::RangeSelect { expr: inner, .. } => resolve_expr_signal(inner, signal_map),
         Expr::MethodCall { .. } => None,
         Expr::MemberAccess { .. } => None,
+        // Paren (`(sig)`) → resolve ke signal dasar yang sama.
+        Expr::Paren(inner) => resolve_expr_signal(inner, signal_map),
         _ => None,
     }
 }
@@ -470,6 +472,10 @@ pub fn collect_sensitivity(expr: &Expr, signal_map: &HashMap<Symbol, SignalId>) 
         Expr::MethodCall { obj, .. } => collect_sensitivity(obj, signal_map),
         Expr::MemberAccess { obj, .. } => collect_sensitivity(obj, signal_map),
         Expr::Dist { expr, .. } => collect_sensitivity(expr, signal_map),
+        // Paren (`(sig)`) hanyalah pengelompokan — sinyal di dalamnya TETAP
+        // sensitif. Sebelumnya jatuh ke `_ => vec![]` → assign/always_comb
+        // tidak re-trigger saat sinyal di dalam tanda kurung berubah.
+        Expr::Paren(inner) => collect_sensitivity(inner, signal_map),
         _ => vec![],
     }
 }

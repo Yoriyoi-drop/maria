@@ -182,6 +182,7 @@ pub enum Token {
     // Blocking / Non-blocking
     BlockingAssign,    // =
     NonBlockingAssign, // <=
+    FatArrow,          // => (transition bin SVA / implicasi)
 
     // Punctuation
     LParen,
@@ -1051,7 +1052,11 @@ impl Lexer {
                 }
             }
             '=' => {
-                if self.peek() == Some('=') && self.peek_next() == Some('=') {
+                if self.peek() == Some('>') {
+                    // => (transition bin / implication) — VERIF-31
+                    self.advance();
+                    Token::FatArrow
+                } else if self.peek() == Some('=') && self.peek_next() == Some('=') {
                     // ===
                     self.advance();
                     self.advance();

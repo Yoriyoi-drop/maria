@@ -16,6 +16,8 @@ pub struct ElabArgs<'a> {
     pub tree: bool,
     pub params: bool,
     pub signals: bool,
+    /// SIM-22: analisis reset-domain crossing (RDC).
+    pub reset_domain: bool,
     /// Baca hasil elaborasi dari cache pipeline (tanpa menjalankan elaborator).
     pub from_cache: bool,
 }
@@ -72,6 +74,13 @@ pub fn run(args: &ElabArgs) -> Result<(), SimError> {
                 println!("    {:<10} {:<32}{}", kind, p.name.as_str(), default);
             }
         }
+    }
+
+    if args.reset_domain {
+        // SIM-22: analisis reset-domain crossing pada IR ter-elaborasi.
+        section("Reset-Domain Crossing (RDC)");
+        let rdc = maria_simulator::scheduler::reset_domain::ResetDomainAnalysis::analyze(&ir);
+        print!("{}", rdc.report());
     }
 
     if args.signals {

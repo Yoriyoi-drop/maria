@@ -13,6 +13,7 @@ use maria_core::Symbol;
 use crate::waveform::{CsvWaveWriter, FstWaveWriter, SignalStats, VcdWriter};
 use rand::SeedableRng;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 impl SimulationEngine {
     pub fn new(design: IrDesign, max_time: u64) -> Self {
@@ -39,6 +40,7 @@ impl SimulationEngine {
             events: Vec::new(),
             events_base: 0,
             nba_pending: Vec::new(),
+            auto_checkpoint: None,
             vcd: None,
             fst: None,
             csv: None,
@@ -93,11 +95,17 @@ impl SimulationEngine {
             uvm_analysis_port_data: HashMap::new(),
             uvm_analysis_imp_data: HashMap::new(),
             uvm_config_db_data: HashMap::new(),
+            uvm_config_db_waiters: HashMap::new(),
             uvm_event_data: HashMap::new(),
             uvm_barrier_data: HashMap::new(),
+            uvm_cmdline_id: None,
+            uvm_cmdline_last_value: String::new(),
+            uvm_cmdline_values: Vec::new(),
             uvm_sync_waiters: HashMap::new(),
             uvm_tlm_fifo_data: HashMap::new(),
             uvm_fifo_export_data: HashMap::new(),
+            uvm_comparator_data: HashMap::new(),
+            uvm_heartbeat_data: HashMap::new(),
             uvm_seq_item_port_data: HashMap::new(),
             ast_fork_cont: HashMap::new(),
             sdf_timing_checks: Vec::new(),
@@ -116,6 +124,7 @@ impl SimulationEngine {
             cover_hits: HashMap::new(),
             cover_total: HashMap::new(),
             cover_bins: HashMap::new(),
+            covergroup_prev: HashMap::new(),
             ast_loop_iters: 0,
             plusargs: HashMap::new(),
             debug_mode: DebugMode::Normal,
@@ -125,6 +134,8 @@ impl SimulationEngine {
             signal_last_change: HashMap::new(),
             signal_last_dir: HashMap::new(),
             signal_prev_change: HashMap::new(),
+            signal_prev_value: HashMap::new(),
+            sdf_pulse_controls: HashMap::new(),
             timing_reported: HashMap::new(),
             udp_prev_args: HashMap::new(),
             parallel_config: ParallelConfig::default(),
@@ -173,7 +184,17 @@ impl SimulationEngine {
             cur_src_line: std::cell::Cell::new(0),
             cur_src_col: std::cell::Cell::new(0),
             signal_writers: std::collections::HashMap::new(),
-            signal_write_count: std::collections::HashMap::new(),            delta_limit: 20_000_000,
+            signal_write_count: std::collections::HashMap::new(),
+            // Delta limit default 100_000 (bukan 20M) — siklus delta > 100k
+            // pada SATU time step adalah tanda kombinational loop / osilasi;
+            // dengan limit 20M, kasus osilasi menghabiskan berjam-jam sebelum
+            // error InfiniteDelta muncul. Naikkan via set_delta_limit bila
+            // desain sah membutuhkan lebih banyak.
+            delta_limit: 100_000,
+            osc_state_hashes: std::collections::HashSet::new(),
+            osc_last_state_hash: None,
+            comb_access: Vec::new(),
+            comb_access_ready: false,
 
             timing_wheel: None,
             use_timing_wheel: false,
@@ -412,6 +433,16 @@ impl SimulationEngine {
 
     pub fn set_use_mir_jit(&mut self, enabled: bool) {
         self.use_mir_jit = enabled;
+    }
+
+    /// SIM-18: aktifkan auto-checkpoint (crash recovery) — simpan state tiap
+    /// `interval` cycle ke `path`. `interval=0` menonaktifkan.
+    pub fn set_auto_checkpoint(&mut self, path: &str, interval: u64) {
+        if interval == 0 {
+            self.auto_checkpoint = None;
+        } else {
+            self.auto_checkpoint = Some((path.to_string(), interval));
+        }
     }
 
     /// Ensure the events Vec is large enough to hold events at time `t`.
@@ -823,8 +854,10 @@ impl SimulationEngine {
             // ── IEEE 1800 stratified event loop ──
             self.sim_perf.counters.time_steps += 1;
             let mut delta_count = 0u64;
+            crate::dbg_sim!(1, "time-step {} delta-loop start (events[same-time]={})", t, self.events.len());
             loop {
                 self.sim_perf.counters.delta_cycles += 1;
+                crate::dbg_sim!(3, "t={} delta={} region-loop", t, delta_count);
                 let mut activity = false;
                 let mut deltas: Vec<SignalId> = Vec::new();
 
@@ -997,6 +1030,28 @@ impl SimulationEngine {
                             let changed = self.state.commit_changes();
                             if !changed.is_empty() {
                                 activity = true;
+                                crate::dbg_sim!(
+                                    3,
+                                    "t={} delta={} commit: {} signal change(s)",
+                                    t,
+                                    delta_count,
+                                    changed.len()
+                                );
+                                if crate::simulator::dbg_sim_level() >= 4 {
+                                    let names: Vec<String> = changed
+                                        .iter()
+                                        .take(16)
+                                        .map(|(id, _, _)| {
+                                            self.design
+                                                .top
+                                                .signals
+                                                .get(*id)
+                                                .map(|s| s.name.as_str().to_string())
+                                                .unwrap_or_else(|| format!("#{}", id))
+                                        })
+                                        .collect();
+                                    crate::dbg_sim!(4, "  changed: {:?}", names);
+                                }
                                 for (id, _, _) in &changed {
                                     if !deltas.contains(id) {
                                         deltas.push(*id);
@@ -1062,7 +1117,10 @@ impl SimulationEngine {
                 if delta_count > self.delta_limit {
                     return Err(SimError::with_diag(
                         DiagCode::InfiniteDelta,
-                        format!("simulation exceeded max delta cycles per time step ({})", self.delta_limit),
+                        format!(
+                            "simulation exceeded max delta cycles per time step ({}) at time {} — kemungkinan kombinational loop / osilasi (signal tidak stabil dalam satu timestep). Periksa `always_comb`/`assign` yang membentuk loop, atau naikkan limit via set_delta_limit()",
+                            self.delta_limit, self.state.time
+                        ),
                     ));
                 }
                 let report_interval = if self.delta_limit >= 100_000 { 100_000 } else { self.delta_limit / 10 }.max(1);
@@ -1074,6 +1132,35 @@ impl SimulationEngine {
                 }
                 delta_count += 1;
                 self.current_delta = delta_count;
+
+                // ── Oscillation detection (SIM-28) ──
+                // Kombinational loop (cycle) membuat state sinyal berulang
+                // non-kontigu dalam satu time step. Deteksi via hash state
+                // commit: catat urutan state BERBEDA; bila hash yang sama
+                // muncul lagi setelah berubah → cycle → abort cepat, tanpa
+                // menunggu delta_limit (yang di desain osilasi bisa berjam-jam).
+                // Plateau (state stabil, hanya event yang churn) TIDAK dihitung
+                // sebagai osilasi (hash hanya di-insert saat berubah).
+                // Dihitung mulai delta ke-1000 agar simulasi normal (settle
+                // cepat) tidak pernah membayar biaya hash.
+                if delta_count >= 1000 {
+                    use std::hash::{Hash, Hasher};
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    self.state.signals.hash(&mut h);
+                    let hv = h.finish();
+                    if self.osc_last_state_hash != Some(hv) {
+                        if !self.osc_state_hashes.insert(hv) {
+                            return Err(SimError::with_diag(
+                                DiagCode::InfiniteDelta,
+                                format!(
+                                    "kombinational loop / osilasi terdeteksi: state sinyal berulang pada delta {} di time {} (cycle). Periksa always_comb/assign yang membentuk feedback tanpa state.",
+                                    delta_count, self.state.time
+                                ),
+                            ));
+                        }
+                        self.osc_last_state_hash = Some(hv);
+                    }
+                }
 
                 // Check pending $wait conditions
                 if !self.pending_waits.is_empty() && !deltas.is_empty()
@@ -1189,6 +1276,19 @@ impl SimulationEngine {
             self.record_signal_stats();
             self.check_monitor()?;
             self.check_timing_constraints()?;
+            // SIM-06/07/08/10: timing checks dari SDF TIMINGCHECK (di-parse
+            // annotate_sdf, dievaluasi di sini — sebelumnya tidak pernah dipakai).
+            self.check_sdf_timing_constraints()?;
+
+            // ── SIM-18: auto-checkpoint (crash recovery) — simpan tiap
+            // interval cycle ke file. File ditimpa (bukan append) sehingga
+            // selalu merepresentasikan titik terakhir; resume memakai
+            // --restore + --max-time lanjutan.
+            if let Some((ref path, interval)) = self.auto_checkpoint.clone() {
+                if interval > 0 && self.state.time % interval == 0 {
+                    let _ = self.save_checkpoint(std::path::Path::new(&path));
+                }
+            }
 
             // ── VPI: Read-Write Synch callback after all signal updates ──
             crate::vpi::callback::dispatch_read_write_synch();
@@ -1202,10 +1302,6 @@ impl SimulationEngine {
             if self.debug_mode != DebugMode::Normal {
                 self.debug_check()?;
                 if self.paused {
-                    break;
-                }
-                if self.step_mode == StepMode::StepCycle {
-                    self.paused = true;
                     break;
                 }
             }
@@ -1248,7 +1344,25 @@ impl SimulationEngine {
             // Reclaim slot event untuk time step yang baru selesai (anti-leak:
             // events tidak pernah tumbuh O(max_time)).
             self.retire_events(t);
+            crate::dbg_sim!(
+                1,
+                "time {} -> {} selesai (deltas={}, events_step={})",
+                t,
+                self.state.time,
+                delta_count,
+                self.sim_perf.counters.events_processed - step_start_events
+            );
             self.state.time += 1;
+            // BUG FIX (step mode): pause SETELAH time increment — sebelumnya break
+            // terjadi sebelum `state.time += 1` sehingga step_cycle() berulang
+            // memproses time step yang SAMA dan waktu tidak pernah maju.
+            if self.step_mode == StepMode::StepCycle {
+                self.paused = true;
+                break;
+            }
+            // Reset deteksi osilasi untuk time step berikutnya.
+            self.osc_state_hashes.clear();
+            self.osc_last_state_hash = None;
 
             // ── Progress report + deteksi stall ──
             let processed_this_step = self.sim_perf.counters.events_processed - step_start_events;
@@ -1505,7 +1619,10 @@ impl SimulationEngine {
                 return Ok(());
             }
         };
-        let signal_snapshot = self.state.signals.clone();
+        // Snapshot Arc: per-process `signals.to_vec()` = Arc clone (cheap,
+        // tanpa deep-copy semua sinyal) — deep-copy hanya sinyal yang diakses.
+        let signal_snapshot: Vec<Arc<LogicVec>> =
+            self.state.signals.iter().map(|lv| Arc::new(lv.clone())).collect();
 
         // Evaluate each layer sequentially (processes WITHIN a layer are parallel)
         // Pass process_body_cache langsung — zero clone per cycle
@@ -1616,6 +1733,15 @@ impl SimulationEngine {
     }
 
     fn initialize_time_zero(&mut self) -> Result<(), SimError> {
+        // BUG FIX (co-sim/debugger): `run()` bisa dipanggil berulang (pause +
+        // continue / step). Inisialisasi time-0 HANYA sekali — re-run setelah
+        // state.time > 0 akan (a) meng-schedule ulang event time-0 yang basi,
+        // dan (b) setelah kompaksi events (EVENT_COMPACT_THRESHOLD) `push_event(0)`
+        // memakai `idx = 0 - events_base` → underflow usize → panic. Guard ini
+        // membuat repeated run() melanjutkan dari state saat ini.
+        if self.state.time != 0 {
+            return Ok(());
+        }
         let t = 0usize;
         let processes = self.design.top.processes.clone();
 
@@ -1744,6 +1870,18 @@ impl SimulationEngine {
 
         // Store timing checks for later use
         self.sdf_timing_checks = sdf.timing_checks.clone();
+
+        // Pulse control (SIM-09): resolve nama signal ke id engine. SDF memakai
+        // hierarchical names — suffix match setelah titik terakhir (pola yang
+        // sama dengan timing check resolve).
+        for (name, pc) in &sdf.pulse_controls {
+            let resolved = self.design.top.signals.iter().enumerate().find(|(_, s)| {
+                s.name.as_str() == name || s.name.as_str().ends_with(&format!(".{}", name))
+            });
+            if let Some((id, _)) = resolved {
+                self.sdf_pulse_controls.insert(id, pc.width.get(mode));
+            }
+        }
 
         // Print summary of annotation
         let cell_count = sdf.cell_delays.len();

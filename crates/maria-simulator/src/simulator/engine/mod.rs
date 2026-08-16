@@ -119,6 +119,10 @@ pub struct SimulationEngine {
     /// Waktu absolut yang direpresentasikan oleh `events[0]`.
     pub events_base: usize,
     pub nba_pending: Vec<(IrLValue, LogicVec)>,
+    /// SIM-18: auto-checkpoint untuk crash recovery — (path, interval cycle).
+    /// Checkpoint disimpan otomatis tiap `interval` cycle (dan di akhir run)
+    /// sehingga run yang crash/terhenti bisa di-resume dari titik terakhir.
+    pub auto_checkpoint: Option<(String, u64)>,
     pub vcd: Option<VcdWriter>,
     pub fst: Option<FstWaveWriter>,
     /// CSV waveform writer (signal values as comma-separated values)
@@ -207,16 +211,30 @@ pub struct SimulationEngine {
     pub uvm_analysis_port_data: HashMap<ObjId, UvmAnalysisPortData>,
     pub uvm_analysis_imp_data: HashMap<ObjId, UvmAnalysisImpData>,
     pub uvm_config_db_data: HashMap<(String, String), LogicVec>,
+    /// VERIF-06: waiter blocking `uvm_config_db::wait_modified(inst, field)`
+    /// — keyed by (inst, field); release saat `set` dipanggil utk key tsb.
+    pub uvm_config_db_waiters: HashMap<(String, String), Vec<crate::simulator::types::UvmSyncWaiter>>,
     /// F21: uvm_event data per objek (triggered/on).
     pub uvm_event_data: HashMap<ObjId, UvmEventData>,
     /// F21: uvm_barrier data per objek (threshold/count).
     pub uvm_barrier_data: HashMap<ObjId, UvmBarrierData>,
+    /// VERIF-03: uvm_cmdline_processor — singleton id (semua get() → sama).
+    pub uvm_cmdline_id: Option<ObjId>,
+    /// Nilai terakhir get_arg_value (ref out dibaca get_arg_value_out).
+    pub uvm_cmdline_last_value: String,
+    /// Daftar nilai get_plusargs/get_arg_values (string array).
+    pub uvm_cmdline_values: Vec<String>,
     /// F21: waiter blocking `wait_trigger`/`wait_on`/`wait_for` — kontinuasi
     /// AST yang di-suspend per objek event/barrier, di-resume saat trigger/
     /// barrier penuh (pola sama dengan get_next_item blocking).
     pub uvm_sync_waiters: HashMap<ObjId, Vec<crate::simulator::types::UvmSyncWaiter>>,
     // F23: data uvm_tlm_fifo (queue ObjId + capacity + export internal).
     pub uvm_tlm_fifo_data: HashMap<ObjId, crate::simulator::types::UvmTlmFifoData>,
+    /// VERIF-13: uvm_comparator / uvm_in_order_comparator — antrian expected
+    /// + counter match/mismatch (write dipanggil analysis_imp).
+    pub uvm_comparator_data: HashMap<ObjId, crate::simulator::types::UvmComparatorData>,
+    /// VERIF-15: uvm_heartbeat — object terdaftar + jumlah heartbeat wajib.
+    pub uvm_heartbeat_data: HashMap<ObjId, crate::simulator::types::UvmHeartbeatData>,
     // F23: data export analysis internal fifo (__uvm_fifo_export) — parent fifo.
     pub uvm_fifo_export_data: HashMap<ObjId, ObjId>,
     /// F24: data uvm_seq_item_port (port driver↔sequencer, sequencer ter-connect).
@@ -251,6 +269,9 @@ pub struct SimulationEngine {
     pub cover_hits: HashMap<Symbol, u64>,
     pub cover_total: HashMap<Symbol, u64>,
     pub cover_bins: HashMap<Symbol, HashMap<Symbol, u64>>,
+    /// Nilai coverpoint terakhir per (covergroup, coverpoint) — dipakai
+    /// transition bins `(a => b)` (VERIF-31). Key = "cg.cp".
+    pub covergroup_prev: HashMap<Symbol, u64>,
     /// Iterasi loop AST terkumpul selama satu eksekusi method/task (anti-hang
     /// saat loop berisi blocking event yang tidak memajukan waktu).
     pub ast_loop_iters: u64,
@@ -264,6 +285,12 @@ pub struct SimulationEngine {
     pub signal_last_dir: HashMap<usize, maria_ast::types::EdgeKind>,
     /// Waktu perubahan SEBELUM signal_last_change (untuk dedupe width/period, SIM-24).
     pub signal_prev_change: HashMap<usize, u64>,
+    /// Nilai commit sebelum pulse terakhir per signal — dipakai pulse control
+    /// (SIM-09) untuk rollback nilai saat pulse pendek di-reject.
+    pub signal_prev_value: HashMap<usize, LogicVec>,
+    /// Pulse control dari SDF (SIM-09): signal_id → lebar minimum (ns). Pulse
+    /// lebih pendek dari ini di-reject (di-filter, bukan violation).
+    pub sdf_pulse_controls: HashMap<usize, f64>,
     /// Dedupe pelaporan timing violation per (check_name, signal_id) → last_change
     /// yang sudah dilaporkan, supaya width/period/recovery tidak spam (SIM-24).
     pub timing_reported: HashMap<(String, usize), u64>,
@@ -356,6 +383,19 @@ pub struct SimulationEngine {
     pub signal_write_count: std::collections::HashMap<SignalId, u32>,
     /// Max delta cycles per time step before abort (configurable for testing)
     pub delta_limit: u64,
+    /// Oscillation detection: hash state sinyal yang berbeda-beda per delta
+    /// (urutan state BERBEDA) dalam satu time step. State berulang non-kontigu
+    /// = kombinational loop (cycle) → abort cepat, bukan menunggu delta_limit.
+    /// Dikosongkan setiap time step baru.
+    pub osc_state_hashes: std::collections::HashSet<u64>,
+    /// Hash state commit terakhir dalam time step ini (untuk mendeteksi plateau).
+    pub osc_last_state_hash: Option<u64>,
+    /// Cache analisis akses sinyal per process (SIM-28). Dibangun lazy saat
+    /// trigger_sensitive_processes pertama. Dipakai snapshot sparse: base
+    /// hanya sinyal yang diakses process yang terpicu (bukan seluruh sinyal).
+    pub comb_access: Vec<crate::scheduler::sim_dag::SignalAccess>,
+    /// Sudah pernah membangun comb_access?
+    pub comb_access_ready: bool,
 
     /// Co-simulation state (shared with external simulator via TCP)
     pub cosim_state: Option<std::sync::Arc<std::sync::Mutex<crate::simulator::cosim::CosimState>>>,

@@ -1614,6 +1614,52 @@ impl SimulationEngine {
                                 }
                             }
                         }
+                        // VERIF-06: `uvm_config_db::wait_modified(inst, field)`
+                        // BLOCKING — menunggu `set` berikutnya utk key tsb.
+                        // Waiter keyed by (inst, field) di
+                        // `uvm_config_db_waiters`; release oleh set (ast.rs/
+                        // expr.rs → config_db_release_waiters →
+                        // ContinueAstBlock t+1). Saat resume, statement
+                        // wait_modified DIULANG → kali ini key sudah ada →
+                        // kondisi terpenuhi → dikonsumsi.
+                        if nm == "uvm_config_db::wait_modified" {
+                            let arg_vals: Vec<LogicVec> = args
+                                .iter()
+                                .map(|a| self.evaluate_ast_expr(a))
+                                .collect::<Result<_, _>>()?;
+                            let inst_name = if arg_vals.len() > 1 {
+                                logicvec_to_string(&arg_vals[1])
+                            } else {
+                                String::new()
+                            };
+                            let field_name = if arg_vals.len() > 2 {
+                                logicvec_to_string(&arg_vals[2])
+                            } else {
+                                String::new()
+                            };
+                            // Sudah ada nilai → kondisi terpenuhi seketika.
+                            if self.config_db_exists(&inst_name, &field_name) {
+                                continue;
+                            }
+                            let mut wait_stmts: Vec<maria_ast::Stmt> =
+                                vec![maria_ast::Stmt::Expr { expr: expr.clone() }];
+                            wait_stmts.extend(stmts[i + 1..].to_vec());
+                            if let Some(lc) = &self.ast_loop_continuation {
+                                wait_stmts.extend(lc.clone());
+                            }
+                            let key = (inst_name, field_name);
+                            self.uvm_config_db_waiters
+                                .entry(key)
+                                .or_default()
+                                .push(crate::simulator::types::UvmSyncWaiter {
+                                    continuation: wait_stmts,
+                                    fork_id,
+                                    this: self.current_this,
+                                    method: self.current_method,
+                                    wait_label: "wait_modified".to_string(),
+                                });
+                            return Ok(false);
+                        }
                     }
                     // F21/F23: blocking wait uvm_event/uvm_barrier (`wait_*`)
                     // + blocking put/get/peek uvm_tlm_fifo. Eval obj SEKALI

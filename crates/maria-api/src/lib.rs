@@ -40,6 +40,10 @@ pub use maria_simulator::{debugger, foreign, pli, scheduler, simulator, vhpi, vp
 // pindah ke maria-mv (crates/) — lihat migrasi monorepo.
 pub use maria_mv as mv;
 
+// ── Emulator (EMULATOR.md) — Hardware-Software Emulator; R0: MHIR ──
+// `maria::emu::mhir::*` di main.rs tetap valid via re-export.
+pub use maria_emu as emu;
+
 // ── New Module Structure ──
 // frontend/cache/micd/hir/mir/profiling + scheduler(task cluster) →
 // maria-compiler (crates/) — lihat migrasi monorepo.
@@ -142,25 +146,44 @@ pub fn read_project_file(path: &str) -> Result<Vec<String>, SimError> {
     let content = fs::read_to_string(path)
         .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("cannot read '{}': {}", path, e)))?;
     let base = Path::new(path).parent().unwrap_or(Path::new("."));
-    let mut in_foreign = false;
+    // Section `[...]` di project file .maria ([foreign] untuk library
+    // VHPI/PLI/DPI, dan header lain) — header DAN isi section (baris
+    // `key = value`) bukan file .sv. Konvensi: daftar file dulu, section di
+    // akhir — setelah header section pertama, sisanya di-skip. [foreign]
+    // di-parse terpisah oleh read_project_with_foreign.
+    let mut in_section = false;
+    let mut skipped_templates = 0usize;
     let files: Vec<String> = content
         .lines()
         .map(|l| l.trim())
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .filter(|l| {
-            // Bagian `[foreign]` (poin 9 arsitektur user) bukan file .sv —
-            // di-skip di sini, di-parse read_project_with_foreign.
             if l.starts_with('[') && l.ends_with(']') {
-                in_foreign = l.trim_matches(['[', ']']).trim() == "foreign";
+                in_section = true;
                 return false;
             }
-            !in_foreign
+            !in_section
+        })
+        .filter(|l| {
+            let p = base.join(l);
+            if maria_core::template::is_template_source(&p) {
+                skipped_templates += 1;
+                false
+            } else {
+                true
+            }
         })
         .map(|l| {
             let p = base.join(l);
             p.to_string_lossy().to_string()
         })
         .collect();
+    if skipped_templates > 0 {
+        eprintln!(
+            "warning: filelist '{}': melewati {} file template (*.tpl*) — bukan SystemVerilog",
+            path, skipped_templates
+        );
+    }
     if files.is_empty() {
         return Err(SimError::with_diag(
             DiagCode::ModuleNotFound,

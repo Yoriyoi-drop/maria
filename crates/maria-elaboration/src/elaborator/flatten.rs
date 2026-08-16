@@ -46,11 +46,24 @@ impl Elaborator {
             .map(|(i, m)| (m.name, i))
             .collect();
         let known_mods: Vec<Symbol> = self.design.modules.iter().map(|m| m.name).collect();
+        // ── Perbaikan global (hierarchy tree): simpan instance top ──
+        // `flatten_instances_inner` memakai `std::mem::take(&mut top.sub_instances)`
+        // dan TIDAK pernah mengembalikannya → `IrDesign.top.sub_instances`
+        // SELALU kosong setelah elaborasi. Akibatnya melab `--tree`, hierarchy
+        // tree debugger, dan outline GUI tidak pernah menampilkan anak top
+        // (hanya root), dan distributed partitioner selalu jatuh ke jalur
+        // single-partition (instance partitioning mati). Clone daftar asli
+        // SEBELUM flatten dan kembalikan setelah selesai — hierarki asli
+        // (instance + line/col) tetap tersedia di IrDesign.top. Biaya: satu
+        // clone list instance top (kecil).
+        let saved_instances = top.sub_instances.clone();
         let mut chain = Vec::new();
         let mut map = self.flatten_instances_inner(top, &mut chain, &module_index, &known_mods)?;
         // F28 post-pass: proses job alias hier port interface SETELAH semua
         // instance ter-flatten — tidak bergantung pada urutan sub_instances
         // (instance interface boleh muncul setelah child module di AST).
+        // Kembalikan daftar instance asli top (lihat komentar di atas).
+        top.sub_instances = saved_instances;
         let jobs = std::mem::take(&mut self.iface_alias_jobs);
         for (port_name, iface_name, inst_path) in jobs {
             let Some(iface) = self

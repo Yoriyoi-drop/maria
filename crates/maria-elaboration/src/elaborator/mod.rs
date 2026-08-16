@@ -161,6 +161,16 @@ const BUILTIN_UVM_CLASSES: &[&str] = &[
     "uvm_report_object",
     "uvm_factory",
     "uvm_resource_db",
+    // VERIF-03: uvm_cmdline_processor — singleton pembaca plusarg CLI.
+    "uvm_cmdline_processor",
+    // VERIF-12: uvm_printer / uvm_table_printer — format object jadi tabel.
+    "uvm_printer",
+    "uvm_table_printer",
+    // VERIF-13: uvm_comparator / uvm_in_order_comparator — pembanding TLM.
+    "uvm_comparator",
+    "uvm_in_order_comparator",
+    // VERIF-15: uvm_heartbeat — monitor liveness object.
+    "uvm_heartbeat",
 ];
 
 /// Kumpulkan nama module yang diinstansiasi dari daftar ModuleItem,
@@ -347,13 +357,18 @@ impl Elaborator {
             // (OpenTitan: `tl_main_pkg` ada di top_darjeeling + top_earlgrey +
             // top_englishbreakfast dengan item yang BERBEDA — mis.
             // `ADDR_SPACE_ROM_CTRL0__ROM` hanya ada di copy darjeeling).
-            // Overwrite total membuat referensi `tl_main_pkg::X` dari top yang
-            // bukan copy pertama gagal "not found in package". MERGE
-            // first-wins: item yang sudah ada dipertahankan, item baru (unik
-            // per copy) ditambahkan.
+            // MODULE di-dedup "tie → definisi TERAKHIR" (lihat blok dedup
+            // module); package harus konsisten dengan pilihan module, jadi
+            // item yang berkonflik memakai definisi TERAKHIR (bukan
+            // first-wins). Sebelumnya first-wins membuat package = varian
+            // top PERTAMA di filelist (darjeeling) sedangkan module =
+            // varian TERAKHIR (englishbreakfast) → `hw2reg.recov_err_code.
+            // io_div4_measure_err.d` di clkmgr tidak ter-resolve (struct
+            // `clkmgr_hw2reg_recov_err_code_reg_t` varian pertama cuma 5
+            // field, tidak punya io_div4_measure_err) → E2001.
             let pkg_items = package_symbols.entry(pkg.name).or_default();
             for (k, v) in items {
-                pkg_items.entry(k).or_insert(v);
+                pkg_items.insert(k, v);
             }
         }
         // Second pass: resolve imports within packages
@@ -1351,6 +1366,12 @@ let mut top = match self.modules.remove(&top_name) {
                         cls.extends = Some(Symbol::intern("__uvm_analysis_export"))
                     }
                     Some("uvm_subscriber") => cls.extends = Some(Symbol::intern("__uvm_subscriber")),
+                    // VERIF-13: uvm_comparator / uvm_in_order_comparator.
+                    Some("uvm_comparator") | Some("uvm_in_order_comparator") => {
+                        cls.extends = Some(Symbol::intern("__uvm_comparator"))
+                    }
+                    // VERIF-15: uvm_heartbeat.
+                    Some("uvm_heartbeat") => cls.extends = Some(Symbol::intern("__uvm_heartbeat")),
                     Some("uvm_tlm_fifo") => cls.extends = Some(Symbol::intern("__uvm_tlm_fifo")),
                     Some("uvm_seq_item_port") => {
                         cls.extends = Some(Symbol::intern("__uvm_seq_item_port"))
@@ -1582,6 +1603,32 @@ let mut top = match self.modules.remove(&top_name) {
             // `new` di-dispatch builtin (auto-buat analysis_imp child + set
             // field `analysis_imp`); `write` user override jalan normal
             // (pattern override-check di method.rs); tanpa override → no-op.
+            classes.insert(
+                Symbol::intern("__uvm_heartbeat"),
+                IrClassDef {
+                    name: Symbol::intern("__uvm_heartbeat"),
+                    extends: Some(Symbol::intern("__uvm_component")),
+                    type_params: vec![],
+                    fields: vec![],
+                    methods: vec![],
+                    constraints: vec![],
+                    rand_fields: vec![],
+                    lets: vec![],
+                },
+            );
+            classes.insert(
+                Symbol::intern("__uvm_comparator"),
+                IrClassDef {
+                    name: Symbol::intern("__uvm_comparator"),
+                    extends: Some(Symbol::intern("__uvm_component")),
+                    type_params: vec![],
+                    fields: vec![],
+                    methods: vec![],
+                    constraints: vec![],
+                    rand_fields: vec![],
+                    lets: vec![],
+                },
+            );
             classes.insert(
                 Symbol::intern("__uvm_subscriber"),
                 IrClassDef {
@@ -4519,6 +4566,7 @@ impl Elaborator {
                                 expr,
                             )
                         }),
+                    PortConnection::Unconnected { .. } => None,
                 };
                 if let Some((true, e)) = out_like {
                     self.implicit_declare_port_idents(
@@ -4794,6 +4842,8 @@ impl Elaborator {
                             let expr = match conn {
                                 PortConnection::Positional(e) => e,
                                 PortConnection::Named { expr, .. } => expr,
+                                // Port UDP tak terhubung — lewati.
+                                PortConnection::Unconnected { .. } => continue,
                             };
                             let sid = self.instance_port_expr_to_signal(
                                 expr,
@@ -4932,6 +4982,12 @@ impl Elaborator {
                                     )?;
                                     port_map.insert(*port, sig_id);
                                 }
+                                // Port tak terhubung (`.port()`): TIDAK buat
+                                // stub/port_assign (bukan literal 0!) — port
+                                // child tetap internal: output didorong child,
+                                // input mengambang Z/X. port_map tanpa entry →
+                                // flatten mempertahankan signal port child.
+                                PortConnection::Unconnected { .. } => {}
                             }
                         }
                         // Resolve parameter overrides to integer values

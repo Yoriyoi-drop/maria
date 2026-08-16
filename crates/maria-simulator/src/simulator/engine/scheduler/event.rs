@@ -4,6 +4,7 @@ use maria_core::diagnostics::DiagCode;
 use maria_ir::*;
 use crate::simulator::types::*;
 use crate::simulator::parallel;
+use std::sync::Arc;
 
 /// Apakah sensitivity process terpenuhi oleh perubahan signal `changed`.
 /// Entry range (msb/lsb Some) hanya terpicu bila SLICE tsb berubah; entry
@@ -53,6 +54,24 @@ impl SimulationEngine {
                 };
                 self.current_process_name = Some(pname.to_string());
                 self.current_instance_path = Some(self.design.top.name.to_string());
+
+                let kind = match &process {
+                    Process::Combinational { .. } => "always_comb",
+                    Process::CombReactive { .. } => "always_comb_reactive",
+                    Process::Sequential { .. } => "always_ff",
+                    Process::Initial { .. } => "initial",
+                    Process::Final { .. } => "final",
+                    Process::AlwaysWithDelay { .. } => "always",
+                };
+                crate::dbg_sim!(
+                    1,
+                    "t={} delta={} eval pid={} kind={} '{}'",
+                    t,
+                    self.current_delta,
+                    pid,
+                    kind,
+                    pname
+                );
 
                 match &process {
                     Process::Initial { body, .. } => {
@@ -190,6 +209,16 @@ impl SimulationEngine {
                 }
                 // Re-suspend: pertahankan konteks — ContinueAstBlock berikutnya
                 // sudah menyimpan this/method baru di titik suspend-nya.
+            }
+            // WAV-13: commit tertunda dari write signal ber-annotasi SDF delay
+            // (dijadwalkan `write_lvalue` saat delay_rise/delay_fall > 0).
+            // Commit memakai helper yang sama dengan jalur write langsung
+            // (multi-driver resolution + record_signal_change) sehingga proses
+            // sensitive ikut terpicu pada waktu yang benar (t+delay).
+            EventKind::SdfDelayedWrite { sig_id, value } => {
+                if sig_id < self.design.top.signals.len() {
+                    self.commit_delayed_signal_write(sig_id, value)?;
+                }
             }
         }
         Ok(())
@@ -499,43 +528,141 @@ impl SimulationEngine {
         }
 
         // If enough processes to parallelize and config allows it, use parallel eval
+        crate::dbg_sim!(
+            2,
+            "t={} delta={} trigger_sensitive: {} comb process(es), {} changed",
+            self.current_time,
+            self.current_delta,
+            comb_indices.len(),
+            changed.len()
+        );
         if comb_indices.len() >= self.parallel_config.min_processes_parallel
             && self.parallel_config.parallel_processes
         {
             use rayon::prelude::*;
             let signal_count = self.state.signals.len();
-            let snapshot: Vec<LogicVec> = (0..signal_count)
-                .map(|i| self.state.read_signal(i).clone())
-                .collect();
-            let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = comb_indices
-                .par_iter()
-                .map(|&pid| {
-                    let process = &processes[pid];
-                    if let Process::Combinational { body, .. } = process {
-                        let mut local_signals = snapshot.clone();
-                        let mut writes = Vec::new();
-                        match parallel::evaluate_stmt_block_parallel(
-                            body,
-                            &mut local_signals,
-                            &mut writes,
-                            &self.design.top.signals,
-                        ) {
-                            Ok(()) => {
-                                // Apply writes from parallel eval
-                                Ok(writes)
-                            }
-                            Err(e) => Err(SimError::with_diag(DiagCode::InternalError, format!("parallel eval error: {}", e))),
-                        }
-                    } else {
-                        Ok(Vec::new())
-                    }
-                })
-                .collect();
 
-            for result in results {
-                let writes = result?;
-                for (sig_id, val) in writes {
-                    self.state.write_signal(sig_id, val);
+            // ── SIM-28: snapshot SPARSE ──
+            // Bangun cache akses per-process sekali (lazy). Bila ada process
+            // dengan akses tak-resolve (HierRef dll) → mode FULL (snapshot
+            // seluruh sinyal). Bila semua ter-resolve → mode SPARSE: base
+            // hanya berisi UNION sinyal yang diakses process terpicu —
+            // per-process setup O(0) (overlay kosong), bukan clone O(S).
+            if !self.comb_access_ready {
+                self.comb_access = self
+                    .design
+                    .top
+                    .processes
+                    .iter()
+                    .map(crate::scheduler::sim_dag::analyze_process_access)
+                    .collect();
+                self.comb_access_ready = true;
+            }
+            let needs_full = comb_indices.iter().any(|&pid| {
+                self.comb_access
+                    .get(pid)
+                    .map(|a| a.has_unresolved)
+                    .unwrap_or(true)
+            });
+
+            let dbg_t = self.current_time;
+            let dbg_delta = self.current_delta;
+            if needs_full {
+                // ── Mode FULL: snapshot seluruh sinyal (Arc, clone sekali) ──
+                let snapshot: Vec<Arc<LogicVec>> = (0..signal_count)
+                    .map(|i| Arc::new(self.state.read_signal(i).clone()))
+                    .collect();
+                let identity: Vec<Option<usize>> = (0..signal_count).map(Some).collect();
+                crate::dbg_sim!(2, "  sparse=off (unresolved access) full-snapshot {} sig", signal_count);
+                let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = comb_indices
+                    .par_iter()
+                    .map(|&pid| {
+                        let process = &processes[pid];
+                        if let Process::Combinational { body, .. } = process {
+                            crate::dbg_sim!(3, "t={} delta={} par-eval pid={}", dbg_t, dbg_delta, pid);
+                            let mut overlay = std::collections::HashMap::new();
+                            let mut view = parallel::SignalView::new(&snapshot, &identity, &mut overlay);
+                            let mut writes = Vec::new();
+                            match parallel::evaluate_stmt_block_parallel(
+                                body,
+                                &mut view,
+                                &mut writes,
+                                &self.design.top.signals,
+                            ) {
+                                Ok(()) => Ok(writes),
+                                Err(e) => Err(SimError::with_diag(DiagCode::InternalError, format!("parallel eval error: {}", e))),
+                            }
+                        } else {
+                            Ok(Vec::new())
+                        }
+                    })
+                    .collect();
+                for result in results {
+                    let writes = result?;
+                    for (sig_id, val) in writes {
+                        self.state.write_signal(sig_id, val);
+                    }
+                }
+            } else {
+                // ── Mode SPARSE: base = union sinyal yang diakses ──
+                let mut needed = vec![false; signal_count];
+                for &pid in &comb_indices {
+                    if let Some(a) = self.comb_access.get(pid) {
+                        for &r in &a.reads {
+                            if r < signal_count {
+                                needed[r] = true;
+                            }
+                        }
+                        for &w in &a.writes {
+                            if w < signal_count {
+                                needed[w] = true;
+                            }
+                        }
+                    }
+                }
+                let mut id_map: Vec<Option<usize>> = vec![None; signal_count];
+                let mut base: Vec<Arc<LogicVec>> = Vec::new();
+                for i in 0..signal_count {
+                    if needed[i] {
+                        id_map[i] = Some(base.len());
+                        base.push(Arc::new(self.state.read_signal(i).clone()));
+                    }
+                }
+                crate::dbg_sim!(
+                    2,
+                    "  sparse: base {} sig dari {} (union akses), {} process",
+                    base.len(),
+                    signal_count,
+                    comb_indices.len()
+                );
+                let results: Vec<Result<Vec<(SignalId, LogicVec)>, SimError>> = comb_indices
+                    .par_iter()
+                    .map(|&pid| {
+                        let process = &processes[pid];
+                        if let Process::Combinational { body, .. } = process {
+                            crate::dbg_sim!(3, "t={} delta={} par-eval pid={}", dbg_t, dbg_delta, pid);
+                            let mut overlay = std::collections::HashMap::new();
+                            let mut view = parallel::SignalView::new(&base, &id_map, &mut overlay);
+                            let mut writes = Vec::new();
+                            match parallel::evaluate_stmt_block_parallel(
+                                body,
+                                &mut view,
+                                &mut writes,
+                                &self.design.top.signals,
+                            ) {
+                                Ok(()) => Ok(writes),
+                                Err(e) => Err(SimError::with_diag(DiagCode::InternalError, format!("parallel eval error: {}", e))),
+                            }
+                        } else {
+                            Ok(Vec::new())
+                        }
+                    })
+                    .collect();
+                for result in results {
+                    let writes = result?;
+                    for (sig_id, val) in writes {
+                        self.state.write_signal(sig_id, val);
+                    }
                 }
             }
         } else {
@@ -543,6 +670,13 @@ impl SimulationEngine {
             for &pid in &comb_indices {
                 let process = &processes[pid];
                 if let Process::Combinational { body, .. } = process {
+                    crate::dbg_sim!(
+                        3,
+                        "t={} delta={} seq-eval pid={}",
+                        self.current_time,
+                        self.current_delta,
+                        pid
+                    );
                     self.evaluate_stmt_block(body)?;
                 }
             }

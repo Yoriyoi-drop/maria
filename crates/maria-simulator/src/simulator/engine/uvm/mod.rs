@@ -1,5 +1,6 @@
 pub mod hierarchy;
 pub mod method;
+pub mod cmdline;
 pub mod builtin;
 pub mod util;
 pub mod constraint_solver;
@@ -10,3 +11,6 @@ pub mod component;
 pub mod reg;
 pub mod fifo;
 pub mod seq;
+pub mod printer;
+pub mod comparator;
+pub mod heartbeat;

@@ -2,6 +2,68 @@ use maria_core::error::SimError;
 use maria_ir::{BinaryIrOp, CaseType, IrExpr, IrLValue, IrStmt, LogicVal, LogicVec, SignalId, SignalInfo};
 use crate::simulator::util::{is_signed_expr, string_to_logicvec};
 use crate::simulator::value::*;
+use std::sync::Arc;
+
+/// Pandangan sinyal untuk evaluasi paralel (SIM-28): base array + peta id
+/// global→lokal + overlay tulis per-process. Per-process setup = O(0) (tanpa
+/// clone seluruh sinyal). Baca: overlay dulu, lalu base via id_map. Tulis:
+/// ke overlay (copy-on-write). Sinyal sintetis (Foreach) memakai id >=
+/// id_map.len() agar tidak pernah bentrok dengan id sinyal global.
+pub struct SignalView<'a> {
+    base: &'a [Arc<LogicVec>],
+    id_map: &'a [Option<usize>],
+    overlay: &'a mut std::collections::HashMap<usize, Arc<LogicVec>>,
+    next_synth: usize,
+}
+
+impl<'a> SignalView<'a> {
+    pub fn new(
+        base: &'a [Arc<LogicVec>],
+        id_map: &'a [Option<usize>],
+        overlay: &'a mut std::collections::HashMap<usize, Arc<LogicVec>>,
+    ) -> Self {
+        SignalView {
+            base,
+            id_map,
+            overlay,
+            next_synth: id_map.len(),
+        }
+    }
+
+    #[inline]
+    pub fn get(&self, id: usize) -> Option<&Arc<LogicVec>> {
+        if let Some(v) = self.overlay.get(&id) {
+            return Some(v);
+        }
+        if id < self.id_map.len() {
+            match self.id_map[id] {
+                Some(i) => self.base.get(i),
+                None => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Tulis sinyal ke overlay local process (copy-on-write).
+    #[inline]
+    pub fn set(&mut self, id: usize, val: Arc<LogicVec>) {
+        self.overlay.insert(id, val);
+    }
+
+    /// Id sintetis berikutnya untuk Foreach (>= id_map.len()).
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.next_synth
+    }
+
+    /// Push sinyal sintetis (Foreach index variable) ke overlay.
+    #[inline]
+    pub fn push(&mut self, val: Arc<LogicVec>) {
+        self.overlay.insert(self.next_synth, val);
+        self.next_synth += 1;
+    }
+}
 
 /// Configuration for parallel execution
 #[derive(Debug, Clone, Copy)]
@@ -42,7 +104,7 @@ impl Default for ParallelConfig {
 /// parallel eval default-on untuk Process::Combinational.
 pub fn evaluate_expr_simple(
     expr: &IrExpr,
-    signals: &[LogicVec],
+    signals: &SignalView,
     sig_info: &[SignalInfo],
 ) -> Result<LogicVec, SimError> {
     match expr {
@@ -50,7 +112,7 @@ pub fn evaluate_expr_simple(
         IrExpr::FillLit(val) => Ok(LogicVec::fill(*val, 1)),
         IrExpr::Signal(id, _) => Ok(signals
             .get(*id)
-            .cloned()
+            .map(|a| (**a).clone())
             .unwrap_or_else(|| LogicVec::new(1))),
         IrExpr::RangeSelect(sig_id, msb, lsb) => {
             if let Some(val) = signals.get(*sig_id) {
@@ -59,8 +121,11 @@ pub fn evaluate_expr_simple(
                 } else {
                     (*msb, *lsb)
                 };
-                if end >= val.width {
-                    return Ok(LogicVec::new(1));
+                // Guard OOB lengkap (start & end & bits.len) — selain panic,
+                // LogicVec dengan width>0 tapi bits kosong pernah muncul.
+                let n = val.bits.len();
+                if n == 0 || start >= n || end >= n || start > end {
+                    return Ok(LogicVec::fill(LogicVal::X, (end - start + 1).max(1)));
                 }
                 let bits = val.bits[start..=end].to_vec();
                 Ok(LogicVec {
@@ -74,7 +139,7 @@ pub fn evaluate_expr_simple(
         IrExpr::BitSelect(sig_id, idx) => {
             let val = signals
                 .get(*sig_id)
-                .cloned()
+                .map(|a| (**a).clone())
                 .unwrap_or_else(|| LogicVec::new(1));
             let bit = val.bits.get(*idx).copied().unwrap_or(LogicVal::X);
             Ok(LogicVec {
@@ -89,8 +154,9 @@ pub fn evaluate_expr_simple(
             } else {
                 (*msb, *lsb)
             };
-            if end >= val.width {
-                return Ok(LogicVec::new(1));
+            let n = val.bits.len();
+            if n == 0 || start >= n || end >= n || start > end {
+                return Ok(LogicVec::fill(LogicVal::X, (end - start + 1).max(1)));
             }
             let bits = val.bits[start..=end].to_vec();
             Ok(LogicVec {
@@ -110,10 +176,11 @@ pub fn evaluate_expr_simple(
             let val = evaluate_expr_simple(inner, signals, sig_info)?;
             let base = evaluate_expr_simple(base_expr, signals, sig_info)?.to_u64() as usize;
             let width = evaluate_expr_simple(width_expr, signals, sig_info)?.to_u64() as usize;
-            if width == 0 || base >= val.width {
+            let n = val.bits.len();
+            if n == 0 || width == 0 || base >= n {
                 return Ok(LogicVec::new(1));
             }
-            let end = (base + width - 1).min(val.width - 1);
+            let end = (base + width - 1).min(n - 1);
             let bits = val.bits[base..=end].to_vec();
             Ok(LogicVec {
                 width: bits.len(),
@@ -130,8 +197,13 @@ pub fn evaluate_expr_simple(
             if let Some(array_val) = signals.get(*sig_id) {
                 let start = idx * elem_width;
                 let end = start + elem_width - 1;
+                // SELALU hasilkan elem_width bit — index OOB di-pad X (sama
+                // dengan jalur serial eval/expr.rs). Versi lama membatasi loop
+                // ke array_val.width sehingga index OOB menghasilkan `bits`
+                // KOSONG tapi width=elem_width>0 → panic di value.rs:28
+                // (to_bitmasks) saat hasilnya dipakai op berikutnya.
                 let mut bits = Vec::with_capacity(*elem_width);
-                for i in start..=end.min(array_val.width.saturating_sub(1)) {
+                for i in start..=end {
                     bits.push(array_val.bits.get(i).copied().unwrap_or(LogicVal::X));
                 }
                 Ok(LogicVec {
@@ -222,7 +294,7 @@ pub fn evaluate_expr_simple(
 /// This is the parallel-safe version that doesn't need SimulationEngine or IrDesign.
 pub fn evaluate_stmt_block_parallel(
     stmts: &[IrStmt],
-    signals: &mut Vec<LogicVec>,
+    signals: &mut SignalView,
     writes: &mut Vec<(SignalId, LogicVec)>,
     sig_info: &[SignalInfo],
 ) -> Result<(), SimError> {
@@ -370,9 +442,9 @@ pub fn evaluate_stmt_block_parallel(
                 };
                 let num_elems = arr_val.width.checked_div(elem_width).unwrap_or(0);
                 let idx_sig = signals.len();
-                signals.push(LogicVec::from_u64(0, 32));
+                signals.push(Arc::new(LogicVec::from_u64(0, 32)));
                 for i in 0..num_elems.min(10_000) {
-                    signals[idx_sig] = LogicVec::from_u64(i as u64, 32);
+                    signals.set(idx_sig, Arc::new(LogicVec::from_u64(i as u64, 32)));
                     evaluate_stmt_block_parallel(body, signals, writes, sig_info)?;
                 }
             }
@@ -393,7 +465,7 @@ pub fn evaluate_stmt_block_parallel(
 fn eval_assign_rhs_simple(
     expr: &IrExpr,
     lhs: &IrLValue,
-    signals: &[LogicVec],
+    signals: &SignalView,
     sig_info: &[SignalInfo],
 ) -> Result<LogicVec, SimError> {
     if let IrExpr::FillLit(v) = expr {
@@ -416,7 +488,7 @@ fn eval_assign_rhs_simple(
 /// Get lvalue width (no design reference)
 fn get_lvalue_width_simple(
     lvalue: &IrLValue,
-    signals: &[LogicVec],
+    signals: &SignalView,
     sig_info: &[SignalInfo],
 ) -> usize {
     match lvalue {
@@ -459,7 +531,7 @@ fn get_lvalue_width_simple(
 fn write_lvalue_simple(
     lvalue: &IrLValue,
     val: LogicVec,
-    signals: &mut Vec<LogicVec>,
+    signals: &mut SignalView,
     writes: &mut Vec<(SignalId, LogicVec)>,
     sig_info: &[SignalInfo],
 ) -> Result<(), SimError> {
@@ -471,9 +543,14 @@ fn write_lvalue_simple(
             } else {
                 val
             };
-            if *id < signals.len() {
-                signals[*id] = resized.clone();
-            }
+            // Defensif: normalisasi nilai korup (width>0 tapi bits kosong)
+            // agar tidak mencemari state dan memicu panic di jalur eval lain.
+            let resized = if resized.width > 0 && resized.bits.is_empty() {
+                LogicVec::fill(LogicVal::X, resized.width)
+            } else {
+                resized
+            };
+            signals.set(*id, Arc::new(resized.clone()));
             writes.push((*id, resized));
         }
         IrLValue::RangeSelect(sig_id, msb, lsb) => {
@@ -484,28 +561,24 @@ fn write_lvalue_simple(
             };
             let mut existing = signals
                 .get(*sig_id)
-                .cloned()
+                .map(|a| (**a).clone())
                 .unwrap_or_else(|| LogicVec::new(1));
             for i in start..=end.min(existing.width.saturating_sub(1)) {
                 let src_idx = if *msb > *lsb { end - i } else { i - start };
                 existing.bits[i] = val.bits.get(src_idx).copied().unwrap_or(LogicVal::X);
             }
-            if *sig_id < signals.len() {
-                signals[*sig_id] = existing.clone();
-            }
+            signals.set(*sig_id, Arc::new(existing.clone()));
             writes.push((*sig_id, existing));
         }
         IrLValue::BitSelect(sig_id, idx) => {
             let mut existing = signals
                 .get(*sig_id)
-                .cloned()
+                .map(|a| (**a).clone())
                 .unwrap_or_else(|| LogicVec::new(1));
             if *idx < existing.width {
                 existing.bits[*idx] = val.bits.first().copied().unwrap_or(LogicVal::X);
             }
-            if *sig_id < signals.len() {
-                signals[*sig_id] = existing.clone();
-            }
+            signals.set(*sig_id, Arc::new(existing.clone()));
             writes.push((*sig_id, existing));
         }
         IrLValue::ArrayIndex {
@@ -517,7 +590,7 @@ fn write_lvalue_simple(
             let idx_u64 = idx_val.to_u64() as usize;
             let mut existing = signals
                 .get(*sig_id)
-                .cloned()
+                .map(|a| (**a).clone())
                 .unwrap_or_else(|| LogicVec::new(1));
             let start = idx_u64 * elem_width;
             for i in 0..*elem_width {
@@ -525,9 +598,7 @@ fn write_lvalue_simple(
                     existing.bits[start + i] = val.bits.get(i).copied().unwrap_or(LogicVal::X);
                 }
             }
-            if *sig_id < signals.len() {
-                signals[*sig_id] = existing.clone();
-            }
+            signals.set(*sig_id, Arc::new(existing.clone()));
             writes.push((*sig_id, existing));
         }
         IrLValue::ExprPartSelect {
@@ -539,16 +610,14 @@ fn write_lvalue_simple(
             let start = idx_val.to_u64() as usize;
             let mut existing = signals
                 .get(*sig_id)
-                .cloned()
+                .map(|a| (**a).clone())
                 .unwrap_or_else(|| LogicVec::new(1));
             for i in 0..*width {
                 if start + i < existing.width {
                     existing.bits[start + i] = val.bits.get(i).copied().unwrap_or(LogicVal::X);
                 }
             }
-            if *sig_id < signals.len() {
-                signals[*sig_id] = existing.clone();
-            }
+            signals.set(*sig_id, Arc::new(existing.clone()));
             writes.push((*sig_id, existing));
         }
         IrLValue::Concat(items) => {

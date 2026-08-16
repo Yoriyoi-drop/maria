@@ -609,6 +609,24 @@ impl SimulationEngine {
         }
     }
 
+    pub(crate) fn is_uvm_cmdline_hierarchy(&self, class_name: &str) -> bool {
+        // VERIF-03: uvm_cmdline_processor — singleton pembaca plusarg.
+        // Class user (`my_cmdline extends uvm_cmdline_processor`) juga masuk.
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_cmdline_processor" || current == "uvm_cmdline_processor" {
+                return true;
+            }
+            match self.design.classes.get(&Symbol::intern(current)) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
     pub(crate) fn is_uvm_monitor_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
@@ -645,6 +663,30 @@ impl SimulationEngine {
         let mut current = class_name;
         loop {
             if current == "__uvm_analysis_imp" {
+                return true;
+            }
+            match self.design.classes.get(&Symbol::intern(current)) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    // VERIF-12: uvm_printer / uvm_table_printer — telusur extends chain ke
+    // `__uvm_table_printer` / `uvm_table_printer` / `__uvm_printer` /
+    // `uvm_printer` (class user `my_printer extends uvm_table_printer` juga
+    // masuk). Method print_object dioverride user → jalur normal (method.rs
+    // hanya intercept bila tidak dioverride).
+    pub(crate) fn is_uvm_printer_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if matches!(
+                current,
+                "__uvm_printer" | "uvm_printer" | "__uvm_table_printer" | "uvm_table_printer"
+            ) {
                 return true;
             }
             match self.design.classes.get(&Symbol::intern(current)) {
@@ -697,6 +739,44 @@ impl SimulationEngine {
         let mut current = class_name;
         loop {
             if current == "__uvm_fifo_export" {
+                return true;
+            }
+            match self.design.classes.get(&Symbol::intern(current)) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    // VERIF-15: uvm_heartbeat — telusur extends chain ke `__uvm_heartbeat`.
+    pub(crate) fn is_uvm_heartbeat_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_heartbeat" || current == "uvm_heartbeat" {
+                return true;
+            }
+            match self.design.classes.get(&Symbol::intern(current)) {
+                Some(c) => match &c.extends {
+                    Some(parent) => current = parent.as_str(),
+                    None => return false,
+                },
+                None => return false,
+            }
+        }
+    }
+
+    // VERIF-13: uvm_comparator / uvm_in_order_comparator — telusur extends
+    // chain ke `__uvm_comparator` / `uvm_in_order_comparator`.
+    pub(crate) fn is_uvm_comparator_hierarchy(&self, class_name: &str) -> bool {
+        let mut current = class_name;
+        loop {
+            if current == "__uvm_comparator"
+                || current == "uvm_comparator"
+                || current == "uvm_in_order_comparator"
+            {
                 return true;
             }
             match self.design.classes.get(&Symbol::intern(current)) {

@@ -643,7 +643,35 @@ impl CompileSession {
 
     fn discover_files(&mut self) -> Result<Vec<PathBuf>, SimError> {
         if !self.config.sources.is_empty() {
-            return Ok(self.config.sources.clone());
+            // File template (*.tpl*) bukan SystemVerilog — di-skip global.
+            // Sebagian besar jalur (filelist/tool) sudah memfilter di source
+            // discovery; filter ini pengaman terakhir untuk pemanggil API yang
+            // memasang sources manual.
+            let has_tpl = self
+                .config
+                .sources
+                .iter()
+                .any(|p| maria_core::template::is_template_source(p));
+            let files: Vec<PathBuf> = self
+                .config
+                .sources
+                .iter()
+                .filter(|p| !maria_core::template::is_template_source(p))
+                .cloned()
+                .collect();
+            if has_tpl && files.is_empty() {
+                return Err(SimError::with_diag(
+                    DiagCode::ModuleNotFound,
+                    "semua source file adalah template (*.tpl*) — bukan SystemVerilog",
+                ));
+            }
+            if has_tpl {
+                eprintln!(
+                    "warning: compile: melewati {} file template (*.tpl*) — bukan SystemVerilog",
+                    self.config.sources.len() - files.len()
+                );
+            }
+            return Ok(files);
         }
         if self.config.auto_incdirs {
             let result = FileDiscovery::scan_dir(".", &DiscoveryOptions::default());

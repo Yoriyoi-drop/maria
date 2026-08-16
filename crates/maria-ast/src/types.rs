@@ -572,8 +572,21 @@ pub struct CrossDef {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BinDef {
     pub name: Symbol,
-    pub range_list: Vec<Expr>,
+    pub range_list: Vec<BinRange>,
     pub bin_type: BinType,
+    /// Transition bins `(a => b => ...)` — VERIF-31: tiap Vec<Expr> = satu
+    /// sekuens nilai transisi (panjang 2 = kasus umum `prev => curr`).
+    pub transitions: Vec<Vec<Expr>>,
+}
+
+/// Satu range nilai dalam bin: `[lo:hi]` (high Some) atau nilai tunggal
+/// (high None). Representasi terpisah agar `{[1:5]}` (satu range) tidak
+/// ambigu dengan `{1, 5}` (dua nilai) — sebelumnya dua expr didorong ke
+/// Vec<Expr> tanpa penanda range (VERIF-30).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BinRange {
+    pub low: Expr,
+    pub high: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -832,6 +845,11 @@ pub struct ModuleInstance {
 pub enum PortConnection {
     Positional(Expr),
     Named { port: Symbol, expr: Expr },
+    /// Koneksi port KOSONG (`.data_o()`) = TIDAK terhubung (LRM 1800 §23.3.2.6).
+    /// Input yang tak terhubung mengambang (Z/X); output yang tak terhubung
+    /// hanya didorong sisi child. JANGAN diubah jadi literal 0 (konflik
+    /// multiple-driver → osilasi, terlihat di `prim_secded` checkers OpenTitan).
+    Unconnected { port: Symbol },
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

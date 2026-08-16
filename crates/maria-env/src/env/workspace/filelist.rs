@@ -58,7 +58,11 @@ fn parse_into(
             parse_into(&nested, out, visited)?;
             continue;
         }
-        out.files.push(base.join(trimmed));
+        let p = base.join(trimmed);
+        if maria_core::template::is_template_source(&p) {
+            continue;
+        }
+        out.files.push(p);
     }
     Ok(())
 }

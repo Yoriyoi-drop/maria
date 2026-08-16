@@ -73,6 +73,9 @@ impl FileDiscovery {
         }) {
             if let Ok(entry) = entry {
                 if entry.file_type().is_file() {
+                    if maria_core::template::is_template_source(entry.path()) {
+                        continue;
+                    }
                     if let Some(ext) = entry.path().extension() {
                         if let Some(ext_str) = ext.to_str() {
                             if extensions.contains(&ext_str) {
@@ -145,12 +148,42 @@ impl FileDiscovery {
             .map_err(|e| format!("cannot read '{}': {}", path.display(), e))?;
 
         let base = path.parent().unwrap_or(Path::new("."));
+        let mut skipped_templates = 0usize;
+        // Section header `[...]` di project file .maria ([foreign], dll):
+        // header DAN semua isi section (baris `key = value`) BUKAN path file.
+        // Tanpa ini, `[foreign]`/`vhpi = [...]` dianggap file → E0004 palsu di
+        // semua tool yang memakai scan_file_list (collect_targets). Pola sama
+        // dengan maria-api::read_project_file. Konvensi: file list dulu,
+        // section di akhir — setelah section pertama, sisanya di-skip.
+        let mut in_section = false;
         let files: Vec<PathBuf> = content
             .lines()
             .map(|l| l.trim())
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .filter(|l| {
+                if l.starts_with('[') && l.ends_with(']') {
+                    in_section = true;
+                    return false;
+                }
+                !in_section
+            })
             .map(|l| base.join(l))
+            .filter(|p| {
+                if maria_core::template::is_template_source(p) {
+                    skipped_templates += 1;
+                    false
+                } else {
+                    true
+                }
+            })
             .collect();
+        if skipped_templates > 0 {
+            eprintln!(
+                "warning: filelist '{}': melewati {} file template (*.tpl*) — bukan SystemVerilog",
+                path.display(),
+                skipped_templates
+            );
+        }
 
         if files.is_empty() {
             return Err(format!("no files listed in '{}'", path.display()));
@@ -206,6 +239,25 @@ mod tests {
 
         let result = FileDiscovery::scan_file_list(&list_path).unwrap();
         assert_eq!(result.len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_scan_file_list_skips_section_headers() {
+        // Project file .maria dengan section `[foreign]` / header lain —
+        // header BUKAN path file; hanya baris .sv yang di-scan.
+        let dir = std::env::temp_dir().join("maria_test_discovery_sections");
+        let _ = std::fs::create_dir_all(&dir);
+        let list_path = dir.join("proj.maria");
+        std::fs::write(
+            &list_path,
+            "rtl/top.sv\n\n[foreign]\nvhpi = [\"libvhpi.so\"]\n\n[[emu.device]]\nname = \"u_uart\"\nmmio = 0x10000000\n",
+        )
+        .unwrap();
+
+        let result = FileDiscovery::scan_file_list(&list_path).unwrap();
+        assert_eq!(result.len(), 1, "hanya file .sv — header section di-skip");
+        assert!(result[0].ends_with("rtl/top.sv"), "got {:?}", result[0]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

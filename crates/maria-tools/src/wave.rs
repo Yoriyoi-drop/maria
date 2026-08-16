@@ -4,6 +4,10 @@
 //! - `merge`   — gabungkan beberapa VCD jadi satu (offset waktu kumulatif)
 //! - `export`  — VCD → CSV/TXT
 //! - `filter`  — pertahankan subset sinyal
+//! - `compare` — bandingkan 2 VCD (perbedaan nilai per signal, WAV-09)
+//! - `search`  — cari sinyal by pola wildcard (WAV-10)
+//! - `tree`    — index hierarki scope + sinyal (WAV-08)
+//! - `stats`   — statistik per sinyal: toggle, transitions, aktivitas (WAV-17)
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -45,6 +49,20 @@ pub enum WaveArgs {
         signals: Vec<String>,
         output: Option<String>,
     },
+    Compare {
+        a: String,
+        b: String,
+    },
+    Search {
+        input: String,
+        patterns: Vec<String>,
+    },
+    Tree {
+        input: String,
+    },
+    Stats {
+        input: String,
+    },
 }
 
 /// Jalankan mwave.
@@ -53,6 +71,10 @@ pub fn run(args: &WaveArgs) -> Result<(), SimError> {
         WaveArgs::Merge { inputs, output } => merge(inputs, output.as_deref()),
         WaveArgs::Export { input, format, output } => export(input, format, output.as_deref()),
         WaveArgs::Filter { input, signals, output } => filter(input, signals, output.as_deref()),
+        WaveArgs::Compare { a, b } => compare(a, b),
+        WaveArgs::Search { input, patterns } => search(input, patterns),
+        WaveArgs::Tree { input } => tree(input),
+        WaveArgs::Stats { input } => stats(input),
     }
 }
 
@@ -464,7 +486,573 @@ fn filter(input: &str, keep: &[String], output: Option<&str>) -> Result<(), SimE
     Ok(())
 }
 
+/// ── compare ──
+///
+/// Bandingkan dua VCD (WAV-09): untuk setiap signal yang ada di KEDUA file,
+/// bangun timeline nilai (time → value) dan laporkan:
+/// - jumlah waktu sampel di mana nilai berbeda (first mismatch + count),
+/// - signal yang hanya ada di salah satu file (missing),
+/// - range waktu yang dibandingkan (union dari kedua max_time).
+///
+/// Pendekatan deterministik: sample per detik/unit timescale gabungan.
+fn compare(a: &str, b: &str) -> Result<(), SimError> {
+    let da = parse_vcd(a)?;
+    let db = parse_vcd(b)?;
+    let r = compare_data(&da, &db);
+
+    // ── Laporan ──
+    println!("  compare {} vs {}", a, b);
+    println!("    timescale: {} vs {}", da.timescale, db.timescale);
+    println!(
+        "    signals:   {} vs {} ({} sinyal umum, {} hanya di A, {} hanya di B)",
+        da.signals.len(),
+        db.signals.len(),
+        r.common,
+        r.only_a.len(),
+        r.only_b.len()
+    );
+    println!("    max_time:  {} vs {}", r.max_time_a, r.max_time_b);
+    println!("    total mismatch: {}", r.mismatches.len());
+    for (name, t, fa, fb, cnt) in &r.mismatches {
+        let fa_s = if fa.len() == 1 { fa.clone() } else { format!("b{} ", fa) };
+        let fb_s = if fb.len() == 1 { fb.clone() } else { format!("b{} ", fb) };
+        println!(
+            "      {}  first t={}  a={} b={}  ({} sample berbeda)",
+            name, t, fa_s.trim_end(), fb_s.trim_end(), cnt
+        );
+    }
+    for n in &r.only_a {
+        println!("      [hanya di A] {}", n);
+    }
+    for n in &r.only_b {
+        println!("      [hanya di B] {}", n);
+    }
+    Ok(())
+}
+
+/// Hasil perbandingan dua VCD (dipisah dari pencetakan agar bisa diuji).
+struct CompareResult {
+    common: usize,
+    only_a: Vec<String>,
+    only_b: Vec<String>,
+    mismatches: Vec<(String, u64, String, String, usize)>,
+    max_time_a: u64,
+    max_time_b: u64,
+}
+
+/// Logika perbandingan dua VCD: timeline per signal, sample per unit waktu.
+fn compare_data(da: &VcdData, db: &VcdData) -> CompareResult {
+    // Indeks signal per nama penuh (scope.name).
+    let idx_a: HashMap<String, &VcdSignal> =
+        da.signals.iter().map(|s| (full_name(s), s)).collect();
+    let idx_b: HashMap<String, &VcdSignal> =
+        db.signals.iter().map(|s| (full_name(s), s)).collect();
+
+    // Timeline per signal: (time, value) terurut dari changes.
+    let mut tl_a: HashMap<String, Vec<(u64, String)>> = HashMap::new();
+    for (t, id, val) in &da.changes {
+        if let Some(sig) = da.signals.iter().find(|s| &s.id == id) {
+            tl_a.entry(full_name(sig)).or_default().push((*t, val.clone()));
+        }
+    }
+    let mut tl_b: HashMap<String, Vec<(u64, String)>> = HashMap::new();
+    for (t, id, val) in &db.changes {
+        if let Some(sig) = db.signals.iter().find(|s| &s.id == id) {
+            tl_b.entry(full_name(sig)).or_default().push((*t, val.clone()));
+        }
+    }
+
+    // Nama gabungan (union) — urutan stabil: A dulu, lalu B yang tidak di A.
+    let mut names: Vec<String> = idx_a.keys().cloned().collect();
+    names.sort();
+    for n in idx_b.keys() {
+        if !idx_a.contains_key(n) {
+            names.push(n.clone());
+        }
+    }
+
+    let end = da.max_time.max(db.max_time);
+
+    let mut only_a: Vec<String> = Vec::new();
+    let mut only_b: Vec<String> = Vec::new();
+    let mut mismatches: Vec<(String, u64, String, String, usize)> = Vec::new();
+
+    for name in &names {
+        let in_a = idx_a.contains_key(name);
+        let in_b = idx_b.contains_key(name);
+        match (in_a, in_b) {
+            (true, false) => only_a.push(name.clone()),
+            (false, true) => only_b.push(name.clone()),
+            (false, false) => {} // union names — tidak mungkin
+            (true, true) => {
+                let ta = tl_a.get(name).cloned().unwrap_or_default();
+                let tb = tl_b.get(name).cloned().unwrap_or_default();
+                // Nilai pada tiap saat: value yang berlaku (last change ≤ t).
+                let val_at = |tl: &[(u64, String)], t: u64| -> Option<String> {
+                    tl.iter()
+                        .rev()
+                        .find(|(tt, _)| *tt <= t)
+                        .map(|(_, v)| v.clone())
+                };
+                let mut first: Option<(u64, String, String)> = None;
+                let mut count = 0usize;
+                let mut t = 0u64;
+                while t <= end {
+                    let va = val_at(&ta, t);
+                    let vb = val_at(&tb, t);
+                    // Kedua punya nilai & berbeda → mismatch.
+                    if va.is_some() && vb.is_some() && va != vb {
+                        count += 1;
+                        if first.is_none() {
+                            first = Some((t, va.unwrap(), vb.unwrap()));
+                        }
+                    }
+                    t += 1;
+                }
+                if count > 0 {
+                    let (ft, fa, fb) = first.unwrap();
+                    mismatches.push((name.clone(), ft, fa, fb, count));
+                }
+            }
+        }
+    }
+
+    CompareResult {
+        common: names.len() - only_a.len() - only_b.len(),
+        only_a,
+        only_b,
+        mismatches,
+        max_time_a: da.max_time,
+        max_time_b: db.max_time,
+    }
+}
+
+/// ── search ──
+///
+/// Cari sinyal VCD yang cocok dengan pola wildcard (WAV-10). Pola bisa
+/// memakai `*` (any run) dan `?` (satu karakter). Cocok terhadap nama
+/// polos (`cnt`) maupun nama penuh (`top.cnt`, hierarki). Output: daftar
+/// nama + lebar + scope, urutan kemunculan di file.
+fn search(input: &str, patterns: &[String]) -> Result<(), SimError> {
+    let data = parse_vcd(input)?;
+    let pats: Vec<&str> = patterns
+        .iter()
+        .flat_map(|p| p.split([',', ' ', ';']))
+        .filter(|p| !p.is_empty())
+        .collect();
+    if pats.is_empty() {
+        return Err(err("search membutuhkan minimal 1 pola (dukung * dan ?)"));
+    }
+
+    let mut found: Vec<(&VcdSignal, String)> = Vec::new();
+    for sig in &data.signals {
+        let full = full_name(sig);
+        let hit = pats.iter().any(|p| {
+            wildcard_match(p, &sig.name) || wildcard_match(p, &full)
+        });
+        if hit {
+            found.push((sig, full));
+        }
+    }
+
+    if found.is_empty() {
+        println!(
+            "  tidak ada sinyal yang cocok dengan: {}",
+            pats.join(", ")
+        );
+        return Ok(());
+    }
+    println!(
+        "  {} sinyal cocok dengan: {}",
+        found.len(),
+        pats.join(", ")
+    );
+    for (sig, full) in &found {
+        println!(
+            "    {}  width={}  scope={}",
+            full,
+            sig.width,
+            if sig.scope.is_empty() {
+                "<top>".to_string()
+            } else {
+                sig.scope.join(".")
+            }
+        );
+    }
+    Ok(())
+}
+
+/// ── tree ──
+///
+/// Index hierarki scope + sinyal dari VCD (WAV-08): kelompokkan signal per
+/// scope (dari $scope/$upscope), cetak sebagai pohon dengan indentasi dan
+/// lebar tiap signal. Berguna untuk menemukan path lengkap signal sebelum
+/// `filter`/`search`.
+fn tree(input: &str) -> Result<(), SimError> {
+    let data = parse_vcd(input)?;
+    // scope → daftar signal (urut kemunculan)
+    let mut scopes: std::collections::BTreeMap<Vec<String>, Vec<&VcdSignal>> =
+        std::collections::BTreeMap::new();
+    for sig in &data.signals {
+        scopes.entry(sig.scope.clone()).or_default().push(sig);
+    }
+
+    println!("  waveform tree: {} ({} signal, {} scope)", input, data.signals.len(), scopes.len());
+    for (scope, sigs) in &scopes {
+        // Indentasi scope: 4 + 2 per kedalaman (pohon hierarki).
+        let indent = "    ".repeat(scope.len().saturating_add(1));
+        let name = if scope.is_empty() {
+            "<top>".to_string()
+        } else {
+            scope.join(".")
+        };
+        println!("  {} {}", indent, name);
+        let sig_indent = "    ".repeat(scope.len().saturating_add(2));
+        for sig in sigs {
+            println!(
+                "  {}{:<8} bits={:<5} {}",
+                sig_indent,
+                format!("[{}:0]", sig.width.saturating_sub(1)),
+                sig.width,
+                sig.name
+            );
+        }
+    }
+    Ok(())
+}
+
+/// ── stats ──
+///
+/// Statistik aktivitas per sinyal (WAV-17): dari timeline VCD hitung per
+/// sinyal — jumlah transisi (toggle count), jumlah perubahan nilai yang
+/// tercatat, first/last change, dan aktivitas (persentase waktu di mana
+/// sinyal punya nilai berbeda dari nilai awal). Berguna untuk menilai
+/// signal yang "stuck" (0 aktivitas) atau toggling berlebihan.
+struct SignalStats {
+    name: String,
+    width: usize,
+    toggles: usize,
+    changes: usize,
+    first: u64,
+    last: u64,
+    activity: u64,
+    duration: u64,
+}
+
+fn stats(input: &str) -> Result<(), SimError> {
+    let data = parse_vcd(input)?;
+    let r = stats_data(&data);
+
+    // ── Laporan ──
+    println!("  stats: {} ({} sinyal, max_time={}, timescale={})", input, r.len(), data.max_time, data.timescale);
+    println!(
+        "  {:<22} {:<5} {:<7} {:<7} {:<10} {:<7} {}",
+        "signal", "width", "toggle", "change", "first", "last", "activity%"
+    );
+    let mut total_toggle = 0usize;
+    let mut stuck = 0usize;
+    for s in &r {
+        total_toggle += s.toggles;
+        if s.toggles == 0 {
+            stuck += 1;
+        }
+        let act = if s.duration > 0 {
+            s.activity * 100 / s.duration
+        } else {
+            0
+        };
+        println!(
+            "  {:<22} {:<5} {:<7} {:<7} {:<10} {:<7} {}%",
+            s.name, s.width, s.toggles, s.changes, s.first, s.last, act
+        );
+    }
+    println!("  total toggle: {} ({} sinyal stuck / 0 aktivitas)", total_toggle, stuck);
+    Ok(())
+}
+
+/// Logika statistik per sinyal (dipisah dari pencetakan agar bisa diuji).
+/// Toggle = transisi nilai antar perubahan berurutan (bitwise berbeda),
+/// activity = jumlah unit waktu di mana nilai != nilai commit pertama.
+fn stats_data(data: &VcdData) -> Vec<SignalStats> {
+    let mut out: Vec<SignalStats> = Vec::new();
+    let end = data.max_time;
+
+    for sig in &data.signals {
+        let full = full_name(sig);
+        let mut tl: Vec<(u64, String)> = data
+            .changes
+            .iter()
+            .filter(|(_, id, _)| id == &sig.id)
+            .map(|(t, _, v)| (*t, v.clone()))
+            .collect();
+        tl.sort_by_key(|(t, _)| *t);
+
+        if tl.is_empty() {
+            out.push(SignalStats {
+                name: full,
+                width: sig.width,
+                toggles: 0,
+                changes: 0,
+                first: 0,
+                last: 0,
+                activity: 0,
+                duration: end,
+            });
+            continue;
+        }
+
+        let first_t = tl[0].0;
+        let last_t = tl[tl.len() - 1].0;
+        let mut toggles = 0usize;
+        let mut prev = tl[0].1.clone();
+        for (_, v) in tl.iter().skip(1) {
+            if v != &prev {
+                toggles += 1;
+            }
+            prev = v.clone();
+        }
+        // Aktivitas: waktu di mana nilai berlaku != nilai commit pertama.
+        let baseline = tl[0].1.clone();
+        let mut activity = 0u64;
+        for w in tl.windows(2) {
+            let (t0, v0) = &w[0];
+            let (t1, _) = &w[1];
+            if *v0 != baseline {
+                activity += t1 - t0;
+            }
+        }
+        if let Some((t_last, v_last)) = tl.last() {
+            if *v_last != baseline {
+                activity += end.saturating_sub(*t_last);
+            }
+        }
+        out.push(SignalStats {
+            name: full,
+            width: sig.width,
+            toggles,
+            changes: tl.len(),
+            first: first_t,
+            last: last_t,
+            activity,
+            duration: end,
+        });
+    }
+    out
+}
+
+/// Wildcard match sederhana: `*` = any run (termasuk kosong), `?` = satu
+/// karakter, sisanya literal. Case-sensitive (nama signal SV case-sensitive).
+fn wildcard_match(pattern: &str, text: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    // DP: dp[i][j] = pattern[..i] cocok text[..j].
+    let mut dp = vec![vec![false; t.len() + 1]; p.len() + 1];
+    dp[0][0] = true;
+    for i in 1..=p.len() {
+        if p[i - 1] == '*' {
+            dp[i][0] = dp[i - 1][0];
+        }
+    }
+    for i in 1..=p.len() {
+        for j in 1..=t.len() {
+            dp[i][j] = match p[i - 1] {
+                '*' => dp[i - 1][j] || dp[i][j - 1],
+                '?' => dp[i - 1][j - 1],
+                c => dp[i - 1][j - 1] && c == t[j - 1],
+            };
+        }
+    }
+    dp[p.len()][t.len()]
+}
+
 #[allow(dead_code)]
 fn _pathbuf(s: &str) -> PathBuf {
     PathBuf::from(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vcd(extra: bool, cnt_seq: &[&str]) -> String {
+        let mut s = String::new();
+        s.push_str("$timescale 1ns $end\n");
+        s.push_str("$scope module top $end\n");
+        s.push_str("$var wire 1 ! clk $end\n");
+        s.push_str("$var wire 4 \" cnt $end\n");
+        if extra {
+            s.push_str("$var wire 2 # extra $end\n");
+        }
+        s.push_str("$upscope $end\n");
+        s.push_str("$enddefinitions $end\n");
+        s.push_str("#0\n0!\nb0000 \"\n");
+        for (i, v) in cnt_seq.iter().enumerate() {
+            let t = (i + 1) * 5;
+            s.push_str(&format!("#{}\n", t));
+            if i % 2 == 0 {
+                s.push_str("1!\n");
+            } else {
+                s.push_str("0!\n");
+            }
+            s.push_str(&format!("b{} \"\n", v));
+        }
+        s
+    }
+
+    #[test]
+    fn test_compare_identical_vcds() {
+        std::fs::write("/tmp/__cmp_ident_a.vcd", vcd(false, &["0010", "0011"])).unwrap();
+        std::fs::write("/tmp/__cmp_ident_b.vcd", vcd(false, &["0010", "0011"])).unwrap();
+        let a = parse_vcd("/tmp/__cmp_ident_a.vcd").unwrap();
+        let b = parse_vcd("/tmp/__cmp_ident_b.vcd").unwrap();
+        let r = compare_data(&a, &b);
+        assert_eq!(r.common, 2, "2 sinyal umum (clk + cnt)");
+        assert!(r.only_a.is_empty(), "tidak ada sinyal hanya di A");
+        assert!(r.only_b.is_empty(), "tidak ada sinyal hanya di B");
+        assert!(r.mismatches.is_empty(), "VCD identik → 0 mismatch");
+        let _ = std::fs::remove_file("/tmp/__cmp_ident_a.vcd");
+        let _ = std::fs::remove_file("/tmp/__cmp_ident_b.vcd");
+        let _ = a;
+    }
+
+    #[test]
+    fn test_compare_detects_mismatch_and_only_b() {
+        std::fs::write("/tmp/__cmp_diff_a.vcd", vcd(false, &["0010", "0011"])).unwrap();
+        std::fs::write("/tmp/__cmp_diff_b.vcd", vcd(true, &["0101", "0101"])).unwrap();
+        let a = parse_vcd("/tmp/__cmp_diff_a.vcd").unwrap();
+        let b = parse_vcd("/tmp/__cmp_diff_b.vcd").unwrap();
+        let r = compare_data(&a, &b);
+        // cnt berbeda mulai t=5: a=b0010 vs b=b0101.
+        let cnt = r
+            .mismatches
+            .iter()
+            .find(|(name, _, _, _, _)| name == "top.cnt")
+            .expect("cnt harus mismatch");
+        assert_eq!(cnt.1, 5, "first mismatch di t=5");
+        assert_eq!(cnt.2, "0010", "nilai A");
+        assert_eq!(cnt.3, "0101", "nilai B");
+        assert!(cnt.4 >= 1, "ada sample berbeda");
+        // extra hanya di B.
+        assert_eq!(r.only_b, vec!["top.extra"], "extra hanya ada di B");
+        assert!(r.only_a.is_empty());
+        let _ = std::fs::remove_file("/tmp/__cmp_diff_a.vcd");
+        let _ = std::fs::remove_file("/tmp/__cmp_diff_b.vcd");
+    }
+
+    #[test]
+    fn test_tree_indexes_scopes() {
+        // VCD dengan 2 scope: top.clk/cnt + top.sub.extra.
+        let src = "$timescale 1ns $end\n\
+                   $scope module top $end\n\
+                   $var wire 1 ! clk $end\n\
+                   $scope module sub $end\n\
+                   $var wire 2 # extra $end\n\
+                   $upscope $end\n\
+                   $upscope $end\n\
+                   $enddefinitions $end\n\
+                   #0\n0!\nb00 #\n";
+        std::fs::write("/tmp/__tree.vcd", src).unwrap();
+        let data = parse_vcd("/tmp/__tree.vcd").unwrap();
+        // 2 scope: [top] dan [top, sub]; signal terkelompok benar.
+        let mut scopes: std::collections::BTreeMap<Vec<String>, usize> =
+            std::collections::BTreeMap::new();
+        for sig in &data.signals {
+            *scopes.entry(sig.scope.clone()).or_insert(0) += 1;
+        }
+        assert_eq!(scopes.len(), 2, "2 scope: {}", data.signals.len());
+        assert_eq!(scopes.get(&vec!["top".to_string()]), Some(&1), "top punya 1 signal");
+        assert_eq!(
+            scopes.get(&vec!["top".to_string(), "sub".to_string()]),
+            Some(&1),
+            "top.sub punya 1 signal"
+        );
+        let _ = std::fs::remove_file("/tmp/__tree.vcd");
+    }
+
+    #[test]
+    fn test_wildcard_match() {
+        assert!(wildcard_match("cnt", "cnt"));
+        assert!(wildcard_match("c*", "cnt"));
+        assert!(wildcard_match("*nt", "cnt"));
+        assert!(wildcard_match("*", "anything"));
+        assert!(wildcard_match("c?t", "cnt"));
+        assert!(wildcard_match("top.*", "top.cnt"));
+        assert!(!wildcard_match("c?t", "count"));
+        assert!(!wildcard_match("top.*", "other.cnt"));
+        assert!(!wildcard_match("cnt", "clk"));
+    }
+
+    #[test]
+    fn test_search_finds_signals_by_pattern() {
+        std::fs::write("/tmp/__srch.vcd", vcd(true, &["0010"])).unwrap();
+        let data = parse_vcd("/tmp/__srch.vcd").unwrap();
+        // Pola `c*` cocok clk + cnt (bukan extra); `*extra*` cocok extra.
+        let names: Vec<String> = data
+            .signals
+            .iter()
+            .filter(|s| {
+                wildcard_match("c*", &s.name) || wildcard_match("*extra*", &s.name)
+            })
+            .map(full_name)
+            .collect();
+        assert!(names.contains(&"top.clk".to_string()));
+        assert!(names.contains(&"top.cnt".to_string()));
+        assert!(names.contains(&"top.extra".to_string()));
+        assert_eq!(names.len(), 3);
+        // Pola sempit `cnt` hanya 1.
+        let cnt_only: Vec<String> = data
+            .signals
+            .iter()
+            .filter(|s| wildcard_match("cnt", &s.name))
+            .map(full_name)
+            .collect();
+        assert_eq!(cnt_only, vec!["top.cnt".to_string()]);
+        let _ = std::fs::remove_file("/tmp/__srch.vcd");
+    }
+
+    #[test]
+    fn test_stats_counts_toggles_and_activity() {
+        // clk: 0@0, 1@5, 0@10 → 2 toggle, first=5, last=10.
+        // cnt: 0010@0, 0011@5 (1 toggle), 0101@10 (1 toggle) → 2 toggle.
+        std::fs::write("/tmp/__st.vcd", vcd(false, &["0010", "0011"])).unwrap();
+        let data = parse_vcd("/tmp/__st.vcd").unwrap();
+        let r = stats_data(&data);
+        assert_eq!(r.len(), 2, "2 sinyal di-stats");
+        let clk = r.iter().find(|s| s.name == "top.clk").expect("clk");
+        assert_eq!(clk.width, 1);
+        assert_eq!(clk.toggles, 2, "clk 0→1→0 = 2 toggle");
+        assert_eq!(clk.changes, 3, "3 perubahan (0,5,10)");
+        assert_eq!(clk.first, 0, "perubahan pertama di inisialisasi t=0");
+        assert_eq!(clk.last, 10);
+        // Aktivitas clk: nilai != baseline 0 selama [5,10) = 5 unit + sampai
+        // akhir (max_time=10) nilai 0 = 0 → activity 5.
+        assert_eq!(clk.activity, 5, "clk aktif 5 unit waktu");
+        assert!(clk.duration >= 10);
+        let cnt = r.iter().find(|s| s.name == "top.cnt").expect("cnt");
+        assert_eq!(cnt.toggles, 2, "cnt 2 transisi nilai");
+        assert_eq!(cnt.first, 0, "cnt inisialisasi di t=0");
+        assert_eq!(cnt.last, 10);
+        let _ = std::fs::remove_file("/tmp/__st.vcd");
+    }
+
+    #[test]
+    fn test_stats_stuck_signal_zero_toggle() {
+        // Signal tanpa perubahan → toggles=0 (stuck) — aktivitas 0.
+        let src = "$timescale 1ns $end\n\
+                   $scope module top $end\n\
+                   $var wire 1 ! clk $end\n\
+                   $var wire 4 \" cnt $end\n\
+                   $upscope $end\n\
+                   $enddefinitions $end\n\
+                   #0\n0!\nb0000 \"\n\
+                   #10\n1!\n";
+        std::fs::write("/tmp/__stuck.vcd", src).unwrap();
+        let data = parse_vcd("/tmp/__stuck.vcd").unwrap();
+        let r = stats_data(&data);
+        let cnt = r.iter().find(|s| s.name == "top.cnt").expect("cnt");
+        assert_eq!(cnt.toggles, 0, "cnt tidak pernah berubah → stuck");
+        assert_eq!(cnt.changes, 1, "hanya inisialisasi");
+        assert_eq!(cnt.activity, 0, "aktivitas 0");
+        let _ = std::fs::remove_file("/tmp/__stuck.vcd");
+    }
 }

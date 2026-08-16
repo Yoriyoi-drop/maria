@@ -526,9 +526,62 @@ impl Elaborator {
                 items,
                 default,
             } => {
-                // Try constant-fold the case expression
-                if let Ok(case_val) = const_eval_with_params(expr, &self.param_vals) {
-                    // Case expression is compile-time constant — find matching branch
+                // BUG FIX (case const-fold): `case (1'b1)` / `case (KONST)` dengan
+                // label SINYAL (idiom `(* parallel_case *) case (1'b1) sel: ...`)
+                // TIDAK boleh di-const-fold — nilai label berubah di runtime.
+                // Sebelumnya: case expr konstanta membuat elaborator memilih branch
+                // secara STATIS; label sinyal gagal const_eval → tidak match → jatuh
+                // ke `default` → cabang yang dipilih sinyal TIDAK PERNAH dieksekusi
+                // (mis. picorv32 `decoded_imm` selalu X). Fold hanya aman bila case
+                // expr KONSTAN dan SEMUA label KONSTAN.
+                let all_labels_const = items.iter().all(|item| {
+                    item.labels.iter().all(|l| {
+                        const_eval_with_params(l, &self.param_vals).is_ok()
+                            || matches!(l, Expr::Value(_))
+                    })
+                });
+                let case_const = const_eval_with_params(expr, &self.param_vals);
+                if case_const.is_err() || !all_labels_const {
+                    // ── Evaluasi RUNTIME: case expr / label memakai sinyal ──
+                    let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
+                    let mut ir_items = Vec::new();
+                    for item in items {
+                        let mut labels = Vec::new();
+                        for label in &item.labels {
+                            labels.push(self.elaborate_expr(label, signal_map, signals)?);
+                        }
+                        let body = match &*item.stmt {
+                            Stmt::Block { stmts } => self.elaborate_stmt_block(
+                                stmts,
+                                signal_map,
+                                known_modules,
+                                signals,
+                            )?,
+                            other => self.elaborate_stmt_block(
+                                std::slice::from_ref(other),
+                                signal_map,
+                                known_modules,
+                                signals,
+                            )?,
+                        };
+                        ir_items.push(IrCaseItem { labels, body });
+                    }
+                    let ir_default = match default {
+                        Some(d) => {
+                            vec![self.elaborate_stmt(d, signal_map, known_modules, signals)?]
+                        }
+                        None => vec![],
+                    };
+                    Ok(IrStmt::Case {
+                        case_type: CaseType::Normal,
+                        expr: ir_expr,
+                        items: ir_items,
+                        default: ir_default,
+                    })
+                } else {
+                    // ── Fold aman: case expr + semua label konstanta ──
+                    // Cari branch pertama yang match (prioritas Verilog).
+                    let case_val = case_const.unwrap();
                     let mut matched_body: Option<&Stmt> = None;
                     for item in items {
                         for label in &item.labels {
@@ -578,42 +631,6 @@ impl Elaborator {
                             }
                         }
                     }
-                } else {
-                    let ir_expr = self.elaborate_expr(expr, signal_map, signals)?;
-                    let mut ir_items = Vec::new();
-                    for item in items {
-                        let mut labels = Vec::new();
-                        for label in &item.labels {
-                            labels.push(self.elaborate_expr(label, signal_map, signals)?);
-                        }
-                        let body = match &*item.stmt {
-                            Stmt::Block { stmts } => self.elaborate_stmt_block(
-                                stmts,
-                                signal_map,
-                                known_modules,
-                                signals,
-                            )?,
-                            other => self.elaborate_stmt_block(
-                                std::slice::from_ref(other),
-                                signal_map,
-                                known_modules,
-                                signals,
-                            )?,
-                        };
-                        ir_items.push(IrCaseItem { labels, body });
-                    }
-                    let ir_default = match default {
-                        Some(d) => {
-                            vec![self.elaborate_stmt(d, signal_map, known_modules, signals)?]
-                        }
-                        None => vec![],
-                    };
-                    Ok(IrStmt::Case {
-                        case_type: CaseType::Normal,
-                        expr: ir_expr,
-                        items: ir_items,
-                        default: ir_default,
-                    })
                 }
             }
             Stmt::StmtAssign { lhs, rhs } => {
@@ -1422,6 +1439,27 @@ impl Elaborator {
                     Some(e) => Some(Box::new(self.elaborate_expr(e, signal_map, signals)?)),
                     None => None,
                 };
+                // ELAB-12: assertion dengan kondisi parameter-dependent yang
+                // bisa di-eval saat elab-time (seluruh operand konstanta /
+                // parameter) dievaluasi SEKARANG — melaporkan kegagalan lebih
+                // awal daripada menunggu simulasi. Hanya assertion tanpa
+                // clock_event (immediate, bukan concurrent SVA) yang di-eval;
+                // assertion concurrent butuh semantik waktu simulasi.
+                if clock_event.is_none() {
+                    if let Ok(val) = maria_ast::types::const_eval_with_params(
+                        cond,
+                        &self.param_vals,
+                    ) {
+                        if val == 0 {
+                            self.elab_warn_at(
+                                maria_core::diagnostics::DiagCode::AssertionFailed,
+                                format!("elaboration-time assertion failed (condition evaluates to 0 at elaboration)\n  condition: {:?}", cond),
+                                a_line,
+                                a_col,
+                            );
+                        }
+                    }
+                }
                 Ok(IrStmt::Assert {
                     cond: ir_cond,
                     pass_stmt: pass,
@@ -2072,83 +2110,9 @@ impl Elaborator {
                     if let Some(&base_sid) = signal_map.get(&Symbol::intern(&base_name)) {
                         let base_info = &signals[base_sid];
                         if !base_info.struct_fields.is_empty() {
-                            let mut offset = 0usize;
-                            let mut width = 1usize;
-                            let mut cur_fields: Option<Vec<StructFieldInfo>> =
-                                Some(base_info.struct_fields.clone());
-                            let mut last_field: Option<StructFieldInfo> = None;
-                            let mut ok = true;
-                            for (i, step) in chain.iter().enumerate() {
-                                match step {
-                                    ChainStep::Index(idx) => {
-                                        // Elemen ke-idx dari field struct array
-                                        // (atau base signal bila di posisi awal).
-                                        let elem_width = if let Some(f) = &last_field {
-                                            f.type_name
-                                                .as_ref()
-                                                .and_then(|tn| {
-                                                    self.lookup_struct_fields(tn.as_str())
-                                                })
-                                                .map(|fs| {
-                                                    fs.iter()
-                                                        .map(|sf| sf.width)
-                                                        .sum::<usize>()
-                                                        .max(1)
-                                                })
-                                                .unwrap_or(1)
-                                        } else {
-                                            base_info.elem_width.max(1)
-                                        };
-                                        offset = offset.saturating_add(
-                                            (*idx as usize).saturating_mul(elem_width),
-                                        );
-                                        // Fields elemen struct (untuk field berikutnya).
-                                        if let Some(f) = &last_field {
-                                            if let Some(tn) = &f.type_name {
-                                                cur_fields =
-                                                    self.lookup_struct_fields(tn.as_str());
-                                            }
-                                        }
-                                        last_field = None;
-                                    }
-                                    ChainStep::Field(fname) => {
-                                        let fields = match &cur_fields {
-                                            Some(fs) => fs.clone(),
-                                            None => {
-                                                ok = false;
-                                                break;
-                                            }
-                                        };
-                                        let found = fields.iter().find(|f| f.name == *fname);
-                                        match found {
-                                            Some(f) => {
-                                                offset += f.offset;
-                                                width = f.width;
-                                                last_field = Some(f.clone());
-                                                if i + 1 < chain.len() {
-                                                    let mut nxt = f
-                                                        .type_name
-                                                        .as_ref()
-                                                        .and_then(|tn| {
-                                                            self.lookup_struct_fields(tn.as_str())
-                                                        });
-                                                    if nxt.is_none() {
-                                                        nxt = Some(f.sub_fields.clone());
-                                                    }
-                                                    cur_fields = nxt;
-                                                }
-                                            }
-                                            None => {
-                                                ok = false;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            if ok {
-                                let lsb = offset;
-                                let msb = offset + width - 1;
+                            if let Some((msb, lsb)) =
+                                self.resolve_struct_chain(base_sid, &chain, signals)
+                            {
                                 return Ok(IrLValue::RangeSelect(base_sid, msb, lsb));
                             }
                         }
@@ -2339,7 +2303,7 @@ impl Elaborator {
     /// Index konstanta (genvar sudah di-substitute saat generate expansion),
     /// dievaluasi via `const_eval_with_params` agar ekspresi seperti `31-i`
     /// (sudah menjadi `31-0`, `31-1`, …) ikut ter-fold.
-    fn collect_member_chain(
+    pub(crate) fn collect_member_chain(
         obj: &Expr,
         leaf_field: Symbol,
         param_vals: &std::collections::HashMap<Symbol, i64>,
@@ -2372,11 +2336,92 @@ impl Elaborator {
             }
         }
     }
+
+    /// Resolve chain member access struct (`a.b.c.d`) menjadi offset [lsb..msb]
+    /// terhadap signal dasar `base_sid`. Memakai struct_fields base signal +
+    /// typedef_field_map untuk step berjenjang. Mengembalikan (msb, lsb) bila
+    /// seluruh step ter-resolve; None bila tidak (fallback jalur HierRef/
+    /// MemberAccess runtime).
+    pub(crate) fn resolve_struct_chain(
+        &self,
+        base_sid: SignalId,
+        chain: &[ChainStep],
+        signals: &[SignalInfo],
+    ) -> Option<(usize, usize)> {
+        let base_info = &signals[base_sid];
+        if base_info.struct_fields.is_empty() {
+            return None;
+        }
+        let mut offset = 0usize;
+        let mut width = 1usize;
+        let mut cur_fields: Option<Vec<StructFieldInfo>> =
+            Some(base_info.struct_fields.clone());
+        let mut last_field: Option<StructFieldInfo> = None;
+        let mut ok = true;
+        for (i, step) in chain.iter().enumerate() {
+            match step {
+                ChainStep::Index(idx) => {
+                    let elem_width = if let Some(f) = &last_field {
+                        f.type_name
+                            .as_ref()
+                            .and_then(|tn| self.lookup_struct_fields(tn.as_str()))
+                            .map(|fs| fs.iter().map(|sf| sf.width).sum::<usize>().max(1))
+                            .unwrap_or(1)
+                    } else {
+                        base_info.elem_width.max(1)
+                    };
+                    offset = offset.saturating_add((*idx as usize).saturating_mul(elem_width));
+                    if let Some(f) = &last_field {
+                        if let Some(tn) = &f.type_name {
+                            cur_fields = self.lookup_struct_fields(tn.as_str());
+                        }
+                    }
+                    last_field = None;
+                }
+                ChainStep::Field(fname) => {
+                    let fields = match &cur_fields {
+                        Some(fs) => fs.clone(),
+                        None => {
+                            ok = false;
+                            break;
+                        }
+                    };
+                    let found = fields.iter().find(|f| f.name == *fname);
+                    match found {
+                        Some(f) => {
+                            offset += f.offset;
+                            width = f.width;
+                            last_field = Some(f.clone());
+                            if i + 1 < chain.len() {
+                                let mut nxt = f
+                                    .type_name
+                                    .as_ref()
+                                    .and_then(|tn| self.lookup_struct_fields(tn.as_str()));
+                                if nxt.is_none() {
+                                    nxt = Some(f.sub_fields.clone());
+                                }
+                                cur_fields = nxt;
+                            }
+                        }
+                        None => {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if ok {
+            Some((offset + width - 1, offset))
+        } else {
+            None
+        }
+    }
 }
 
 /// Langkah dalam chain member access — field struct atau index array konstanta.
 #[derive(Debug, Clone)]
-enum ChainStep {
+pub(crate) enum ChainStep {
     Field(Symbol),
     Index(i64),
 }

@@ -37,9 +37,40 @@ impl Elaborator {
                 let mut ir_cps = Vec::new();
                 for cp in &cg.coverpoints {
                     let ir_expr = self.elaborate_expr(&cp.expr, signal_map, signals)?;
+                    // VERIF-30: turunkan bin eksplisit (bins/illegal_bins/
+                    // ignore_bins) — sebelumnya di-parse parser tapi di-drop
+                    // di sini sehingga sampler hanya memakai auto-binning.
+                    let mut ir_bins = Vec::new();
+                    for b in &cp.bins {
+                        let mut ranges = Vec::new();
+                        for r in &b.range_list {
+                            let low = self.elaborate_expr(&r.low, signal_map, signals)?;
+                            let high = match &r.high {
+                                Some(h) => Some(self.elaborate_expr(h, signal_map, signals)?),
+                                None => None,
+                            };
+                            ranges.push(IrBinRange { low, high });
+                        }
+                        // VERIF-31: transition bins — turunkan tiap sekuens nilai.
+                        let mut ir_transitions = Vec::new();
+                        for seq in &b.transitions {
+                            let mut ir_seq = Vec::new();
+                            for v in seq {
+                                ir_seq.push(self.elaborate_expr(v, signal_map, signals)?);
+                            }
+                            ir_transitions.push(ir_seq);
+                        }
+                        ir_bins.push(IrBin {
+                            name: b.name,
+                            ranges,
+                            transitions: ir_transitions,
+                            bin_type: b.bin_type.clone(),
+                        });
+                    }
                     ir_cps.push(IrCoverpoint {
                         name: cp.name,
                         expr: ir_expr,
+                        bins: ir_bins,
                     });
                 }
                 let ir_crosses = cg

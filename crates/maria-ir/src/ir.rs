@@ -60,6 +60,28 @@ pub struct IrCovergroup {
 pub struct IrCoverpoint {
     pub name: Symbol,
     pub expr: IrExpr,
+    /// Bin eksplisit (bins/illegal_bins/ignore_bins) — VERIF-30. Sebelumnya
+    /// di-parse parser tapi di-drop elaborator & diabaikan sampler (hanya
+    /// auto-binning default).
+    pub bins: Vec<IrBin>,
+}
+
+/// Satu bin eksplisit coverpoint: nama + daftar range nilai.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct IrBin {
+    pub name: Symbol,
+    pub ranges: Vec<IrBinRange>,
+    pub bin_type: maria_ast::types::BinType,
+    /// Transition bins `(a => b => ...)` — VERIF-31: tiap Vec<IrExpr> = satu
+    /// sekuens nilai (panjang 2 = kasus umum `prev => curr`).
+    pub transitions: Vec<Vec<IrExpr>>,
+}
+
+/// Satu range nilai bin: `[lo:hi]` (high Some) atau nilai tunggal (high None).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct IrBinRange {
+    pub low: IrExpr,
+    pub high: Option<IrExpr>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

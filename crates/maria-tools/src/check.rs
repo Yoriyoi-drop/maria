@@ -19,12 +19,19 @@ pub struct CheckArgs<'a> {
     pub deps: bool,
     pub cycles: bool,
     pub timescale: bool,
+    /// PARSER-13: bandingkan AST target pertama dgn file ini (structural diff).
+    pub ast_diff: Option<&'a str>,
 }
 
 /// Jalankan mcheck.
 pub fn run(args: &CheckArgs) -> Result<(), SimError> {
     let all = args.all;
     let check = |flag: bool| flag || all;
+
+    // PARSER-13: AST differential — mode khusus, tidak jalan bareng check lain.
+    if let Some(other) = args.ast_diff {
+        return run_ast_diff(args.targets, other);
+    }
 
     let mut problems = 0usize;
 
@@ -340,5 +347,132 @@ fn collect_gen_instances(gi: &GenerateItem, out: &mut Vec<maria_core::intern::Sy
                 collect_mod_instances(d, out);
             }
         }
+    }
+}
+
+/// PARSER-13: AST differential — bandingkan AST elaborasi dua file .sv,
+/// cetak perbedaan struktural (module/signal/proses/instance). Exit code
+/// 0 bila identik, 1 bila ada perbedaan (utk regression gate).
+/// PARSER-13: bandingkan dua IrDesign (structural: module/signal/proses/
+/// class/covergroup) — padanan compare_asts API tanpa depend maria-api.
+fn compare_ir_designs(a: &maria_ir::IrDesign, b: &maria_ir::IrDesign) -> Vec<String> {
+    let mut diffs = Vec::new();
+    if a.modules.len() != b.modules.len() {
+        diffs.push(format!("module count: {} vs {}", a.modules.len(), b.modules.len()));
+    }
+    if a.top.signals.len() != b.top.signals.len() {
+        diffs.push(format!("top signal count: {} vs {}", a.top.signals.len(), b.top.signals.len()));
+    }
+    if a.top.processes.len() != b.top.processes.len() {
+        diffs.push(format!("process count: {} vs {}", a.top.processes.len(), b.top.processes.len()));
+    }
+    for (i, (sa, sb)) in a.top.signals.iter().zip(b.top.signals.iter()).enumerate() {
+        if sa.width != sb.width {
+            diffs.push(format!("signal[{}] '{}' width: {} vs {}", i, sa.name, sa.width, sb.width));
+        }
+        if sa.is_signed != sb.is_signed {
+            diffs.push(format!("signal[{}] '{}' signed: {} vs {}", i, sa.name, sa.is_signed, sb.is_signed));
+        }
+    }
+    if a.classes.len() != b.classes.len() {
+        diffs.push(format!("class count: {} vs {}", a.classes.len(), b.classes.len()));
+    }
+    if a.covergroups.len() != b.covergroups.len() {
+        diffs.push(format!("covergroup count: {} vs {}", a.covergroups.len(), b.covergroups.len()));
+    }
+    diffs
+}
+
+fn run_ast_diff(targets: &[String], other: &str) -> Result<(), SimError> {
+    use maria_core::diagnostics::DiagCode;
+    let a_file = targets.first().ok_or_else(|| {
+        SimError::with_diag(DiagCode::InvalidSyntax, "--ast-diff butuh file pertama: mcheck a.sv --ast-diff b.sv")
+    })?;
+    println!("AST diff: {} vs {}", a_file, other);
+
+    let (_, _, ir_a) = crate::open_elaborated(std::slice::from_ref(a_file), &[], &[], None, maria_elaboration::elaborator::ElaborateMode::StrictSimulation)
+        .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("gagal compile '{}': {}", a_file, e)))?;
+    let (_, _, ir_b) = crate::open_elaborated(&[other.to_string()], &[], &[], None, maria_elaboration::elaborator::ElaborateMode::StrictSimulation)
+        .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, format!("gagal compile '{}': {}", other, e)))?;
+
+    let diffs = compare_ir_designs(&ir_a, &ir_b);
+    if diffs.is_empty() {
+        println!("✅ AST identik (0 perbedaan)");
+        Ok(())
+    } else {
+        println!("⚠️  {} perbedaan struktural:", diffs.len());
+        for d in &diffs {
+            println!("  - {}", d);
+        }        Err(SimError::with_diag(
+            maria_core::diagnostics::DiagCode::AssertionFailed,
+            format!("AST berbeda: {} perbedaan", diffs.len()),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Nama file unik per test — 3 test berjalan PARALLEL; bila semua memakai
+    // `t.sv` di dir sama, salah satu test meng-overwrite file test lain →
+    // isi campur → diff palsu (flaky). Dir per-test juga unik.
+    fn elabor(file: &str) -> maria_ir::IrDesign {
+        let dir = std::env::temp_dir().join(format!(
+            "maria_astdiff_{}_{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("t").replace("::", "_")
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("t.sv");
+        std::fs::write(&path, file).unwrap();
+        let (_, _, ir) = crate::open_elaborated(
+            &[path.to_string_lossy().to_string()],
+            &[],
+            &[],
+            None,
+            maria_elaboration::elaborator::ElaborateMode::StrictSimulation,
+        )
+        .unwrap();
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+        ir
+    }
+
+    #[test]
+    fn test_ast_diff_identical() {
+        // PARSER-13: dua file identik → 0 perbedaan.
+        let src = "module m(input clk); reg [7:0] q; always @(posedge clk) q <= q + 1; endmodule";
+        let a = elabor(src);
+        let b = elabor(src);
+        assert!(compare_ir_designs(&a, &b).is_empty(), "file identik harus 0 diff");
+    }
+
+    #[test]
+    fn test_ast_diff_width_mismatch() {
+        // PARSER-13: lebar signal berbeda → diff terdeteksi.
+        let a = elabor("module m(input clk); reg [7:0] q; always @(posedge clk) q <= q + 1; endmodule");
+        let b = elabor("module m(input clk); reg [15:0] q; always @(posedge clk) q <= q + 1; endmodule");
+        let diffs = compare_ir_designs(&a, &b);
+        assert!(
+            diffs.iter().any(|d| d.contains("width") && d.contains("8 vs 16")),
+            "lebar 8 vs 16 harus terdeteksi: {:?}",
+            diffs
+        );
+    }
+
+    #[test]
+    fn test_ast_diff_process_count_mismatch() {
+        // PARSER-13: jumlah proses berbeda → diff terdeteksi.
+        let a = elabor("module m(input clk); reg q; always @(posedge clk) q <= 1; endmodule");
+        let b = elabor(
+            "module m(input clk); reg q; always @(posedge clk) q <= 1; always @(posedge clk) q <= 0; endmodule",
+        );
+        let diffs = compare_ir_designs(&a, &b);
+        assert!(
+            diffs.iter().any(|d| d.contains("process count")),
+            "jumlah proses harus terdeteksi: {:?}",
+            diffs
+        );
     }
 }

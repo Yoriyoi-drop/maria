@@ -186,7 +186,7 @@ fn get_clock_name(process: &Process, signals: &[SignalInfo]) -> String {
 }
 
 /// Get the clock signal ID from a sequential process.
-fn get_clock_signal_id(process: &Process) -> Option<SignalId> {
+pub(crate) fn get_clock_signal_id(process: &Process) -> Option<SignalId> {
     match process {
         Process::Sequential { clock, .. } => {
             match clock {
@@ -201,7 +201,7 @@ fn get_clock_signal_id(process: &Process) -> Option<SignalId> {
 }
 
 /// Extract writes from a list of statements, flattening named blocks.
-fn collect_writes_from_stmts(stmts: &[IrStmt]) -> HashSet<SignalId> {
+pub(crate) fn collect_writes_from_stmts(stmts: &[IrStmt]) -> HashSet<SignalId> {
     let mut writes = HashSet::new();
     collect_stmt_writes_recursive(stmts, &mut writes);
     writes
@@ -263,7 +263,7 @@ fn collect_stmt_writes_recursive(stmts: &[IrStmt], writes: &mut HashSet<SignalId
     }
 }
 
-fn lvalue_collect_signal_ids(lvalue: &IrLValue, ids: &mut HashSet<SignalId>) {
+pub(crate) fn lvalue_collect_signal_ids(lvalue: &IrLValue, ids: &mut HashSet<SignalId>) {
     match lvalue {
         IrLValue::Signal(sig_id, _)
         | IrLValue::RangeSelect(sig_id, _, _)
@@ -730,7 +730,7 @@ impl CdcAnalysis {
 
 // ─── Expression Read Collector (simplified) ───
 
-fn collect_stmt_signal_reads(stmts: &[IrStmt], reads: &mut HashSet<SignalId>) {
+pub(crate) fn collect_stmt_signal_reads(stmts: &[IrStmt], reads: &mut HashSet<SignalId>) {
     for stmt in stmts {
         match stmt {
             IrStmt::Block { stmts: inner }
@@ -806,7 +806,7 @@ fn collect_stmt_signal_reads(stmts: &[IrStmt], reads: &mut HashSet<SignalId>) {
     }
 }
 
-fn collect_expr_signal_ids(expr: &IrExpr, ids: &mut HashSet<SignalId>) {
+pub(crate) fn collect_expr_signal_ids(expr: &IrExpr, ids: &mut HashSet<SignalId>) {
     match expr {
         IrExpr::Signal(sig_id, _)
         | IrExpr::RangeSelect(sig_id, _, _)

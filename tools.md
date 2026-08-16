@@ -141,6 +141,9 @@ parameter resolve
 generate
 hierarchy
 maria melab top.sv
+maria melab top.sv --reset-domain   # SIM-22: analisis reset-domain crossing
+                                    # (domain reset + crossing sinyal antar
+                                    # domain, severity OK/MEDIUM/HIGH/CRITICAL)
 4. msim
 
 Simulator.
@@ -180,6 +183,12 @@ Digunakan
 mwave merge
 mwave export
 mwave filter
+mwave compare a.vcd b.vcd   # bandingkan 2 VCD (WAV-09): mismatch per signal
+                             # + sinyal yang hanya ada di salah satu file
+mwave search t.vcd "c*"     # cari sinyal by wildcard (WAV-10): * dan ?
+mwave tree t.vcd            # index hierarki scope + sinyal (WAV-08)
+mwave stats t.vcd           # statistik per sinyal (WAV-17): toggle, transitions,
+                             # first/last change, activity% + stuck detection
 7. mfmt
 
 Formatter.
@@ -222,6 +231,10 @@ Circular include
 Dependency
 Version
 Config
+
+PARSER-13 (AST differential): `mcheck a.sv --ast-diff b.sv` — bandingkan
+AST elaborasi dua file (module/signal/proses/class/covergroup), exit 0
+identik / 1 berbeda (regression gate).
 10. mbench
 
 Benchmark Tool.

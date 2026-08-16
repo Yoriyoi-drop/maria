@@ -16,6 +16,7 @@
 
 use std::collections::HashSet;
 use maria_ir::*;
+use std::sync::Arc;
 
 
 // ─── Signal Access Analysis ───
@@ -27,10 +28,14 @@ pub struct SignalAccess {
     pub reads: HashSet<SignalId>,
     /// Signal IDs yang ditulis process ini.
     pub writes: HashSet<SignalId>,
+    /// True bila ada akses yang TIDAK bisa di-resolve ke SignalId (HierRef,
+    /// VirtualIfaceAccess, This, dst.) — process dengan flag ini TIDAK boleh
+    /// memakai snapshot sparse (harus full snapshot agar tidak salah hasil).
+    pub has_unresolved: bool,
 }
 
 /// Analyze which signals a process reads and writes.
-fn analyze_process_access(process: &Process) -> SignalAccess {
+pub(crate) fn analyze_process_access(process: &Process) -> SignalAccess {
     match process {
         Process::Combinational {
             sensitivity, body, ..
@@ -233,8 +238,11 @@ fn lvalue_signal_writes(lvalue: &IrLValue, access: &mut SignalAccess) {
                 lvalue_signal_writes(item, access);
             }
         }
-        // Lvalue hierarkis belum ter-resolve di fase ini.
-        IrLValue::HierRef(_) | IrLValue::HierRefIndex { .. } => {}
+        // Lvalue hierarkis belum ter-resolve di fase ini → proses memakai
+        // path full-snapshot (bukan sparse) agar perilaku tidak berubah.
+        IrLValue::HierRef(_) | IrLValue::HierRefIndex { .. } => {
+            access.has_unresolved = true;
+        }
     }
 }
 
@@ -327,9 +335,16 @@ fn expr_signal_reads(expr: &IrExpr, access: &mut SignalAccess) {
                 expr_signal_reads(arg, access);
             }
         }
-        // These don't access signals
-        IrExpr::Const(_) | IrExpr::FillLit(_) | IrExpr::String(_)
-        | IrExpr::This | IrExpr::HierRef(_) | IrExpr::VifBinding { .. } => {}
+        // These don't access signals — tapi beberapa TIDAK bisa di-resolve ke
+        // SignalId (HierRef/VirtualIfaceAccess/This/VifBinding) → tandai
+        // has_unresolved agar proses tidak dipakai di snapshot sparse.
+        IrExpr::Const(_) | IrExpr::FillLit(_) | IrExpr::String(_) => {}
+        IrExpr::This
+        | IrExpr::HierRef(_)
+        | IrExpr::VifBinding { .. }
+        | IrExpr::VirtualIfaceAccess { .. } => {
+            access.has_unresolved = true;
+        }
     }
 }
 
@@ -519,24 +534,21 @@ pub fn layer_to_string(layers: &[Vec<usize>]) -> String {
 /// tapi bekerja dengan body process standalone.
 pub fn evaluate_process_body(
     body: &[IrStmt],
-    signals: &[LogicVec],
+    signals: &[Arc<LogicVec>],
     writes: &mut Vec<(SignalId, LogicVec)>,
     // For fill-lit width resolution, pass signal count as signal_ref
 ) -> Result<(), maria_core::error::SimError> {
-    // Reuse the existing parallel-safe evaluator
-    // We create a mutable copy of the signals slice so evaluate_stmt_block_parallel can work
-    let mut signals_mut: Vec<LogicVec> = signals.to_vec();
+    // Reuse the existing parallel-safe evaluator. Per-process overlay kosong
+    // (copy-on-write) — tidak ada clone seluruh sinyal per process (SIM-28).
     let signal_count = signals.len();
-    
-    // Create dummy signals for array bounds that might be out of range
-    while signals_mut.len() < signal_count + 16 {
-        signals_mut.push(LogicVec::new(1));
-    }
+    let identity: Vec<Option<usize>> = (0..signal_count).map(Some).collect();
+    let mut overlay = std::collections::HashMap::new();
+    let mut view = crate::simulator::parallel::SignalView::new(signals, &identity, &mut overlay);
 
     // sig_info kosong (scheduler ini tidak punya SignalInfo; jalur tak
     // terpakai — exported tapi tidak ada caller) → is_signed_expr false →
     // perilaku unsigned default seperti sebelumnya.
-    crate::simulator::parallel::evaluate_stmt_block_parallel(body, &mut signals_mut, writes, &[])?;
+    crate::simulator::parallel::evaluate_stmt_block_parallel(body, &mut view, writes, &[])?;
     Ok(())
 }
 
@@ -553,11 +565,12 @@ pub fn evaluate_process_body(
 pub fn evaluate_layer_parallel(
     layer: &[usize],
     processes: &[Process],
-    signals: &[LogicVec],
+    signals: &[Arc<LogicVec>],
 ) -> Result<Vec<(SignalId, LogicVec)>, maria_core::error::SimError> {
     use rayon::prelude::*;
 
     // Evaluate each process in the layer in parallel
+    let identity: Vec<Option<usize>> = (0..signals.len()).map(Some).collect();
     let results: Vec<Result<Vec<(SignalId, LogicVec)>, maria_core::error::SimError>> = layer
         .par_iter()
         .map(|pid| -> Result<Vec<(SignalId, LogicVec)>, maria_core::error::SimError> {
@@ -575,8 +588,9 @@ pub fn evaluate_layer_parallel(
             };
 
             let mut writes: Vec<(SignalId, LogicVec)> = Vec::new();
-            let mut signals_mut: Vec<LogicVec> = signals.to_vec();
-            crate::simulator::parallel::evaluate_stmt_block_parallel(body, &mut signals_mut, &mut writes, &[])?;
+            let mut overlay = std::collections::HashMap::new();
+            let mut view = crate::simulator::parallel::SignalView::new(signals, &identity, &mut overlay);
+            crate::simulator::parallel::evaluate_stmt_block_parallel(body, &mut view, &mut writes, &[])?;
             Ok(writes)
         })
         .collect();
@@ -600,10 +614,12 @@ pub fn evaluate_layer_parallel(
 pub fn evaluate_bodies_parallel(
     layer_pids: &[&usize],
     body_map: &std::collections::HashMap<usize, Vec<IrStmt>>,
-    signals: &[LogicVec],
+    signals: &[Arc<LogicVec>],
 ) -> Result<Vec<(SignalId, LogicVec)>, maria_core::error::SimError> {
     use rayon::prelude::*;
 
+    // SIM-28: per-process overlay kosong — tanpa clone seluruh sinyal.
+    let identity: Vec<Option<usize>> = (0..signals.len()).map(Some).collect();
     let results: Vec<Result<Vec<(SignalId, LogicVec)>, maria_core::error::SimError>> = layer_pids
         .par_iter()
         .map(|&&pid| -> Result<Vec<(SignalId, LogicVec)>, maria_core::error::SimError> {
@@ -613,8 +629,9 @@ pub fn evaluate_bodies_parallel(
             };
 
             let mut writes: Vec<(SignalId, LogicVec)> = Vec::new();
-            let mut signals_mut: Vec<LogicVec> = signals.to_vec();
-            crate::simulator::parallel::evaluate_stmt_block_parallel(body, &mut signals_mut, &mut writes, &[])?;
+            let mut overlay = std::collections::HashMap::new();
+            let mut view = crate::simulator::parallel::SignalView::new(signals, &identity, &mut overlay);
+            crate::simulator::parallel::evaluate_stmt_block_parallel(body, &mut view, &mut writes, &[])?;
             Ok(writes)
         })
         .collect();
@@ -680,10 +697,12 @@ mod tests {
         let a = SignalAccess {
             reads: [1, 2].into_iter().collect(),
             writes: HashSet::new(),
+            has_unresolved: false,
         };
         let b = SignalAccess {
             reads: [2, 3].into_iter().collect(),
             writes: HashSet::new(),
+            has_unresolved: false,
         };
         // Both only read — no conflict
         assert!(!processes_conflict(&a, &b));
@@ -694,10 +713,12 @@ mod tests {
         let a = SignalAccess {
             reads: HashSet::new(),
             writes: [5].into_iter().collect(),
+            has_unresolved: false,
         };
         let b = SignalAccess {
             reads: [5].into_iter().collect(),
             writes: HashSet::new(),
+            has_unresolved: false,
         };
         // A writes signal 5, B reads it → conflict
         assert!(processes_conflict(&a, &b));
@@ -708,10 +729,12 @@ mod tests {
         let a = SignalAccess {
             reads: HashSet::new(),
             writes: [10].into_iter().collect(),
+            has_unresolved: false,
         };
         let b = SignalAccess {
             reads: HashSet::new(),
             writes: [10].into_iter().collect(),
+            has_unresolved: false,
         };
         // Both write signal 10 → conflict
         assert!(processes_conflict(&a, &b));
