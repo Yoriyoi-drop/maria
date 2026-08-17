@@ -164,7 +164,9 @@ impl SimulationEngine {
         method: &str,
     ) -> Result<IrClassMethod, SimError> {
         let mut current = class_name;
+        let mut found_class = false;
         while let Some(cls) = self.design.classes.get(&Symbol::intern(current)) {
+            found_class = true;
             if let Some(m) = cls.methods.iter().find(|m| m.name == method) {
                 return Ok(m.clone());
             }
@@ -174,7 +176,31 @@ impl SimulationEngine {
                 break;
             }
         }
-        Err(SimError::with_diag(
+        // Jika hierarchy walk berhenti karena PARENT class tidak ada di design
+        // tapi nama parent diawali `uvm_`, method diwarisi dari UVM library
+        // (build_phase/connect_phase/dll adalah no-op di base class).
+        // Return synthetic method supaya callers (.is_ok()) tidak gagal.
+        //
+        // PENTING: hanya synthesize bila class asli DITEMUKAN di design
+        // (walk masuk loop). Class builtin UVM yang TIDAK terdaftar di
+        // design.classes (mis. `uvm_table_printer`/`uvm_event`/`uvm_barrier` —
+        // object dibuat dengan class_name polos, bukan `__uvm_*`) method-nya
+        // ditangani execute_uvm_*_method di layer dispatch → harus Err agar
+        // user_override=false dan dispatch builtin berjalan. Tanpa guard ini
+        // synthetic method membuat user_override=true untuk SEMUA method
+        // class builtin → dispatch UVM di-skip → error "X not implemented".
+        if found_class && current.starts_with("uvm_") {
+            return Ok(IrClassMethod {
+                name: Symbol::intern(method),
+                is_task: method == "run_phase",
+                virtual_flag: true,
+                is_static: false,
+                ports: vec![],
+                decls: vec![],
+                stmts: vec![],
+            });
+        }
+        Err(self.diag_error(
             DiagCode::DpiError,
             format!("method '{}' not found in class '{}' or its parents", method, class_name),
         ))
@@ -293,7 +319,7 @@ impl SimulationEngine {
                     let elem_width = sig.elem_width;
                     let count = lv.width.checked_div(elem_width).unwrap_or(0);
                     if idx >= count {
-                        return Err(SimError::with_diag(
+                        return Err(self.diag_error(
                             DiagCode::MemoryOutOfBounds,
                             format!("delete index {} out of range (size {})", idx, count),
                         ));
@@ -318,7 +344,7 @@ impl SimulationEngine {
                 let lv = self.state.read_signal(sig_id);
                 let elem_width = sig.elem_width;
                 if lv.width < elem_width {
-                    return Err(SimError::with_diag(DiagCode::MemoryOutOfBounds, "pop_front on empty queue"));
+                    return Err(self.diag_error(DiagCode::MemoryOutOfBounds, "pop_front on empty queue"));
                 }
                 let mut bits = Vec::with_capacity(elem_width);
                 for i in 0..elem_width {
@@ -339,7 +365,7 @@ impl SimulationEngine {
                 let lv = self.state.read_signal(sig_id);
                 let elem_width = sig.elem_width;
                 if lv.width < elem_width {
-                    return Err(SimError::with_diag(DiagCode::MemoryOutOfBounds, "pop_back on empty queue"));
+                    return Err(self.diag_error(DiagCode::MemoryOutOfBounds, "pop_back on empty queue"));
                 }
                 let start = lv.width - elem_width;
                 let mut bits = Vec::with_capacity(elem_width);
@@ -361,7 +387,7 @@ impl SimulationEngine {
                 let arg_val = if let Some(a) = args.first() {
                     self.evaluate_expr(a)?
                 } else {
-                    return Err(SimError::with_diag(DiagCode::DpiError, "push_front expects 1 argument"));
+                    return Err(self.diag_error(DiagCode::DpiError, "push_front expects 1 argument"));
                 };
                 let elem_width = sig.elem_width;
                 let padded = if arg_val.width >= elem_width {
@@ -390,7 +416,7 @@ impl SimulationEngine {
             "exists" => {
                 let index_expr = args
                     .first()
-                    .ok_or_else(|| SimError::with_diag(DiagCode::DpiError, "exists expects 1 argument"))?;
+                    .ok_or_else(|| self.diag_error(DiagCode::DpiError, "exists expects 1 argument"))?;
                 let idx_val = self.evaluate_expr(index_expr)?;
                 let idx = idx_val.to_u64() as usize;
                 let lv = self.state.read_signal(sig_id);
@@ -402,7 +428,7 @@ impl SimulationEngine {
                 let arg_val = if let Some(a) = args.first() {
                     self.evaluate_expr(a)?
                 } else {
-                    return Err(SimError::with_diag(DiagCode::DpiError, "push_back expects 1 argument"));
+                    return Err(self.diag_error(DiagCode::DpiError, "push_back expects 1 argument"));
                 };
                 let elem_width = sig.elem_width;
                 let padded = if arg_val.width >= elem_width {
@@ -427,7 +453,7 @@ impl SimulationEngine {
             }
             "insert" => {
                 if args.len() < 2 {
-                    return Err(SimError::with_diag(DiagCode::DpiError, "insert expects 2 arguments (index, value)"));
+                    return Err(self.diag_error(DiagCode::DpiError, "insert expects 2 arguments (index, value)"));
                 }
                 let idx_val = self.evaluate_expr(&args[0])?;
                 let idx = idx_val.to_u64() as usize;
@@ -948,7 +974,7 @@ impl SimulationEngine {
                 }
                 Ok(LogicVec::new(0))
             }
-            _ => Err(SimError::with_diag(
+            _ => Err(self.diag_error(
                 DiagCode::NotImplemented,
                 format!("unknown array/queue method: {}", method),
             )),

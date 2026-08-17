@@ -172,6 +172,12 @@ fn stmt_signal_access(stmts: &[IrStmt], access: &mut SignalAccess) {
                 stmt_signal_access(pass_stmt, access);
                 stmt_signal_access(fail_stmt, access);
             }
+            // LANG-14: expect — baca cond + walk pass/fail stmts.
+            IrStmt::Expect { cond, pass_stmt, fail_stmt, .. } => {
+                expr_signal_reads(cond, access);
+                stmt_signal_access(pass_stmt, access);
+                stmt_signal_access(fail_stmt, access);
+            }
             IrStmt::Cover { cond, pass_stmt, disable_iff, .. } => {
                 expr_signal_reads(cond, access);
                 if let Some(di) = disable_iff {

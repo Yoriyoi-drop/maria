@@ -82,7 +82,7 @@ pub use verify::{CheckResult, VerifyCheckKind, VerifyResult, now_ns};
 /// bump manual ini cache MICD akan me-restore hasil LAMA dari binary BARU
 /// (stale IR bug — ROUND 36). Kedua sisi enforcement hidup: schema check
 /// (bawah) dan `CacheManifest::valid()` membandingkan `compiler_version`.
-pub const COMPILER_VERSION: &str = concat!("Maria ", env!("CARGO_PKG_VERSION"), "-p1");
+pub const COMPILER_VERSION: &str = concat!("Maria ", env!("CARGO_PKG_VERSION"), "-p2");
 
 /// Versi skema database (Kritik 3 db.md). Naikkan bila layout/format
 /// persistensi berubah (field struct, key store, semantik). Database lama

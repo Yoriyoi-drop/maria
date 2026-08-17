@@ -80,9 +80,11 @@ pub trait CpuCore {
 
 pub mod riscv32;
 pub mod rtl;
+pub mod x86;
 
 pub use riscv32::Rv32Cpu;
 pub use rtl::RtlLinkedCpu;
+pub use x86::{FileDisk, X86Cpu, X86Disk};
 
 #[cfg(test)]
 mod tests {

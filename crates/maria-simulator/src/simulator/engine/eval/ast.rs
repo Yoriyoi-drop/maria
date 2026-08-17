@@ -359,7 +359,11 @@ impl SimulationEngine {
                 self.uvm_resource_db_data.insert((scope, rname), value);
                 Ok(LogicVec::from_u64(1, 1))
             }
-            Expr::FuncCall { name, args, .. } if name == "uvm_resource_db::get" => {
+            Expr::FuncCall { name, args, .. }
+                if name == "uvm_resource_db::get" || name == "uvm_resource_db::read_by_name" =>
+            {
+                // VERIF-07: lookup exact dulu, lalu wildcard scope paling
+                // spesifik — `set("*.env", ...)` terbaca `get("tb.env", ...)`.
                 let arg_vals: Vec<LogicVec> = args
                     .iter()
                     .map(|a| self.evaluate_ast_expr(a))
@@ -374,8 +378,7 @@ impl SimulationEngine {
                 } else {
                     String::new()
                 };
-                let key = (scope, rname);
-                let stored = self.uvm_resource_db_data.get(&key).cloned();
+                let stored = self.resource_db_find(&scope, &rname);
                 if let Some(val) = stored {
                     if let Some(last_arg) = args.get(2) {
                         match last_arg {
@@ -396,6 +399,50 @@ impl SimulationEngine {
                 } else {
                     Ok(LogicVec::from_u64(0, 1))
                 }
+            }
+            Expr::FuncCall { name, args, .. } if name == "uvm_resource_db::exists" => {
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
+                    .map(|a| self.evaluate_ast_expr(a))
+                    .collect::<Result<_, _>>()?;
+                let scope = if !arg_vals.is_empty() {
+                    logicvec_to_string(&arg_vals[0])
+                } else {
+                    String::new()
+                };
+                let rname = if arg_vals.len() > 1 {
+                    logicvec_to_string(&arg_vals[1])
+                } else {
+                    String::new()
+                };
+                Ok(LogicVec::from_u64(
+                    if self.resource_db_exists(&scope, &rname) { 1 } else { 0 },
+                    1,
+                ))
+            }
+            Expr::FuncCall { name, args, .. } if name == "uvm_resource_db::write_by_name" => {
+                // VERIF-07: alias set dgn arg ke-4 rw access type (diabaikan).
+                let arg_vals: Vec<LogicVec> = args
+                    .iter()
+                    .map(|a| self.evaluate_ast_expr(a))
+                    .collect::<Result<_, _>>()?;
+                let scope = if !arg_vals.is_empty() {
+                    logicvec_to_string(&arg_vals[0])
+                } else {
+                    String::new()
+                };
+                let rname = if arg_vals.len() > 1 {
+                    logicvec_to_string(&arg_vals[1])
+                } else {
+                    String::new()
+                };
+                let value = if arg_vals.len() > 2 {
+                    arg_vals[2].clone()
+                } else {
+                    LogicVec::new(1)
+                };
+                self.uvm_resource_db_data.insert((scope, rname), value);
+                Ok(LogicVec::from_u64(1, 1))
             }
             Expr::FuncCall { name, args, .. } if name == "uvm_factory::set_type_override_by_type" => {
                 let arg_vals: Vec<LogicVec> = args

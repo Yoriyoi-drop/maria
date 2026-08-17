@@ -786,6 +786,26 @@ impl Elaborator {
                     col: *col,
                 })
             }
+            // LANG-14: expect (procedural assertion) — pass-through sama
+            // dengan Assert/Assume (translate cond + pass/fail stmts).
+            IrStmt::Expect {
+                cond,
+                pass_stmt,
+                fail_stmt,
+                line,
+                col,
+            } => {
+                let new_cond = self.translate_expr(cond, map_sig);
+                let new_pass = self.translate_stmts(pass_stmt, map_sig)?;
+                let new_fail = self.translate_stmts(fail_stmt, map_sig)?;
+                Ok(IrStmt::Expect {
+                    cond: new_cond,
+                    pass_stmt: new_pass,
+                    fail_stmt: new_fail,
+                    line: *line,
+                    col: *col,
+                })
+            }
             IrStmt::Cover {
                 cond,
                 pass_stmt,

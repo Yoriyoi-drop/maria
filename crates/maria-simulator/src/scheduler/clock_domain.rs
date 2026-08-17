@@ -291,7 +291,9 @@ fn collect_stmt_writes(stmts: &[IrStmt], writes: &mut HashSet<SignalId>) {
                     collect_stmt_writes(p, writes);
                 }
             }
-            IrStmt::Assert { pass_stmt, fail_stmt, .. } | IrStmt::Assume { pass_stmt, fail_stmt, .. } => {
+            IrStmt::Assert { pass_stmt, fail_stmt, .. }
+            | IrStmt::Assume { pass_stmt, fail_stmt, .. }
+            | IrStmt::Expect { pass_stmt, fail_stmt, .. } => {
                 collect_stmt_writes(pass_stmt, writes);
                 collect_stmt_writes(fail_stmt, writes);
             }
@@ -365,6 +367,11 @@ fn collect_stmt_reads(stmts: &[IrStmt], reads: &mut HashSet<SignalId>) {
                 if let Some(di) = disable_iff {
                     collect_expr_reads(di, reads);
                 }
+                collect_stmt_reads(pass_stmt, reads);
+                collect_stmt_reads(fail_stmt, reads);
+            }
+            IrStmt::Expect { cond, pass_stmt, fail_stmt, .. } => {
+                collect_expr_reads(cond, reads);
                 collect_stmt_reads(pass_stmt, reads);
                 collect_stmt_reads(fail_stmt, reads);
             }

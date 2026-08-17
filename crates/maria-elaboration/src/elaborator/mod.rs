@@ -1336,6 +1336,16 @@ let mut top = match self.modules.remove(&top_name) {
                 }
             }
         }
+        // Add package classes to design.classes so they're available for hierarchy walk
+        for (_, items) in &self.package_symbols {
+            for item in items.values() {
+                if let PackageItem::Class(c) = item {
+                    if !self.design.classes.iter().any(|existing| existing.name == c.name) {
+                        self.design.classes.push(c.clone());
+                    }
+                }
+            }
+        }
 
         let mut classes = self.elaborate_classes()?;
 
@@ -5343,7 +5353,7 @@ impl Elaborator {
                     }
                 }
             }
-            let methods = cd
+            let mut methods: Vec<IrClassMethod> = cd
                 .members
                 .iter()
                 .filter_map(|m| match m {
@@ -5368,6 +5378,47 @@ impl Elaborator {
                     _ => None,
                 })
                 .collect();
+            // Merge parent class methods (recursively) — parent methods come before child methods
+            if let Some(ref parent_name) = cd.extends {
+                let parent_key = parent_name
+                    .split("::")
+                    .last()
+                    .unwrap_or_else(|| parent_name.as_str());
+                let mut merged_methods = Vec::new();
+                let mut seen_methods: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
+                if let Some(parent_cd) = classes.get(&Symbol::intern(parent_key)) {
+                    let mut ancestors: Vec<&IrClassDef> = vec![parent_cd];
+                    loop {
+                        let current = ancestors.last().unwrap();
+                        if let Some(ref gp) = current.extends {
+                            let gp_key = gp.split("::").last().unwrap_or_else(|| gp.as_str());
+                            if let Some(gp_cd) = classes.get(&Symbol::intern(gp_key)) {
+                                ancestors.push(gp_cd);
+                            } else {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    for anc in ancestors.iter().rev() {
+                        for m in &anc.methods {
+                            if seen_methods.insert(m.name) {
+                                merged_methods.push(m.clone());
+                            }
+                        }
+                    }
+                }
+                for m in &methods {
+                    let method_name: Symbol = m.name;
+                    if seen_methods.insert(method_name) {
+                        merged_methods.push(m.clone());
+                    } else if let Some(pos) = merged_methods.iter().position(|pm| pm.name == m.name) {
+                        merged_methods[pos] = m.clone();
+                    }
+                }
+                methods = merged_methods;
+            }
             let constraints: Vec<(Symbol, bool, Vec<maria_ast::types::ConstraintItem>)> = cd
                 .members
                 .iter()

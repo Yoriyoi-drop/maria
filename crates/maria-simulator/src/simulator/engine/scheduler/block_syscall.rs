@@ -27,6 +27,18 @@ impl SimulationEngine {
         _stmts: &[IrStmt],
         _i: usize,
     ) -> Result<bool, SimError> {
+        // VERIF-07: UVM DB call sebagai bare statement (uvm_config_db::set /
+        // uvm_resource_db::set/get/exists/write_by_name/read_by_name, uvm_
+        // cmdline_processor::*) — dispatch lewat execute_uvm_db_stmt. Tanpa
+        // ini set-as-statement di-eliminasi elaborator (sebelumnya map tidak
+        // pernah terisi).
+        if name.starts_with("uvm_config_db::")
+            || name.starts_with("uvm_resource_db::")
+            || name.starts_with("uvm_cmdline_processor::")
+        {
+            self.execute_uvm_db_stmt(name, ir_args)?;
+            return Ok(true);
+        }
         if self.evaluate_lang_syscall(name, ir_args)? {
             return Ok(true);
         }
@@ -955,6 +967,17 @@ impl SimulationEngine {
         name: &str,
         ir_args: &[IrExpr],
     ) -> Result<(), SimError> {
+        // VERIF-07: UVM DB call sebagai bare statement di jalur statement-block
+        // (dipakai initial/always block biasa + CLI run) — dispatch sama dgn
+        // evaluate_syscall. Tanpa ini `uvm_resource_db::set(...)` statement
+        // masuk ke sini dan jatuh ke no-op (map tidak pernah terisi).
+        if name.starts_with("uvm_config_db::")
+            || name.starts_with("uvm_resource_db::")
+            || name.starts_with("uvm_cmdline_processor::")
+        {
+            self.execute_uvm_db_stmt(name, ir_args)?;
+            return Ok(());
+        }
         if self.evaluate_lang_syscall(name, ir_args)? {
             return Ok(());
         }

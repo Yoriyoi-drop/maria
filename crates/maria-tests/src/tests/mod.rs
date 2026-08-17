@@ -16015,6 +16015,84 @@ endmodule
 }
 
 #[test]
+fn test_expect_statement_failure_runs_else() {
+    // LANG-14: `expect (cond) else stmt` — assertion dalam procedural code
+    // (IEEE 1800-2017 §17.16.2). Kondisi dievaluasi SEKETIKA; false →
+    // else (fail) statement dieksekusi + diag "expect failed" (AssertionFailed).
+    let source = r#"
+module tb;
+    reg [3:0] a;
+    reg hit;
+    initial begin
+        a = 5;
+        hit = 0;
+        expect (a == 1) else hit = 1;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let hit = sigs
+        .iter()
+        .find(|(n, _)| n == "hit")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    assert_eq!(hit, 1, "expect gagal harus mengeksekusi else (fail) statement");
+
+    // Diag "expect failed" harus ada (diperiksa via engine langsung).
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 5);
+    engine.run().unwrap();
+    let diags = engine.flush_diagnostics();
+    assert!(
+        diags.iter().any(|d| {
+            d.code == maria_core::diagnostics::DiagCode::AssertionFailed
+                && d.message == "expect failed"
+        }),
+        "harus ada diag 'expect failed': {:#?}",
+        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_expect_statement_success_runs_pass() {
+    // LANG-14: expect dengan kondisi BENAR → pass statement dieksekusi,
+    // TIDAK ada diag failure. (pass_stmt = statement sebelum else.)
+    let source = r#"
+module tb;
+    reg [3:0] a;
+    reg hit;
+    initial begin
+        a = 7;
+        hit = 0;
+        expect (a == 7) hit = 1;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let hit = sigs
+        .iter()
+        .find(|(n, _)| n == "hit")
+        .map(|(_, v)| v.to_u64())
+        .unwrap_or(0);
+    assert_eq!(hit, 1, "expect berhasil harus mengeksekusi pass statement");
+
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 5);
+    engine.run().unwrap();
+    let diags = engine.flush_diagnostics();
+    assert!(
+        !diags.iter().any(|d| {
+            d.code == maria_core::diagnostics::DiagCode::AssertionFailed
+                && d.message == "expect failed"
+        }),
+        "expect berhasil TIDAK boleh memunculkan diag failure: {:#?}",
+        diags.iter().map(|d| (d.code.as_str(), d.message.as_ref())).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_uvm_macro_severity_fatal() {
     // F16: macro `uvm_info/uvm_warning/uvm_error/uvm_fatal` di AWAL BARIS
     // ter-expand (fix preprocessor: backtick + nama macro terdefinisi =

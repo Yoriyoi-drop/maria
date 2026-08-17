@@ -1149,6 +1149,9 @@ impl Elaborator {
                     || name == "uvm_config_db::get"
                     || name == "uvm_resource_db::set"
                     || name == "uvm_resource_db::get"
+                    || name == "uvm_resource_db::exists"
+                    || name == "uvm_resource_db::read_by_name"
+                    || name == "uvm_resource_db::write_by_name"
                     || name == "uvm_cmdline_processor::get" =>
             {
                 let ir_args: Result<Vec<IrExpr>, SimError> = args

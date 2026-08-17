@@ -3268,6 +3268,67 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
             })?,
             None => EmuConfig::default(),
         };
+
+        // ── Memory map (R1): config ram → region RAM host (mmap) ──
+        // Dibuat lebih awal agar bisa dipakai jalur --boot-iso (x86) juga.
+        let mut memmap = MemoryMap::new();
+        if let Some(ram) = cfg.ram {
+            let (base, size) = (ram.base, ram.size);
+            let region = RamRegion::new(
+                Symbol::intern("ram"),
+                base,
+                size,
+                RegionKind::Ram,
+                true,
+            )
+            .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
+            memmap
+                .add(region)
+                .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
+        }
+
+        // ── Boot ISO x86 real-mode (R6): interpreter x86 + ISO sebagai disk.
+        // Tanpa RTL — jalur boot BIOS: MBR → INT 13h → El Torito → GRUB. ──
+        if let Some(iso_path) = &a.boot_iso {
+            let mut out = String::new();
+            if memmap.regions.is_empty() {
+                return Err(SimError::with_diag(
+                    DiagCode::InvalidSyntax,
+                    "--boot-iso butuh region RAM — definisikan ram = { base, size } di config .meu (mis. 0x0:0x100000)",
+                ));
+            }
+            let bytes = std::fs::read(iso_path)
+                .map_err(|e| SimError::with_diag(DiagCode::IoError, format!("{}: {}", iso_path, e)))?;
+            if bytes.len() < 512 {
+                return Err(SimError::with_diag(DiagCode::InvalidSyntax, "ISO terlalu kecil (min 512 byte)"));
+            }
+            // MBR (sektor 0) ke 0x7c00 — konvensi boot BIOS
+            let mut cpu = maria_api::emu::cpu::x86::X86Cpu::new();
+            cpu.disk = Some(Box::new(maria_api::emu::cpu::x86::FileDisk::open(iso_path)
+                .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?));
+            cpu.load_boot_sector(&mut memmap, &bytes[..512])
+                .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e.reason))?;
+            let max_steps = a.max_steps.unwrap_or(50_000);
+            let mut machine = Machine::new(Box::new(cpu), memmap, max_steps);
+            match machine.run() {
+                Ok(result) => {
+                    out.push_str(&format!("\n{}", result.summary()));
+                    out.push_str(&format!(
+                        "\nBIOS console: {}\n",
+                        String::from_utf8_lossy(&result.console)
+                    ));
+                }
+                Err(e) => {
+                    return Err(SimError::with_diag(
+                        DiagCode::InvalidSyntax,
+                        format!("x86 fault: {:?}", e),
+                    ))
+                }
+            }
+            print!("{}", out);
+            return Ok(());
+        }
+
         // Top untuk open_elaborated (targets): --top > config > --rtl-cpu-top
         // (saat mesin dijalankan dari RTL, top SoC sudah jelas dari flag CPU).
         let top = a.top.as_deref().or(cfg.top.as_deref()).or(a.rtl_cpu_top.as_deref());
@@ -3306,23 +3367,6 @@ fn dispatch_emu(a: &crate::cli::EmuArgs) -> ! {
             }
         }
         maria_api::emu::mhir::extract::apply_address_map(&mut mhir, &entries);
-
-        // ── Memory map (R1): config ram → region RAM host (mmap) ──
-        let mut memmap = MemoryMap::new();
-        if let Some(ram) = cfg.ram {
-            let (base, size) = (ram.base, ram.size);
-            let region = RamRegion::new(
-                Symbol::intern("ram"),
-                base,
-                size,
-                RegionKind::Ram,
-                true,
-            )
-            .map_err(|e| SimError::with_diag(DiagCode::IoError, e))?;
-            memmap
-                .add(region)
-                .map_err(|e| SimError::with_diag(DiagCode::InvalidSyntax, e))?;
-        }
 
         let mut out = String::new();
         if a.dump_memory_map {

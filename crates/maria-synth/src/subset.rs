@@ -270,12 +270,15 @@ impl Ctx {
                 );
                 *warn += 1;
             }
-            IrStmt::Assert { .. } | IrStmt::Assume { .. } | IrStmt::Cover { .. } => {
+            IrStmt::Assert { .. }
+            | IrStmt::Assume { .. }
+            | IrStmt::Cover { .. }
+            | IrStmt::Expect { .. } => {
                 self.push(
                     module,
                     "SYN-4",
                     SynSeverity::Warning,
-                    "assertion/cover dibuang saat synthesis".into(),
+                    "assertion/cover/expect dibuang saat synthesis".into(),
                 );
                 *warn += 1;
             }
@@ -380,6 +383,7 @@ fn stmt_kind_name(st: &IrStmt) -> &'static str {
         IrStmt::Assert { .. } => "assert",
         IrStmt::Assume { .. } => "assume",
         IrStmt::Cover { .. } => "cover",
+        IrStmt::Expect { .. } => "expect",
         IrStmt::WaitOrder { .. } => "wait_order",
         IrStmt::WaitFork => "wait_fork",
         IrStmt::RandCase { .. } => "randcase",
@@ -470,6 +474,11 @@ where
                 ..
             }
             | IrStmt::Assume {
+                pass_stmt,
+                fail_stmt,
+                ..
+            }
+            | IrStmt::Expect {
                 pass_stmt,
                 fail_stmt,
                 ..

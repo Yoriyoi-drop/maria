@@ -556,6 +556,38 @@ impl SimulationEngine {
                         }
                     }
                 }
+                // LANG-14: `expect (cond) else stmt` — assertion dalam
+                // procedural code (IEEE 1800-2017 §17.16.2). Kondisi
+                // dievaluasi SEKETIKA saat statement dijangkau (subset
+                // immediate); false → fail_stmt + report "expect failed".
+                // Tidak dipengaruhi $assertoff/$assertkill (berbeda dari
+                // assert immediate) — expect selalu dievaluasi.
+                IrStmt::Expect {
+                    cond,
+                    pass_stmt,
+                    fail_stmt,
+                    line,
+                    col,
+                } => {
+                    self.set_cur_src_pos(*line, *col);
+                    let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                    if ok {
+                        if !pass_stmt.is_empty() {
+                            self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
+                        }
+                    } else {
+                        let (a_l, a_c) = self.cur_src_pos();
+                        let _ = self.diag_error_at(
+                            maria_core::diagnostics::DiagCode::AssertionFailed,
+                            "expect failed",
+                            a_l,
+                            a_c,
+                        );
+                        if !fail_stmt.is_empty() {
+                            self.evaluate_block_with_delay_fork(fail_stmt, fork_id)?;
+                        }
+                    }
+                }
                 IrStmt::Assume {
                     cond,
                     pass_stmt,
@@ -2290,11 +2322,38 @@ impl SimulationEngine {
                                     "assertion failed",
                                     a_l,
                                     a_c,
-                                );
-                                if !fail_stmt.is_empty() {
+                                );                                if !fail_stmt.is_empty() {
                                     self.evaluate_stmt_block(fail_stmt)?;
                                 }
                             }
+                        }
+                    }
+                }
+                // LANG-14: `expect (cond) else stmt` — jalur evaluate_stmt_block
+                // (sama dengan Assert immediate, tanpa assert-off/disable).
+                IrStmt::Expect {
+                    cond,
+                    pass_stmt,
+                    fail_stmt,
+                    line,
+                    col,
+                } => {
+                    self.set_cur_src_pos(*line, *col);
+                    let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                    if ok {
+                        if !pass_stmt.is_empty() {
+                            self.evaluate_stmt_block(pass_stmt)?;
+                        }
+                    } else {
+                        let (a_l, a_c) = self.cur_src_pos();
+                        let _ = self.diag_error_at(
+                            maria_core::diagnostics::DiagCode::AssertionFailed,
+                            "expect failed",
+                            a_l,
+                            a_c,
+                        );
+                        if !fail_stmt.is_empty() {
+                            self.evaluate_stmt_block(fail_stmt)?;
                         }
                     }
                 }
@@ -2333,8 +2392,7 @@ impl SimulationEngine {
                                     "assumption violated",
                                     a_l,
                                     a_c,
-                                );
-                                if !fail_stmt.is_empty() {
+                                );                                if !fail_stmt.is_empty() {
                                     self.evaluate_stmt_block(fail_stmt)?;
                                 }
                             }

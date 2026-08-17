@@ -20,6 +20,8 @@
 //!   `mem_valid && mem_ready`) → transaksi selesai, `mem_valid` turun.
 //! - `trap` tinggi saat ebreak/ecall/instruksi ilegal → `CpuStep::Trap`.
 
+use std::collections::VecDeque;
+
 use maria_ir::{IrDesign, LogicVec, SignalId};
 use maria_simulator::debugger::Debugger;
 use maria_simulator::simulator::{
@@ -52,6 +54,10 @@ struct CpuPorts {
     /// Console UART RTL (opsional): tx_done pulse + byte untuk host.
     uart_tx_done: Option<SignalId>,
     uart_tx_byte: Option<SignalId>,
+    /// UART RX (input host → device RTL, opsional): strobe + byte input.
+    uart_rx_wr: Option<SignalId>,
+    uart_rx_din: Option<SignalId>,
+    uart_rx_pending: Option<SignalId>,
 }
 
 /// CPU RTL-linked: eksekusi instruksi terjadi di RTL (`.sv`/`.v`), bukan .rs.
@@ -71,6 +77,12 @@ pub struct RtlLinkedCpu {
     served_addr: u64,
     /// Byte yang ditulis CPU ke Direct RTL Device (UART console) selama run.
     pub console_out: Vec<u8>,
+    /// Input host → device RTL (UART RX): byte di-deliver ke `rx_wr`/`rx_din`
+    /// saat `rx_pending` UART kosong (satu byte per read-clear).
+    pending_rx: VecDeque<u8>,
+    /// rx_wr sedang tinggi (tunggu 1 posedge agar edge-detect UART latch,
+    /// lalu drop ke 0 agar byte berikutnya bisa membuat edge baru).
+    rx_wr_high: bool,
 }
 
 /// Compile file RTL CPU (bisa lebih dari satu — wrapper + picorv32.v) → IrDesign.
@@ -166,6 +178,9 @@ fn resolve_ports(design: &IrDesign) -> Result<CpuPorts, String> {
         mmio_sel: find("mmio_sel"),
         uart_tx_done: find("uart_tx_done"),
         uart_tx_byte: find("uart_tx_byte"),
+        uart_rx_wr: find("uart_rx_wr"),
+        uart_rx_din: find("uart_rx_din"),
+        uart_rx_pending: find("uart_rx_pending"),
     })
 }
 
@@ -191,6 +206,8 @@ impl RtlLinkedCpu {
             served_instr: false,
             served_addr: 0,
             console_out: Vec::new(),
+            pending_rx: VecDeque::new(),
+            rx_wr_high: false,
         };
         cpu.recreate_engine();
         Ok(cpu)
@@ -200,6 +217,17 @@ impl RtlLinkedCpu {
     pub fn read_signal(&self, name: &str) -> Option<u64> {
         let id = self.design.top.signals.iter().position(|s| s.name.as_str() == name)?;
         Some(self.dbg.engine.state.read_signal(id).to_u64())
+    }
+
+    /// Nama semua sinyal top design (debug/probe flatten naming).
+    pub fn signal_names(&self) -> Vec<String> {
+        self.design.top.signals.iter().map(|s| s.name.as_str().to_string()).collect()
+    }
+
+    /// Lebar sinyal top design (debug/probe).
+    pub fn signal_width(&self, name: &str) -> Option<usize> {
+        let id = self.design.top.signals.iter().position(|s| s.name.as_str() == name)?;
+        Some(self.design.top.signals[id].width)
     }
 
     /// Satu tick clock (high+low) DENGAN layanan bus — untuk probing manual
@@ -222,6 +250,8 @@ impl RtlLinkedCpu {
         self.served = false;
         self.last_pc = 0;
         self.console_out.clear();
+        self.pending_rx.clear();
+        self.rx_wr_high = false;
     }
 
     /// Reset: engine baru, resetn aktif-rendah beberapa cycle, lalu lepas.
@@ -370,6 +400,9 @@ impl Default for RtlLinkedCpu {
                 mmio_sel: None,
                 uart_tx_done: None,
                 uart_tx_byte: None,
+                uart_rx_wr: None,
+                uart_rx_din: None,
+                uart_rx_pending: None,
             },
             cycle: 0,
             last_pc: 0,
@@ -377,9 +410,42 @@ impl Default for RtlLinkedCpu {
             served_instr: false,
             served_addr: 0,
             console_out: Vec::new(),
+            pending_rx: VecDeque::new(),
+            rx_wr_high: false,
         };
         cpu.recreate_engine();
         cpu
+    }
+}
+
+impl RtlLinkedCpu {
+    /// Input host → device RTL (UART RX): antre byte; di-deliver ke `rx_wr`/
+    /// `rx_din` saat UART RTL kosong (`rx_pending` = 0) — satu byte per
+    /// read-clear. Menjadikan device bidirectional (console input).
+    pub fn push_uart_input(&mut self, bytes: &[u8]) {
+        self.pending_rx.extend(bytes.iter().copied());
+    }
+
+    /// Deliver byte input berikutnya ke port RX RTL: naikkan `rx_wr` (level,
+    /// `rx_wr_high` ditandai — step() menurunkannya 1 posedge setelah latch
+    /// UART agar byte berikutnya membuat edge baru).
+    fn deliver_rx_byte(&mut self) {
+        let (Some(din), Some(wr)) = (self.ports.uart_rx_din, self.ports.uart_rx_wr) else {
+            return;
+        };
+        if let Some(b) = self.pending_rx.pop_front() {
+            self.poke_val(din, b as u64);
+            self.poke(wr, 1);
+            self.rx_wr_high = true;
+        }
+    }
+
+    /// UART RTL siap menerima byte berikutnya (pending kosong).
+    fn uart_rx_idle(&self) -> bool {
+        self.ports
+            .uart_rx_pending
+            .map(|id| !self.bit(id))
+            .unwrap_or(false)
     }
 }
 
@@ -395,6 +461,18 @@ impl CpuCore for RtlLinkedCpu {
             self.tick(Some(mem))?;
             // Direct RTL Device: byte UART RTL → console host.
             self.capture_console();
+            // UART RX handshake: drop rx_wr 1 posedge setelah latch (edge
+            // berikutnya terdeteksi UART), lalu deliver byte berikutnya saat
+            // UART kosong (rx_pending = 0, read-clear oleh CPU).
+            if self.rx_wr_high {
+                if let Some(wr) = self.ports.uart_rx_wr {
+                    self.poke(wr, 0);
+                }
+                self.rx_wr_high = false;
+            }
+            if !self.pending_rx.is_empty() && self.uart_rx_idle() {
+                self.deliver_rx_byte();
+            }
             // Trap (ebreak/ecall/ilegal) — CPU berhenti.
             if self.bit(self.ports.trap) {
                 return Ok(CpuStep::Trap { cause: CAUSE_ECALL_M, tval: self.last_pc });
@@ -472,6 +550,16 @@ mod tests {
 
     fn cpu_files() -> Vec<String> {
         vec![root_of("examples/rtl/rv32_bus_wrapper.sv"), root_of("examples/rtl/picorv32.v")]
+    }
+
+    /// SoC lengkap: picorv32 + UART + timer (semua Direct RTL Device).
+    fn soc_files() -> Vec<String> {
+        vec![
+            root_of("examples/rtl/rv32_soc.sv"),
+            root_of("examples/rtl/uart_console.sv"),
+            root_of("examples/rtl/timer_console.sv"),
+            root_of("examples/rtl/picorv32.v"),
+        ]
     }
 
     fn map() -> MemoryMap {
@@ -579,11 +667,7 @@ mod tests {
     #[test]
     fn test_rtl_cpu_mmio_uart_console() {
         with_big_stack(|| {
-            let soc_files = vec![
-                root_of("examples/rtl/rv32_soc.sv"),
-                root_of("examples/rtl/uart_console.sv"),
-                root_of("examples/rtl/picorv32.v"),
-            ];
+            let soc_files = soc_files();
             // t0='A'/'B'/'C' → sw ke 0x10000000 (UART RTL); t0=42 → sw ke
             // 0x80000004 (RAM host); ebreak.
             let code = [
@@ -623,11 +707,7 @@ mod tests {
     #[test]
     fn test_rtl_cpu_mmio_read_status() {
         with_big_stack(|| {
-            let soc_files = vec![
-                root_of("examples/rtl/rv32_soc.sv"),
-                root_of("examples/rtl/uart_console.sv"),
-                root_of("examples/rtl/picorv32.v"),
-            ];
+            let soc_files = soc_files();
             // a0 = UART (0x10000000), a1 = RAM (0x80000000).
             // baca tx_count awal (0) → ram[0]; tulis 'A' → baca (1) → ram[4];
             // tulis 'B' → baca (2) → ram[8]; ebreak.
@@ -666,6 +746,61 @@ mod tests {
         });
     }
 
+    /// E2E R4 — Direct RTL Device INTERRUPT device-initiated: `timer_console`
+    /// menghitung mundur 64 cycle setelah di-load (MMIO 0x10001000) lalu
+    /// menaikkan `irq_timer` (bit 4, LEVEL) TANPA aksi CPU — interrupt murni
+    /// dari device. picorv32 masuk handler, handler tulis 'T' ke UART +
+    /// maskirq + retirq. Verifikasi: console "T" + trap di ebreak (retirq
+    /// pulang ke instruksi setelah waitirq) + timer reload/IRQ state.
+    #[test]
+    fn test_rtl_cpu_irq_timer() {
+        with_big_stack(|| {
+            let soc_files = soc_files();
+            // main @0x80000000: unmask device IRQ (bit 3 UART + bit 4 timer),
+            // load timer 64 → countdown → waitirq → ebreak.
+            let main = [
+                (0xFFFFFu32 << 12) | (5u32 << 7) | LUI, // lui t0, 0xFFFFF
+                ((-25i32 as u32 & 0xfff) << 20) | (5u32 << 15) | (5u32 << 7) | ADDI, // addi t0, -25 → 0xFFFFEFE7 (unmask bit 3+4)
+                r(0b0000011, 0, 5, 0, 0, 0x0B),       // maskirq t0
+                (0x10001u32 << 12) | (10u32 << 7) | LUI, // lui a0, 0x10001 → timer base (0x10001000)
+                i(64, 0, 0, 6, ADDI),                 // t1 = 64 (countdown)
+                s(0, 6, 10, 2, SW),                  // timer load 64
+                0x0800_000B,                          // waitirq              (0x80000018)
+                0x0010_0073,                          // ebreak               (0x8000001C)
+            ];
+            // handler @0x80000100: tulis 'T' ke UART, mask semua IRQ, retirq.
+            let handler = [
+                (0x10000u32 << 12) | (10u32 << 7) | LUI, // lui a0, 0x10000 → UART base
+                i(0x54, 0, 0, 6, ADDI),              // t1 = 'T'
+                s(0, 6, 10, 0, 0x23),               // sb t1, 0(a0) → UART 'T'
+                (0xFFFFFu32 << 12) | (7u32 << 7) | LUI, // lui t2, 0xFFFFF
+                i(-1, 7, 0, 7, ADDI),                // t2 = 0xFFFFFFFF
+                r(0b0000011, 0, 7, 0, 0, 0x0B),      // maskirq t2
+                r(0b0000010, 0, 0, 0, 0, 0x0B),      // retirq
+            ];
+            let mut payload = vec![0u8; 0x120];
+            for (i, w) in main.iter().enumerate() {
+                payload[i * 4..i * 4 + 4].copy_from_slice(&w.to_le_bytes());
+            }
+            for (i, w) in handler.iter().enumerate() {
+                let off = 0x100 + i * 4;
+                payload[off..off + 4].copy_from_slice(&w.to_le_bytes());
+            }
+            let elf = make_elf(&payload);
+            let mut mem = map();
+            crate::elf::load_elf(&elf, &mut mem).expect("load elf");
+
+            let mut cpu = RtlLinkedCpu::from_files(&soc_files, "rv32_soc").expect("compile");
+            cpu.reset();
+            let mut machine = crate::machine::Machine::new(Box::new(cpu), mem, 5000);
+            let result = machine.run().expect("machine run");
+            assert!(result.halted, "CPU RTL harus trap setelah retirq ke ebreak: {:?}", result);
+            assert_eq!(result.pc & !3, 0x8000_001c, "retirq harus pulang ke ebreak (0x1C)");
+            // Handler IRQ timer menulis 'T' → console dari UART RTL.
+            assert_eq!(result.console, b"T", "console dari handler IRQ timer: {:?}", result.console);
+        });
+    }
+
     #[test]
     fn test_rtl_cpu_reset_pc_starts_at_reset_vector() {
         with_big_stack(|| {
@@ -688,11 +823,7 @@ mod tests {
     #[test]
     fn test_rtl_cpu_irq_uart_tx() {
         with_big_stack(|| {
-            let soc_files = vec![
-                root_of("examples/rtl/rv32_soc.sv"),
-                root_of("examples/rtl/uart_console.sv"),
-                root_of("examples/rtl/picorv32.v"),
-            ];
+            let soc_files = soc_files();
             // main @0x80000000: unmask IRQ 3 (maskirq), tulis 'A' ke UART,
             // waitirq (blokir sampai IRQ), ebreak.
             let main = [
@@ -701,7 +832,7 @@ mod tests {
                 0x0602800Bu32, // maskirq t0               → unmask bit 3
                 0x10000537u32, // lui a0, 0x10000          → a0 = UART base
                 0x04100313u32, // addi t1, zero, 0x41      → t1 = 'A'
-                0x06500023u32, // sb t1, 0(a0)             → UART 'A'
+                0x00650023u32, // sb t1, 0(a0)             → UART 'A'
                 0x0800000Bu32, // waitirq                  (0x80000018)
                 0x00100073u32, // ebreak                   (0x8000001C)
             ];
@@ -709,7 +840,7 @@ mod tests {
             let handler = [
                 0x10000537u32, // lui a0, 0x10000
                 0x04200313u32, // addi t1, zero, 0x42      → t1 = 'B'
-                0x06500023u32, // sb t1, 0(a0)             → UART 'B'
+                0x00650023u32, // sb t1, 0(a0)             → UART 'B'
                 0xFFFFF3B7u32, // lui t2, 0xFFFFF
                 0xFFF38393u32, // addi t2, t2, -1          → t2 = 0xFFFFFFFF
                 0x0603800Bu32, // maskirq t2               → mask semua IRQ
@@ -735,6 +866,64 @@ mod tests {
             assert_eq!(result.pc & !3, 0x8000_001c, "retirq harus pulang ke ebreak (0x1C)");
             // Byte dari main ('A') + handler IRQ ('B') — keduanya dari UART RTL.
             assert_eq!(result.console, b"AB", "console dari UART RTL (main + handler IRQ): {:?}", result.console);
+        });
+    }
+
+    /// E2E R4 — UART RX (input HOST → device RTL, bidirectional): byte 'H'
+    /// di-inject host (`push_uart_input`) → UART RTL meng-latch (edge `rx_wr`)
+    /// → `irq_rx` (bit 5) → handler baca UART_BASE+8 (read-clear) → simpan ke
+    /// RAM + echo ke UART TX → retirq. Verifikasi: console "H" (echo), RAM
+    /// menyimpan 0x48 ('H') yang DIBACA dari device RTL, trap di ebreak.
+    #[test]
+    fn test_rtl_cpu_uart_rx_bidirectional() {
+        with_big_stack(|| {
+            let soc_files = soc_files();
+            // main @0x80000000: unmask bit 5 (UART RX) → waitirq → ebreak.
+            let main = [
+                0xFFFFF2B7u32, // lui t0, 0xFFFFF
+                0xFDF28293u32, // addi t0, t0, -33 → 0xFFFFEFDF (unmask bit 5 + 12)
+                r(0b0000011, 0, 5, 0, 0, 0x0B), // maskirq t0
+                0x0800_000B,                    // waitirq              (0x8000000C)
+                0x0010_0073,                    // ebreak               (0x80000010)
+            ];
+            // handler @0x80000100: baca UART_BASE+8 (rx_byte, read-clear),
+            // simpan ke RAM, echo ke UART TX, mask semua, retirq.
+            let handler = [
+                (0x10000u32 << 12) | (10u32 << 7) | LUI, // lui a0, 0x10000 → UART base
+                i(8, 10, 2, 6, LW),                     // lw t1, 8(a0) → rx_byte
+                (0x80000u32 << 12) | (11u32 << 7) | LUI, // lui a1, 0x80000 → RAM base
+                s(4, 6, 11, 2, SW),                     // sw t1, 4(a1) → ram[0x80000004]
+                s(0, 6, 10, 0, 0x23),                  // sb t1, 0(a0) → echo UART TX
+                (0xFFFFFu32 << 12) | (7u32 << 7) | LUI, // lui t2, 0xFFFFF
+                i(-1, 7, 0, 7, ADDI),                   // t2 = 0xFFFFFFFF
+                r(0b0000011, 0, 7, 0, 0, 0x0B),         // maskirq t2
+                r(0b0000010, 0, 0, 0, 0, 0x0B),         // retirq
+            ];
+            let mut payload = vec![0u8; 0x124];
+            for (i, w) in main.iter().enumerate() {
+                payload[i * 4..i * 4 + 4].copy_from_slice(&w.to_le_bytes());
+            }
+            for (i, w) in handler.iter().enumerate() {
+                let off = 0x100 + i * 4;
+                payload[off..off + 4].copy_from_slice(&w.to_le_bytes());
+            }
+            let elf = make_elf(&payload);
+            let mut mem = map();
+            crate::elf::load_elf(&elf, &mut mem).expect("load elf");
+
+            let mut cpu = RtlLinkedCpu::from_files(&soc_files, "rv32_soc").expect("compile");
+            cpu.reset();
+            // Input host → device RTL: 'H' di-inject sebelum run.
+            cpu.push_uart_input(b"H");
+            let mut machine = crate::machine::Machine::new(Box::new(cpu), mem, 5000);
+            let result = machine.run().expect("machine run");
+            assert!(result.halted, "CPU RTL harus trap setelah retirq ke ebreak: {:?}", result);
+            assert_eq!(result.pc & !3, 0x8000_0010, "retirq harus pulang ke ebreak (0x10)");
+            // Echo TX: byte RX dibaca handler lalu ditulis ke UART TX → console.
+            assert_eq!(result.console, b"H", "echo UART TX: {:?}", result.console);
+            // Byte yang DIBACA dari device RTL (UART_BASE+8) tersimpan di RAM.
+            let rx = machine.mem.read(0x8000_0004, 4).expect("read");
+            assert_eq!(rx, 0x48, "RAM harus berisi byte RX 0x48 ('H') dari UART RTL");
         });
     }
 }

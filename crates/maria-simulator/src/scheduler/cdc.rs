@@ -251,7 +251,8 @@ fn collect_stmt_writes_recursive(stmts: &[IrStmt], writes: &mut HashSet<SignalId
                 }
             }
             IrStmt::Assert { pass_stmt, fail_stmt, .. }
-            | IrStmt::Assume { pass_stmt, fail_stmt, .. } => {
+            | IrStmt::Assume { pass_stmt, fail_stmt, .. }
+            | IrStmt::Expect { pass_stmt, fail_stmt, .. } => {
                 collect_stmt_writes_recursive(pass_stmt, writes);
                 collect_stmt_writes_recursive(fail_stmt, writes);
             }
@@ -787,7 +788,8 @@ pub(crate) fn collect_stmt_signal_reads(stmts: &[IrStmt], reads: &mut HashSet<Si
                 }
             }
             IrStmt::Assert { cond, pass_stmt, fail_stmt, .. }
-            | IrStmt::Assume { cond, pass_stmt, fail_stmt, .. } => {
+            | IrStmt::Assume { cond, pass_stmt, fail_stmt, .. }
+            | IrStmt::Expect { cond, pass_stmt, fail_stmt, .. } => {
                 collect_expr_signal_ids(cond, reads);
                 collect_stmt_signal_reads(pass_stmt, reads);
                 collect_stmt_signal_reads(fail_stmt, reads);

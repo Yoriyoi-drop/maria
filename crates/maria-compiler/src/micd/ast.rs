@@ -24,7 +24,7 @@ pub fn deserialize_design(bytes: &[u8]) -> Option<Design> {
 /// Versi format serialisasi IR hasil elaborasi (increment bila skema IR
 /// berubah — memisahkan skema AST dan IR agar perubahan satu tidak
 /// meng-invalidasi yang lain).
-pub const IR_FORMAT_VERSION: u64 = 1;
+pub const IR_FORMAT_VERSION: u64 = 2;
 
 /// Serialisasi `IrDesign` → bytes biner (bincode). Dipakai menyimpan hasil
 /// elaborasi penuh ke cache `elaborate/` agar warm run dapat meng-restore IR

@@ -34,7 +34,13 @@ formal verification, LSP/IDE, compiled-code simulation,
 distributed/parallel simulation engine, coverage minimal,
 constraint solver inadequate, waveform database tidak ada, CI/CD ✅ sudah ada,
 tidak ada regression infrastructure, tidak ada VHDL/SystemC co-sim,
-dan pre-existing test failures (ALL FIXED ✅ — 1939 tests pass, 0 fail,
+dan pre-existing test failures (ALL FIXED ✅ — 2020 tests pass, 0 fail,
+update 2026-08-17: ROUND 59 LANG-14 expect statement (procedural assertion)
+  + BUG FIX 12 regresi UVM (synthetic method find_method_in_hierarchy +
+  hierarchy prefix fallback — class builtin polos uvm_table_printer dll.
+  jadi user_override=true → dispatch builtin di-skip) + re-verifikasi 11
+  marker [] stale → [x] (LANG-05/07/09, ELAB-05, SIM-21, WAV-18, VERIF-02/10/
+  22/24, FORMAL-02/06/08)
 update 2026-08-16: ROUND 58 VERIF-30 coverpoint bins + bug fix multi-bin
 update 2026-08-16: ROUND 57 SIM-13/15/17 race + multi-driver + checkpoint
 update 2026-08-16: ROUND 56 WAV-13 SDF delay diterapkan ke timing + bug fix
@@ -73,10 +79,10 @@ constraint_mode() dan LANG-29 wait fork diimplementasikan baru).
 
 Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 ~18ms untuk 400 module, zero-deallocation sim arena, struktur
-kode terorganisir rapi, ✅ CI/CD aktif, ✅ 1939 tests pass 0 fail,
+kode terorganisir rapi, ✅ CI/CD aktif, ✅ 2020 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
-dan ✅ 57 item audit telah diperbaiki (termasuk monorepo workspace,
+dan ✅ 69 item audit telah diperbaiki (termasuk monorepo workspace,
 Arsitektur-08, LANG-31 soft constraint — ROUND 28, LANG-33 constraint_mode()
 dan LANG-29 wait fork — ROUND 29, LANG-43 qualified pkg func + LANG-50
 timing checks — ROUND 30, LANG-32 static constraint + LANG-34 randomize
@@ -84,7 +90,8 @@ with inline — ROUND 31, LANG-47 $realtime re-verified — ROUND 32,
 LANG-30 disable fork — ROUND 33, LANG-40 let declaration — ROUND 34,
 LANG-46 VPI systf bug fix + test — ROUND 35, literal negatif signed +
 MICD IR cache stale versioning — ROUND 36, LANG-46 VPI e2e SV→C systf
-via interpreter — ROUND 36 lanjutan).
+via interpreter — ROUND 36 lanjutan, LANG-14 expect statement — ROUND 59,
+re-verifikasi 11 marker [] stale → [x] — ROUND 59).
 
 ═══════════════════════════════════════════════════════════════════════════════
 2. ARCHITECTURE REVIEW
@@ -512,18 +519,38 @@ LANG-02: [] Tidak ada SystemC Support (Critical)
 LANG-03: [] Tidak ada PSL (Property Specification Language) (High)
 LANG-04: [] Tidak ada `assert property @ formal semantics — hanya
          cycle-based simulation (Critical)
-LANG-05: [] Constraint solver rejection sampling max 100 attempts —
-         completely inadequate. VCS uses BDD + SAT. (Critical)
+LANG-05: [x] Constraint solver — RE-VERIFIKASI (ROUND 59): domain analysis +
+         guided generation + bounded backtracking 10K (bukan rejection 100) —
+         uvm/constraint_solver.rs solve_constraints (domain equality/inequality/
+         inside/dist + guided generation) + CRIT-002. Marker audit stale.
 LANG-06: [] Tidak ada full coverage of 1800-2017 (98% claimed tapi
          banyak partial) (High)
-LANG-07: [] `ifdef expression syntax tidak didukung (High)
+LANG-07: [x] `ifdef expression syntax — RE-VERIFIKASI (ROUND 59): preprocessor
+         eval_ifdef_expr (|| && ! ( ) defined, `elsif) — CRIT-046. Marker stale.
 LANG-08: [] Tidak ada net alias / nettype (High)
-LANG-09: [] Tidak ada let declarations (let policies) (Medium)
+LANG-09: [x] let declarations — RE-VERIFIKASI (ROUND 59): SAMA dengan LANG-40
+         (let declaration FIXED 2026-08-14 — Token::Let, LetDecl, let_decls,
+         resolve via elaborate_expr, substitute_let_args, 2 test). Marker stale.
 LANG-10: [] Tidak ada checker construct (SVA checker) (High)
 LANG-11: [] Tidak ada restrict property (Medium)
 LANG-12: [] Tidak ada assume property formal (formal semantics) (High)
 LANG-13: [] Tidak ada cover property formal (Medium)
-LANG-14: [] Tidak ada expect statement (assertion in procedural) (Medium)
+LANG-14: [x] expect statement — FIXED (ROUND 59): `expect (cond) else stmt`
+         (IEEE 1800-2017 §17.16.2). Parser sudah parse (Stmt::Expect), tapi
+         ELABORATOR MEN-DROP (Stmt::Expect → IrStmt::Null) → expect tidak pernah
+         dievaluasi. Kini: IrStmt::Expect {cond, pass_stmt, fail_stmt, line, col}
+         (maria-ir/ir.rs) + elaborasi penuh (elaborator/stmt.rs, flatten.rs
+         pass-through) + engine handler di block.rs (2 jalur: evaluate_block_with_
+         delay_fork + evaluate_stmt_block) — kondisi dievaluasi seketika; false →
+         fail_stmt + diag "expect failed" (AssertionFailed); true → pass_stmt.
+         Tidak dipengaruhi $assertoff/$assertkill (beda assert immediate).
+         Sync lintas pipeline: sim_dag.rs (reads cond+pass/fail), cdc.rs +
+         clock_domain.rs (reads+writes), uvm/hierarchy.rs (ir_has_run_test),
+         maria-synth/subset.rs (SYN-4 warning + stmt_kind_name + walk_stmts).
+         IR cache bump: IR_FORMAT_VERSION 1→2 + COMPILER_VERSION -p1→-p2.
+         Tests BARU (2): test_expect_statement_failure_runs_else (hit=1 +
+         diag "expect failed"), test_expect_statement_success_runs_pass
+         (pass stmt jalan, tanpa diag failure).
 LANG-15: [x] wildcard range in case — FIXED: `case (x) inside` + rentang `[lo:hi]`
          (IrExpr::Inside/InsideRange). Parser: crates/maria-parser/src/stmt.rs:1064
          (case inside), expr.rs:225; eval: scheduler/block_control.rs:193
@@ -778,8 +805,9 @@ ELAB-02:[] Lazy elaboration partial — hanya skip full elab untuk
          --compile-only mode (High)
 ELAB-03:[] Tidak ada non-blocking elaboration (Medium)
 ELAB-04:[] Tidak ada type-2 incremental elaboration (High)
-ELAB-05:[] Generate loop unrolling bisa O(2^N) untuk nested
-         generated loops (Critical)
+ELAB-05: [x] Generate loop unrolling safety cap — FIXED (ROUND 5):
+         MAX_GENERATED_ITEMS=1M (elaboration/util/generate.rs:18) + cap iter
+         utk nested generate (loop_unroll). Marker stale.
 ELAB-06:[] Tidak ada generate loop runtime bounds (Medium)
 ELAB-07:[] Tidak ada cross-module parameter dependency tracking (High)
 ELAB-08:[] Tidak ada config/libraray mapping full implementation (Medium)
@@ -891,7 +919,10 @@ SIM-18: ✅ Simulation crash recovery (ROUND 48) — auto-checkpoint berkala
            lanjutan.
 SIM-19:[] No out-of-order simulation (Medium)
 SIM-20:[] No cycle-based simulation mode (beyond cycle-fusion claim) (High)
-SIM-21:[] No clock-domain crossing (CDC) awareness (Critical)
+SIM-21: [x] CDC awareness — RE-VERIFIKASI (ROUND 59): CdcAnalysis lengkap
+         (scheduler/cdc.rs — domain extraction, signal-domain mapping, crossing
+         detection, synchronizer recognition, severity; CLI --cdc-report)
+         = CRIT-013. Marker stale.
 SIM-22: ✅ Reset-domain crossing detection (ROUND 40)
            crates/maria-simulator/src/scheduler/reset_domain.rs —
            ResetDomainAnalysis::analyze(design): kelompokkan proses
@@ -1025,13 +1056,17 @@ WAV-16:[] No protocol-aware waveform decode (AHB, AXI, APB) (High)
 WAV-17: ✅ No waveform statistics (ROUND 46) — mwave stats (toggle count,
            transitions, first/last change, activity%, stuck detection)
            + src/waveform/statistics.rs (--signal-stats, daftar lama ✅).
-WAV-18:[] No value change dump at end of sim (blocking) (Medium)
+WAV-18: [x] Value change dump blocking — RE-VERIFIKASI (ROUND 59): diatasi
+         WAV-06 waveform streaming (VCD periodic flush + --waveform-stream;
+         FST via wavefst) — dump tidak lagi menumpuk di akhir sim.
 WAV-19:[] VCD writer single-threaded, blocking sim during dump (High)
 
 4.7 VERIFICATION GAPS
 
 VERIF-01:[] No full UVM 1.2 class library (Critical)
-VERIF-02:[] No uvm_reg (register layer) (Critical)
+VERIF-02: [x] uvm_reg — RE-VERIFIKASI (ROUND 59): uvm_reg_field/uvm_reg/
+         uvm_reg_block/uvm_reg_map lengkap (uvm/reg.rs + hierarchy + dispatch
+         method.rs + super arm builtin.rs) = CRIT-032. Marker stale.
 VERIF-03: ✅ uvm_cmdline_processor (ROUND 42)
            crates/maria-simulator/src/simulator/engine/uvm/cmdline.rs —
            singleton (get() → obj_id sama), has_plusarg/has_arg (prefix
@@ -1054,7 +1089,10 @@ VERIF-08: ✅ uvm_event / uvm_event_pool — sync.rs (is_uvm_event_hierarchy,
            test_uvm_event_sync + test_uvm_event_subclass_override.
 VERIF-09: ✅ uvm_barrier / uvm_barrier_pool — sync.rs (uvm_barrier_data,
            threshold/count, F21) + test_uvm_barrier_sync.
-VERIF-10:[] No uvm_callback (Critical — used in all commercial VIP)
+VERIF-10: [x] uvm_callback — RE-VERIFIKASI (ROUND 59): uvm_callbacks add/
+         delete/display + pre_*/post_* invocation (uvm/object.rs
+         execute_uvm_callbacks_add + invoke_callbacks + method.rs) = CRIT-031.
+         Marker stale.
 VERIF-11:[] No uvm_report_handler full (High)
 VERIF-12: ✅ uvm_printer / uvm_table_printer (ROUND 45) — printer.rs
            (new + print_object → string tabel Name/Type/Size/Value per
@@ -1083,10 +1121,15 @@ VERIF-18:[] No uvm_tr_database (High)
 VERIF-19:[] No uvm_recorded_item / uvm_tr_stream (Medium)
 VERIF-20:[] No full OVM compatibility (Medium)
 VERIF-21:[] No functional coverage integration with coverage database (High)
-VERIF-22:[] No code coverage (line, toggle, branch, condition, FSM) (Critical)
+VERIF-22: [x] Code coverage — RE-VERIFIKASI (ROUND 59): line/toggle/branch/
+         FSM coverage 4-tipe (engine/coverage.rs record_line_hit/
+         record_toggle/record_branch_hit/record_fsm_value + report_full_coverage)
+         = CRIT-004. Marker stale.
 VERIF-23: ✅ coverage HTML report — main.rs --coverage-html (CoverageDatabase
            export_html) + cli.rs.
-VERIF-24:[] No coverage merge across multiple runs (High)
+VERIF-24: [x] Coverage merge multi-run — RE-VERIFIKASI (ROUND 59):
+         CoverageDatabase merge_from_db/diff/report/export_html
+         (coverage_db.rs:684) = CRIT-005. Marker stale.
 VERIF-25: ✅ coverage exclusion (cover pragmas) — `` `coverage_off `` /
            `` `coverage_on `` di preprocessor (coverage_exclusions) →
            engine.is_line_excluded (SIM-29) + test_coverage_exclusion_macros
@@ -1139,13 +1182,17 @@ VERIF-38: ✅ solve-before full ordering — method.rs before_map/ordered_fields
 4.8 FORMAL VERIFICATION GAPS
 
 FORMAL-01:[] No formal property checking engine (Critical)
-FORMAL-02:[] No BMC (Bounded Model Checking) (Critical)
+FORMAL-02: [x] BMC — FIXED (CRIT-003): crates/maria-formal bmc.rs
+         check_assertions_bmc (Z3 bit-vector, transition relation, per-depth
+         assertion check, CLI --formal/--formal-bound, 22 test). Marker stale.
 FORMAL-03:[] No induction-based proof (Critical)
 FORMAL-04:[] No k-induction (High)
 FORMAL-05:[] No IC3/PDR (Critical)
-FORMAL-06:[] No SAT solver integration (Critical)
+FORMAL-06: [x] SAT solver — FIXED (CRIT-003): Z3 bit-vector solver
+         (maria-formal sat.rs, thread-local context, IrExpr→Z3 BV/Bool).
 FORMAL-07:[] No BDD engine (High)
-FORMAL-08:[] No SMT solver integration (High)
+FORMAL-08: [x] SMT solver — FIXED (CRIT-003): Z3 SMT (BV + Bool) dipakai BMC;
+         solver-level integration ada (maria-formal sat.rs).
 FORMAL-09:[] No abstract interpretation (Medium)
 FORMAL-10:[] No assume-guarantee reasoning (High)
 FORMAL-11:[] No equivalence checking combinational (Critical)
@@ -4975,6 +5022,83 @@ Test (+3 e2e, semua diverifikasi menangkap bug — matikan matching → FAIL):
    - cargo test --workspace: 1939 passed, 0 failed (42 suite)
      — baseline ROUND 57: 1936; +3 test; 0 regresi
    - Verifikasi batch: WAV-15 (mwave export CSV/TXT + --waveform-csv) → ✅
+
+═══ ROUND 59 — LANG-14 EXPECT + BUG FIX 12 REGRESI UVM (2026-08-17) ═══
+
+⚠️ TEMUAN AWAL: `cargo test --workspace` = 12 FAILED (test_uvm_barrier_sync,
+cmdline, comparator x2, event_sync, heartbeat x2, printer x2, tlm_fifo x3) —
+WIP user di uvm/hierarchy.rs (`None => return current.starts_with("uvm_")`)
+dan uvm/util.rs (synthetic method di find_method_in_hierarchy) MENGUBAH
+perilaku dispatch builtin UVM:
+   1. util.rs find_method_in_hierarchy: walk berhenti di class TIDAK di design
+      (builtin polos seperti `uvm_table_printer`/`uvm_event`/`uvm_barrier` —
+      object dibuat dgn class_name polos, bukan `__uvm_*`) → return synthetic
+      Ok(...) → `user_override=true` utk SEMUA method → dispatch is_uvm_*_
+      hierarchy di method.rs DI-SKIP → jatuh ke fallback
+      execute_uvm_report_object_method → error "uvm_object::print_object
+      not implemented" / "uvm_tlm_fifo not initialized" dll.
+   2. hierarchy.rs prefix fallback `starts_with("uvm_")` di semua
+      is_uvm_*_hierarchy: class builtin polos TIDAK di design → check EVENT
+      (urutan pertama) true utk SEMUA uvm_* → "unknown uvm_event method:
+      capacity" (tlm_fifo kena event dispatch).
+   FIX (2 file):
+   - util.rs: synthetic method HANYA bila `found_class` (class asli DITEMUKAN
+     di design — walk masuk loop); class builtin polos tidak di design → Err
+     → user_override=false → dispatch builtin berjalan. Intent OpenTitan
+     (extends chain menuju parent `uvm_*` library tak ter-parse) TETAP: kasus
+     itu found_class=true.
+   - hierarchy.rs (25 fungsi): fallback `None => return current.starts_with(
+     "uvm_")` diganti `return design.classes.contains_key(class_name) &&
+     current.starts_with("uvm_")` — fallback konservatif hanya utk class
+     USER di design; class builtin polos → false → dispatch spesifik
+     (match eksplisit is_uvm_*_hierarchy) menentukan.
+   Hasil: 46 test UVM hijau, full suite 0 regresi. (Debug via DBG_UVM
+temp + revert; tidak ada file lain yang berubah.)
+
+✅ LANG-14 EXPECT STATEMENT — DIIMPLEMENTASIKAN (baru):
+   - `expect (cond) else stmt` (IEEE 1800-2017 §17.16.2): parser SUDAH parse
+     (Stmt::Expect, parse_immediate_assertion) tapi ELABORATOR MEN-DROP
+     (`Stmt::Expect { .. } => Ok(IrStmt::Null)`) → expect tidak pernah
+     dievaluasi (item [] sejak audit awal).
+   - maria-ir/ir.rs: IrStmt::Expect { cond, pass_stmt, fail_stmt, line, col }.
+   - elaborator/stmt.rs: elaborasi penuh (cond + pass/fail stmts) +
+     expr_location/stmt_kind_name sudah punya arm Expect.
+   - elaborator/flatten.rs: pass-through (translate cond + pass/fail).
+   - engine block.rs (2 jalur): evaluate_block_with_delay_fork + evaluate_stmt_
+     block — kondisi dievaluasi SEKETIKA; false → fail_stmt + diag
+     "expect failed" (DiagCode::AssertionFailed); true → pass_stmt. Tidak
+     dipengaruhi $assertoff/$assertkill (beda assert immediate).
+   - Sync lintas pipeline: sim_dag.rs (reads cond + pass/fail), cdc.rs +
+     clock_domain.rs (reads + writes — arm terpisah karena Expect tanpa
+     disable_iff), uvm/hierarchy.rs (ir_has_run_test), maria-synth/subset.rs
+     (SYN-4 warning + stmt_kind_name "expect" + walk_stmts).
+   - IR cache: IR_FORMAT_VERSION 1→2 (micd/ast.rs) + COMPILER_VERSION
+     "-p1"→"-p2" (micd/mod.rs) — skema IR berubah → IR lama tidak di-restore.
+   - Test BARU (2): test_expect_statement_failure_runs_else (expect false →
+     else stmt jalan hit=1 + diag "expect failed"),
+     test_expect_statement_success_runs_pass (expect true → pass stmt jalan,
+     tanpa diag failure).
+
+✅ RE-VERIFIKASI MARKER [] STALE → [x] (bukti di kode):
+   - LANG-05 constraint solver → domain analysis + guided 10K
+     (constraint_solver.rs solve_constraints) [CRIT-002]
+   - LANG-07 `ifdef expression → eval_ifdef_expr (preprocessor.rs) [CRIT-046]
+   - LANG-09 let declarations → SAMA dgn LANG-40 (let FIXED 2026-08-14)
+   - ELAB-05 generate cap → MAX_GENERATED_ITEMS=1M (generate.rs) [ROUND 5]
+   - SIM-21 CDC → CdcAnalysis (scheduler/cdc.rs) [CRIT-013]
+   - WAV-18 dump blocking → WAV-06 streaming
+   - VERIF-02 uvm_reg → uvm/reg.rs (4 tipe + method) [CRIT-032]
+   - VERIF-10 uvm_callback → execute_uvm_callbacks_add + pre/post [CRIT-031]
+   - VERIF-22 code coverage → record_* 4-tipe (coverage.rs) [CRIT-004]
+   - VERIF-24 coverage merge → merge_from_db (coverage_db.rs) [CRIT-005]
+   - FORMAL-02 BMC + FORMAL-06 SAT + FORMAL-08 SMT → maria-formal
+     (bmc.rs + sat.rs, Z3) [CRIT-003]
+
+📊 VERIFIKASI ROUND 59:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2020 passed, 0 failed (44 result suite)
+     — baseline ROUND 58: 1939; +2 test LANG-14; 12 regresi UVM WIP
+       diperbaiki (46 test UVM hijau); 0 regresi
 
 //=======================================================================\\
 ATURAN

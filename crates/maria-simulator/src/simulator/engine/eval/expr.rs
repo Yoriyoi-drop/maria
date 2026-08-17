@@ -1082,7 +1082,35 @@ impl SimulationEngine {
                         self.uvm_resource_db_data.insert((scope, name), value);
                         Ok(LogicVec::from_u64(1, 1))
                     }
-                    "uvm_resource_db::get" => {
+                    "uvm_resource_db::write_by_name" => {
+                        // VERIF-07: alias set dgn arg ke-4 rw access type (diabaikan).
+                        let arg_vals: Vec<LogicVec> = args
+                            .iter()
+                            .map(|a| self.evaluate_expr(a))
+                            .collect::<Result<_, _>>()?;
+                        let scope = if !arg_vals.is_empty() {
+                            logicvec_to_string(&arg_vals[0])
+                        } else {
+                            String::new()
+                        };
+                        let name = if arg_vals.len() > 1 {
+                            logicvec_to_string(&arg_vals[1])
+                        } else {
+                            String::new()
+                        };
+                        let value = if arg_vals.len() > 2 {
+                            arg_vals[2].clone()
+                        } else {
+                            LogicVec::new(1)
+                        };
+                        self.uvm_resource_db_data.insert((scope, name), value);
+                        Ok(LogicVec::from_u64(1, 1))
+                    }
+                    "uvm_resource_db::get" | "uvm_resource_db::read_by_name" => {
+                        // VERIF-07: lookup exact dulu, lalu wildcard scope paling
+                        // spesifik (sama dgn config_db) — `set("*.env", ...)`
+                        // terbaca oleh `get("tb.env", ...)`. read_by_name = alias
+                        // get (arg ke-4 rw access type diabaikan).
                         let arg_vals: Vec<LogicVec> = args
                             .iter()
                             .map(|a| self.evaluate_expr(a))
@@ -1097,8 +1125,7 @@ impl SimulationEngine {
                         } else {
                             String::new()
                         };
-                        let key = (scope, rname);
-                        let stored = self.uvm_resource_db_data.get(&key).cloned();
+                        let stored = self.resource_db_find(&scope, &rname);
                         if let Some(val) = stored {
                             if let Some(last_arg) = args.get(2) {
                                 if let IrExpr::Signal(sig_id, _) = last_arg {
@@ -1109,6 +1136,28 @@ impl SimulationEngine {
                         } else {
                             Ok(LogicVec::from_u64(0, 1))
                         }
+                    }
+                    "uvm_resource_db::exists" => {
+                        // VERIF-07: 1 bila resource (scope, name) tersedia
+                        // (exact atau wildcard paling spesifik), 0 bila tidak.
+                        let arg_vals: Vec<LogicVec> = args
+                            .iter()
+                            .map(|a| self.evaluate_expr(a))
+                            .collect::<Result<_, _>>()?;
+                        let scope = if !arg_vals.is_empty() {
+                            logicvec_to_string(&arg_vals[0])
+                        } else {
+                            String::new()
+                        };
+                        let rname = if arg_vals.len() > 1 {
+                            logicvec_to_string(&arg_vals[1])
+                        } else {
+                            String::new()
+                        };
+                        Ok(LogicVec::from_u64(
+                            if self.resource_db_exists(&scope, &rname) { 1 } else { 0 },
+                            1,
+                        ))
                     }
                     "uvm_cmdline_processor::get" => {
                         // VERIF-03: singleton uvm_cmdline_processor. Return

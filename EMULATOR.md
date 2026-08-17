@@ -380,11 +380,32 @@ RTL, bukan host (`test_rtl_cpu_runs_elf_program`).
   (`UART_BASE+0` = tx_byte, `UART_BASE+4` = `tx_count`), non-MMIO → rdata
   host (RAM). Host tidak men-drive `mem_rdata` saat MMIO. Status register
   monotonik (`tx_count` naik tiap tulis) → verifikasi deterministik.
+- **Interrupt device (R4)**: `uart_console` menaikkan `irq_tx` (level, bit 3)
+  `IRQ_DELAY` (=16) cycle setelah `tx_done` — tunda memberi CPU waktu
+  mencapai `waitirq` sebelum IRQ tiba (deterministik, tidak bergantung timing
+  pipeline). picorv32 di-instansiasi dengan `ENABLE_IRQ=1` dan
+  `PROGADDR_IRQ=0x80000100` (handler di RAM). Handshake murni RTL:
+  `irq[3]` (level) → `irq_pending` → CPU masuk handler (return addr di q0,
+  IRQ vector di q1) → `eoi[3]` pulse di `irq_state[1]` → UART menurunkan
+  `irq_tx` (ack). Custom instr picorv32 dipakai: `maskirq` (unmask/mask),
+  `waitirq` (blokir sampai IRQ, pulang ke instruksi setelahnya), `retirq`.
+- **Timer device (R4)**: `timer_console` (TIMER_BASE `0x10001000`) — load
+  countdown 32-bit via MMIO write → `count` turun 1/cycle → saat transisi
+  1→0 menaikkan `irq_timer` (level, bit 4) **tanpa aksi CPU** (interrupt
+  device-initiated). Ack via `eoi[4]` atau reload. SoC kini punya DUA device
+  RTL (UART bit 3 + timer bit 4), decoder MMIO 0x1000_0000–0x1000_1fff dengan
+  sub-decode `uart_sel`/`timer_sel` dan mux rdata berprioritas DI RTL.
 
 Verifikasi e2e: `test_rtl_cpu_mmio_uart_console` (CPU tulis 'A','B','C' ke
-0x10000000 → console "ABC"; store RAM biasa tetap bekerja) dan
+0x10000000 → console "ABC"; store RAM biasa tetap bekerja),
 `test_rtl_cpu_mmio_read_status` (CPU baca `tx_count` 0→1→2 → simpan ke RAM →
-diverifikasi host).
+diverifikasi host), `test_rtl_cpu_irq_uart_tx` (main unmask IRQ 3 →
+tulis 'A' → `waitirq`; IRQ UART masuk handler di 0x80000100 → handler tulis
+'B' + `maskirq` semua + `retirq` → main lanjut ke ebreak. Console "AB" —
+byte dari main DAN dari handler IRQ, keduanya dari UART RTL; retirq pulang
+tepat ke instruksi setelah `waitirq`), dan `test_rtl_cpu_irq_timer`
+(load timer 64 → countdown → IRQ bit 4 device-initiated → handler tulis
+'T' ke UART + `retirq` → ebreak; console "T").
 
 ### 7.3 Protokol co-sim MMIO (transaksi bus)
 
@@ -881,16 +902,22 @@ maria emu wrapper.sv picorv32.v --config emu_ram.meu \
   `Machine`: mesin dijalankan dari RTL .sv/.v (picorv32.v dari GitHub,
   `examples/rtl/`), bukan interpreter. CLI `--rtl-cpu/--rtl-cpu-top/--run/
   --max-steps`; e2e program bare-metal → hasil di RAM oleh RTL | ✅ |
-| **Direct RTL Device (R4, sebagian besar)** — `rv32_soc.sv` +
-  `uart_console.sv` (examples/rtl/): decode MMIO (0x10000000) DI RTL, UART
-  TX RTL → byte ditangkap host (`mmio_sel`/`uart_tx_done`/`uart_tx_byte`),
-  console host di `MachineResult.console`/`--run` summary. **MMIO write**:
-  CPU tulis 'ABC' → console "ABC" (test `test_rtl_cpu_mmio_uart_console`).
-  **MMIO read**: status register `tx_count` (UART_BASE+4, mux `cpu_mem_rdata`
-  DI RTL) — CPU baca 0→1→2 disimpan ke RAM, diverifikasi (test
-  `test_rtl_cpu_mmio_read_status`). Rust hanya membaca sinyal output UART —
-  logika UART murni RTL | ✅ store+read |
-| Interrupt device RTL (IRQ → CPU) + co-sim bus cycle-accurate | ⏳ |
+| **Direct RTL Device (R4)** — `rv32_soc.sv` + `uart_console.sv`
+  (examples/rtl/): decode MMIO (0x10000000) DI RTL, UART TX RTL → byte
+  ditangkap host (`mmio_sel`/`uart_tx_done`/`uart_tx_byte`), console host di
+  `MachineResult.console`/`--run` summary. **MMIO write**: CPU tulis 'ABC'
+  → console "ABC" (test `test_rtl_cpu_mmio_uart_console`). **MMIO read**: status
+  register `tx_count` (UART_BASE+4, mux `cpu_mem_rdata` DI RTL) — CPU baca
+  0→1→2 disimpan ke RAM, diverifikasi (test `test_rtl_cpu_mmio_read_status`).
+  Rust hanya membaca sinyal output UART — logika UART murni RTL | ✅ store+read |
+| Interrupt device RTL (IRQ → CPU) — `uart_console` `irq_tx` level (bit 3,
+  delay 16 cycle) + `timer_console` `irq_timer` level (bit 4, device-initiated,
+  countdown 0x10001000); picorv32 `ENABLE_IRQ=1` + `PROGADDR_IRQ=0x80000100`;
+  handshake `eoi[3]`/`eoi[4]` ack di RTL; program bare-metal
+  `maskirq`+`waitirq`+`retirq` → console "AB" (UART) dan "T" (timer),
+  retirq pulang ke instruksi setelah waitirq (test `test_rtl_cpu_irq_uart_tx`,
+  `test_rtl_cpu_irq_timer`) | ✅ interrupt device (UART + timer) |
+| Co-sim bus cycle-accurate + mode `hybrid` | ⏳ |
 
 **Bug fix maria utama (global)**:
 1. `flatten_instances` mengonsumsi `top.sub_instances` tanpa mengembalikan →
@@ -918,8 +945,9 @@ maria emu wrapper.sv picorv32.v --config emu_ram.meu \
    angka) bukan nilai register `regs[rs1]` → mtvec salah → trap melompat ke
    alamat salah (riscv32.rs).
 
-Verifikasi: `cargo test --workspace` **2007 test pass, 0 fail** (termasuk
-59 test `maria-emu`: e2e picorv32 RTL + e2e MMIO UART console store+read).
+Verifikasi: `cargo test --workspace` **2009 test pass, 0 fail** (termasuk
+61 test `maria-emu`: e2e picorv32 RTL + e2e MMIO UART console store/read +
+e2e interrupt device UART (bit 3) + timer device-initiated (bit 4)).
 
 ---
 
@@ -939,7 +967,7 @@ MHIR → Memory/Bus → CPU interpreter → device model → Linux boot
 | **R1** | **Memory/Bus**: `mem::RamRegion` (mmap), `MemoryPort`, decode bus; ELF loader | Bare-metal ELF jalan; akses RAM zero-copy |
 | **R2** | **CPU interpreter** (RISC-V32/64, benar dulu) + `CpuCore` trait; CLINT/PLIC + UART native; boot flow OpenSBI; DTB builder; virtio-mmio + virtio-blk | ✅ RV32IM+Zicsr interpreter (riscv32.rs); ✅ RTL-linked CPU (mode 3, picorv32 boot bare-metal); ⏳ RV64 + vmlinux/initrd boot di cva6 |
 | **R3** | **JIT** (Tier C): basic-block translation via Cranelift + softmmu/TLB + MMIO trap + interrupt delivery | Boot Linux < 30 s; `$` shell; `uname -a`; ISO Linux RISC-V boot |
-| **R4** | **RTL device bridge** (Direct RTL Device end-to-end): UART RTL via bus co-sim; Tier B (cycle-based compiled) untuk peripheral RTL | ✅ store+read `0x10000000` → `uart_console.sv` RTL → host console + status register (`rv32_soc`, 2 test e2e); ⏳ interrupt device + mode `hybrid` |
+| **R4** | **RTL device bridge** (Direct RTL Device end-to-end): UART RTL via bus co-sim; Tier B (cycle-based compiled) untuk peripheral RTL | ✅ store+read `0x10000000` → `uart_console.sv` RTL → host console + status register (`rv32_soc`, 4 test e2e); ✅ interrupt device UART bit 3 + timer bit 4 device-initiated (picorv32 `ENABLE_IRQ` → handler `PROGADDR_IRQ` → `eoi` ack → `retirq`, console "AB"/"T"); ⏳ mode `hybrid` |
 | **R5** | **Deterministic replay** + snapshot penuh (machine state); Virtual Time lengkap | `maria replay trace.bin` reproduksi bug; snapshot boot < 1 s |
 | **R6** | **Windows/UEFI**: mesin x86-64 (translation ISA ketiga) + chipset (PIC/APIC/ACPI minimal) → phase bootloader → kernel → device init → Safe Mode | Windows bootloader + kernel (functional); desktop = R6 lanjutan |
 | **R7** | **Full hybrid co-emulation**: multi-core SMP, per-region accuracy, distribusi lintas host, VHDL/SystemC frontend | SMP Linux boot; mode `coemu` penuh; SoC VHDL boot |

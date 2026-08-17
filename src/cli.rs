@@ -571,7 +571,7 @@ pub struct SynthArgs {
 #[derive(clap::Args, Clone)]
 pub struct EmuArgs {
     /// Target input: file .sv, direktori, atau file list (.f/.maria)
-    #[arg(required = true)]
+    /// (opsional bila `--boot-iso` dipakai — boot ISO tidak butuh RTL)
     pub targets: Vec<String>,
 
     /// Tambahkan include search path
@@ -634,6 +634,13 @@ pub struct EmuArgs {
     /// Batas langkah instruksi mesin (default 10000)
     #[arg(long = "max-steps", value_name = "N")]
     pub max_steps: Option<u64>,
+
+    /// Boot ISO x86 real-mode (R6): muat MBR ke 0x7c00, jalankan interpreter
+    /// x86 real-mode dengan ISO sebagai disk (INT 13h). Jalur boot BIOS:
+    /// MBR (ISOLINUX hybrid) → INT 13h → El Torito → GRUB boot.img.
+    /// Butuh `ram = { base, size }` di config .meu (minimal 0x0:0x100000).
+    #[arg(long = "boot-iso", value_name = "PATH")]
+    pub boot_iso: Option<String>,
 }
 
 #[derive(ClapParser, Clone)]

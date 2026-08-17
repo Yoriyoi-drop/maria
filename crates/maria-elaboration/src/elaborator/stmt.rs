@@ -725,7 +725,28 @@ impl Elaborator {
                             col: *col,
                         })
                     }
-                    Expr::FuncCall { name, line, col, .. } => {
+                    Expr::FuncCall { name, args, line, col, .. } => {
+                        // VERIF-07: UVM DB calls (`uvm_config_db::set`, `uvm_resource_db::set`/
+                        // get/exists/write_by_name/read_by_name, uvm_cmdline_processor::*) adalah
+                        // statement BER-Efek — jangan eliminasi sebagai side-effect-free.
+                        // BUG SEBELUMNYA: `uvm_resource_db::set(...)` sebagai bare statement di
+                        // initial/always block di-eliminasi di sini → map tidak pernah terisi →
+                        // get selalu 0 (nilai tak pernah tersimpan).
+                        if name.starts_with("uvm_config_db::")
+                            || name.starts_with("uvm_resource_db::")
+                            || name.starts_with("uvm_cmdline_processor::")
+                        {
+                            let ir_args: Result<Vec<IrExpr>, SimError> = args
+                                .iter()
+                                .map(|a| self.elaborate_expr(a, signal_map, signals))
+                                .collect();
+                            return Ok(IrStmt::SysCall {
+                                name: *name,
+                                args: ir_args?,
+                                line: *line,
+                                col: *col,
+                            });
+                        }
                         // Check if this is a DPI function call used as a statement
                         let is_dpi = self.design.modules.iter().flat_map(|m| m.items.iter()).any(
                             |item| matches!(item, ModuleItem::DpiImport(d) if d.name == *name),
@@ -1526,7 +1547,33 @@ impl Elaborator {
                     sequence: None,
                 })
             }
-            Stmt::Expect { .. } => Ok(IrStmt::Null),
+            Stmt::Expect {
+                cond,
+                pass_stmt,
+                fail_stmt,
+            } => {
+                // LANG-14: `expect (property) else stmt` — assertion dalam
+                // procedural code (IEEE 1800-2017 §17.16.2). Kondisi
+                // dievaluasi seketika saat statement dijangkau (subset
+                // immediate, tanpa clock_event/disable_iff di AST Expect).
+                let (a_line, a_col) = expr_location(cond);
+                let ir_cond = self.elaborate_expr(cond, signal_map, signals)?;
+                let pass = match pass_stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                let fail = match fail_stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                Ok(IrStmt::Expect {
+                    cond: ir_cond,
+                    pass_stmt: pass,
+                    fail_stmt: fail,
+                    line: a_line,
+                    col: a_col,
+                })
+            }
             Stmt::WaitOrder { events, fail_stmt } => {
                 let mut sig_ids = Vec::new();
                 for name in events {

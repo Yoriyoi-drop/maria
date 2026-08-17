@@ -8,6 +8,7 @@
 use super::super::SimulationEngine;
 use maria_core::error::SimError;
 use maria_compiler::hir::{LogicVec, ObjId};
+use maria_ir::IrExpr;
 use crate::simulator::types::*;
 use crate::simulator::util::*;
 
@@ -94,6 +95,103 @@ impl SimulationEngine {
     /// nilai (exact atau wildcard paling spesifik), 0 bila tidak ada.
     pub(crate) fn config_db_exists(&self, inst_name: &str, field_name: &str) -> bool {
         self.config_db_find(inst_name, field_name).is_some()
+    }
+
+    /// VERIF-07: cari nilai uvm_resource_db — exact match dulu, lalu
+    /// wildcard scope paling spesifik (sama dengan config_db_find, reuse
+    /// config_db_path_match + pattern_specificity). uvm_resource_db::set
+    /// menyimpan key (scope, name); get/exists/read_by_name memakai lookup
+    /// ini sehingga `set("*.env", ...)` terbaca oleh `get("tb.env", ...)`.
+    pub(crate) fn resource_db_find(
+        &self,
+        scope: &str,
+        name: &str,
+    ) -> Option<LogicVec> {
+        if let Some(v) = self.uvm_resource_db_data.get(&(scope.to_string(), name.to_string())) {
+            return Some(v.clone());
+        }
+        let mut best: Option<((usize, usize, usize), LogicVec)> = None;
+        for ((pat, n), v) in &self.uvm_resource_db_data {
+            if n != name {
+                continue;
+            }
+            if config_db_path_match(pat, scope) {
+                let sp = pattern_specificity(pat);
+                let better = match &best {
+                    None => true,
+                    Some((bsp, _)) => sp < *bsp,
+                };
+                if better {
+                    best = Some((sp, v.clone()));
+                }
+            }
+        }
+        best.map(|(_, v)| v)
+    }
+
+    /// VERIF-07: `uvm_resource_db::exists` — 1 bila resource (scope, name)
+    /// punya nilai (exact atau wildcard paling spesifik), 0 bila tidak ada.
+    pub(crate) fn resource_db_exists(&self, scope: &str, name: &str) -> bool {
+        self.resource_db_find(scope, name).is_some()
+    }
+
+    /// VERIF-07: dispatch statement-context UVM DB call —
+    /// `uvm_config_db::set/get` dan `uvm_resource_db::set/get/exists/
+    /// write_by_name/read_by_name` sebagai bare statement di initial/always
+    /// block (jalur IR, masuk via evaluate_syscall). Sebelumnya statement ini
+    /// di-eliminasi elaborator sbg side-effect-free → set tidak pernah
+    /// menyimpan → get selalu 0. Semantik argumen disamakan dgn handler
+    /// ekspresi (expr.rs): config_db::set(obj, inst, field, value) — value di
+    /// arg ke-3; resource_db::set(scope, name, value) — value di arg ke-2.
+    pub(crate) fn execute_uvm_db_stmt(
+        &mut self,
+        name: &str,
+        ir_args: &[IrExpr],
+    ) -> Result<(), SimError> {
+        let arg_vals: Vec<LogicVec> = ir_args
+            .iter()
+            .map(|a| self.evaluate_expr(a).unwrap_or(LogicVec::from_u64(0, 32)))
+            .collect();
+        match name {
+            "uvm_config_db::set" => {
+                let inst = arg_vals.get(1).map(logicvec_to_string).unwrap_or_default();
+                let field = arg_vals.get(2).map(logicvec_to_string).unwrap_or_default();
+                let value = arg_vals.get(3).cloned().unwrap_or_else(|| LogicVec::new(1));
+                self.uvm_config_db_data
+                    .insert((inst.clone(), field.clone()), value);
+                // VERIF-06: bangunkan waiter wait_modified utk key ini.
+                self.config_db_release_waiters(&inst, &field)?;
+            }
+            "uvm_config_db::get" => {
+                let inst = arg_vals.get(1).map(logicvec_to_string).unwrap_or_default();
+                let field = arg_vals.get(2).map(logicvec_to_string).unwrap_or_default();
+                if let Some(v) = self.config_db_find(&inst, &field) {
+                    if let Some(IrExpr::Signal(sid, _)) = ir_args.get(3) {
+                        self.state.write_signal(*sid, v);
+                    }
+                }
+            }
+            "uvm_resource_db::set" | "uvm_resource_db::write_by_name" => {
+                let scope = arg_vals.get(0).map(logicvec_to_string).unwrap_or_default();
+                let rname = arg_vals.get(1).map(logicvec_to_string).unwrap_or_default();
+                let value = arg_vals.get(2).cloned().unwrap_or_else(|| LogicVec::new(1));
+                self.uvm_resource_db_data.insert((scope, rname), value);
+            }
+            "uvm_resource_db::get" | "uvm_resource_db::read_by_name" => {
+                let scope = arg_vals.get(0).map(logicvec_to_string).unwrap_or_default();
+                let rname = arg_vals.get(1).map(logicvec_to_string).unwrap_or_default();
+                if let Some(v) = self.resource_db_find(&scope, &rname) {
+                    if let Some(IrExpr::Signal(sid, _)) = ir_args.get(2) {
+                        self.state.write_signal(*sid, v);
+                    }
+                }
+            }
+            "uvm_resource_db::exists" => {
+                // return value diabaikan dalam konteks statement
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     /// VERIF-06: release SEMUA waiter blocking `wait_modified` untuk key

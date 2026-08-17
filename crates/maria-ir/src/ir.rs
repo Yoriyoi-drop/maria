@@ -503,6 +503,19 @@ pub enum IrStmt {
         disable_iff: Option<Box<IrExpr>>,
         sequence: Option<Box<IrSequence>>,
     },
+    /// LANG-14: `expect (property_expr) else stmt` — assertion dalam
+    /// procedural code (IEEE 1800-2017 §17.16.2). Subset: kondisi dievaluasi
+    /// seketika saat statement dijangkau; false → fail_stmt + report
+    /// "expect failed" (assertion immediate); true → pass_stmt. Tidak
+    /// dipengaruhi $assertoff/$assertkill (berbeda dari assert immediate).
+    Expect {
+        cond: IrExpr,
+        pass_stmt: Vec<IrStmt>,
+        fail_stmt: Vec<IrStmt>,
+        /// Posisi source expect utk diagnostic file:line:col (F20).
+        line: usize,
+        col: usize,
+    },
     WaitOrder {
         events: Vec<SignalId>,
         failure_stmts: Vec<IrStmt>,

@@ -203,6 +203,11 @@ impl SimulationEngine {
                     pass_stmt,
                     fail_stmt,
                     ..
+                }
+                | IrStmt::Expect {
+                    pass_stmt,
+                    fail_stmt,
+                    ..
                 } => {
                     if Self::ir_has_run_test(pass_stmt)
                         || Self::ir_has_run_test(fail_stmt)
@@ -504,7 +509,18 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Parent tidak ada di design — jika diawali `uvm_`, asumsikan
+                    // bagian dari UVM library hierarchy (uvm_component/uvm_scoreboard/
+                    // uvm_driver/uvm_monitor/dll). tanpa parse UVM library lengkap,
+                    // tidak bisa verifikasi exact parent → conservatively return true.
+                    // HANYA bila class asli terdaftar di design (class user yang
+                    // extends chain-nya menuju library UVM tak ter-parse); class
+                    // builtin polos (uvm_tlm_fifo dll.) → false agar dispatch
+                    // spesifik berjalan.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -520,7 +536,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -536,7 +561,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -552,7 +586,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -568,7 +611,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -588,7 +640,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -604,14 +665,21 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
 
     pub(crate) fn is_uvm_cmdline_hierarchy(&self, class_name: &str) -> bool {
-        // VERIF-03: uvm_cmdline_processor — singleton pembaca plusarg.
-        // Class user (`my_cmdline extends uvm_cmdline_processor`) juga masuk.
         let mut current = class_name;
         loop {
             if current == "__uvm_cmdline_processor" || current == "uvm_cmdline_processor" {
@@ -622,7 +690,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -638,7 +715,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -654,7 +740,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -670,16 +765,20 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
 
-    // VERIF-12: uvm_printer / uvm_table_printer — telusur extends chain ke
-    // `__uvm_table_printer` / `uvm_table_printer` / `__uvm_printer` /
-    // `uvm_printer` (class user `my_printer extends uvm_table_printer` juga
-    // masuk). Method print_object dioverride user → jalur normal (method.rs
-    // hanya intercept bila tidak dioverride).
     pub(crate) fn is_uvm_printer_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
@@ -694,13 +793,20 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
 
-    // F22: `class my_sub extends uvm_subscriber` — telusur extends chain ke
-    // `__uvm_subscriber` (dispatch new builtin untuk auto-buat analysis_imp).
     pub(crate) fn is_uvm_subscriber_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
@@ -712,13 +818,20 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
 
-    // F23: uvm_tlm_fifo / export analysis internal fifo — telusur extends
-    // chain ke `__uvm_tlm_fifo` / `__uvm_fifo_export`.
     pub(crate) fn is_uvm_tlm_fifo_hierarchy(&self, class_name: &str) -> bool {
         let mut current = class_name;
         loop {
@@ -730,7 +843,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -746,7 +868,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -763,7 +894,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -784,7 +924,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -800,7 +949,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -816,7 +974,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -832,7 +999,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -866,7 +1042,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -882,7 +1067,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -898,7 +1092,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -914,7 +1117,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
@@ -930,7 +1142,16 @@ impl SimulationEngine {
                     Some(parent) => current = parent.as_str(),
                     None => return false,
                 },
-                None => return false,
+                None => {
+                    // Class asli TIDAK di design (builtin polos seperti
+                    // uvm_event/uvm_tlm_fifo/uvm_table_printer) → jangan
+                    // prefix-fallback — dispatch spesifik (match eksplisit di
+                    // is_uvm_*_hierarchy) yang menentukan. Fallback konservatif
+                    // hanya utk class USER di design yang extends chain-nya
+                    // menuju parent `uvm_*` library yang tidak di-parse.
+                    return self.design.classes.contains_key(&Symbol::intern(class_name))
+                        && current.starts_with("uvm_");
+                }
             }
         }
     }
