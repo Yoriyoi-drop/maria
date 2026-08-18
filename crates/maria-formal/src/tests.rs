@@ -337,6 +337,7 @@ mod tests {
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
             stmt_lines: HashMap::new(),
+            net_aliases: HashMap::new(),
         };
 
         let mut engine = test_engine();
@@ -388,6 +389,7 @@ mod tests {
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
             stmt_lines: HashMap::new(),
+            net_aliases: HashMap::new(),
         };
 
         let mut engine = test_engine();
@@ -441,6 +443,7 @@ mod tests {
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
             stmt_lines: HashMap::new(),
+            net_aliases: HashMap::new(),
         };
 
         let mut engine = test_engine();
@@ -569,6 +572,7 @@ mod tests {
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
             stmt_lines: HashMap::new(),
+            net_aliases: HashMap::new(),
         };
 
         let results = engine.check_assertions_bmc(&design);
@@ -641,6 +645,7 @@ mod tests {
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
             stmt_lines: HashMap::new(),
+            net_aliases: HashMap::new(),
         };
 
         let results = engine.check_assertions_bmc(&design);
@@ -758,6 +763,7 @@ mod tests {
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
             stmt_lines: HashMap::new(),
+            net_aliases: HashMap::new(),
         };
 
         let results = engine.check_assertions_bmc(&design);
@@ -835,6 +841,7 @@ mod tests {
             pkg_scoped_consts: HashMap::new(),
             coverage_exclusions: Vec::new(),
             stmt_lines: HashMap::new(),
+            net_aliases: HashMap::new(),
         };
 
         let results = engine.check_assertions_bmc(&design);

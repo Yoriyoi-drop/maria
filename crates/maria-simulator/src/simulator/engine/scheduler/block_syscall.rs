@@ -35,6 +35,8 @@ impl SimulationEngine {
         if name.starts_with("uvm_config_db::")
             || name.starts_with("uvm_resource_db::")
             || name.starts_with("uvm_cmdline_processor::")
+            || name.starts_with("uvm_root::")
+            || name.starts_with("uvm_tr_database::")
         {
             self.execute_uvm_db_stmt(name, ir_args)?;
             return Ok(true);
@@ -974,6 +976,8 @@ impl SimulationEngine {
         if name.starts_with("uvm_config_db::")
             || name.starts_with("uvm_resource_db::")
             || name.starts_with("uvm_cmdline_processor::")
+            || name.starts_with("uvm_root::")
+            || name.starts_with("uvm_tr_database::")
         {
             self.execute_uvm_db_stmt(name, ir_args)?;
             return Ok(());

@@ -685,6 +685,7 @@ mod tests {
             pkg_scoped_consts: Default::default(),
             coverage_exclusions: Vec::new(),
             stmt_lines: HashMap::new(),
+            net_aliases: HashMap::new(),
         }
     }
 

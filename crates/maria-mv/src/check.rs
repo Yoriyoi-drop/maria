@@ -91,6 +91,10 @@ struct Scope<'a> {
     /// konstanta package (terlihat sebagai ident di ekspresi)
     consts: &'a HashSet<&'a str>,
     env: Env<'a>,
+    /// kedalaman loop (untuk validasi break/continue)
+    loop_depth: usize,
+    /// apakah sedang di dalam task (return expr di task = error)
+    in_task: bool,
 }
 
 impl Scope<'_> {
@@ -126,6 +130,7 @@ fn td_pos(td: &Typedef) -> (usize, usize) {
     match td {
         Typedef::Alias { line, col, .. }
         | Typedef::Struct { line, col, .. }
+        | Typedef::Union { line, col, .. }
         | Typedef::Enum { line, col, .. } => (*line, *col),
     }
 }
@@ -512,6 +517,7 @@ fn td_name(td: &Typedef) -> &str {
     match td {
         Typedef::Alias { name, .. } => name,
         Typedef::Struct { name, .. } => name,
+        Typedef::Union { name, .. } => name,
         Typedef::Enum { name, .. } => name,
     }
 }
@@ -551,7 +557,7 @@ fn resolve_typedef<'a>(name: &str, ctx: &'a Ctx<'a>) -> Option<&'a Typedef> {
 fn check_typedef<'a>(td: &'a Typedef, ctx: &'a Ctx<'a>) -> Result<(), MvError> {
     match td {
         Typedef::Alias { ty, .. } => check_type(ty, ctx, 0),
-        Typedef::Struct { name, fields, .. } => {
+        Typedef::Struct { name, fields, .. } | Typedef::Union { name, fields, .. } => {
             let mut fseen = HashSet::new();
             for f in fields {
                 for n in &f.names {
@@ -559,7 +565,7 @@ fn check_typedef<'a>(td: &'a Typedef, ctx: &'a Ctx<'a>) -> Result<(), MvError> {
                         return Err(err_at(
                             f.line, f.col,
                             "E2007",
-                            format!("field '{n}' dideklarasikan dua kali di struct '{name}'"),
+                            format!("field '{n}' dideklarasikan dua kali di struct/union '{name}'"),
                         ));
                     }
                 }
@@ -804,6 +810,8 @@ fn new_scope<'a>(ctx: &'a Ctx<'a>, mname: &'a str) -> Scope<'a> {
             mname,
             ports: HashMap::new(),
         },
+        loop_depth: 0,
+        in_task: false,
     }
 }
 
@@ -1065,6 +1073,7 @@ fn check_func<'a>(f: &'a MFunc, ctx: &'a Ctx<'a>, base: &mut Scope<'a>) -> Resul
 
 fn check_task<'a>(t: &'a MTask, ctx: &'a Ctx<'a>, base: &mut Scope<'a>) -> Result<(), MvError> {
     let mut scope = base.clone();
+    scope.in_task = true;
     for (n, ty, _) in &t.args {
         check_type_scope(ty, ctx, Some(&scope), 0)?;
         scope.sigs.insert(n.as_str());
@@ -1334,15 +1343,20 @@ fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind:
             check_expr(to, ctx, scope, 0)?;
             let mut inner = scope.clone();
             inner.sigs.insert(var.as_str());
+            inner.loop_depth += 1;
             check_stmt(body, ctx, &mut inner, kind)
         }
         Stmt::While { cond, body } => {
             check_expr(cond, ctx, scope, 0)?;
-            check_stmt(body, ctx, scope, kind)
+            let mut inner = scope.clone();
+            inner.loop_depth += 1;
+            check_stmt(body, ctx, &mut inner, kind)
         }
         // F38: `do { body } while (cond)` — post-test, validasi body+cond biasa.
         Stmt::DoWhile { cond, body } => {
-            check_stmt(body, ctx, scope, kind)?;
+            let mut inner = scope.clone();
+            inner.loop_depth += 1;
+            check_stmt(body, ctx, &mut inner, kind)?;
             check_expr(cond, ctx, scope, 0)
         }
         // F38: event trigger `->ev` — target harus signal/event yang dikenal.
@@ -1361,9 +1375,15 @@ fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind:
         }
         Stmt::Repeat { count, body } => {
             check_expr(count, ctx, scope, 0)?;
-            check_stmt(body, ctx, scope, kind)
+            let mut inner = scope.clone();
+            inner.loop_depth += 1;
+            check_stmt(body, ctx, &mut inner, kind)
         }
-        Stmt::Forever(body) => check_stmt(body, ctx, scope, kind),
+        Stmt::Forever(body) => {
+            let mut inner = scope.clone();
+            inner.loop_depth += 1;
+            check_stmt(body, ctx, &mut inner, kind)
+        }
         Stmt::Wait { cond, body } => {
             check_expr(cond, ctx, scope, 0)?;
             check_stmt(body, ctx, scope, kind)
@@ -1383,6 +1403,12 @@ fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind:
                 check_expr(i, ctx, scope, 0)?;
             }
             for n in names {
+                if scope.sigs.contains(n.as_str()) {
+                    return Err(MvError::new(
+                        0, 0,
+                        format!("E2007: variabel '{}' sudah dideklarasikan", n),
+                    ));
+                }
                 scope.sigs.insert(n.as_str());
                 scope.types.insert(n.as_str(), ty);
             }
@@ -1390,11 +1416,25 @@ fn check_stmt<'a>(stmt: &'a Stmt, ctx: &'a Ctx<'a>, scope: &mut Scope<'a>, kind:
         }
         Stmt::Return(v) => {
             if let Some(v) = v {
+                if scope.in_task {
+                    return Err(MvError::new(
+                        0, 0,
+                        "E2008: task tidak boleh mengembalikan nilai (return expr)".to_string(),
+                    ));
+                }
                 check_expr(v, ctx, scope, 0)?;
             }
             Ok(())
         }
-        Stmt::Break | Stmt::Continue => Ok(()),
+        Stmt::Break | Stmt::Continue => {
+            if scope.loop_depth == 0 {
+                return Err(MvError::new(
+                    0, 0,
+                    "E2009: break/continue hanya boleh di dalam loop".to_string(),
+                ));
+            }
+            Ok(())
+        }
         Stmt::Assert { cond, pass, fail } => {
             check_expr(cond, ctx, scope, 0)?;
             if let Some(p) = pass {
@@ -1705,6 +1745,7 @@ fn type_width(ty: &MvType, ctx: &Ctx, scope: &Scope, depth: usize) -> Option<i64
         MvType::Int => Some(32),
         MvType::Uint => Some(32),
         MvType::LongInt => Some(64),
+        MvType::ULongInt => Some(64),
         MvType::ShortInt => Some(16),
         MvType::Byte => Some(8),
         MvType::Time => Some(64),
@@ -1726,6 +1767,15 @@ fn type_width(ty: &MvType, ctx: &Ctx, scope: &Scope, depth: usize) -> Option<i64
                     Some(total)
                 }
                 Typedef::Struct { packed: false, .. } => None,
+                Typedef::Union { packed: true, fields, .. } => {
+                    let mut max_w = 0i64;
+                    for f in fields {
+                        let w = type_width(&f.ty, ctx, scope, depth + 1)?;
+                        if w > max_w { max_w = w; }
+                    }
+                    Some(max_w)
+                }
+                Typedef::Union { packed: false, .. } => None,
                 Typedef::Enum { width, members, .. } => match width {
                     Some(Expr::Int(n)) => Some(*n),
                     _ => Some(enum_bits(members.len())),
@@ -1767,7 +1817,7 @@ fn resolve_fields<'a>(ty: &'a MvType, ctx: &'a Ctx<'a>, depth: usize) -> Option<
         MvType::Named(n, ..) => {
             let td = resolve_typedef(n, ctx)?;
             match td {
-                Typedef::Struct { fields, .. } => Some(fields.iter().collect()),
+                Typedef::Struct { fields, .. } | Typedef::Union { fields, .. } => Some(fields.iter().collect()),
                 Typedef::Alias { ty, .. } => resolve_fields(ty, ctx, depth + 1),
                 Typedef::Enum { .. } => None,
             }
@@ -1865,7 +1915,7 @@ fn expr_width(e: &Expr, ctx: &Ctx, scope: &Scope, depth: usize) -> Option<i64> {
             }
             None
         }
-        Expr::Range(obj, a, b) => {
+        Expr::Range(_obj, a, b) => {
             let wa = fold_const(a, &scope.params, 0);
             let wb = fold_const(b, &scope.params, 0);
             match (wa, wb) {

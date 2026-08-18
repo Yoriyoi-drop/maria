@@ -4,7 +4,7 @@
 // Unknown directives (`uvm_*) prefixed with backtick are skipped by preprocessor.
 
 `define uvm_info(ID, MSG, VERBOSITY) \
-  $info("UVM_INFO %s: %s", ID, MSG)
+  uvm_report_info(ID, MSG, VERBOSITY)
 
 `define uvm_warning(ID, MSG) \
   $warning("UVM_WARNING %s: %s", ID, MSG)

@@ -141,8 +141,11 @@ fn score_auto_top(name: Symbol, cone: usize) -> i64 {
 
 const BUILTIN_UVM_CLASSES: &[&str] = &[
     "uvm_object",
+    "uvm_transaction",
     "uvm_component",
     "uvm_sequence_item",
+    "uvm_tr_database",
+    "uvm_tr_stream",
     "uvm_sequence",
     "uvm_sequencer",
     "uvm_driver",
@@ -171,6 +174,10 @@ const BUILTIN_UVM_CLASSES: &[&str] = &[
     "uvm_in_order_comparator",
     // VERIF-15: uvm_heartbeat — monitor liveness object.
     "uvm_heartbeat",
+    // VERIF-04: uvm_root — singleton root + top-level component.
+    "uvm_root",
+    // VERIF-05: uvm_phase — handle phase (jump/get_name/skip).
+    "uvm_phase",
 ];
 
 /// Kumpulkan nama module yang diinstansiasi dari daftar ModuleItem,
@@ -178,6 +185,19 @@ const BUILTIN_UVM_CLASSES: &[&str] = &[
 /// generate — raw AST maupun hasil partial expansion — wajib terlihat oleh
 /// reachability analysis dari top; tanpa ini module yang sah (mis. ibex_decoder
 /// di dalam ibex_id_stage) bisa salah di-flag unreachable dan di-prune.
+/// LANG-08: ekstrak nama net (Ident polos / ScopedIdent sederhana) dari
+/// ekspresi lhs/rhs `alias a = b;` → SignalId bila ada di top signal map.
+/// Bit-select (`a[3]`) tidak didukung utk alias (bisa ditambah nanti).
+fn net_expr_signal_id(expr: &maria_ast::Expr, map: &HashMap<Symbol, SignalId>) -> Option<SignalId> {
+    match expr {
+        maria_ast::Expr::Ident { name, .. } => map.get(name).copied(),
+        // `pkg::net` scoped — peta signal top memakai nama polos; hanya
+        // resolve bila nama cocok persis.
+        maria_ast::Expr::ScopedIdent { item, .. } => map.get(item).copied(),
+        _ => None,
+    }
+}
+
 fn collect_instance_names(items: &[ModuleItem], out: &mut Vec<Symbol>) {
     for item in items {
         match item {
@@ -230,6 +250,10 @@ pub struct Elaborator {
     /// elaborate_module_with_params_and_type; di-resolve elaborate_expr
     /// (ident untuk let tanpa parameter, FuncCall untuk let berparameter).
     pub let_decls: HashMap<Symbol, LetDecl>,
+    /// LANG-10: deklarasi checker (nama → CheckerDecl) — dikumpulkan dari
+    /// module items saat elaborate; instance checker di-resolve ke sini lalu
+    /// assertion body di-drive dengan port binding.
+    pub checker_decls: HashMap<Symbol, CheckerDecl>,
     pub typedef_map: HashMap<Symbol, usize>,
     pub typedef_field_map: HashMap<Symbol, Vec<StructFieldInfo>>,
     /// Range + packed dims typedef module/package (untuk mengisi `packed_dims`
@@ -494,6 +518,7 @@ impl Elaborator {
             modules: HashMap::new(),
             param_vals: HashMap::new(),
             let_decls: HashMap::new(),
+            checker_decls: HashMap::new(),
             typedef_map: HashMap::new(),
             typedef_dims: HashMap::new(),
             typedef_field_map: HashMap::new(),
@@ -535,6 +560,17 @@ impl Elaborator {
         // module. Sebelumnya dihitung ulang per-modul (rescan semua package +
         // fixed-point 64 iterasi) yang menjadi bottleneck di desain besar.
         self.build_pkg_param_ctx();
+
+        // LANG-10: kumpulkan deklarasi checker dari SEMUA module (pre-pass)
+        // agar instance checker (di module mana pun) ter-resolve. Checker
+        // bisa dideklarasikan sebelum/ sesudah instance-nya di file yang sama.
+        for module in &self.design.modules {
+            for item in &module.items {
+                if let ModuleItem::Checker(cd) = item {
+                    self.checker_decls.entry(cd.name).or_insert_with(|| cd.clone());
+                }
+            }
+        }
 
         // ── Deduplicate module definitions (pilih yang self-contained) ──
         // Filelist project besar (OpenTitan) sering memuat BEBERAPA varian
@@ -1355,6 +1391,10 @@ let mut top = match self.modules.remove(&top_name) {
                 let extends_str = cls.extends.map(|s| s.as_str());
                 match extends_str {
                     Some("uvm_object") => cls.extends = Some(Symbol::intern("__uvm_object")),
+                    Some("uvm_transaction") => {
+                        // VERIF-17: uvm_transaction — kelas dasar uvm_sequence_item.
+                        cls.extends = Some(Symbol::intern("__uvm_transaction"))
+                    }
                     Some("uvm_component") => cls.extends = Some(Symbol::intern("__uvm_component")),
                     Some("uvm_sequence_item") => {
                         cls.extends = Some(Symbol::intern("__uvm_sequence_item"))
@@ -1445,10 +1485,25 @@ let mut top = match self.modules.remove(&top_name) {
                 },
             );
             classes.insert(
+                Symbol::intern("__uvm_transaction"),
+                IrClassDef {
+                    name: Symbol::intern("__uvm_transaction"),
+                    // VERIF-17: uvm_transaction extends uvm_object (per UVM 1.2).
+                    extends: Some(Symbol::intern("__uvm_object")),
+                    type_params: vec![],
+                    fields: vec![],
+                    methods: vec![],
+                    constraints: vec![],
+                    rand_fields: vec![],
+                    lets: vec![],
+                },
+            );
+            classes.insert(
                 Symbol::intern("__uvm_sequence_item"),
                 IrClassDef {
                     name: Symbol::intern("__uvm_sequence_item"),
-                    extends: Some(Symbol::intern("__uvm_object")),
+                    // VERIF-17: uvm_sequence_item extends uvm_transaction (UVM 1.2).
+                    extends: Some(Symbol::intern("__uvm_transaction")),
                     type_params: vec![],
                     fields: vec![],
                     methods: vec![],
@@ -1770,6 +1825,58 @@ let mut top = match self.modules.remove(&top_name) {
             .enumerate()
             .map(|(i, s)| (s.name, i))
             .collect();
+        // LANG-08: net alias (IEEE 1800-2017 §10.9) — `alias a = b = c;`
+        // menyatukan semua net dalam rantai jadi satu jaringan: resolve nama
+        // net → SignalId, union-find, pilih canonical (id terkecil), simpan
+        // peta member → canonical di IrDesign. Engine mer-direct read/write
+        // member ke canonical (state.alias_redirect) sehingga menulis ke salah
+        // satu terlihat di semua (short).
+        let mut net_aliases: HashMap<SignalId, SignalId> = HashMap::new();
+        if let Some(top_ast) = self.design.modules.iter().find(|m| m.name == top_name) {
+            let mut parent: HashMap<SignalId, SignalId> = HashMap::new();
+            for item in &top_ast.items {
+                if let ModuleItem::NetAlias(pairs) = item {
+                    for (lhs, rhs) in pairs {
+                        let l_id = net_expr_signal_id(lhs, &top_signal_map);
+                        let r_id = net_expr_signal_id(rhs, &top_signal_map);
+                        if let (Some(a), Some(b)) = (l_id, r_id) {
+                            // union-find (simple path-compression)
+                            let root = |x: SignalId, p: &mut HashMap<SignalId, SignalId>| {
+                                let mut cur = x;
+                                while let Some(&n) = p.get(&cur) {
+                                    cur = n;
+                                }
+                                let mut back = x;
+                                while let Some(&n) = p.get(&back) {
+                                    p.insert(back, cur);
+                                    back = n;
+                                }
+                                cur
+                            };
+                            let ra = root(a, &mut parent);
+                            let rb = root(b, &mut parent);
+                            if ra != rb {
+                                parent.insert(ra, rb); // ra → rb
+                            }
+                        }
+                    }
+                }
+            }
+            for member in top_signal_map.values().copied() {
+                let mut cur = member;
+                let mut hops = 0;
+                while let Some(&n) = parent.get(&cur) {
+                    cur = n;
+                    hops += 1;
+                    if hops > 64 {
+                        break;
+                    }
+                }
+                if cur != member {
+                    net_aliases.insert(member, cur);
+                }
+            }
+        }
         let covergroups = self.elaborate_covergroups(top_name.as_str(), &top_signal_map, &top.signals)?;
         let dpi_imports = self.elaborate_dpi_imports()?;
 
@@ -1839,6 +1946,7 @@ let mut top = match self.modules.remove(&top_name) {
             pkg_scoped_consts: std::mem::take(&mut self.pkg_param_ctx),
             coverage_exclusions: Vec::new(),
             stmt_lines: self.stmt_lines.take(),
+            net_aliases,
         })
     }
 
@@ -3045,6 +3153,19 @@ impl Elaborator {
                     if matches!(&td.dtype, DataType::StructType { .. } | DataType::UnionType { .. }) {
                         self.store_typedef_fields(td.name, &td.dtype);
                     }
+                }
+                // LANG-08: nettype — daftarkan nama sebagai tipe (lebar = base
+                // type × range) agar `mynet x;` ter-resolve (UserDefined →
+                // typedef_map).
+                ModuleItem::Nettype(nt) => {
+                    let width = self.resolve_typedef_width_dims(
+                        &nt.base,
+                        nt.range.as_ref(),
+                        &[],
+                        &effective_params,
+                    );
+                    self.typedef_map.insert(nt.name, width);
+                    self.typedef_dims.insert(nt.name, (nt.range.clone(), vec![]));
                 }
                 _ => {}
             }
@@ -4609,6 +4730,80 @@ impl Elaborator {
                 }
             };
             match item {
+                // LANG-04/11/12/13: module-level concurrent assertion property
+                // boolean — ubah jadi always block ber-clock (dari clock_event
+                // assertion) agar engine mengevaluasi tiap edge clock.
+                ModuleItem::PropertyAssert(stmt) => {
+                    let clock_event = match stmt.as_ref() {
+                        Stmt::Assert { clock_event, .. }
+                        | Stmt::Assume { clock_event, .. }
+                        | Stmt::Cover { clock_event, .. } => clock_event.clone(),
+                        _ => None,
+                    };
+                    if let Some(ce) = clock_event {
+                        let ev = match &ce {
+                            maria_ast::types::ClockEvent::Posedge(s) => {
+                                SensitivityEvent::PosEdge(Expr::Ident {
+                                    name: *s,
+                                    line: 0,
+                                    col: 0,
+                                })
+                            }
+                            maria_ast::types::ClockEvent::Negedge(s) => {
+                                SensitivityEvent::NegEdge(Expr::Ident {
+                                    name: *s,
+                                    line: 0,
+                                    col: 0,
+                                })
+                            }
+                            maria_ast::types::ClockEvent::Edge(s) => {
+                                SensitivityEvent::Level(Expr::Ident {
+                                    name: *s,
+                                    line: 0,
+                                    col: 0,
+                                })
+                            }
+                        };
+                        let always = AlwaysBlock {
+                            kind: AlwaysKind::Always,
+                            sensitivity: Some(SensitivityList { events: vec![ev] }),
+                            stmts: vec![stmt.as_ref().clone()],
+                        };
+                        match self.elaborate_always(&always, &signal_map, &signals) {
+                            Ok(process) => processes.push(process),
+                            Err(e) => {
+                                let mut diag = e.to_diagnostic();
+                                if !self.is_current_module_reachable() {
+                                    diag.level = DiagLevel::Warning;
+                                }
+                                self.diag_sink.push(diag);
+                            }
+                        }
+                    } else {
+                        // Tanpa clock event — evaluasi sebagai proses initial
+                        // sekali (bentuk langka; fallback aman).
+                        let name = format_sym(b"initial_prop_", proc_counter);
+                        proc_counter += 1;
+                        *self.current_proc_name.borrow_mut() = Some(name.clone());
+                        let body_res = self.elaborate_stmt_block(
+                            std::slice::from_ref(stmt.as_ref()),
+                            &signal_map,
+                            known_modules,
+                            &signals,
+                        );
+                        *self.current_proc_name.borrow_mut() = None;
+                        match body_res {
+                            Ok(body) => processes.push(Process::Initial { name, body }),
+                            Err(e) => {
+                                let mut diag = e.to_diagnostic();
+                                if !self.is_current_module_reachable() {
+                                    diag.level = DiagLevel::Warning;
+                                }
+                                self.diag_sink.push(diag);
+                            }
+                        }
+                    }
+                }
                 ModuleItem::Always(always) => {
                     match self.elaborate_always(always, &signal_map, &signals) {
                         Ok(process) => {
@@ -4912,6 +5107,86 @@ impl Elaborator {
                                     delay: None,
                                 }],
                             });
+                        }
+                    } else if let Some(cd) = self.checker_decls.get(&inst.module_name).cloned() {
+                        // LANG-10: checker instance — bind port (positional/
+                        // named) ke signal, lalu drive assertion property di
+                        // body checker sebagai always block ber-clock (pola
+                        // sama dengan ModuleItem::PropertyAssert module-level).
+                        let mut bind_map = signal_map.clone();
+                        for (i, conn) in inst.port_conns.iter().enumerate() {
+                            let (pname, expr) = match conn {
+                                PortConnection::Positional(e) => {
+                                    (cd.ports.get(i).copied(), Some(e))
+                                }
+                                PortConnection::Named { port, expr } => {
+                                    (Some(*port), Some(expr))
+                                }
+                                PortConnection::Unconnected { .. } => (None, None),
+                            };
+                            if let (Some(pname), Some(expr)) = (pname, expr) {
+                                let sid = self.instance_port_expr_to_signal(
+                                    expr,
+                                    &signal_map,
+                                    &mut signals,
+                                    &mut next_id,
+                                    &mut processes,
+                                    &format!("{}.{}", inst.instance_name, pname.as_str()),
+                                )?;
+                                bind_map.insert(pname, sid);
+                            }
+                        }
+                        // Drive assertion property items di body checker.
+                        for item in &cd.items {
+                            let ModuleItem::PropertyAssert(stmt) = item else {
+                                continue;
+                            };
+                            let clock_event = match stmt.as_ref() {
+                                Stmt::Assert { clock_event, .. }
+                                | Stmt::Assume { clock_event, .. }
+                                | Stmt::Cover { clock_event, .. } => clock_event.clone(),
+                                _ => None,
+                            };
+                            if let Some(ce) = clock_event {
+                                let ev = match &ce {
+                                    maria_ast::types::ClockEvent::Posedge(s) => {
+                                        SensitivityEvent::PosEdge(Expr::Ident {
+                                            name: *s,
+                                            line: 0,
+                                            col: 0,
+                                        })
+                                    }
+                                    maria_ast::types::ClockEvent::Negedge(s) => {
+                                        SensitivityEvent::NegEdge(Expr::Ident {
+                                            name: *s,
+                                            line: 0,
+                                            col: 0,
+                                        })
+                                    }
+                                    maria_ast::types::ClockEvent::Edge(s) => {
+                                        SensitivityEvent::Level(Expr::Ident {
+                                            name: *s,
+                                            line: 0,
+                                            col: 0,
+                                        })
+                                    }
+                                };
+                                let always = AlwaysBlock {
+                                    kind: AlwaysKind::Always,
+                                    sensitivity: Some(SensitivityList { events: vec![ev] }),
+                                    stmts: vec![stmt.as_ref().clone()],
+                                };
+                                match self.elaborate_always(&always, &bind_map, &signals) {
+                                    Ok(process) => processes.push(process),
+                                    Err(e) => {
+                                        let mut diag = e.to_diagnostic();
+                                        if !self.is_current_module_reachable() {
+                                            diag.level = DiagLevel::Warning;
+                                        }
+                                        self.diag_sink.push(diag);
+                                    }
+                                }
+                            }
                         }
                     } else {
                         // Regular module instance

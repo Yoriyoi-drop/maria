@@ -41,7 +41,7 @@ impl SimulationEngine {
                 let mut cd = UvmComponentData {
                     parent: None,
                     children: Vec::new(),
-                    report_verbosity: 2,
+                    report_verbosity: super::object::UVM_MEDIUM,
                 };
                 if parent_obj != 0 {
                     cd.parent = Some(parent_obj);

@@ -6,6 +6,7 @@
 //! 1 file = 1 tanggung jawab: hanya path matching + lookup config db.
 
 use super::super::SimulationEngine;
+use maria_core::Symbol;
 use maria_core::error::SimError;
 use maria_compiler::hir::{LogicVec, ObjId};
 use maria_ir::IrExpr;
@@ -188,6 +189,39 @@ impl SimulationEngine {
             }
             "uvm_resource_db::exists" => {
                 // return value diabaikan dalam konteks statement
+            }
+            "uvm_root::run_test" => {
+                // VERIF-04: varian class-method run_test("name") sebagai
+                // statement — sama dgn bare run_test (F18).
+                let test_name = arg_vals
+                    .first()
+                    .map(logicvec_to_string)
+                    .unwrap_or_default();
+                self.run_uvm_test(&test_name)?;
+            }
+            "uvm_tr_database::get_db" => {
+                // VERIF-18: singleton db sebagai statement — pastikan id ada.
+                if self.uvm_tr_db_id.is_none() {
+                    let id = self.state.alloc_object(Symbol::intern("uvm_tr_database"));
+                    self.uvm_tr_db_id = Some(id);
+                }
+            }
+            "uvm_tr_database::get_stream" => {
+                // VERIF-18: get_stream(name) sebagai statement — buat stream.
+                let stream_name = arg_vals
+                    .first()
+                    .map(logicvec_to_string)
+                    .unwrap_or_default();
+                self.tr_stream_get(&stream_name);
+            }
+            "uvm_tr_database::set_stream" => {
+                // VERIF-18: set_stream(name) — stream default db.
+                let stream_name = arg_vals
+                    .first()
+                    .map(logicvec_to_string)
+                    .unwrap_or_default();
+                self.tr_stream_get(&stream_name);
+                self.tr_db_default_stream = Some(stream_name);
             }
             _ => {}
         }

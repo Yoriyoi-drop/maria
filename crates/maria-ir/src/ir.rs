@@ -39,6 +39,11 @@ pub struct IrDesign {
     /// `record_line_hit` melewati statement yang barisnya berada dalam
     /// `` `coverage_off ``/`` `coverage_on `` (is_line_excluded).
     pub stmt_lines: HashMap<Symbol, usize>,
+    /// LANG-08: net alias (IEEE 1800-2017 §10.9) — peta member → canonical
+    /// SignalId. `alias a = b;` membuat a dan b satu jaringan: engine
+    /// mer-direct read/write member ke canonical (state.alias_redirect),
+    /// sehingga menulis ke salah satu terlihat di semua (short).
+    pub net_aliases: HashMap<SignalId, SignalId>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -54,6 +59,12 @@ pub struct IrCovergroup {
     pub name: Symbol,
     pub coverpoints: Vec<IrCoverpoint>,
     pub crosses: Vec<IrCross>,
+    /// VERIF-28: `type_option.weight = N` — bobot utk functional coverage
+    /// keseluruhan (default 1).
+    pub weight: u64,
+    /// VERIF-28: `type_option.per_instance = 1` — coverage per-instance
+    /// (default false = merge semua instance ke satu akumulator).
+    pub per_instance: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

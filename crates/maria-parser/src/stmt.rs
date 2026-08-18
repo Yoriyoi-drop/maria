@@ -95,6 +95,9 @@ impl Parser {
             Token::Assume => { self.advance(); "assume" }
             Token::Cover => { self.advance(); "cover" }
             Token::Expect => { self.advance(); "expect" }
+            // LANG-11: restrict property — properti constraint (asumsi),
+            // diperlakukan seperti assume (violation → fail metric).
+            Token::Restrict => { self.advance(); "assume" }
             _ => return Err(self.err("expected assert/assume/cover/expect")),
         };
         if self.peek() == &Token::Property {
@@ -221,6 +224,11 @@ impl Parser {
         } else { self.skip_semi(); }
         let mut coverpoints = Vec::new();
         let mut crosses = Vec::new();
+        // VERIF-28: `type_option.weight = N` / `type_option.per_instance = 1`
+        // (juga varian `option.*`) — dibaca saat body loop; default weight 1,
+        // per_instance false.
+        let mut cg_weight: Option<u64> = None;
+        let mut cg_per_instance: bool = false;
         loop {
             match self.peek() {
                 Token::EndGroup | Token::Eof => {
@@ -233,6 +241,34 @@ impl Parser {
                 }
                 Token::Ident(_) => {
                     let ident = self.expect_ident()?;
+                    // VERIF-28: `type_option.weight = N` / `type_option.per_instance =
+                    // 0|1` / `type_option.merge_instances = 0|1` — opsi tipe
+                    // covergroup. Sebelumnya di-skip sampai ';' (opsi diabaikan).
+                    if ident == Symbol::intern("type_option") && self.peek() == &Token::Dot {
+                        self.advance(); // '.'
+                        let opt = self.expect_ident()?;
+                        self.expect(Token::BlockingAssign)?;
+                        if opt == Symbol::intern("weight") {
+                            let w = self.parse_expr(0)?;
+                            cg_weight = const_eval_simple(&w).ok().map(|v| v as u64);
+                        } else if opt == Symbol::intern("per_instance")
+                            || opt == Symbol::intern("merge_instances")
+                        {
+                            let v = self.parse_expr(0)?;
+                            let v = const_eval_simple(&v).ok().map(|x| x as u64);
+                            if opt == Symbol::intern("per_instance") {
+                                // per_instance=1 → per-instance; 0 → merge
+                                cg_per_instance = v == Some(1);
+                            } else {
+                                // merge_instances=1 → merge; 0 → per-instance
+                                cg_per_instance = v == Some(0);
+                            }
+                        } else {
+                            let _ = self.parse_expr(0)?;
+                        }
+                        self.skip_semi();
+                        continue;
+                    }
                     if self.peek() == &Token::Colon {
                         self.advance();
                         match self.peek() {
@@ -386,7 +422,29 @@ impl Parser {
                         self.skip_until_semi_or_end()?;
                     }
                 }
-                Token::Option_ => { self.advance(); self.skip_until_semi_or_end()?; }
+                Token::Option_ => {
+                    self.advance();
+                    // VERIF-28: `option.weight = N` / `option.per_instance = 0|1` —
+                    // opsi instance covergroup. Sebelumnya di-skip sampai ';'.
+                    if self.peek() == &Token::Dot {
+                        self.advance(); // '.'
+                        let opt = self.expect_ident()?;
+                        self.expect(Token::BlockingAssign)?;
+                        if opt == Symbol::intern("weight") {
+                            let w = self.parse_expr(0)?;
+                            cg_weight = const_eval_simple(&w).ok().map(|v| v as u64);
+                        } else if opt == Symbol::intern("per_instance") {
+                            let v = self.parse_expr(0)?;
+                            let v = const_eval_simple(&v).ok().map(|x| x as u64);
+                            cg_per_instance = v == Some(1);
+                        } else {
+                            let _ = self.parse_expr(0)?;
+                        }
+                    } else {
+                        self.skip_until_semi_or_end()?;
+                    }
+                    self.skip_semi();
+                }
                 _ => {
                     // Token tidak dikenal di body covergroup — skip sampai ';' atau '}'
                     // agar parsing tidak berhenti di sini. Contoh: `type_option.weight = 0;`
@@ -408,7 +466,7 @@ impl Parser {
                 }
             }
         }
-        Ok(CovergroupDecl { name, clocking_event, coverpoints, crosses })
+        Ok(CovergroupDecl { name, clocking_event, coverpoints, crosses, weight: cg_weight, per_instance: cg_per_instance })
     }
 
     pub(crate) fn parse_dpi_import(&mut self) -> Result<DpiImport, SimError> {

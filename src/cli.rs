@@ -457,7 +457,7 @@ pub struct McheckArgs {
     #[arg(long)]
     pub timescale: bool,
 
-    /// PARSER-13: bandingkan AST file pertama dgn file kedua (structural
+    /// bandingkan AST file pertama dgn file kedua (structural
     /// diff utk regression) — `mcheck a.sv --ast-diff b.sv`.
     #[arg(long = "ast-diff")]
     pub ast_diff: Option<String>,

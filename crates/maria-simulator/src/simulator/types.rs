@@ -240,6 +240,24 @@ pub struct UvmObjectData {
     pub name: String,
 }
 
+/// VERIF-17: satu record transaksi UVM — dibuat oleh `begin_tr(name)` pada
+/// uvm_transaction/uvm_sequence_item, ditutup oleh `end_tr()`. Waktu memakai
+/// time simulation (state.time); `stream` = nama tr_stream yang dilampirkan
+/// (via `set_stream`/`db.get_stream`), None bila tidak ada.
+#[derive(Debug, Clone)]
+pub struct UvmTrRecord {
+    /// Nama transaksi (argumen begin_tr).
+    pub name: String,
+    /// Obj id transaksi (uvm_transaction/uvm_sequence_item instance).
+    pub obj_id: ObjId,
+    /// Nama stream tempat record dilampirkan (VERIF-18/19), None = default.
+    pub stream: Option<String>,
+    /// Waktu mulai (state.time saat begin_tr).
+    pub start_time: u64,
+    /// Waktu selesai (state.time saat end_tr) — None selama masih terbuka.
+    pub end_time: Option<u64>,
+}
+
 /// UVM callback data: registered callback objects for a callback type.
 #[derive(Debug, Clone)]
 pub struct UvmCallbackData {

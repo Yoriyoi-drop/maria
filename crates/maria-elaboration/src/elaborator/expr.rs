@@ -1152,7 +1152,14 @@ impl Elaborator {
                     || name == "uvm_resource_db::exists"
                     || name == "uvm_resource_db::read_by_name"
                     || name == "uvm_resource_db::write_by_name"
-                    || name == "uvm_cmdline_processor::get" =>
+                    || name == "uvm_cmdline_processor::get"
+                    || name == "uvm_root::get"
+                    || name == "uvm_root::get_top"
+                    || name == "uvm_root::run_test"
+                    || name == "uvm_tr_database::get_db"
+                    || name == "uvm_tr_database::get_stream"
+                    || name == "uvm_tr_database::get_tr_count"
+                    || name == "uvm_tr_database::set_stream" =>
             {
                 let ir_args: Result<Vec<IrExpr>, SimError> = args
                     .iter()

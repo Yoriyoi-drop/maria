@@ -1032,14 +1032,31 @@ let mut _last_pos = self.pos.get();
                 let decl = self.parse_decl()?;
                 Ok(Some(ModuleItem::Decl(decl)))
             }
-            Token::Assert | Token::Assume | Token::Cover => {
-                // Concurrent assertion SVA `assert property (...) else begin ... end`
-                // (hasil macro `ASSERT` prim_assert) — di-skip penuh; assertion
-                // tidak di-elaborasi Maria. Tanpa ini, `[* N]`/`##`/`disable iff`
-                // di body assertion membuat parse error dan skip_until_semi_or_end
-                // melewati `endmodule` (modul hilang dari design).
-                self.skip_assert_item();
-                Ok(None)
+            Token::Assert | Token::Assume | Token::Cover | Token::Restrict => {
+                // Concurrent assertion SVA module-level. Bentuk BOOLEAN
+                // `assert property (@(posedge clk) expr)` di-parse penuh menjadi
+                // ModuleItem::PropertyAssert (LANG-04/11/12/13) — elaborator
+                // mengubahnya jadi always block ber-clock. Body yang mengandung
+                // operator temporal (`##`, `|->`, `[*]`, `until`, dll) membuat
+                // parse gagal → rollback pos + skip_assert_item (perilaku lama,
+                // modul tetap utuh — assertion kompleks tidak di-elaborasi).
+                let save_pos = self.pos.get();
+                let save_errs = self.errors.len();
+                let save_steps = self.parse_steps;
+                let save_peek = self.peek_count.get();
+                match self.parse_immediate_assertion() {
+                    Ok(stmt) => Ok(Some(ModuleItem::PropertyAssert(Box::new(stmt)))),
+                    Err(_) => {
+                        // Rollback: kembalikan posisi token + hapus error parsing
+                        // yang ditambahkan oleh percobaan, lalu skip penuh.
+                        self.pos.set(save_pos);
+                        self.errors.truncate(save_errs);
+                        self.parse_steps = save_steps;
+                        self.peek_count.set(save_peek);
+                        self.skip_assert_item();
+                        Ok(None)
+                    }
+                }
             }
             Token::Ident(name) => {
                 // Bentuk berlabel: `SigintCheck0_A: assert property (...) else ...`
@@ -1317,6 +1334,105 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                 // LANG-40: `let name[(params)] = expr;` (IEEE 1800-2017 §11.12.2).
                 let ld = self.parse_let_decl()?;
                 return Ok(Some(ModuleItem::Let(ld)));
+            }
+            Token::Checker => {
+                // LANG-10: `checker name (ports); items endchecker` (IEEE
+                // 1800-2017 §17.8) — unit assertion terinstansiasi.
+                self.advance(); // consume 'checker'
+                let name = self.expect_ident()?;
+                let mut ports: Vec<Symbol> = Vec::new();
+                if self.peek() == &Token::LParen {
+                    self.advance();
+                    while self.peek() != &Token::RParen && self.peek() != &Token::Eof {
+                        // Port bisa `input a`, `a` (direction optional).
+                        // Skip direction/type keywords.
+                        match self.peek() {
+                            Token::Input | Token::Output | Token::Inout | Token::Wire
+                            | Token::Logic | Token::Reg | Token::Bit | Token::Int
+                            | Token::Integer | Token::Byte | Token::Shortint | Token::Longint
+                            | Token::Tri | Token::Tri0 | Token::Tri1 | Token::Wand | Token::Wor => {
+                                self.advance();
+                            }
+                            Token::Comma => {
+                                self.advance();
+                            }
+                            Token::Ident(s) => {
+                                ports.push(*s);
+                                self.advance();
+                            }
+                            Token::Semi => break,
+                            _ => {
+                                self.advance();
+                            }
+                        }
+                    }
+                    if self.peek() == &Token::RParen {
+                        self.advance();
+                    }
+                }
+                self.skip_semi();
+                let mut items: Vec<ModuleItem> = Vec::new();
+                loop {
+                    if matches!(self.peek(), Token::EndChecker | Token::Eof) {
+                        self.advance();
+                        break;
+                    }
+                    match self.parse_module_item()? {
+                        Some(item) => items.push(item),
+                        None => {}
+                    }
+                }
+                return Ok(Some(ModuleItem::Checker(CheckerDecl { name, ports, items })));
+            }
+            Token::Alias => {
+                // LANG-08: `alias a = b = c;` (IEEE 1800-2017 §10.9) — semua
+                // net dalam satu rantai jadi satu jaringan (short). Rantai
+                // disimpan sebagai pasangan berurutan (a=b, b=c) agar
+                // elaborator bisa menyatukan grup via union-find.
+                self.advance(); // consume 'alias'
+                let mut pairs: Vec<(Expr, Expr)> = Vec::new();
+                let mut lhs = self.parse_primary_expr()?;
+                loop {
+                    match self.peek() {
+                        Token::BlockingAssign => {
+                            self.advance();
+                            let rhs = self.parse_primary_expr()?;
+                            pairs.push((lhs.clone(), rhs.clone()));
+                            lhs = rhs;
+                        }
+                        _ => break,
+                    }
+                }
+                self.skip_semi();
+                return Ok(Some(ModuleItem::NetAlias(pairs)));
+            }
+            Token::Nettype => {
+                // LANG-08: `nettype <type> <name>;` (IEEE 1800-2017 §6.10).
+                // Parse tipe dasar + nama; klausa `with resolution_fn` di-skip.
+                self.advance(); // consume 'nettype'
+                let base = self.parse_type_expr()?;
+                // Range packed `[msb:lsb]` — parse_type_expr TIDAK mengonsumsi
+                // range (hanya base type); `nettype logic [7:0] mynet;` butuh
+                // range agar lebar tipe benar.
+                let range = if self.peek() == &Token::LBrack {
+                    self.parse_range()?
+                } else {
+                    None
+                };
+                let name = self.expect_ident()?;
+                // Klausa `with resolution_fn` — `with` adalah Ident biasa.
+                if matches!(self.peek(), Token::Ident(s) if *s == Symbol::intern("with")) {
+                    self.advance(); // 'with'
+                    // resolution function: ident optional, konsumsi sampai ';'
+                    while !matches!(self.peek(), Token::Semi | Token::Eof) {
+                        self.advance();
+                    }
+                }
+                self.skip_semi();
+                // Daftarkan nama nettype agar `mynet x;` di-parse sebagai
+                // deklarasi (UserDefined), bukan instance `mynet x(...)`.
+                self.module_type_params.insert(name);
+                return Ok(Some(ModuleItem::Nettype(NettypeDecl { name, base, range })));
             }
             Token::Param | Token::Parameter | Token::LocalParam => {
                 let is_localparam = self.peek() == &Token::LocalParam;

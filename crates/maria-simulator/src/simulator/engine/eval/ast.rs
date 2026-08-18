@@ -507,6 +507,71 @@ impl SimulationEngine {
                     self.run_uvm_test(&test_name)?;
                     return Ok(LogicVec::from_u64(1, 1));
                 }
+                // VERIF-04: uvm_root::run_test("name") — varian class-method,
+                // sama dgn bare run_test (F18).
+                if name == "uvm_root::run_test" {
+                    let test_name = args
+                        .first()
+                        .map(|a| self.evaluate_ast_expr(a))
+                        .transpose()?
+                        .map(|v| logicvec_to_string(&v))
+                        .unwrap_or_default();
+                    self.run_uvm_test(&test_name)?;
+                    return Ok(LogicVec::from_u64(1, 1));
+                }
+                // VERIF-04: uvm_root::get() — singleton handle.
+                if name == "uvm_root::get" {
+                    let obj_id = if self.uvm_root_id.is_none() {
+                        let id = self.state.alloc_object(Symbol::intern("uvm_root"));
+                        self.uvm_root_id = Some(id);
+                        id
+                    } else {
+                        self.uvm_root_id.unwrap()
+                    };
+                    return Ok(LogicVec::from_u64(obj_id as u64, 64));
+                }
+                // VERIF-04: uvm_root::get_top() — komponen top (uvm_test_top).
+                if name == "uvm_root::get_top" {
+                    return Ok(LogicVec::from_u64(
+                        self.root_test_obj_id.unwrap_or(0) as u64,
+                        64,
+                    ));
+                }
+                // VERIF-18: uvm_tr_database — singleton db + stream/record query.
+                if name == "uvm_tr_database::get_db" {
+                    let obj_id = if self.uvm_tr_db_id.is_none() {
+                        let id = self.state.alloc_object(Symbol::intern("uvm_tr_database"));
+                        self.uvm_tr_db_id = Some(id);
+                        id
+                    } else {
+                        self.uvm_tr_db_id.unwrap()
+                    };
+                    return Ok(LogicVec::from_u64(obj_id as u64, 64));
+                }
+                if name == "uvm_tr_database::get_stream" {
+                    let stream_name = args
+                        .first()
+                        .map(|a| self.evaluate_ast_expr(a))
+                        .transpose()?
+                        .map(|v| logicvec_to_string(&v))
+                        .unwrap_or_default();
+                    let id = self.tr_stream_get(&stream_name);
+                    return Ok(LogicVec::from_u64(id as u64, 64));
+                }
+                if name == "uvm_tr_database::get_tr_count" {
+                    return Ok(LogicVec::from_u64(self.tr_records.len() as u64, 64));
+                }
+                if name == "uvm_tr_database::set_stream" {
+                    let stream_name = args
+                        .first()
+                        .map(|a| self.evaluate_ast_expr(a))
+                        .transpose()?
+                        .map(|v| logicvec_to_string(&v))
+                        .unwrap_or_default();
+                    self.tr_stream_get(&stream_name);
+                    self.tr_db_default_stream = Some(stream_name);
+                    return Ok(LogicVec::from_u64(0, 64));
+                }
                 if name == "$sformatf" {
                     // F17: $sformatf di body method class — format via
                     // format_display_ast (argumen AST, field class ter-resolve).

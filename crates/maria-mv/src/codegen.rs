@@ -146,6 +146,16 @@ fn emit_typedef(out: &mut String, indent: usize, td: &Typedef) {
             }
             line(out, indent, &format!("}} {name};"));
         }
+        Typedef::Union { name, packed, fields, .. } => {
+            let pk = if *packed { " packed" } else { "" };
+            line(out, indent, &format!("typedef union{pk} {{"));
+            for f in fields {
+                let names = f.names.join(", ");
+                let ty_s = pad_type(emit_type(&f.ty));
+                line(out, indent + 1, &format!("{ty_s}{names};"));
+            }
+            line(out, indent, &format!("}} {name};"));
+        }
         Typedef::Enum { name, width, members, .. } => {
             let w = match width {
                 // `enum(N)` = N bit → `[N-1:0]`
@@ -993,17 +1003,20 @@ pub fn emit_type(t: &MvType) -> String {
         MvType::Logic(Some((a, b))) => format!("logic [{}:{}]", emit_expr(a), emit_expr(b)),
         MvType::Signed(inner) => {
             // `signed logic[8]` → `logic signed [7:0]`
+            // `signed bit` → `logic signed` (bit tidak mendukung signed di SV)
             match inner.as_ref() {
                 MvType::Logic(r) => match r {
                     Some((a, b)) => format!("logic signed [{}:{}]", emit_expr(a), emit_expr(b)),
                     None => "logic signed".into(),
                 },
+                MvType::Bit => "logic signed".into(),
                 other => format!("signed {}", emit_type(other)),
             }
         }
         MvType::Int => "int".into(),
         MvType::Uint => "logic [31:0]".into(),
         MvType::LongInt => "longint".into(),
+        MvType::ULongInt => "longint unsigned".into(),
         MvType::ShortInt => "shortint".into(),
         MvType::Byte => "byte".into(),
         MvType::Real => "real".into(),

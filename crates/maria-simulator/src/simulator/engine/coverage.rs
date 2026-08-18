@@ -103,6 +103,21 @@ impl SimulationEngine {
             .any(|(s, e)| line >= *s && line <= *e)
     }
 
+    /// VERIF-27: catat hasil evaluasi assertion (pass/fail) ke assertion_stats
+    /// — keyed by (line, col). Dipanggil dari handler Assert/Expect/Assume
+    /// (block.rs, 2 jalur) dan concurrent sequence completion (sequence.rs).
+    pub(crate) fn record_assertion(&mut self, line: usize, col: usize, ok: bool) {
+        if line == 0 {
+            return;
+        }
+        let e = self.assertion_stats.entry((line, col)).or_insert((0, 0));
+        if ok {
+            e.0 += 1;
+        } else {
+            e.1 += 1;
+        }
+    }
+
     /// Record that a source line was executed.
     pub(crate) fn record_line_hit(&mut self, stmt: &IrStmt, process_name: &str) {
         if !self.coverage_type_enabled(CoverageType::Line) {
@@ -238,6 +253,108 @@ impl SimulationEngine {
         }
     }
 
+    /// VERIF-27: laporan assertion coverage metrics — pass/fail per assertion
+    /// (keyed by line:col). Assertion tanpa pass/fail terlihat jelas.
+    fn report_assertion_coverage(&self) {
+        if self.assertion_stats.is_empty() {
+            return;
+        }
+        eprintln!("\n=== Assertion Coverage ===");
+        let mut entries: Vec<((usize, usize), (u64, u64))> = self
+            .assertion_stats
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .collect();
+        entries.sort_by_key(|(k, _)| *k);
+        for ((line, col), (p, f)) in entries {
+            eprintln!("  line {}:{} — {} pass / {} fail", line, col, p, f);
+        }
+        let total_pass: u64 = self.assertion_stats.values().map(|(p, _)| *p).sum();
+        let total_fail: u64 = self.assertion_stats.values().map(|(_, f)| *f).sum();
+        eprintln!("  ({} assertions evaluated: {} pass, {} fail)",
+            total_pass + total_fail, total_pass, total_fail);
+    }
+
+    /// VERIF-26: coverage gap analysis — daftar item coverage yang TIDAK
+    /// pernah kena: covergroup/coverpoint/cross tidak pernah di-sample, bin
+    /// eksplisit yang tidak pernah hit, dan sinyal yang tidak pernah toggle.
+    pub fn coverage_gaps(&self) -> Vec<String> {
+        let mut gaps: Vec<String> = Vec::new();
+        for cg in &self.design.covergroups {
+            for cp in &cg.coverpoints {
+                let key = format!("{}.{}", cg.name, cp.name);
+                let (total, _) = self.cg_item_stats(cg, cp.name.as_str());
+                if total == 0 {
+                    gaps.push(format!("coverpoint '{}' tidak pernah di-sample", key));
+                }
+                // Bin eksplisit normal yang tidak pernah kena (agregat semua
+                // instance — per_instance keys ikut dijumlahkan).
+                let prefix = format!("{}.", cg.name.as_str());
+                for bin in &cp.bins {
+                    if bin.bin_type != maria_ast::types::BinType::Normal {
+                        continue;
+                    }
+                    let bin_key = format!("{}={}", cp.name, bin.name);
+                    let mut hit = 0u64;
+                    for (k, bmap) in &self.cover_bins {
+                        let s = k.as_str();
+                        if s.starts_with(&prefix) && s.ends_with(&format!(".{}", cp.name)) {
+                            if let Some(h) = bmap.get(&Symbol::intern(&bin_key)) {
+                                hit += h;
+                            }
+                        }
+                    }
+                    if hit == 0 {
+                        gaps.push(format!(
+                            "coverpoint '{}' bin '{}' tidak pernah kena (0 hit)",
+                            key, bin.name
+                        ));
+                    }
+                }
+            }
+            for cross in &cg.crosses {
+                let key = format!("{}.{}", cg.name, cross.name);
+                let (total, _) = self.cg_item_stats(cg, cross.name.as_str());
+                if total == 0 {
+                    gaps.push(format!("cross '{}' tidak pernah di-sample", key));
+                }
+            }
+        }
+        // Sinyal yang tidak pernah toggle (hanya saat toggle coverage aktif).
+        if self.coverage_type_enabled(CoverageType::Toggle) && !self.cover_toggle.is_empty() {
+            let mut never_toggled = 0usize;
+            for (idx, s) in self.design.top.signals.iter().enumerate() {
+                if s.width == 0 {
+                    continue;
+                }
+                if !self.cover_toggle.contains_key(&idx) {
+                    gaps.push(format!("signal '{}' tidak pernah toggle", s.name));
+                    never_toggled += 1;
+                    // Batasi noise utk design besar — gap utama sudah terlihat.
+                    if never_toggled >= 20 {
+                        gaps.push(format!("... ({} sinyal tidak pernah toggle, dibatasi)", never_toggled));
+                        break;
+                    }
+                }
+            }
+        }
+        gaps
+    }
+
+    /// VERIF-26: cetak coverage gap analysis ke stderr (setelah summary).
+    pub(crate) fn report_coverage_gaps(&self) {
+        let gaps = self.coverage_gaps();
+        if gaps.is_empty() {
+            eprintln!("\n=== Coverage Gaps ===");
+            eprintln!("  (tidak ada gap — semua item coverage kena)");
+            return;
+        }
+        eprintln!("\n=== Coverage Gaps ({} item tidak kena) ===", gaps.len());
+        for g in gaps {
+            eprintln!("  - {}", g);
+        }
+    }
+
     /// Print combined coverage report.
     pub(crate) fn report_full_coverage(&self) {
         if !self.coverage_enabled {
@@ -308,12 +425,30 @@ impl SimulationEngine {
             eprintln!("  FSM:      (no FSM data)");
         }
         
+        // VERIF-27: assertion coverage metrics (pass/fail per assertion).
+        if !self.assertion_stats.is_empty() {
+            let total_pass: u64 = self.assertion_stats.values().map(|(p, _)| *p).sum();
+            let total_fail: u64 = self.assertion_stats.values().map(|(_, f)| *f).sum();
+            let pct = if total_pass + total_fail > 0 {
+                (total_pass as f64 / (total_pass + total_fail) as f64) * 100.0
+            } else {
+                0.0
+            };
+            eprintln!("  Assert:   {} evaluated ({} pass / {} fail) {:.1}% pass rate",
+                total_pass + total_fail, total_pass, total_fail, pct);
+        } else {
+            eprintln!("  Assert:   (no assertion data)");
+        }
+        
         eprintln!("═══════════════════════════════════════\n");
         
         self.report_line_coverage();
         self.report_toggle_coverage();
         self.report_branch_coverage();
         self.report_fsm_coverage();
+        self.report_assertion_coverage();
+        // VERIF-26: coverage gap analysis — item yang tidak pernah kena.
+        self.report_coverage_gaps();
     }
 
     /// Return coverage statistics as structured data (useful for CLI/JSON output).
@@ -389,7 +524,13 @@ impl SimulationEngine {
     }
 
     /// Sample a named covergroup: evaluate coverpoints, update hit counts and bins.
-    pub(crate) fn sample_covergroup(&mut self, cg_name: &str) -> Result<(), SimError> {
+    /// `instance` = obj id instance covergroup (VERIF-28: per-instance tracking
+    /// saat `type_option.per_instance = 1`; None/ignored bila merge).
+    pub(crate) fn sample_covergroup(
+        &mut self,
+        cg_name: &str,
+        instance: Option<usize>,
+    ) -> Result<(), SimError> {
         if !self.coverage_type_enabled(CoverageType::Covergroup) {
             return Ok(());
         }
@@ -400,9 +541,19 @@ impl SimulationEngine {
             .find(|c| c.name == cg_name)
             .cloned();
         if let Some(cg) = cg {
+            // VERIF-28: per_instance → key ber-prefix instance (`cg.i<obj>.cp`)
+            // sehingga tiap instance punya akumulator terpisah.
+            let inst_prefix = if cg.per_instance {
+                match instance {
+                    Some(id) => format!("{}.i{}", cg.name, id),
+                    None => format!("{}.merge", cg.name),
+                }
+            } else {
+                cg.name.as_str().to_string()
+            };
             let mut cp_values: HashMap<String, u64> = HashMap::new();
             for cp in &cg.coverpoints {
-                let key = format!("{}.{}", cg.name, cp.name);
+                let key = format!("{}.{}", inst_prefix, cp.name);
                 let key_sym = Symbol::intern(&key);
                 let val = self
                     .evaluate_expr(&cp.expr)
@@ -415,7 +566,7 @@ impl SimulationEngine {
                 // default. Semantik IEEE 1800: ignore_bins = nilai yang
                 // dikecualikan (tidak dihitung); illegal_bins = nilai yang
                 // TIDAK BOLEH muncul (error saat kena); bins normal = dihitung.
-                let prev_key = Symbol::intern(&format!("{}.{}", cg.name, cp.name));
+                let prev_key = Symbol::intern(&format!("{}.{}", inst_prefix, cp.name));
                 let prev = self.covergroup_prev.get(&prev_key).copied();
                 let mut ignored = false;
                 let mut illegal = false;
@@ -530,7 +681,7 @@ impl SimulationEngine {
             }
             // Cross coverage
             for cross in &cg.crosses {
-                let key = format!("{}.{}", cg.name, cross.name);
+                let key = format!("{}.{}", inst_prefix, cross.name);
                 let key_sym = Symbol::intern(&key);
                 let total = self.cover_total.entry(key_sym).or_insert(0);
                 *total += 1;
@@ -557,6 +708,69 @@ impl SimulationEngine {
         Ok(())
     }
 
+    /// Total/hits satu item covergroup (coverpoint ATAU cross) — menjumlahkan
+    /// key agregat (`cg.item`) DAN seluruh key per-instance (`cg.i<id>.item`)
+    /// saat `type_option.per_instance = 1` (VERIF-28).
+    fn cg_item_stats(&self, cg: &IrCovergroup, item: &str) -> (u64, u64) {
+        let cg_str = cg.name.as_str();
+        let prefix = format!("{}.", cg_str);
+        let suffix = format!(".{}", item);
+        let full = format!("{}.{}", cg_str, item);
+        let mut total = 0u64;
+        let mut hits = 0u64;
+        for (k, v) in &self.cover_total {
+            let s = k.as_str();
+            if s == full || (s.starts_with(&prefix) && s.ends_with(&suffix)) {
+                total += v;
+            }
+        }
+        for (k, v) in &self.cover_hits {
+            let s = k.as_str();
+            if s == full || (s.starts_with(&prefix) && s.ends_with(&suffix)) {
+                hits += v;
+            }
+        }
+        (total, hits)
+    }
+
+    /// VERIF-28: functional coverage keseluruhan — rata-rata tertimbang
+    /// (weighted) coverage per covergroup. Bobot = `type_option.weight`
+    /// (default 1). Coverage satu covergroup = mean % coverpoint + cross;
+    /// item/covergroup yang TIDAK PERNAH di-sample dihitung 0% (coverage
+    /// hole — menurunkan metric, sesuai semantik gap analysis). Bila tidak
+    /// ada covergroup sama sekali, hasil 0.0.
+    pub fn functional_coverage_percent(&self) -> f64 {
+        if self.design.covergroups.is_empty() {
+            return 0.0;
+        }
+        let mut weighted_sum = 0.0;
+        let mut total_weight = 0.0;
+        for cg in &self.design.covergroups {
+            let w = cg.weight.max(1) as f64;
+            let mut item_sum = 0.0;
+            let mut item_count = 0.0;
+            for cp in &cg.coverpoints {
+                let (total, hits) = self.cg_item_stats(cg, cp.name.as_str());
+                item_sum += if total > 0 { hits as f64 / total as f64 } else { 0.0 };
+                item_count += 1.0;
+            }
+            for cross in &cg.crosses {
+                let (total, hits) = self.cg_item_stats(cg, cross.name.as_str());
+                item_sum += if total > 0 { hits as f64 / total as f64 } else { 0.0 };
+                item_count += 1.0;
+            }
+            if item_count > 0.0 {
+                weighted_sum += w * (item_sum / item_count);
+                total_weight += w;
+            }
+        }
+        if total_weight == 0.0 {
+            0.0
+        } else {
+            (weighted_sum / total_weight) * 100.0
+        }
+    }
+
     /// Print coverage report to stderr.
     pub(crate) fn report_coverage(&self) {
         if self.design.covergroups.is_empty() {
@@ -566,11 +780,7 @@ impl SimulationEngine {
         for cg in &self.design.covergroups {
             eprintln!("Covergroup: {}", cg.name);
             for cp in &cg.coverpoints {
-                let key = format!("{}.{}", cg.name, cp.name);
-                let key_sym = Symbol::intern(&key);
-                let total = self.cover_total.get(&key_sym).copied().unwrap_or(0);
-                let hits = self.cover_hits.get(&key_sym).copied().unwrap_or(0);
-                let bins = self.cover_bins.get(&key_sym);
+                let (total, hits) = self.cg_item_stats(cg, cp.name.as_str());
                 let pct = if total > 0 {
                     (hits as f64 / total as f64) * 100.0
                 } else {
@@ -580,18 +790,9 @@ impl SimulationEngine {
                     "  {}: {} hits / {} samples ({:.1}%)",
                     cp.name, hits, total, pct
                 );
-                if let Some(bins) = bins {
-                    for (bin_key, count) in bins.iter() {
-                        eprintln!("    - {}: {} hits", bin_key, count);
-                    }
-                }
             }
             for cross in &cg.crosses {
-                let key = format!("{}.{}", cg.name, cross.name);
-                let key_sym = Symbol::intern(&key);
-                let total = self.cover_total.get(&key_sym).copied().unwrap_or(0);
-                let hits = self.cover_hits.get(&key_sym).copied().unwrap_or(0);
-                let bins = self.cover_bins.get(&key_sym);
+                let (total, hits) = self.cg_item_stats(cg, cross.name.as_str());
                 let pct = if total > 0 {
                     (hits as f64 / total as f64) * 100.0
                 } else {
@@ -601,13 +802,14 @@ impl SimulationEngine {
                     "  {} (cross): {} hits / {} samples ({:.1}%)",
                     cross.name, hits, total, pct
                 );
-                if let Some(bins) = bins {
-                    for (bin_key, count) in bins.iter() {
-                        eprintln!("    - {}: {} hits", bin_key, count);
-                    }
-                }
             }
+            eprintln!(
+                "  (type_option.weight = {} | per_instance = {})",
+                cg.weight, cg.per_instance
+            );
         }
+        // VERIF-28: functional coverage keseluruhan tertimbang.
+        eprintln!("  Functional: {:.1}% (weighted by type_option.weight)", self.functional_coverage_percent());
     }
 
     /// Export all coverage data to UCIS XML format (IEEE 1800 UCIS schema).

@@ -554,6 +554,12 @@ pub struct CovergroupDecl {
     pub clocking_event: Option<Expr>,
     pub coverpoints: Vec<CoverpointDef>,
     pub crosses: Vec<CrossDef>,
+    /// VERIF-28: `type_option.weight = N` / `option.weight = N` — bobot
+    /// covergroup utk perhitungan functional coverage keseluruhan (default 1).
+    pub weight: Option<u64>,
+    /// VERIF-28: `type_option.per_instance = 1` / `option.per_instance = 1` —
+    /// coverage dilacak per-instance (default false = merge semua instance).
+    pub per_instance: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -643,6 +649,35 @@ pub enum ModuleItem {
     /// let (IEEE 1800-2017 §11.12.2): alias ekspresi scoped. Parameter
     /// kosong = konstanta ekspresi; parameter di-substitusi saat pemakaian.
     Let(LetDecl),
+    /// LANG-08: `alias a = b, c;` — net alias network (IEEE 1800-2017 §10.9):
+    /// semua net dalam satu deklarasi alias menjadi satu jaringan — menulis
+    /// ke salah satu akan terlihat di semua (short). List pasangan (lhs, rhs).
+    NetAlias(Vec<(Expr, Expr)>),
+    /// LANG-08: `nettype <type> <name>;` — user-defined net type (IEEE
+    /// 1800-2017 §6.10): mendaftarkan tipe net baru yang mengikat ke tipe
+    /// data dasar; deklarasi variabel dgn tipe ini di-resolve ke base type.
+    Nettype(NettypeDecl),
+    /// LANG-04/11/12/13: concurrent assertion property module-level —
+    /// `assert/assume/cover/restrict property (@(posedge clk) expr)` bentuk
+    /// BOOLEAN (tanpa operator temporal `##`/`|->`/`[*]`). Disimpan sebagai
+    /// Stmt::Assert/Assume/Cover dgn clock_event + disable_iff; elaborator
+    /// mengubahnya jadi AlwaysBlock ber-clock sehingga dievaluasi tiap edge.
+    /// Property dgn operator temporal tetap di-skip parser (limitation).
+    PropertyAssert(Box<Stmt>),
+    /// LANG-10: `checker name (ports); items endchecker` (IEEE 1800-2017
+    /// §17.8) — unit assertion terinstansiasi. Saat checker diinstansiasi di
+    /// module, assertion property di `items` di-drive dengan port binding.
+    Checker(CheckerDecl),
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CheckerDecl {
+    /// Nama checker.
+    pub name: Symbol,
+    /// Nama port (urut positional).
+    pub ports: Vec<Symbol>,
+    /// Body items — assertion/property/let/dll di dalam checker.
+    pub items: Vec<ModuleItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -653,6 +688,16 @@ pub struct LetDecl {
     /// Ekspresi body — dievaluasi saat pemakaian `name(args)` dengan
     /// parameter disubstitusi oleh argumen.
     pub expr: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct NettypeDecl {
+    /// Nama tipe net user (`nettype logic [7:0] mynet;` → "mynet").
+    pub name: Symbol,
+    /// Tipe data dasar (logic/bit/wire + range) yang di-alias.
+    pub base: DataType,
+    /// Range packed `[msb:lsb]` (mis. `nettype logic [7:0] mynet;`).
+    pub range: Option<ExprRange>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

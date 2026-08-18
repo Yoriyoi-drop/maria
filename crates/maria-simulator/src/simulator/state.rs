@@ -13,6 +13,11 @@ pub struct SimulationState {
     pub signals: Vec<LogicVec>,
     pub next_signals: Vec<LogicVec>,
     pub changed: Vec<bool>,
+    /// LANG-08: net alias redirect — member SignalId → canonical SignalId.
+    /// `alias a = b;` → net_aliases {b: a} (canonical = id terkecil); read/
+    /// write member di-direct ke canonical sehingga semua anggota satu
+    /// jaringan (short). Identity default (id → id).
+    pub alias_redirect: Vec<SignalId>,
     pub time: u64,
     pub objects: Vec<ObjectData>,
     next_obj_id: ObjId,
@@ -34,6 +39,14 @@ impl SimulationState {
         }
 
         let changed = vec![true; signals.len()];
+        // LANG-08: net alias redirect — canonical utk tiap member (identity
+        // default); member yang di-alias di-direct ke canonical.
+        let mut alias_redirect: Vec<SignalId> = (0..signals.len()).collect();
+        for (member, canonical) in &design.net_aliases {
+            if *member < signals.len() && *canonical < signals.len() {
+                alias_redirect[*member] = *canonical;
+            }
+        }
 
         // Index 0 is reserved for null handle
         let objects = vec![ObjectData {
@@ -54,6 +67,7 @@ impl SimulationState {
             signals,
             next_signals,
             changed,
+            alias_redirect,
             time: 0,
             objects,
             next_obj_id: 1,
@@ -136,6 +150,8 @@ impl SimulationState {
         if !self.check_signal_bounds(id) {
             return &self.dummy_signal;
         }
+        // LANG-08: net alias — baca member → baca canonical (nilai sama).
+        let id = self.alias_redirect.get(id).copied().unwrap_or(id);
         if self.changed[id] {
             &self.next_signals[id]
         } else {
@@ -147,6 +163,8 @@ impl SimulationState {
         if !self.check_signal_bounds(id) {
             return; // silently drop
         }
+        // LANG-08: net alias — tulis ke canonical (semua anggota satu jaringan).
+        let id = self.alias_redirect.get(id).copied().unwrap_or(id);
         // Compare against pending (next_signals) if already changed this delta,
         // otherwise compare against committed (signals)
         if self.changed[id] {

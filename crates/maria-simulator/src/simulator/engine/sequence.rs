@@ -90,15 +90,21 @@ impl SimulationEngine {
         }
 
         for (idx, success) in completed.into_iter().rev() {
-            if let Some(attempt) = self.sequence_attempts.get(idx) {
-                let stmts = if success {
-                    attempt.pass_stmt.clone()
-                } else {
-                    attempt.fail_stmt.clone()
-                };
-                if !stmts.is_empty() {
-                    self.evaluate_block_with_delay_fork(&stmts, None)?;
-                }
+            // Copy posisi + stmts dalam scope borrow terpisah agar &mut self
+            // (record_assertion / evaluate_block_with_delay_fork) valid.
+            let (a_line, a_col, stmts) = match self.sequence_attempts.get(idx) {
+                Some(a) => (
+                    a.line,
+                    a.col,
+                    if success { a.pass_stmt.clone() } else { a.fail_stmt.clone() },
+                ),
+                None => (0, 0, Vec::new()),
+            };
+            // VERIF-27: assertion coverage metrics utk concurrent
+            // assertion (sequence) — pass/fail saat attempt selesai.
+            self.record_assertion(a_line, a_col, success);
+            if !stmts.is_empty() {
+                self.evaluate_block_with_delay_fork(&stmts, None)?;
             }
             self.sequence_attempts.remove(idx);
         }

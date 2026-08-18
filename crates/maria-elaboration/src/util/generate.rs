@@ -596,7 +596,11 @@ pub fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, v
         | ModuleItem::DpiExport(_)
         | ModuleItem::Clocking(_)
         | ModuleItem::Specify(_)
-        | ModuleItem::VirtualInterface { .. } => {}
+        | ModuleItem::VirtualInterface { .. }
+        | ModuleItem::NetAlias(_)
+        | ModuleItem::Nettype(_)
+        | ModuleItem::PropertyAssert(_)
+        | ModuleItem::Checker(_) => {}
     }
 }
 

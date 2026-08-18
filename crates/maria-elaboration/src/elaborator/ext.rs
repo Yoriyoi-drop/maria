@@ -85,6 +85,9 @@ impl Elaborator {
                     name: cg.name,
                     coverpoints: ir_cps,
                     crosses: ir_crosses,
+                    // VERIF-28: type_option.weight default 1; per_instance default false.
+                    weight: cg.weight.unwrap_or(1),
+                    per_instance: cg.per_instance,
                 });
             }
         }

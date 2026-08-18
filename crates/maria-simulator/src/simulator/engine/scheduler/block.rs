@@ -531,10 +531,15 @@ impl SimulationEngine {
                                     pass_stmt: pass_stmt.clone(),
                                     fail_stmt: fail_stmt.clone(),
                                     clock_event: clock_event.clone().unwrap(),
+                                    // VERIF-27: posisi utk assertion stats.
+                                    line: *line,
+                                    col: *col,
                                 });
                             } else {
                                 // Immediate assertion: evaluate condition now
                                 let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                                // VERIF-27: assertion coverage metrics.
+                                self.record_assertion(*line, *col, ok);
                                 if ok {
                                     if !pass_stmt.is_empty() {
                                         self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
@@ -571,6 +576,8 @@ impl SimulationEngine {
                 } => {
                     self.set_cur_src_pos(*line, *col);
                     let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                    // VERIF-27: assertion coverage metrics.
+                    self.record_assertion(*line, *col, ok);
                     if ok {
                         if !pass_stmt.is_empty() {
                             self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
@@ -611,6 +618,8 @@ impl SimulationEngine {
                         };
                         if !disabled && !self.assert_kill_all {
                             let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                            // VERIF-27: assumption violation = fail metric.
+                            self.record_assertion(*line, *col, ok);
                             if ok {
                                 if !pass_stmt.is_empty() {
                                     self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
@@ -650,6 +659,12 @@ impl SimulationEngine {
                         if !disabled && !self.assert_kill_all {
                             let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
                             if ok {
+                                // LANG-13: catat hit cover property ke
+                                // cover_hits (key line:col) — coverage summary.
+                                let (cl, cc) = self.cur_src_pos();
+                                let key = format!("cover@{}:{}", cl, cc);
+                                let sym = Symbol::intern(&key);
+                                *self.cover_hits.entry(sym).or_insert(0) += 1;
                                 eprintln!("cover point hit");
                                 if !pass_stmt.is_empty() {
                                     self.evaluate_block_with_delay_fork(pass_stmt, fork_id)?;
@@ -2310,6 +2325,8 @@ impl SimulationEngine {
                         };
                         if !disabled {
                             let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                            // VERIF-27: assertion coverage metrics.
+                            self.record_assertion(*line, *col, ok);
                             if ok {
                                 if !pass_stmt.is_empty() {
                                     self.evaluate_stmt_block(pass_stmt)?;
@@ -2340,6 +2357,8 @@ impl SimulationEngine {
                 } => {
                     self.set_cur_src_pos(*line, *col);
                     let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                    // VERIF-27: assertion coverage metrics.
+                    self.record_assertion(*line, *col, ok);
                     if ok {
                         if !pass_stmt.is_empty() {
                             self.evaluate_stmt_block(pass_stmt)?;
@@ -2380,6 +2399,8 @@ impl SimulationEngine {
                         };
                         if !disabled {
                             let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                            // VERIF-27: assumption violation = fail metric.
+                            self.record_assertion(*line, *col, ok);
                             if ok {
                                 if !pass_stmt.is_empty() {
                                     self.evaluate_stmt_block(pass_stmt)?;
@@ -2418,6 +2439,12 @@ impl SimulationEngine {
                         if !disabled {
                             let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
                             if ok {
+                                // LANG-13: catat hit cover property ke
+                                // cover_hits (key line:col).
+                                let (cl, cc) = self.cur_src_pos();
+                                let key = format!("cover@{}:{}", cl, cc);
+                                let sym = Symbol::intern(&key);
+                                *self.cover_hits.entry(sym).or_insert(0) += 1;
                                 eprintln!("cover point hit");
                                 if !pass_stmt.is_empty() {
                                     self.evaluate_stmt_block(pass_stmt)?;

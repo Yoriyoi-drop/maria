@@ -223,6 +223,15 @@ pub enum Token {
     Cover,
     Expect,
     WaitOrder,
+    /// LANG-08: `alias a = b, c;` — deklarasi net alias network.
+    Alias,
+    /// LANG-08: `nettype <type> <name>;` — user-defined net type.
+    Nettype,
+    /// LANG-11: `restrict property (...)` — properti constraint.
+    Restrict,
+    /// LANG-10: `checker name (ports); ... endchecker` — unit assertion.
+    Checker,
+    EndChecker,
     Property,
     Sequence,
     EndSequence,
@@ -360,6 +369,11 @@ impl fmt::Display for Token {
             Token::Cover => write!(f, "cover"),
             Token::Expect => write!(f, "expect"),
             Token::WaitOrder => write!(f, "wait_order"),
+            Token::Alias => write!(f, "alias"),
+            Token::Nettype => write!(f, "nettype"),
+            Token::Restrict => write!(f, "restrict"),
+            Token::Checker => write!(f, "checker"),
+            Token::EndChecker => write!(f, "endchecker"),
             Token::Property => write!(f, "property"),
             Token::Sequence => write!(f, "sequence"),
             Token::EndSequence => write!(f, "endsequence"),
@@ -763,6 +777,17 @@ impl Lexer {
             "assert" => Token::Assert,
             "assume" => Token::Assume,
             "cover" => Token::Cover,
+            // LANG-08: net alias (IEEE 1800-2017 §10.9) — alias net network.
+            "alias" => Token::Alias,
+            // LANG-08: nettype (IEEE 1800-2017 §6.10) — user-defined net type.
+            "nettype" => Token::Nettype,
+            // LANG-11: restrict property (IEEE 1800-2017 §16.16) — properti
+            // constraint (asumsi) utk formal/simulasi.
+            "restrict" => Token::Restrict,
+            // LANG-10: checker construct (IEEE 1800-2017 §17.8) — unit
+            // assertion terinstansiasi.
+            "checker" => Token::Checker,
+            "endchecker" => Token::EndChecker,
             "expect" => Token::Expect,
             "wait_order" => Token::WaitOrder,
             "property" => Token::Property,

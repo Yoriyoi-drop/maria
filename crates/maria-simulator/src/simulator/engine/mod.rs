@@ -42,6 +42,9 @@ pub struct SequenceAttempt {
     pub pass_stmt: Vec<IrStmt>,
     pub fail_stmt: Vec<IrStmt>,
     pub clock_event: maria_ast::types::ClockEvent,
+    /// VERIF-27: posisi source assertion (utk assertion coverage stats).
+    pub line: usize,
+    pub col: usize,
 }
 
 /// Batas simulasi.
@@ -220,6 +223,38 @@ pub struct SimulationEngine {
     pub uvm_barrier_data: HashMap<ObjId, UvmBarrierData>,
     /// VERIF-03: uvm_cmdline_processor — singleton id (semua get() → sama).
     pub uvm_cmdline_id: Option<ObjId>,
+    /// VERIF-04: uvm_root — singleton id (semua uvm_root::get() → sama).
+    pub uvm_root_id: Option<ObjId>,
+    /// VERIF-05: phase UVM saat ini (nama fase yang sedang/sudah dijalankan
+    /// run_phase_tree) — dipakai get_name()/jump().
+    pub uvm_current_phase: Option<String>,
+    /// VERIF-05: target phase jump (phase.jump("report_phase")) — saat
+    /// dipanggil, run_phase_tree melompat ke fase target (skip fase di
+    /// antaranya).
+    pub uvm_phase_jump: Option<String>,
+    /// VERIF-05: objek uvm_phase handle (cache) — di-inject sebagai argumen
+    /// pertama method fase (build_phase(uvm_phase phase)) agar user bisa
+    /// memanggil phase.jump()/phase.get_name().
+    pub uvm_phase_handle: Option<ObjId>,
+    /// VERIF-18: uvm_tr_database — singleton id (semua uvm_tr_database::get_db()
+    /// → sama).
+    pub uvm_tr_db_id: Option<ObjId>,
+    /// VERIF-18: stream per nama — stream obj id per stream name (get_stream
+    /// create/reuse).
+    pub uvm_tr_streams: HashMap<String, ObjId>,
+    /// VERIF-19: reverse — nama stream per obj (get_tr_count/record stream).
+    pub tr_stream_names: HashMap<ObjId, String>,
+    /// VERIF-18: stream default db (uvm_tr_database::set_stream) — dipakai
+    /// begin_tr bila transaksi tidak punya stream sendiri.
+    pub tr_db_default_stream: Option<String>,
+    /// VERIF-17: record transaksi UVM — begin_tr menambah, end_tr menutup
+    /// (set end_time). Dipakai report + test.
+    pub tr_records: Vec<crate::simulator::types::UvmTrRecord>,
+    /// VERIF-17: transaksi yang masih terbuka per obj — (start idx, name)
+    /// agar end_tr menemukan record yang tepat utk obj tersebut.
+    pub tr_open: HashMap<ObjId, (usize, String)>,
+    /// VERIF-17: stream ter-attach per obj transaksi (set_stream).
+    pub tr_obj_stream: HashMap<ObjId, String>,
     /// Nilai terakhir get_arg_value (ref out dibaca get_arg_value_out).
     pub uvm_cmdline_last_value: String,
     /// Daftar nilai get_plusargs/get_arg_values (string array).
@@ -267,6 +302,9 @@ pub struct SimulationEngine {
     pub _next_process_id: usize,
     pub current_process_id: Option<ObjId>,
     pub cover_hits: HashMap<Symbol, u64>,
+    /// VERIF-27: assertion coverage metrics — per (line, col) → (pass, fail).
+    /// Dipakai report assertion coverage (assertion_pass/assertion_fail).
+    pub assertion_stats: HashMap<(usize, usize), (u64, u64)>,
     pub cover_total: HashMap<Symbol, u64>,
     pub cover_bins: HashMap<Symbol, HashMap<Symbol, u64>>,
     /// Nilai coverpoint terakhir per (covergroup, coverpoint) — dipakai
@@ -342,6 +380,10 @@ pub struct SimulationEngine {
     pub ast_return_pending: bool,
     pub objection_count: usize,
     pub objection_triggered: bool,
+    /// VERIF-05: objection per-objek — count utk tiap objek (raise langsung
+    /// + propagasi dari descendants via hierarki parent). get_objection_count
+    /// membacanya; end-of-test tetap berbasis objection_count global (sum).
+    pub uvm_objection_data: HashMap<ObjId, u64>,
     /// JIT evaluator (native code compilation for fast expression eval)
     pub jit_evaluator: Option<crate::simulator::JITEvaluator>,
     /// Use packed 4-state bitmask eval (SIMD-ready) for bitwise operations

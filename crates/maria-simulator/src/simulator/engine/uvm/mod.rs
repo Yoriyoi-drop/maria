@@ -14,3 +14,6 @@ pub mod seq;
 pub mod printer;
 pub mod comparator;
 pub mod heartbeat;
+pub mod root;
+pub mod transaction;
+pub mod phase;

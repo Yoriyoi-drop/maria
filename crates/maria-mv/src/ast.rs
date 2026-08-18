@@ -24,6 +24,7 @@ pub enum MvType {
     Int,
     Uint,
     LongInt,
+    ULongInt,
     ShortInt,
     Byte,
     Real,
@@ -284,6 +285,14 @@ pub enum Typedef {
     },
     /// `packed struct Packet { ... }`
     Struct {
+        name: String,
+        packed: bool,
+        fields: Vec<Field>,
+        line: usize,
+        col: usize,
+    },
+    /// `packed union Word { ... }`
+    Union {
         name: String,
         packed: bool,
         fields: Vec<Field>,

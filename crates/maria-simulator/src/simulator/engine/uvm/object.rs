@@ -13,6 +13,15 @@ use maria_ir::*;
 use crate::simulator::types::*;
 use crate::simulator::util::*;
 
+/// VERIF-11: konstanta verbosity UVM (IEEE 1800 / UVM 1.2) — dipakai
+/// `uvm_report_info(id, msg, verbosity)` filtering dan
+/// set/get_report_verbosity(_level). Default komponen = UVM_MEDIUM.
+pub const UVM_NONE: u32 = 0;
+pub const UVM_LOW: u32 = 100;
+pub const UVM_MEDIUM: u32 = 200;
+pub const UVM_HIGH: u32 = 300;
+pub const UVM_FULL: u32 = 400;
+
 impl SimulationEngine {
     pub(crate) fn execute_uvm_callback_method(
         &mut self,
@@ -231,6 +240,20 @@ impl SimulationEngine {
             }
             "raise_objection" => {
                 self.objection_count = self.objection_count.saturating_add(1);
+                // VERIF-05: per-objek + propagasi hierarki — raise pada
+                // objek menaikkan count objek itu DAN semua ancestor
+                // (uvm_component_data.parent chain). uvm_objection_data
+                // per objek = raise langsung + propagasi dari descendants;
+                // get_objection_count(obj) membacanya (semantik UVM).
+                *self.uvm_objection_data.entry(obj_id).or_insert(0) += 1;
+                let mut cur = self
+                    .uvm_component_data
+                    .get(&obj_id)
+                    .and_then(|d| d.parent);
+                while let Some(anc) = cur {
+                    *self.uvm_objection_data.entry(anc).or_insert(0) += 1;
+                    cur = self.uvm_component_data.get(&anc).and_then(|d| d.parent);
+                }
                 let name = self
                     .uvm_object_data
                     .get(&obj_id)
@@ -251,6 +274,21 @@ impl SimulationEngine {
                 if self.objection_count > 0 {
                     self.objection_count -= 1;
                 }
+                // Per-objek + ancestors (saturating — drop berlebih tidak
+                // menurunkan di bawah 0, sama seperti counter global).
+                if let Some(c) = self.uvm_objection_data.get_mut(&obj_id) {
+                    *c = c.saturating_sub(1);
+                }
+                let mut cur = self
+                    .uvm_component_data
+                    .get(&obj_id)
+                    .and_then(|d| d.parent);
+                while let Some(anc) = cur {
+                    if let Some(c) = self.uvm_objection_data.get_mut(&anc) {
+                        *c = c.saturating_sub(1);
+                    }
+                    cur = self.uvm_component_data.get(&anc).and_then(|d| d.parent);
+                }
                 println!(
                     "UVM_OBJECTION: {} dropped (count={})",
                     name, self.objection_count
@@ -265,6 +303,12 @@ impl SimulationEngine {
                 }
                 Ok(LogicVec::from_u64(1, 1))
             }
+            // VERIF-05: query jumlah objection utk objek ini (termasuk
+            // propagasi dari descendants). 0 bila tidak ada.
+            "get_objection_count" => Ok(LogicVec::from_u64(
+                self.uvm_objection_data.get(&obj_id).copied().unwrap_or(0),
+                32,
+            )),
             // Fase UVM apa pun = no-op di uvm_object (super.xxx_phase di
             // subclass user). Tanpa ini `super.end_of_elaboration_phase`
             // error RT9003 "uvm_object::end_of_elaboration_phase not
@@ -297,6 +341,21 @@ impl SimulationEngine {
                     .get(1)
                     .map(logicvec_to_string)
                     .unwrap_or_default();
+                // VERIF-11: verbosity filtering — arg ke-3 = level verbosity
+                // (UVM_LOW=100/MEDIUM=200/HIGH=300/FULL=400/NONE=0). Pesan
+                // dicetak HANYA bila verbosity <= verbosity komponen saat ini
+                // (current_this → uvm_component_data.report_verbosity, default
+                // UVM_MEDIUM). Set_report_verbosity(level) mengontrolnya.
+                let verbosity = args.get(2).map(|a| a.to_u64() as u32).unwrap_or(0);
+                let comp_level = self
+                    .current_this
+                    .and_then(|id| self.uvm_component_data.get(&id))
+                    .map(|d| d.report_verbosity)
+                    .unwrap_or(UVM_MEDIUM);
+                if verbosity > comp_level {
+                    // Ditekan — tidak dicetak, tidak increment counter.
+                    return Ok(LogicVec::from_u64(1, 1));
+                }
                 self.emit_severity("info", &format!("@ {}: {} [{}]", self.current_time, msg, id));
                 Ok(LogicVec::from_u64(1, 1))
             }
@@ -335,6 +394,24 @@ impl SimulationEngine {
                     .unwrap_or_default();
                 self.emit_severity("fatal", &format!("@ {}: {} [{}]", self.current_time, msg, id));
                 Ok(LogicVec::from_u64(1, 1))
+            }
+            // VERIF-11: set/get_report_verbosity_level — level verbosity
+            // objek (report_object level). Sama dgn set/get_report_verbosity
+            // komponen; diterapkan ke uvm_component_data bila objek komponen.
+            "set_report_verbosity_level" | "set_report_verbosity" => {
+                let level = args.first().map(|a| a.to_u64() as u32).unwrap_or(UVM_MEDIUM);
+                if let Some(d) = self.uvm_component_data.get_mut(&obj_id) {
+                    d.report_verbosity = level;
+                }
+                Ok(LogicVec::from_u64(1, 1))
+            }
+            "get_report_verbosity_level" | "get_report_verbosity" => {
+                let level = self
+                    .uvm_component_data
+                    .get(&obj_id)
+                    .map(|d| d.report_verbosity)
+                    .unwrap_or(UVM_MEDIUM);
+                Ok(LogicVec::from_u64(level as u64, 32))
             }
             _ => self.execute_uvm_object_method(obj_id, method, args),
         }

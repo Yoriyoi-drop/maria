@@ -32,7 +32,7 @@ impl SimulationEngine {
                 let mut cd = UvmComponentData {
                     parent: None,
                     children: Vec::new(),
-                    report_verbosity: 2,
+                    report_verbosity: super::object::UVM_MEDIUM,
                 };
                 if parent_obj != 0 {
                     cd.parent = Some(parent_obj);
@@ -104,7 +104,7 @@ impl SimulationEngine {
                 Ok(LogicVec::from_u64(if found { 1 } else { 0 }, 1))
             }
             "set_report_verbosity" => {
-                let level = args.first().map(|a| a.to_u64() as u32).unwrap_or(2);
+                let level = args.first().map(|a| a.to_u64() as u32).unwrap_or(super::object::UVM_MEDIUM);
                 if let Some(d) = self.uvm_component_data.get_mut(&obj_id) {
                     d.report_verbosity = level;
                 }
@@ -115,7 +115,7 @@ impl SimulationEngine {
                     .uvm_component_data
                     .get(&obj_id)
                     .map(|d| d.report_verbosity)
-                    .unwrap_or(2);
+                    .unwrap_or(super::object::UVM_MEDIUM);
                 Ok(LogicVec::from_u64(level as u64, 32))
             }
             // Fase UVM adalah no-op di base class (super.xxx_phase(phase)
@@ -314,7 +314,7 @@ impl SimulationEngine {
                 let mut cd = UvmComponentData {
                     parent: None,
                     children: Vec::new(),
-                    report_verbosity: 2,
+                    report_verbosity: super::object::UVM_MEDIUM,
                 };
                 if parent_obj != 0 {
                     cd.parent = Some(parent_obj);
@@ -386,7 +386,7 @@ impl SimulationEngine {
                 let mut cd = UvmComponentData {
                     parent: None,
                     children: Vec::new(),
-                    report_verbosity: 2,
+                    report_verbosity: super::object::UVM_MEDIUM,
                 };
                 if parent_obj != 0 {
                     cd.parent = Some(parent_obj);
@@ -458,7 +458,7 @@ impl SimulationEngine {
                 let mut cd = UvmComponentData {
                     parent: None,
                     children: Vec::new(),
-                    report_verbosity: 2,
+                    report_verbosity: super::object::UVM_MEDIUM,
                 };
                 if parent_obj != 0 {
                     cd.parent = Some(parent_obj);

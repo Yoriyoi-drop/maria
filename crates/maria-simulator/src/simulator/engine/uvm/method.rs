@@ -62,6 +62,34 @@ impl SimulationEngine {
                 return self.execute_uvm_cmdline_method(obj_id, method, args);
             }
         }
+        // VERIF-04: uvm_root — singleton root + top-level component
+        // (get/get_top/run_test). Builtin polos, tidak ada di design →
+        // user_override selalu false → dispatch langsung.
+        if !user_override && self.is_uvm_root_hierarchy(class_name.as_str()) {
+            return self.execute_uvm_root_method(obj_id, method, args);
+        }
+        // VERIF-17: uvm_transaction/uvm_sequence_item — begin_tr/end_tr/
+        // set_stream merekam transaksi (user override → normal). HANYA
+        // method transaction yang dicegat — method lain (randomize, print,
+        // dll) harus jatuh ke dispatch generik di bawah.
+        if !user_override
+            && self.is_uvm_transaction_hierarchy(class_name.as_str())
+            && matches!(method, "begin_tr" | "end_tr" | "set_stream")
+        {
+            return self.execute_uvm_tr_method(obj_id, method, args);
+        }
+        // VERIF-05: uvm_phase — handle phase (jump/get_name/skip).
+        if !user_override && self.is_uvm_phase_hierarchy(class_name.as_str()) {
+            return self.execute_uvm_phase_method(obj_id, method, args);
+        }
+        // VERIF-18: uvm_tr_database — singleton get_db/get_stream/get_tr_count.
+        if !user_override && self.is_uvm_tr_database_hierarchy(class_name.as_str()) {
+            return self.execute_uvm_tr_db_method(obj_id, method, args);
+        }
+        // VERIF-19: uvm_tr_stream — stream transaksi (record/get_tr_count).
+        if !user_override && self.is_uvm_tr_stream_hierarchy(class_name.as_str()) {
+            return self.execute_uvm_tr_stream_method(obj_id, method, args);
+        }
         // VERIF-12: uvm_printer / uvm_table_printer — print_object memformat
         // object jadi string tabel; `new` builtin. User override → normal.
         if !user_override && self.is_uvm_printer_hierarchy(class_name.as_str()) {
@@ -99,12 +127,13 @@ impl SimulationEngine {
         if class_name == "__process" {
             return self.execute_process_method(obj_id, method, args);
         }
-        // Covergroup support: sample() records coverage data
+        // Covergroup support: sample() records coverage data — VERIF-28:
+        // instance obj id diteruskan utk per-instance tracking.
         if method == "sample" && class_name.starts_with("__covergroup_") {
             let cg_name = &class_name.as_str()["__covergroup_".len()..];
             if self.design.covergroups.iter().any(|c| c.name == cg_name) {
                 return self
-                    .sample_covergroup(cg_name)
+                    .sample_covergroup(cg_name, Some(obj_id))
                     .map(|_| LogicVec::from_u64(1, 1));
             }
         }

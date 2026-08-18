@@ -950,6 +950,84 @@ impl SimulationEngine {
                             64,
                         ))
                     }
+                    "uvm_root::get" => {
+                        // VERIF-04: singleton uvm_root — semua get() → obj id
+                        // sama (pola sama dengan uvm_cmdline_processor::get).
+                        let obj_id = if self.uvm_root_id.is_none() {
+                            let id = self.state.alloc_object(Symbol::intern("uvm_root"));
+                            self.uvm_root_id = Some(id);
+                            id
+                        } else {
+                            self.uvm_root_id.unwrap()
+                        };
+                        Ok(LogicVec::from_u64(obj_id as u64, 64))
+                    }
+                    "uvm_root::get_top" => {
+                        // VERIF-04: komponen top (uvm_test_top) — obj id dari
+                        // run_test/execute_phases; 0 (null) bila tidak ada.
+                        Ok(LogicVec::from_u64(
+                            self.root_test_obj_id.unwrap_or(0) as u64,
+                            64,
+                        ))
+                    }
+                    "uvm_root::run_test" => {
+                        // VERIF-04: varian class-method run_test("name") —
+                        // sama dgn bare run_test (F18).
+                        let arg_vals: Vec<LogicVec> = args
+                            .iter()
+                            .map(|a| self.evaluate_expr(a))
+                            .collect::<Result<_, _>>()?;
+                        let test_name = arg_vals
+                            .first()
+                            .map(logicvec_to_string)
+                            .unwrap_or_default();
+                        self.run_uvm_test(&test_name)?;
+                        Ok(LogicVec::from_u64(1, 1))
+                    }
+                    "uvm_tr_database::get_db" => {
+                        // VERIF-18: singleton uvm_tr_database — semua get_db()
+                        // → obj id sama (pola sama dgn uvm_root::get).
+                        let obj_id = if self.uvm_tr_db_id.is_none() {
+                            let id = self.state.alloc_object(Symbol::intern("uvm_tr_database"));
+                            self.uvm_tr_db_id = Some(id);
+                            id
+                        } else {
+                            self.uvm_tr_db_id.unwrap()
+                        };
+                        Ok(LogicVec::from_u64(obj_id as u64, 64))
+                    }
+                    "uvm_tr_database::get_stream" => {
+                        // VERIF-18: get_stream(name) — stream obj id (create/
+                        // reuse), pola sama dgn method dispatch.
+                        let arg_vals: Vec<LogicVec> = args
+                            .iter()
+                            .map(|a| self.evaluate_expr(a))
+                            .collect::<Result<_, _>>()?;
+                        let stream_name = arg_vals
+                            .first()
+                            .map(logicvec_to_string)
+                            .unwrap_or_default();
+                        let id = self.tr_stream_get(&stream_name);
+                        Ok(LogicVec::from_u64(id as u64, 64))
+                    }
+                    "uvm_tr_database::get_tr_count" => {
+                        // VERIF-18: jumlah record transaksi (semua stream).
+                        Ok(LogicVec::from_u64(self.tr_records.len() as u64, 64))
+                    }
+                    "uvm_tr_database::set_stream" => {
+                        // VERIF-18: set_stream(name) — stream default db.
+                        let arg_vals: Vec<LogicVec> = args
+                            .iter()
+                            .map(|a| self.evaluate_expr(a))
+                            .collect::<Result<_, _>>()?;
+                        let stream_name = arg_vals
+                            .first()
+                            .map(logicvec_to_string)
+                            .unwrap_or_default();
+                        self.tr_stream_get(&stream_name);
+                        self.tr_db_default_stream = Some(stream_name);
+                        Ok(LogicVec::from_u64(0, 64))
+                    }
                     "uvm_config_db::set" => {
                         let arg_vals: Vec<LogicVec> = args
                             .iter()
@@ -1384,8 +1462,9 @@ impl SimulationEngine {
                     };
                     self.semaphore_counts.insert(obj_id, init);
                 } else if is_cg {
-                    // Auto-sample covergroup immediately on new()
-                    self.sample_covergroup(class_name.as_str())?;
+                    // Auto-sample covergroup immediately on new() — VERIF-28:
+                    // instance obj id diteruskan utk per-instance tracking.
+                    self.sample_covergroup(class_name.as_str(), Some(obj_id))?;
                 } else if !class_name.is_empty() {
                     if let Some(cls) = self.design.classes.get(&class_name) {
                         if let Some(obj) = self.state.get_object_mut(obj_id) {
@@ -1448,7 +1527,7 @@ impl SimulationEngine {
                         let mut cd = UvmComponentData {
                             parent: None,
                             children: Vec::new(),
-                            report_verbosity: 2,
+                            report_verbosity: crate::simulator::engine::uvm::object::UVM_MEDIUM,
                         };
                         if parent_obj != 0 {
                             cd.parent = Some(parent_obj);

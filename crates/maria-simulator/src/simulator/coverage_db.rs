@@ -242,14 +242,52 @@ impl CoverageDatabase {
                     crosses: Vec::new(),
                 });
 
+            // VERIF-28: per_instance → engine menyimpan per-instance key
+            // (`cg.i<id>.cp`). Jumlahkan SEMUA key ber-prefix `cg.` agar db
+            // tetap menerima total agregat.
+            let prefix = format!("{}.", cg.name);
+            let mut sum_key = |item: &str,
+                               total_map: &HashMap<Symbol, u64>,
+                               hits_map: &HashMap<Symbol, u64>,
+                               bins_map: &HashMap<Symbol, HashMap<Symbol, u64>>|
+             -> (u64, u64, HashMap<Symbol, u64>) {
+                let mut total = 0u64;
+                let mut hits = 0u64;
+                let mut bins = HashMap::new();
+                let full = format!("{}{}", prefix, item);
+                let item_suffix = format!(".{}", item);
+                let matches_key = |s: &str| {
+                    // Key agregat `cg.item` ATAU key per-instance `cg.i<id>.item`
+                    // (VERIF-28) — keduanya diawali `cg.` dan diakhiri `.item`.
+                    s == full || (s.starts_with(&prefix) && s.ends_with(&item_suffix))
+                };
+                for (k, v) in total_map {
+                    if matches_key(k.as_str()) {
+                        total += v;
+                    }
+                }
+                for (k, v) in hits_map {
+                    if matches_key(k.as_str()) {
+                        hits += v;
+                    }
+                }
+                for (k, bmap) in bins_map {
+                    if matches_key(k.as_str()) {
+                        for (bk, bv) in bmap {
+                            *bins.entry(*bk).or_insert(0) += bv;
+                        }
+                    }
+                }
+                (total, hits, bins)
+            };
+
             for cp in &cg.coverpoints {
-                let key = format!("{}.{}", cg.name, cp.name);
-                let key_sym = Symbol::intern(&key);
-                let total = engine.cover_total.get(&key_sym).copied().unwrap_or(0);
-                let hits = engine.cover_hits.get(&key_sym).copied().unwrap_or(0);
-                let bins = engine.cover_bins.get(&key_sym)
-                    .cloned()
-                    .unwrap_or_default();
+                let (total, hits, bins) = sum_key(
+                    cp.name.as_str(),
+                    &engine.cover_total,
+                    &engine.cover_hits,
+                    &engine.cover_bins,
+                );
                 let cp_name = cp.name.to_string();
 
                 // Find or create coverpoint entry by name
@@ -270,13 +308,12 @@ impl CoverageDatabase {
             }
 
             for cross in &cg.crosses {
-                let key = format!("{}.{}", cg.name, cross.name);
-                let key_sym = Symbol::intern(&key);
-                let total = engine.cover_total.get(&key_sym).copied().unwrap_or(0);
-                let hits = engine.cover_hits.get(&key_sym).copied().unwrap_or(0);
-                let bins = engine.cover_bins.get(&key_sym)
-                    .cloned()
-                    .unwrap_or_default();
+                let (total, hits, bins) = sum_key(
+                    cross.name.as_str(),
+                    &engine.cover_total,
+                    &engine.cover_hits,
+                    &engine.cover_bins,
+                );
                 let cross_name = cross.name.to_string();
 
                 if let Some(existing) = entry.crosses.iter_mut().find(|e| e.name == cross_name) {

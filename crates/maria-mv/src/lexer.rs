@@ -194,7 +194,6 @@ fn keyword(s: &str) -> Option<Tok> {
         "unique0" => Tok::Unique0,
         "default" => Tok::Default,
         "for" => Tok::For,
-        "in" => Tok::In,
         "do" => Tok::Do,
         "while" => Tok::While,
         "repeat" => Tok::Repeat,
@@ -454,13 +453,7 @@ pub fn tokenize(src: &str) -> Result<Vec<(Tok, usize, usize)>, MvError> {
             '?' => (Tok::Question, 1),
             '@' => (Tok::At, 1),
             '#' => (Tok::Hash, 1),
-            '~' => {
-                if peek(&chars, i, '^') {
-                    (Tok::Tilde, 1)
-                } else {
-                    (Tok::Tilde, 1)
-                }
-            }
+            '~' => (Tok::Tilde, 1),
             ':' => {
                 if peek(&chars, i, ':') {
                     (Tok::Scope, 2)

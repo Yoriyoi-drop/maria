@@ -735,6 +735,8 @@ impl Elaborator {
                         if name.starts_with("uvm_config_db::")
                             || name.starts_with("uvm_resource_db::")
                             || name.starts_with("uvm_cmdline_processor::")
+                            || name.starts_with("uvm_root::")
+                            || name.starts_with("uvm_tr_database::")
                         {
                             let ir_args: Result<Vec<IrExpr>, SimError> = args
                                 .iter()

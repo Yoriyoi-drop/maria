@@ -99,11 +99,6 @@ impl Parser {
             Err(MvError::new(l, c, format!("diharapkan '{}'", s)))
         }
     }
-    fn is_type_start(&self) -> bool {
-        // Tipe dasar (`bit`, `logic`, `int`, ...) dan tipe user-defined semuanya
-        // di-lex sebagai `Tok::Ident` — dibedakan lewat string di parse_base_type.
-        matches!(self.peek(), Tok::Ident(_))
-    }
 
     // ── Raw slice (untuk `assert property`) ──
     fn byte_offset(&self, line: usize, col: usize) -> usize {
@@ -240,8 +235,7 @@ impl Parser {
                     fields.push(self.parse_field()?);
                     self.eat(&Tok::Comma);
                 }
-                // Union diperlakukan sebagai struct packed lebar-max di codegen.
-                Ok(Typedef::Struct { name, packed: true, fields, line: l, col: c })
+                Ok(Typedef::Union { name, packed: true, fields, line: l, col: c })
             }
             _ => {
                 let (l, c) = self.pos_line();
@@ -1301,6 +1295,8 @@ impl Parser {
                     Ok(MvType::Uint)
                 } else if s == "longint" {
                     Ok(MvType::LongInt)
+                } else if s == "ulongint" {
+                    Ok(MvType::ULongInt)
                 } else if s == "shortint" {
                     Ok(MvType::ShortInt)
                 } else if s == "byte" {

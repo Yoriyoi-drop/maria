@@ -34,8 +34,32 @@ formal verification, LSP/IDE, compiled-code simulation,
 distributed/parallel simulation engine, coverage minimal,
 constraint solver inadequate, waveform database tidak ada, CI/CD ✅ sudah ada,
 tidak ada regression infrastructure, tidak ada VHDL/SystemC co-sim,
-dan pre-existing test failures (ALL FIXED ✅ — 2020 tests pass, 0 fail,
-update 2026-08-17: ROUND 59 LANG-14 expect statement (procedural assertion)
+dan pre-existing test failures (ALL FIXED ✅ — 2032 tests pass, 0 fail,
+update 2026-08-17: ROUND 68 VERIF-28 covergroup type_option weight/
+  per_instance (parse type_option.weight/per_instance + option.* → AST/IR,
+  sampler per-instance key cg.i<id>, functional_coverage_percent weighted
+  avg, coverage_gaps + merge_from_engine agregat per-instance, +2 test) +
+  ROUND 67 VERIF-05 objection per-objek + propagasi
+  hierarki (uvm_objection_data per objek, get_objection_count, raise/drop
+  propagate ke ancestor chain, +1 test) — phase jumping masih open +
+  ROUND 66 VERIF-21 functional coverage integration ke CoverageDatabase —
+  re-verifikasi + test e2e baru (merge_from_engine membawa coverpoint
+  total/hits/bins, test_covergroup_integration_coverage_db, +1 test) +
+  ROUND 65 VERIF-11 uvm_report_handler verbosity filtering
+  (uvm_report_info verbosity vs set_report_verbosity, konstanta UVM_LOW/
+  MEDIUM/HIGH/FULL, default UVM_MEDIUM 200, set/get_report_verbosity_level,
+  macro uvm_info route via uvm_report_info, +2 test) + ROUND 64 VERIF-26
+  coverage gap analysis (coverage_gaps() — coverpoint/cross/bin eksplisit
+  tak pernah kena + sinyal tak pernah toggle, report_coverage_gaps, +1 test)
+  + ROUND 63 re-verifikasi 2 marker [] stale → [x] (VERIF-29 cross coverage
+  auto-binning + VERIF-31 transition coverage, bukti test test_covergroup_
+  cross + test_covergroup_transition_bins) + ROUND 62 VERIF-27 assertion
+  coverage metrics (pass/fail per assertion di engine.assertion_stats +
+  report, +2 test) + ROUND 61 VERIF-04 uvm_root get/get_top/run_test
+  variants (singleton + class-method + method dispatch, +3 test) + ROUND 60
+  VERIF-07 uvm_resource_db full (wildcard scope + read_by_name/
+  write_by_name/exists + BUG FIX set-as-statement di-eliminasi elaborator)
+  + ROUND 59 LANG-14 expect statement (procedural assertion)
   + BUG FIX 12 regresi UVM (synthetic method find_method_in_hierarchy +
   hierarchy prefix fallback — class builtin polos uvm_table_printer dll.
   jadi user_override=true → dispatch builtin di-skip) + re-verifikasi 11
@@ -79,10 +103,10 @@ constraint_mode() dan LANG-29 wait fork diimplementasikan baru).
 
 Kekuatan yang patut dicatat: incremental compile ~0.45s, SIMD lexer
 ~18ms untuk 400 module, zero-deallocation sim arena, struktur
-kode terorganisir rapi, ✅ CI/CD aktif, ✅ 2020 tests pass 0 fail,
+kode terorganisir rapi, ✅ CI/CD aktif, ✅ 2032 tests pass 0 fail,
 ✅ monorepo workspace (14 member: maria-core/maria-ast/maria-ir/maria-parser/maria-elaboration/maria-compiler/maria-simulator/maria-mv/maria-formal/maria-env/maria-tools/maria-gui/maria-api/maria-tests — src/ kini hanya main.rs + cli.rs),
 ✅ scheduler IEEE 1800 compliant (Postponed region + delta snapshot fix),
-dan ✅ 69 item audit telah diperbaiki (termasuk monorepo workspace,
+dan ✅ 77 item audit telah diperbaiki (termasuk monorepo workspace,
 Arsitektur-08, LANG-31 soft constraint — ROUND 28, LANG-33 constraint_mode()
 dan LANG-29 wait fork — ROUND 29, LANG-43 qualified pkg func + LANG-50
 timing checks — ROUND 30, LANG-32 static constraint + LANG-34 randomize
@@ -91,7 +115,17 @@ LANG-30 disable fork — ROUND 33, LANG-40 let declaration — ROUND 34,
 LANG-46 VPI systf bug fix + test — ROUND 35, literal negatif signed +
 MICD IR cache stale versioning — ROUND 36, LANG-46 VPI e2e SV→C systf
 via interpreter — ROUND 36 lanjutan, LANG-14 expect statement — ROUND 59,
-re-verifikasi 11 marker [] stale → [x] — ROUND 59).
+re-verifikasi 11 marker [] stale → [x] — ROUND 59, VERIF-07 uvm_resource_db
+full — ROUND 60, VERIF-04 uvm_root variants — ROUND 61, VERIF-27 assertion
+coverage metrics — ROUND 62, re-verifikasi VERIF-29 + VERIF-31 stale —
+ROUND 63, VERIF-26 coverage gap analysis — ROUND 64, VERIF-11
+uvm_report_handler verbosity — ROUND 65, VERIF-21 functional coverage
+integration — ROUND 66, VERIF-05 objection per-objek (parsial) — ROUND
+67, VERIF-28 covergroup type_option weight/per_instance — ROUND 68,
+VERIF-17/18/19 transaction recording + uvm_tr_database + uvm_tr_stream —
+ROUND 69, LANG-08 net alias / nettype — ROUND 70, LANG-04/11/12/13
+module-level property assertions — ROUND 71, LANG-10 checker construct —
+ROUND 72).
 
 ═══════════════════════════════════════════════════════════════════════════════
 2. ARCHITECTURE REVIEW
@@ -517,8 +551,15 @@ Par-03: ⚠️ Clone bodies di parallel eval — masih open
 LANG-01: [] Tidak ada VHDL Support (Critical)
 LANG-02: [] Tidak ada SystemC Support (Critical)
 LANG-03: [] Tidak ada PSL (Property Specification Language) (High)
-LANG-04: [] Tidak ada `assert property @ formal semantics — hanya
-         cycle-based simulation (Critical)
+LANG-04: ✅ `assert property` module-level boolean (ROUND 71) — bentuk
+         `assert property (@(posedge clk) expr)` (tanpa operator temporal)
+         kini di-parse → ModuleItem::PropertyAssert → elaborator ubah jadi
+         always block ber-clock → engine evaluasi tiap edge: pass saat cond
+         true, fail tercatat di assertion_stats (VERIF-27). Property dgn
+         operator temporal (`##`, `|->`, `[*]`) tetap di-skip (rollback +
+         skip_assert_item, modul utuh). 2 test (pass/fail + temporal
+         skipped). Operator temporal masih open — ⚠️ untuk formal semantics
+         penuh.
 LANG-05: [x] Constraint solver — RE-VERIFIKASI (ROUND 59): domain analysis +
          guided generation + bounded backtracking 10K (bukan rejection 100) —
          uvm/constraint_solver.rs solve_constraints (domain equality/inequality/
@@ -527,14 +568,50 @@ LANG-06: [] Tidak ada full coverage of 1800-2017 (98% claimed tapi
          banyak partial) (High)
 LANG-07: [x] `ifdef expression syntax — RE-VERIFIKASI (ROUND 59): preprocessor
          eval_ifdef_expr (|| && ! ( ) defined, `elsif) — CRIT-046. Marker stale.
-LANG-08: [] Tidak ada net alias / nettype (High)
+LANG-08: ✅ net alias / nettype (ROUND 70) — `alias a = b = c;`
+           (IEEE 1800-2017 §10.9): semua net dalam rantai jadi satu jaringan
+           (short) — lexer Token::Alias + Token::Nettype, AST
+           ModuleItem::NetAlias(Vec<(Expr,Expr)>) + NettypeDecl(base, range),
+           parser `alias`/`nettype` (dgn range `[msb:lsb]` + klausa `with`),
+           elaborator resolve nama → SignalId → union-find → canonical →
+           IrDesign.net_aliases: HashMap<SignalId,SignalId>; engine
+           SimulationState.alias_redirect mer-direct read_signal/write_signal
+           member ke canonical (tulis salah satu → semua terlihat).
+           `nettype logic [7:0] mynet;` — tipe net user-defined: nama
+           didaftarkan ke module_type_params (parser) + typedef_map/typedef_dims
+           (elaborator, lebar = base × range) sehingga `mynet x;` ter-resolve
+           seperti typedef. 3 test (alias short, alias chain 3-net, nettype
+           8-bit 0xAB).
 LANG-09: [x] let declarations — RE-VERIFIKASI (ROUND 59): SAMA dengan LANG-40
          (let declaration FIXED 2026-08-14 — Token::Let, LetDecl, let_decls,
          resolve via elaborate_expr, substitute_let_args, 2 test). Marker stale.
-LANG-10: [] Tidak ada checker construct (SVA checker) (High)
-LANG-11: [] Tidak ada restrict property (Medium)
-LANG-12: [] Tidak ada assume property formal (formal semantics) (High)
-LANG-13: [] Tidak ada cover property formal (Medium)
+LANG-10: ✅ checker construct (SVA checker) (ROUND 72) — `checker name
+           (ports); assert/cover property...; endchecker` (IEEE 1800-2017
+           §17.8): lexer Token::Checker/EndChecker; parser parse deklarasi
+           (port positional/named + body items sampai endchecker) →
+           ModuleItem::Checker(CheckerDecl{name, ports, items}); elaborator
+           prepass kumpulkan checker_decls dari semua module, instance
+           checker (`my_checker u0(clk, cnt);`) di-resolve → port binding
+           (positional/named → signal) → assertion property di body di-drive
+           jadi always block ber-clock (pola ROUND 71). 2 test (instance
+           positional assert pass/fail + named cover hit). Checker port
+           arah/type penuh + formal property masih open — ⚠️ checker
+           assertion boolean.
+LANG-11: ✅ restrict property (ROUND 71) — Token::Restrict (lexer) +
+         parse_immediate_assertion perlakukan seperti assume (constraint
+         asumsi); module-level `restrict property (@(edge) expr)` di-drive
+         jadi always ber-clock; violation = fail metric assertion_stats.
+         Test: test_module_level_cover_restrict_property.
+LANG-12: ✅ assume property module-level (ROUND 71) — `assume property
+         (@(posedge clk) expr)` boolean di-drive jadi always ber-clock;
+         violation = fail metric (assumption violated). Test:
+         test_module_level_assume_property. Formal semantics (constraint
+         solver utk assume) masih open — ⚠️ simulasi cycle-based.
+LANG-13: ✅ cover property module-level (ROUND 71) — `cover property
+         (@(edge) expr)` di-drive jadi always ber-clock; hit saat cond true
+         dicatat ke cover_hits (key cover@line:col) → muncul di coverage
+         summary + merge ke CoverageDatabase. Test:
+         test_module_level_cover_restrict_property.
 LANG-14: [x] expect statement — FIXED (ROUND 59): `expect (cond) else stmt`
          (IEEE 1800-2017 §17.16.2). Parser sudah parse (Stmt::Expect), tapi
          ELABORATOR MEN-DROP (Stmt::Expect → IrStmt::Null) → expect tidak pernah
@@ -1076,14 +1153,55 @@ VERIF-03: ✅ uvm_cmdline_processor (ROUND 42)
            (extends chain) + SysFunc `uvm_cmdline_processor::get` di
            elaborator + BUILTIN_UVM_CLASSES. 2 test e2e (found=1/got=1
            dgn plusarg MODE=42; NOSUCH → 0).
-VERIF-04:[] No uvm_root/get_top/run_test all variants (Medium)
-VERIF-05:[] No uvm_phase jumping/objection full (High)
+VERIF-04: ✅ uvm_root / get_top / run_test variants (ROUND 61) — run_test
+            bare (F18) + uvm_test_top sudah ada; kini lengkap: uvm_root::get()
+            (singleton, uvm_root_id — semua panggilan → obj id sama),
+            uvm_root::get_top() (obj id uvm_test_top / 0 bila tidak ada),
+            uvm_root::run_test("name") (varian class-method statement +
+            ekspresi, sama dgn bare run_test), method dispatch handle
+            (root.run_test("...") / root.get_top() via execute_uvm_root_method,
+            root.rs). 3 jalur: IR SysFunc (eval/expr.rs), AST FuncCall
+            (eval/ast.rs), statement (block_syscall.rs evaluate_syscall +
+            evaluate_syscall_stmt → execute_uvm_db_stmt arm uvm_root::run_test;
+            elaborator stmt.rs Stmt::Expr tidak lagi eliminasi uvm_root::*).
+            BUILTIN_UVM_CLASSES + is_uvm_root_hierarchy (hierarchy.rs) +
+            design_has_explicit_run_test deteksi varian (ir_has_run_test +
+            ast_has_run_test). 3 test: test_uvm_root_get_singleton (2x get
+            → id sama + non-null), test_uvm_root_get_top_after_run_test
+            (uvm_root::run_test statement → get_top non-null),
+            test_uvm_root_method_dispatch (root.run_test + root.get_top).
+VERIF-05: ⚠️ uvm_phase jumping/objection — PARTIAL (ROUND 67): objection
+         per-objek DONE — uvm_objection_data HashMap<ObjId,u64> (count per
+         objek), raise_objection/drop_objection kini propagate ke ancestor
+         chain (uvm_component_data.parent) — count objek = raise langsung +
+         propagasi dari descendants (semantik UVM); get_objection_count
+         query. End-of-test tetap berbasis objection_count global (sum).
+         Test test_uvm_objection_per_object_propagation (child raise 2 →
+         count child 2 + parent 2; drop 1 → parent 1). ⏳ Phase jumping
+         (phase.jump / skipping) masih open.
 VERIF-06: ✅ uvm_config_db full (ROUND 53) — get/set sudah ada (F19
            wildcard path); kini + exists (config_db_exists, ast.rs + expr.rs)
            + wait_modified BLOCKING (block.rs intercept: waiter keyed by
            (inst,field) di uvm_config_db_waiters, release oleh set via
            config_db_release_waiters → ContinueAstBlock t+1).
-VERIF-07:[] No uvm_resource_db full (High)
+VERIF-07: ✅ uvm_resource_db full (ROUND 60) — set/get dasar sudah ada
+            (F19 exact-match); kini + wildcard scope lookup (resource_db_find
+            di uvm/config.rs — exact dulu, lalu pattern paling spesifik, reuse
+            config_db_path_match + pattern_specificity: set("*.env", ...)
+            terbaca get("tb.env", ...)) + exists (resource_db_exists) +
+            read_by_name/write_by_name (alias get/set, arg ke-4 rw access
+            type diabaikan). Semua tersedia di 2 jalur: IR (eval/expr.rs +
+            block_syscall.rs evaluate_syscall/evaluate_syscall_stmt) + AST
+            (eval/ast.rs); routing elaborator (elaborator/expr.rs). BUG FIX:
+            uvm_resource_db::set(...)/uvm_config_db::set(...) sebagai bare
+            statement di initial/always block di-ELIMINASI elaborator
+            (side-effect-free) → map tidak pernah terisi → get selalu 0;
+            kini statement-context di-dispatch execute_uvm_db_stmt (config.rs)
+            via evaluate_syscall DAN evaluate_syscall_stmt (jalur statement-
+            block; evaluasi lama ternyata lewat MICD IR cache — verifikasi
+            dgn --recompile). 3 test: test_uvm_resource_db_set_get (nilai
+            signal, bukan assert), test_uvm_resource_db_wildcard_scope,
+            test_uvm_resource_db_read_write_by_name.
 VERIF-08: ✅ uvm_event / uvm_event_pool — sync.rs (is_uvm_event_hierarchy,
            uvm_event_data, wait_trigger/wait_on/wait_for blocking, F21) +
            test_uvm_event_sync + test_uvm_event_subclass_override.
@@ -1093,7 +1211,22 @@ VERIF-10: [x] uvm_callback — RE-VERIFIKASI (ROUND 59): uvm_callbacks add/
          delete/display + pre_*/post_* invocation (uvm/object.rs
          execute_uvm_callbacks_add + invoke_callbacks + method.rs) = CRIT-031.
          Marker stale.
-VERIF-11:[] No uvm_report_handler full (High)
+VERIF-11: ✅ uvm_report_handler verbosity (ROUND 65) — uvm_report_* dasar
+            sudah ada (F16, object.rs execute_uvm_report_object_method →
+            emit_severity); kini + VERBOSITY FILTERING: uvm_report_info(id,
+            msg, verbosity) dicetak HANYA bila verbosity <= level komponen
+            (current_this → uvm_component_data.report_verbosity). Konstanta
+            UVM_NONE/LOW/MEDIUM/HIGH/FULL (0/100/200/300/400) di object.rs;
+            default report_verbosity komponen/sequencer kini UVM_MEDIUM (200)
+            (sebelumnya 2). set/get_report_verbosity_level ditambahkan
+            (alias set/get_report_verbosity komponen). Macro `uvm_info(ID,
+            MSG, VERBOSITY) di uvm_macros.svh kini expand ke
+            uvm_report_info(ID, MSG, VERBOSITY) (sebelumnya $info langsung —
+            verbosity diabaikan) sehingga filter berlaku end-to-end. 2 test:
+            test_uvm_report_verbosity_filtering (set 100 → verb 100 cetak /
+            verb 300 ditekan; sev_info_count=1; get=100),
+            test_uvm_report_verbosity_default_medium (tanpa set → verb 200
+            cetak, verb 400 ditekan).
 VERIF-12: ✅ uvm_printer / uvm_table_printer (ROUND 45) — printer.rs
            (new + print_object → string tabel Name/Type/Size/Value per
            field), is_uvm_printer_hierarchy, obj.print(printer) delegasi.
@@ -1116,11 +1249,37 @@ VERIF-15: ✅ uvm_heartbeat (ROUND 50) — types.rs UvmHeartbeatData
            elaborator.
 VERIF-16: ✅ uvm_tlm_fifo / uvm_tlm_queue — fifo.rs (F23: blocking put/get/
            peek + analysis_export internal) + 3 test (blocking, export, full).
-VERIF-17:[] No uvm_transaction recording (High)
-VERIF-18:[] No uvm_tr_database (High)
-VERIF-19:[] No uvm_recorded_item / uvm_tr_stream (Medium)
+VERIF-17: ✅ uvm_transaction recording (ROUND 69) — begin_tr(name)/end_tr()
+           pada uvm_transaction/uvm_sequence_item mencatat UvmTrRecord
+           (nama, obj, stream, start_time, end_time) ke engine.tr_records;
+           set_stream(name) menempelkan transaksi ke stream; hierarki
+           `__uvm_transaction` (uvm_transaction extends uvm_object,
+           uvm_sequence_item extends uvm_transaction, remap + inject
+           elaborator); dispatch execute_uvm_tr_method (transaction.rs)
+           hanya utk begin_tr/end_tr/set_stream (method lain jatuh ke
+           dispatch generik). Test: test_uvm_tr_record_fields.
+VERIF-18: ✅ uvm_tr_database (ROUND 69) — singleton get_db() (uvm_tr_db_id),
+           get_stream(name) create/reuse (uvm_tr_streams + tr_stream_names),
+           get_tr_count(), set_stream(name) default db; jalur class-method
+           SysFunc (IR expr.rs + AST ast.rs) + statement (config.rs /
+           block_syscall.rs prefix) + method dispatch execute_uvm_tr_db_method;
+           BUILTIN_UVM_CLASSES. Test: test_uvm_tr_database_stream_singleton.
+VERIF-19: ✅ uvm_tr_stream / uvm_recorded_item (ROUND 69) — stream objek
+           per-nama: new(name), record(tr_handle) menempel transaksi ke
+           stream, get_tr_count() per stream; execute_uvm_tr_stream_method +
+           report_tr_records() (ringkasan total/terbuka/per-stream dicetak
+           saat end-of-sim bila ada record). Test: test_uvm_tr_database_stream_singleton.
 VERIF-20:[] No full OVM compatibility (Medium)
-VERIF-21:[] No functional coverage integration with coverage database (High)
+VERIF-21: [x] Functional coverage integration ke coverage database —
+         RE-VERIFIKASI (ROUND 66): CoverageDatabase.merge_from_engine
+         (coverage_db.rs:232) sudah membawa covergroup/coverpoint/cross
+         total+hits+bins (juga line/toggle/branch/FSM); dipanggil dari
+         main.rs (4 situs --coverage-db), maria-tools/cov.rs (mcov),
+         maria-env simulation coverage; unit test roundtrip
+         test_merge_from_engine_basic (coverage_db.rs). Kini + test e2e
+         test_covergroup_integration_coverage_db (maria-tests): sim
+         covergroup 2 sample → db.covergroups["cg"].coverpoints[0] total=2
+         hits=2 bins=2. Marker stale.
 VERIF-22: [x] Code coverage — RE-VERIFIKASI (ROUND 59): line/toggle/branch/
          FSM coverage 4-tipe (engine/coverage.rs record_line_hit/
          record_toggle/record_branch_hit/record_fsm_value + report_full_coverage)
@@ -1134,10 +1293,51 @@ VERIF-25: ✅ coverage exclusion (cover pragmas) — `` `coverage_off `` /
            `` `coverage_on `` di preprocessor (coverage_exclusions) →
            engine.is_line_excluded (SIM-29) + test_coverage_exclusion_macros
            + test_coverage_exclusion_filters_line_hits.
-VERIF-26:[] No coverage gap analysis (High)
-VERIF-27:[] No assertion coverage metrics (High)
-VERIF-28:[] No covergroup type_option weight/per_instance (Medium)
-VERIF-29:[] No cross coverage auto-binning (Medium)
+VERIF-26: ✅ coverage gap analysis (ROUND 64) — engine.coverage_gaps()
+            (pub): daftar item coverage yang TIDAK pernah kena — coverpoint /
+            cross tidak pernah di-sample (cover_total==0), bin eksplisit
+            normal yang 0 hit (cover_bins key `cp.name=bin.name`), dan sinyal
+            yang tidak pernah toggle (cap 20 utk design besar).
+            report_coverage_gaps() ditambahkan ke report_full_coverage
+            (header "Coverage Gaps (N item tidak kena)"). 1 test:
+            test_coverage_gap_analysis (bin 'high' tak pernah kena jadi gap;
+            coverpoint never_sampled.cp_x jadi gap; bin 'low' yang kena tidak
+            jadi false-positive).
+VERIF-27: ✅ assertion coverage metrics (ROUND 62) — engine.assertion_stats
+            HashMap<(line,col) → (pass,fail)>; record_assertion dipanggil di
+            handler Assert/Expect/Assume (block.rs kedua jalur: delay-fork +
+            stmt-block) + concurrent sequence completion (sequence.rs,
+            SequenceAttempt kini membawa line/col). Report: report_assertion_
+            coverage (per line:col pass/fail + total) ditambahkan ke
+            report_full_coverage (baris "Assert: N evaluated (P pass / F
+            fail) X% pass rate"). 2 test: test_assertion_coverage_metrics
+            (2 assert + 2 expect → stats len 4, 2 pass 2 fail),
+            test_assertion_coverage_concurrent_sequence (forever @(posedge
+            clk) assert — pass≥3 fail≥1 saat cnt overflow; catatan: assert
+            property module-level tidak di-drive jadi process — limitation
+            lama, pola immediate di dalam clocking block dipakai).
+VERIF-28: ✅ covergroup type_option weight/per_instance (ROUND 68) —
+         type_option.weight = N / option.weight = N (default 1) + per_instance
+         = 0|1 (juga merge_instances) di-parse (stmt.rs parse_covergroup,
+         sebelumnya di-skip sampai ';') → AST CovergroupDecl.weight/
+         per_instance → IR IrCovergroup.weight/per_instance (ext.rs).
+         Sampler: sample_covergroup(cg_name, instance) — per_instance=1 → key
+         per-instance `cg.i<id>.cp` (agregat tidak dipakai); default merge.
+         functional_coverage_percent() = weighted avg (bobot × coverage tiap
+         covergroup; covergroup tak pernah di-sample = 0% hole) + baris
+         "Functional: X% (weighted)" di report_coverage. coverage_gaps +
+         merge_from_engine (CoverageDatabase) di-update agar menjumlahkan
+         key agregat DAN per-instance. Test (2):
+         test_covergroup_type_option_weight (weight 2:1 → 66.67%),
+         test_covergroup_per_instance (2 instance → 2 key terpisah + merge
+         agregat 3 sample).
+VERIF-29: [x] Cross coverage auto-binning — RE-VERIFIKASI (ROUND 63): parser
+         parse `cross cp_a, cp_b;` (CrossDef), sampler sample_covergroup
+         (coverage.rs:585) menghitung kombinasi nilai tiap coverpoint
+         (`cp_a=1 x cp_b=2`) sebagai bin auto (cap MAX_DEFAULT_BINS=4096),
+         total/hits per cross + report (report_coverage) + UCIS XML export.
+         Test test_covergroup_cross (mod.rs:11374): 2 sample → 2 bin unik
+         `cp_a=1 x cp_b=2` / `cp_a=3 x cp_b=4`, total=2 hits=2. Marker stale.
 VERIF-30: ✅ Coverpoint ignore_bins / illegal_bins + BUG FIX (ROUND 58)
            Bin eksplisit SEBELUMNYA di-parse parser (stmt.rs) tapi di-drop
            elaborator (IrCoverpoint tak punya bins) dan diabaikan sampler
@@ -1155,7 +1355,15 @@ VERIF-30: ✅ Coverpoint ignore_bins / illegal_bins + BUG FIX (ROUND 58)
            → hanya bin PERTAMA coverpoint yang ter-parse (bin ke-2+ di-skip
            diam-diam). Fix: konsumsi `}` di akhir range-list (stmt.rs).
            STATUS: ✅ FIXED — 3 e2e test (ignore/illegal/list-values)
-VERIF-31:[] No transition coverage (High)
+VERIF-31: [x] Transition coverage — RE-VERIFIKASI (ROUND 63): `=>` di-lex
+         (lexer.rs:1056), parser parse transition bin `(a => b => ...)`
+         (stmt.rs:294) ke BinDef.transitions (types.rs:577), elaborator turunkan
+         (ext.rs:54) ke IrBin.transitions (ir.rs:75), sampler coverage.rs:477
+         cocokkan (prev => curr) — sekuens 2 elemen = kasus umum; ignore/
+         illegal/normal bin_type dihormati. covergroup_prev mencatat nilai
+         sebelumnya. Test test_covergroup_transition_bins (mod.rs:11580):
+         rising (0=>1) kena 2x, falling (1=>0) kena 1x, sampel pertama
+         (prev=None) → auto-bin, total 4. Marker stale.
 VERIF-32:[] No sequence coverage (Medium)
 VERIF-33:[] No SVA assertion coverage (High)
 VERIF-34: ✅ random stability — $urandom/$random seed reproducible
@@ -5099,6 +5307,422 @@ temp + revert; tidak ada file lain yang berubah.)
    - cargo test --workspace: 2020 passed, 0 failed (44 result suite)
      — baseline ROUND 58: 1939; +2 test LANG-14; 12 regresi UVM WIP
        diperbaiki (46 test UVM hijau); 0 regresi
+
+✅ VERIF-07 UVM_RESOURCE_DB FULL — DIIMPLEMENTASIKAN (ROUND 60):
+   - uvm_resource_db::set/get dasar sudah ada (F19 exact-match) tapi item
+     audit VERIF-07 [] menuntut "full". Gap yang diisi:
+     1. WILDCARD SCOPE: resource_db_find (uvm/config.rs) — exact match dulu,
+        lalu wildcard scope paling spesifik (reuse config_db_path_match +
+        pattern_specificity dari uvm_config_db): set("*.env", "baud", N)
+        terbaca oleh get("tb.env", "baud", v) dan exists("tb.env", "baud")
+        = 1.
+     2. exists (resource_db_exists), read_by_name/write_by_name (alias
+        get/set; arg ke-4 rw access type diabaikan).
+     3. Dua jalur evaluasi disinkronkan: IR (eval/expr.rs) + AST
+        (eval/ast.rs); routing elaborator (elaborator/expr.rs) + statement-
+        context dispatch baru execute_uvm_db_stmt (config.rs) dipanggil dari
+        evaluate_syscall DAN evaluate_syscall_stmt (block_syscall.rs).
+   - BUG FIX PENTING: `uvm_resource_db::set(...)` / `uvm_config_db::set(...)`
+     sebagai BARE STATEMENT di initial/always block di-ELIMINASI elaborator
+     (arm side-effect-free Stmt::Expr → IrStmt::Block{stmts:[]}) → map tidak
+     pernah terisi → get selalu 0 (success=0, val=x) meski test lama
+     assert(success==1) lulus diam-diam (assertion failure tidak
+     mempropagasi error di simulate_signals). Kini elaborator/stmt.rs arm
+     Stmt::Expr menangkap uvm_config_db::*/uvm_resource_db::*/
+     uvm_cmdline_processor::* → IrStmt::SysCall, engine dispatch statement.
+   - Catatan verifikasi: probe CLI awal tetap sukses=0 SETELAH fix karena
+     MICD IR CACHE me-restore IR lama (elaborator di-skip); verifikasi benar
+     dgn `--recompile` → success=1 val=99. Debug via DBG_UVM temporary
+     (+DBG_ALWAYS unconditional) + revert; tidak ada debug tersisa di diff.
+   - Test (3): test_uvm_resource_db_set_get (cek NILAI SIGNAL success=1 /
+     val=99 / missing=0, bukan assert), test_uvm_resource_db_wildcard_scope
+     (wildcard *.env → get tb.env =115200, exists 1/0),
+     test_uvm_resource_db_read_write_by_name (write_by_name 42 →
+     read_by_name → 42).
+
+📊 VERIFIKASI ROUND 60:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2022 passed, 0 failed
+     — baseline ROUND 59: 2020; +2 test VERIF-07 (wildcard + read/write),
+       test set_get diperkuat (nilai signal); 0 regresi (48 test UVM hijau)
+
+✅ VERIF-04 UVM_ROOT / GET_TOP / RUN_TEST VARIANTS — DIIMPLEMENTASIKAN
+   (ROUND 61):
+   - Latar: run_test bare (F18) + uvm_test_top sudah ada, tapi varian
+     class-method uvm_root (get/get_top/run_test) belum — item audit []
+     "uvm_root/get_top/run_test all variants".
+   - uvm_root::get() — SINGLETON: uvm_root_id (engine field baru, pola sama
+     uvm_cmdline_processor::get); semua panggilan → obj id sama (alloc_object
+     sekali). Tersedia di IR (eval/expr.rs SysFunc), AST (eval/ast.rs
+     FuncCall), dan method dispatch handle.
+   - uvm_root::get_top() — obj id komponen top (uvm_test_top) dari
+     root_test_obj_id; 0 (null) bila tidak ada test berjalan.
+   - uvm_root::run_test("name") — varian class-method: statement (Stmt::Expr
+     elaborator TIDAK eliminasi uvm_root::* lagi → IrStmt::SysCall →
+     execute_uvm_db_stmt arm uvm_root::run_test → run_uvm_test), ekspresi
+     (SysFunc IR + AST), dan method dispatch root.run_test("...").
+   - method dispatch: is_uvm_root_hierarchy (hierarchy.rs, match uvm_root /
+     __uvm_root) + root.rs execute_uvm_root_method (get/new → singleton,
+     get_top, run_test, default warning). Dispatch arm di method.rs (jalur
+     IR + AST sama via execute_method).
+   - BUILTIN_UVM_CLASSES + "uvm_root" (elaborator/mod.rs) agar `uvm_root r;`
+     ter-resolve (handle 64-bit). design_has_explicit_run_test deteksi varian
+     uvm_root::run_test (ir_has_run_test + ast_has_run_test) → auto-detect
+     execute_phases tidak mendahului run_test eksplisit.
+   - Test (3): test_uvm_root_get_singleton (2x get → id SAMA + non-null),
+     test_uvm_root_get_top_after_run_test (uvm_root::run_test statement →
+     get_top non-null), test_uvm_root_method_dispatch (root.run_test +
+     root.get_top → non-null top).
+
+📊 VERIFIKASI ROUND 61:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2025 passed, 0 failed
+     — baseline ROUND 60: 2022; +3 test VERIF-04 (uvm_root singleton /
+       get_top / method dispatch); 0 regresi (51 test UVM hijau)
+
+✅ VERIF-27 ASSERTION COVERAGE METRICS — DIIMPLEMENTASIKAN (ROUND 62):
+   - Latar: item audit [] "assertion coverage metrics" — engine mengevaluasi
+     assert/assume/expect tapi tidak pernah menghitung pass/fail per
+     assertion (coverage hanya line/toggle/branch/FSM).
+   - Field baru: assertion_stats HashMap<(line,col) → (pass, fail)> di
+     SimulationEngine (mod.rs). record_assertion(line, col, ok) di
+     coverage.rs (skip line 0).
+   - Hook di SEMUA jalur evaluasi assertion:
+     - Assert immediate + clock-gated: block.rs kedua jalur
+       (evaluate_block_with_delay_fork ~line 504 + evaluate_stmt_block
+       ~line 2290) setelah cond dievaluasi.
+     - Expect: kedua jalur (LANG-14).
+     - Assume: kedua jalur (violation = fail metric).
+     - Concurrent sequence completion: sequence.rs evaluate_sequence_attempts
+       — SequenceAttempt kini membawa line/col (ditulis saat push di block.rs);
+       pass/fail dicatat saat attempt selesai.
+   - Report: report_assertion_coverage (per line:col pass/fail + total)
+     dipanggil dari report_full_coverage; ringkasan di header
+     "Assert: N evaluated (P pass / F fail) X% pass rate".
+   - Test (2): test_assertion_coverage_metrics (x=5; assert x>0 PASS,
+     assert x>10 FAIL, expect x==5 PASS, expect x==6 FAIL → stats len 4,
+     total 2 pass 2 fail), test_assertion_coverage_concurrent_sequence
+     (clk 5ns + cnt counter; forever @(posedge clk) assert (cnt<=3) →
+     pass ≥3 (cnt 0..3) fail ≥1 (cnt overflow)).
+     Catatan: `assert property (@(posedge clk) ...)` module-level TIDAK
+     di-drive jadi process (limitation lama, bukan bagian ROUND ini) —
+     test memakai pola immediate assertion di dalam forever clocking block.
+
+📊 VERIFIKASI ROUND 62:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2027 passed, 0 failed
+     — baseline ROUND 61: 2025; +2 test VERIF-27 (metrics + concurrent
+       sequence); 0 regresi
+
+✅ RE-VERIFIKASI 2 MARKER [] STALE → [x] (ROUND 63) — bukti kuat di kode
+   + test yang lulus (tanpa perubahan kode):
+   - VERIF-29 CROSS COVERAGE AUTO-BINNING: parser parse `cross cp_a, cp_b;`
+     (CrossDef), sampler sample_covergroup (coverage.rs:585) menghitung
+     kombinasi nilai tiap coverpoint (`cp_a=1 x cp_b=2`) sbg bin auto dengan
+     cap MAX_DEFAULT_BINS=4096, total/hits per cross dicatat (cover_total /
+     cover_hits), report_coverage menampilkan cross + bins, UCIS XML export
+     menyertakan cross. Test test_covergroup_cross (mod.rs:11374) PASS:
+     2 sample → 2 bin unik, total=2 hits=2, isi bin diverifikasi.
+   - VERIF-31 TRANSITION COVERAGE: `=>` di-lex (lexer.rs:1056),
+     parser parse transition bin `(a => b => ...)` (stmt.rs:294) →
+     BinDef.transitions Vec<Vec<Expr>> (types.rs:577), elaborator turunkan
+     (ext.rs:54) → IrBin.transitions (ir.rs:75), sampler coverage.rs:477
+     cocokkan (prev => curr) utk sekuens 2 elemen; ignore/illegal/normal
+     bin_type dihormati; covergroup_prev menyimpan nilai sebelumnya.
+     Test test_covergroup_transition_bins (mod.rs:11580) PASS: rising
+     (0=>1) kena 2x, falling (1=>0) kena 1x, sampel pertama (prev=None) →
+     auto-bin, total 4.
+   (Kedua item sebenarnya sudah diimplementasi saat VERIF-30 ROUND 58 —
+   marker audit tidak di-update waktu itu.)
+
+📊 VERIFIKASI ROUND 63:
+   - Tidak ada perubahan kode (re-verifikasi murni, bukti test yang ada)
+   - cargo test -p maria-tests test_covergroup: 7 passed, 0 failed
+   - cargo test --workspace: 2027 passed, 0 failed (baseline ROUND 62)
+
+✅ VERIF-26 COVERAGE GAP ANALYSIS — DIIMPLEMENTASIKAN (ROUND 64):
+   - Latar: item audit [] "coverage gap analysis" — engine mencatat
+     cover_total/cover_hits/cover_bins/cover_toggle tapi tidak pernah
+     melaporkan item yang TIDAK kena.
+   - coverage.rs coverage_gaps() (pub): daftar gap:
+     1. coverpoint / cross yang tidak pernah di-sample (cover_total == 0),
+     2. bin eksplisit NORMAL yang tidak pernah kena (cover_bins key
+        `cp.name=bin.name`; ignore/illegal bin_type dilewati),
+     3. sinyal yang tidak pernah toggle (hanya saat toggle coverage aktif,
+        cap 20 untuk design besar — gap utama tetap terlihat).
+   - report_coverage_gaps() ditambahkan ke report_full_coverage (header
+     "Coverage Gaps (N item tidak kena)"); dipanggil setelah assertion
+     coverage — laporan coverage summary sekarang punya bagian gap.
+   - Test (1): test_coverage_gap_analysis — covergroup cg (cp_a bins
+     low={0}, high={100}) di-sample dgn a=0 dan a=5 → bin 'high' jadi gap,
+     bin 'low' TIDAK (false-positive tercek), covergroup never_sampled
+     (cp_x) tidak pernah di-sample → gap.
+
+📊 VERIFIKASI ROUND 64:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2028 passed, 0 failed
+     — baseline ROUND 63: 2027; +1 test VERIF-26 (gap analysis); 0 regresi
+
+✅ VERIF-11 UVM_REPORT_HANDLER VERBOSITY — DIIMPLEMENTASIKAN (ROUND 65):
+   - Latar: uvm_report_info/warning/error/fatal sudah ada (F16) tapi arg
+     ke-3 (verbosity) DIABAIKAN — semua info tercetak; item audit []
+     "uvm_report_handler full". Gap utama: verbosity filtering.
+   - object.rs: konstanta UVM_NONE=0 / UVM_LOW=100 / UVM_MEDIUM=200 /
+     UVM_HIGH=300 / UVM_FULL=400 (pub const). uvm_report_info kini
+     mencetak HANYA bila verbosity <= level komponen (current_this →
+     uvm_component_data.report_verbosity; fallback UVM_MEDIUM). Pesan
+     ditekan tidak increment sev_info_count.
+   - set_report_verbosity_level / get_report_verbosity_level ditambahkan
+     (alias set/get_report_verbosity komponen) di jalur report_object.
+   - Default report_verbosity komponen/sequencer/agent/env dll diubah
+     2 → UVM_MEDIUM (200) (component.rs 4 situs + seq.rs + eval/expr.rs) —
+     sesuai default UVM 1.2. Tidak ada test lama yang bergantung pada 2.
+   - uvm_macros.svh: macro `uvm_info(ID, MSG, VERBOSITY)` kini expand ke
+     uvm_report_info(ID, MSG, VERBOSITY) (sebelumnya $info langsung —
+     VERBOSITY dibuang) → filtering verbosity berlaku end-to-end lewat
+     macro maupun panggilan langsung. (uvm_warning/error/fatal tetap $* —
+     severity tidak verbosity-gated di UVM.)
+   - Test (2): test_uvm_report_verbosity_filtering (set_report_verbosity(100)
+     → verb 100 cetak / verb 300 ditekan; sev_info_count=1; get=100),
+     test_uvm_report_verbosity_default_medium (default 200 → verb 200 cetak,
+     verb 400 ditekan).
+
+📊 VERIFIKASI ROUND 65:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2030 passed, 0 failed
+     — baseline ROUND 64: 2028; +2 test VERIF-11 (verbosity filtering +
+       default medium); 0 regresi (53 test UVM hijau)
+
+✅ VERIF-21 FUNCTIONAL COVERAGE INTEGRATION — RE-VERIFIKASI + TEST E2E
+   (ROUND 66):
+   - Latar: item audit [] "functional coverage integration with coverage
+     database" — dugaan covergroup tidak masuk CoverageDatabase.
+   - Bukti kode: CoverageDatabase.merge_from_engine (coverage_db.rs:232)
+     ALREADY membawa SEMUA tipe coverage: covergroup → CovergroupEntry
+     (coverpoint total/hits/bins + cross total/hits/bins), line, toggle,
+     branch, FSM. Dipanggil dari: main.rs 4 situs (--coverage-db +
+     merge), maria-tools/cov.rs (mcov), maria-env/src/env/simulation/
+     coverage.rs. Unit test roundtrip test_merge_from_engine_basic sudah
+     ada (coverage_db.rs). Marker audit stale (implementasi sudah ada
+     sejak awal coverage database).
+   - Tambahan ROUND ini: test e2e BARU test_covergroup_integration_
+     coverage_db (maria-tests) — sim covergroup cg (cp_a) dengan 2 sample
+     (a=1, a=2) → CoverageDatabase.merge_from_engine → db.covergroups
+     ["cg"].coverpoints[0].total=2, hits=2, bins=2. Bukti integrasi
+     end-to-end engine → database (bukan hanya unit test manual).
+
+📊 VERIFIKASI ROUND 66:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2031 passed, 0 failed
+     — baseline ROUND 65: 2030; +1 test VERIF-21 e2e (integrasi covergroup
+       → CoverageDatabase); 0 regresi
+
+⚠️ VERIF-05 UVM_PHASE JUMPING/OBJECTION — PARTIAL (ROUND 67):
+   - Latar: item audit [] "uvm_phase jumping/objection full". Objection
+     global sudah ada (objection_count global → end-of-test); gap "full":
+     objection per-objek + propagasi hierarki + get_objection_count.
+   - engine: field baru objection_per_obj: HashMap<ObjId, u64> (mod.rs +
+     core.rs init) — count utk tiap objek (raise langsung + propagasi).
+   - object.rs: raise_objection/drop_objection kini menaikkan count objek
+     current_this DAN propagate ke ancestor chain (uvm_component_data.parent,
+     naik sampai None) — semantik UVM: total count komponen = raise langsung
+     + seluruh propagasi dari descendants. get_objection_count query count
+     utk objek ini (termasuk propagasi). End-of-test tetap berbasis
+     objection_count global (sum) — tidak berubah.
+   - Test (1): test_uvm_objection_per_object_propagation — child raise 2
+     → count child 2 + parent 2 (propagasi); drop 1 → child 1 + parent 1.
+   - ⏳ Phase jumping (phase.jump / phase skipping) masih OPEN (tidak
+     termasuk scope ROUND ini — item ditandai ⚠️ PARTIAL, bukan ✅).
+
+📊 VERIFIKASI ROUND 67:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2032 passed, 0 failed
+     — baseline ROUND 66: 2031; +1 test VERIF-05 (objection per-objek +
+       propagasi hierarki); 0 regresi
+
+✅ VERIF-28 COVERGROUP TYPE_OPTION WEIGHT/PER_INSTANCE (ROUND 68):
+   - Latar: item audit [] "covergroup type_option weight/per_instance" —
+     parser MENYEBABKAN type_option.weight / option.* di-skip sampai ';'
+     (opsi diabaikan); tidak ada bobot maupun tracking per-instance.
+   - Parser (stmt.rs parse_covergroup): type_option.weight = N /
+     type_option.per_instance = 0|1 / type_option.merge_instances = 0|1 /
+     option.weight = N / option.per_instance = 0|1 kini di-parse (const_eval
+     via const_eval_simple). Default weight 1, per_instance false.
+   - AST CovergroupDecl.weight: Option<u64> + per_instance: bool → IR
+     IrCovergroup.weight: u64 (default 1) + per_instance (ext.rs propagate).
+   - Sampler: sample_covergroup(cg_name, instance: Option<usize>) — dua call
+     site (new() auto-sample eval/expr.rs + sample() method.rs) meneruskan
+     obj id. per_instance=1 → key per-instance `cg.i<id>.cp` (agregat TIDAK
+     dipakai); default tetap key agregat `cg.cp` (backward compatible).
+   - functional_coverage_percent() (pub) — rata-rata TERTIMBANG per
+     covergroup: bobot (weight) × coverage; covergroup/item tak pernah
+     di-sample dihitung 0% (coverage hole, menurunkan metric). Baris
+     "Functional: X% (weighted by type_option.weight)" di report_coverage.
+   - coverage_gaps() (VERIF-26) + CoverageDatabase.merge_from_engine
+     (coverage_db.rs) di-update: menjumlahkan key agregat DAN per-instance
+     (prefix cg. + suffix .item) — integrasi db tetap benar utk per_instance.
+   - Test (2): test_covergroup_type_option_weight (weight 2 vs 1, satu
+     covergroup tak di-sample → (2*100+1*0)/3 = 66.67%),
+     test_covergroup_per_instance (2 instance → 2 key terpisah cg.i<id>,
+     total 2+1; merge_from_engine agregat = 3 sample).
+
+📊 VERIFIKASI ROUND 68:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2034 passed, 0 failed
+     — baseline ROUND 67: 2032; +2 test VERIF-28 (weight + per_instance);
+       0 regresi (suite covergroup 10 passed)
+
+✅ VERIF-17/18/19 TRANSACTION RECORDING + TR_DATABASE + TR_STREAM (ROUND 69):
+   - Latar: item audit [] "uvm_transaction recording", [] "uvm_tr_database",
+     [] "uvm_recorded_item / uvm_tr_stream" — begin_tr/end_tr tidak ada,
+     tidak ada database/stream transaksi; hierarki kelas transaksi juga
+     belum lengkap (uvm_sequence_item extends langsung ke __uvm_object
+     tanpa uvm_transaction di antaranya).
+   - Tipe + engine: UvmTrRecord (types.rs: name, obj_id, stream,
+     start_time, end_time) + field engine tr_records / tr_open /
+     tr_obj_stream / uvm_tr_db_id / uvm_tr_streams / tr_stream_names /
+     tr_db_default_stream (mod.rs + core.rs init).
+   - Elaborator: BUILTIN_UVM_CLASSES + remap `uvm_transaction` →
+     `__uvm_transaction` dan inject kelas builtin baru `__uvm_transaction`
+     (extends __uvm_object) + `__uvm_sequence_item` (extends
+     __uvm_transaction — sesuai UVM 1.2); routing SysFunc
+     uvm_tr_database::get_db/get_stream/get_tr_count/set_stream (expr.rs)
+     + stmt guard uvm_tr_database:: (stmt.rs).
+   - hierarchy.rs: is_uvm_transaction_hierarchy / is_uvm_tr_database_hierarchy /
+     is_uvm_tr_stream_hierarchy (walk extends chain).
+   - uvm/transaction.rs (1 file = 1 tanggung jawab):
+     - execute_uvm_tr_method — begin_tr(name) push UvmTrRecord (stream
+       obj sendiri > default db, start_time = state.time, end_time None),
+       end_tr() set end_time, set_stream(name) attach stream.
+     - execute_uvm_tr_db_method — get_db/new singleton (uvm_tr_db_id),
+       get_stream(name) create/reuse, get_tr_count(), set_stream(name)
+       stream default db.
+     - execute_uvm_tr_stream_method — new(name) register, record(tr_handle)
+       attach transaksi, get_tr_count() per stream.
+     - report_tr_records() — ringkasan total/terbuka/per-stream; dicetak
+       saat end-of-sim bila ada record (core.rs).
+   - Dispatch: method.rs arm transaction (HANYA begin_tr/end_tr/set_stream
+     yang dicegat — method lain randomize/print jatuh ke dispatch generik,
+     mencegah regresi uvm_do randomize) + db + stream; jalur expression
+     SysFunc IR (eval/expr.rs) + AST (eval/ast.rs); jalur statement
+     (block_syscall.rs dua situs + config.rs execute_uvm_db_stmt).
+   - Test (2): test_uvm_tr_database_stream_singleton (get_db singleton 2x
+     → id sama; get_stream s1 2x → reuse; get_tr_count 1; stream s2
+     get_tr_count 1; db.get_stream(s3) method dispatch non-null),
+     test_uvm_tr_record_fields (record: name 'write', stream default db
+     'dbg', end_time >= start_time).
+
+📊 VERIFIKASI ROUND 69:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2036 passed, 0 failed
+     — baseline ROUND 68: 2034; +2 test VERIF-17/18/19; 0 regresi (suite
+       UVM 56 passed). Catatan: dispatch awal transaction mencegat
+       randomize pada uvm_do_macro_sequence_e2e → dibatasi matches! utk
+       method transaction saja, semua UVM hijau kembali.
+
+✅ LANG-08 NET ALIAS / NETTYPE (ROUND 70):
+   - Latar: item audit [] "net alias / nettype" — keyword `alias`/`nettype`
+     tidak dikenal (di-lex sebagai Ident), deklarasi alias di-skip sebagai
+     construct tak dikenal; tidak ada jaringan short antar net.
+   - Lexer: Token::Alias + Token::Nettype (keyword table + Display).
+   - AST: ModuleItem::NetAlias(Vec<(Expr, Expr)>) — rantai `alias a = b = c`
+     disimpan pasangan berurutan (a=b, b=c) agar elaborator bisa union-find;
+     NettypeDecl { name, base, range } (range packed `[msb:lsb]`).
+   - Parser: arm Token::Alias (parse_primary_expr + rantai BlockingAssign,
+     skip_semi) + Token::Nettype (parse_type_expr + parse_range + klausa
+     `with` di-skip; nama didaftarkan ke module_type_params agar `mynet x;`
+     di-parse sebagai deklarasi, bukan instance).
+   - Elaborator: net_expr_signal_id (Ident/ScopedIdent → SignalId via
+     top_signal_map) + union-find (path-compression) → IrDesign.net_aliases
+     HashMap<SignalId, SignalId> member→canonical (canonical = root terkecil).
+     Nettype → typedef_map + typedef_dims (lebar = resolve_typedef_width_dims
+     base × range) sehingga UserDefined("mynet") ter-resolve. All IrDesign
+     constructors di workspace di-update (7 situs: elaborator, sir print/
+     lower, formal tests, partitioner, sim_dag, clock_domain, synth).
+   - Simulator: SimulationState.alias_redirect (Vec<SignalId>, identity
+     default; member di-direct ke canonical dari design.net_aliases) —
+     read_signal/write_signal redirect member → canonical sehingga menulis
+     ke salah satu anggota terlihat di semua (short).
+   - Test (3): test_net_alias_short (tulis a=1 → b baca 1; tulis b=0 → a
+     baca 0), test_net_alias_chain (alias a=b=c → b & c ikut 1), dan
+     test_nettype_user_defined (nettype logic[7:0] mynet; mynet x; x=0xAB).
+
+📊 VERIFIKASI ROUND 70:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2039 passed, 0 failed
+     — baseline ROUND 69: 2036; +3 test LANG-08 (alias short, alias chain,
+       nettype); 0 regresi.
+
+✅ LANG-04/11/12/13 MODULE-LEVEL PROPERTY ASSERTIONS (ROUND 71):
+   - Latar: item audit [] "assert property formal semantics", [] "restrict
+     property", [] "assume property formal", [] "cover property formal" —
+     module-level `assert/assume/cover property` di-skip penuh (skip_
+     assert_item) sehingga tidak pernah dievaluasi; `restrict` tidak dikenal.
+   - Lexer: Token::Restrict (keyword + Display).
+   - Parser: arm Token::Assert|Assume|Cover|Restrict module-level — coba
+     parse_immediate_assertion() (yang SUDAH menangani `property (@(posedge
+     clk) expr)` + disable iff + else); sukses → ModuleItem::PropertyAssert
+     (Box<Stmt>); gagal (body mengandung operator temporal `##`/`|->`/`[*]`
+     yang tidak dikenal lexer) → rollback pos/errors/parse_steps/peek_count
+     + skip_assert_item (perilaku lama, modul tetap utuh — assert kompleks
+     tidak di-elaborasi). parse_immediate_assertion: Token::Restrict →
+     diperlakukan seperti assume (Stmt::Assume).
+   - Elaborator: ModuleItem::PropertyAssert → AlwaysBlock ber-clock (dari
+     clock_event assertion: PosEdge/NegEdge/Level) → elaborate_always —
+     assertion dievaluasi tiap edge clock; tanpa clock_event → proses
+     initial sekali. generate.rs: arm PropertyAssert no-op (genvar).
+   - Engine (LANG-13): IrStmt::Cover kini mencatat hit ke cover_hits
+     (key `cover@line:col`) di KEDUA jalur (delay-fork + stmt-block) →
+     coverage summary + merge CoverageDatabase. Assert/Assume sudah
+     mencatat pass/fail ke assertion_stats (VERIF-27, ROUND 62).
+   - Test (4): test_module_level_assert_property_pass_fail (pass ≥3, fail
+     ≥1), test_module_level_cover_restrict_property (cover hit ≥1 + restrict
+     violation fail ≥1), test_module_level_assume_property (assume violation
+     fail ≥1), test_module_level_property_temporal_skipped (`a ##1 b` di-skip,
+     modul tetap ter-parse).
+
+📊 VERIFIKASI ROUND 71:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2043 passed, 0 failed
+     — baseline ROUND 70: 2039; +4 test LANG-04/11/12/13; 0 regresi.
+     Catatan: assertion_stats menghitung fail hanya utk violation yang benar-
+     benar diamati (NBA cnt commit di delta yang sama setelah assumption
+     dievaluasi → batas restrict di-set 1 siklus lebih ketat di test).
+
+✅ LANG-10 CHECKER CONSTRUCT (ROUND 72):
+   - Latar: item audit [] "checker construct (SVA checker)" — `checker`
+     tidak dikenal (di-lex sebagai Ident → error instance tak ter-resolve);
+     unit assertion (IEEE 1800-2017 §17.8) tidak bisa dideklarasikan.
+   - Lexer: Token::Checker + Token::EndChecker (keyword + Display).
+   - AST: ModuleItem::Checker(CheckerDecl { name, ports: Vec<Symbol>,
+     items: Vec<ModuleItem> }) — body items di-parse sampai endchecker
+     (reuse parse_module_item, jadi assertion property di dalam checker
+     ter-parse via arm ROUND 71).
+   - Parser: arm Token::Checker — advance, expect_ident (nama), parse port
+     list `(input clk, input [3:0] v)` (skip direction/type keywords, ambil
+     nama ident, urut positional), loop parse_module_item sampai
+     Token::EndChecker → ModuleItem::Checker.
+   - Elaborator: prepass di elaborate() mengumpulkan checker_decls
+     (HashMap<Symbol, CheckerDecl>) dari SEMUA module items; arm
+     ModuleItem::Instance — sebelum "Regular module instance", cek
+     checker_decls: jika cocok → bind port (positional via cd.ports[i],
+     named via port name) ke signal via instance_port_expr_to_signal, lalu
+     untuk tiap ModuleItem::PropertyAssert di cd.items bangun AlwaysBlock
+     ber-clock (dari clock_event assertion) + elaborate_always dengan
+     bind_map (port → signal terkoneksi) → assertion dievaluasi tiap edge
+     dengan nilai signal modul yang terikat ke port checker.
+   - generate.rs: arm Checker no-op (genvar).
+   - Test (2): test_checker_construct_instance (checker positional instance
+     `u_chk(clk, cnt)` — assert v<=3: pass ≥3, fail ≥1 saat cnt>3),
+     test_checker_construct_named_ports (instance named `.clk(clk)`,
+     `.v(cnt)` — cover property hit ≥1 di cover_hits).
+
+📊 VERIFIKASI ROUND 72:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2045 passed, 0 failed
+     — baseline ROUND 71: 2043; +2 test LANG-10 (checker positional +
+       named); 0 regresi. Checker assertion boolean didukung; checker dgn
+       formal property / direction penuh tetap open (⚠️).
 
 //=======================================================================\\
 ATURAN

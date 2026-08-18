@@ -99,6 +99,17 @@ impl SimulationEngine {
             uvm_event_data: HashMap::new(),
             uvm_barrier_data: HashMap::new(),
             uvm_cmdline_id: None,
+            uvm_root_id: None,
+            uvm_current_phase: None,
+            uvm_phase_jump: None,
+            uvm_phase_handle: None,
+            uvm_tr_db_id: None,
+            uvm_tr_streams: HashMap::new(),
+            tr_stream_names: HashMap::new(),
+            tr_db_default_stream: None,
+            tr_records: Vec::new(),
+            tr_open: HashMap::new(),
+            tr_obj_stream: HashMap::new(),
             uvm_cmdline_last_value: String::new(),
             uvm_cmdline_values: Vec::new(),
             uvm_sync_waiters: HashMap::new(),
@@ -122,6 +133,7 @@ impl SimulationEngine {
             _next_process_id: 1,
             current_process_id: None,
             cover_hits: HashMap::new(),
+            assertion_stats: HashMap::new(),
             cover_total: HashMap::new(),
             cover_bins: HashMap::new(),
             covergroup_prev: HashMap::new(),
@@ -167,6 +179,7 @@ impl SimulationEngine {
             ast_return_pending: false,
             objection_count: 0,
             objection_triggered: false,
+            uvm_objection_data: std::collections::HashMap::new(),
             jit_evaluator: Some(crate::simulator::JITEvaluator::new()),
             use_packed_eval: true,
             use_jit_expression: false, // Expression-level JIT: disabled by default (opt-in for stability)
@@ -1406,6 +1419,11 @@ impl SimulationEngine {
 
             self.report_full_coverage();
             self.report_coverage();
+            // VERIF-17/18/19: ringkasan transaction recording (bila ada).
+            if !self.tr_records.is_empty() {
+                eprintln!("\n=== Transaction Recording ===");
+                eprint!("{}", self.report_tr_records());
+            }
             self.check_post_simulation_warnings();
             self.report_severity_summary();
         }

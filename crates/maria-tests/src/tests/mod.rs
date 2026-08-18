@@ -10799,27 +10799,79 @@ endmodule
 
 #[test]
 fn test_uvm_resource_db_set_get() {
+    // VERIF-07: set/get sebagai bare statement (bukan di-eliminasi
+    // elaborator) — set menyimpan ke map, get mengembalikan nilai.
+    let source = r#"
+module tb;
+    int val;
+    int success;
+    int missing_success;
+    initial begin
+        uvm_resource_db::set("scope1", "key1", 99);
+        success = uvm_resource_db::get("scope1", "key1", val);
+        missing_success = uvm_resource_db::get("scope1", "missing", val);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).expect("uvm_resource_db sim");
+    let (_, sv) = sigs.iter().find(|(n, _)| n == "success").unwrap();
+    assert_eq!(sv.to_u64(), 1, "get harus menemukan resource yang di-set");
+    let (_, vv) = sigs.iter().find(|(n, _)| n == "val").unwrap();
+    assert_eq!(vv.to_u64(), 99, "nilai resource harus 99");
+    let (_, mv) = sigs.iter().find(|(n, _)| n == "missing_success").unwrap();
+    assert_eq!(mv.to_u64(), 0, "get untuk key yang tidak ada harus 0");
+}
+
+#[test]
+fn test_uvm_resource_db_wildcard_scope() {
+    // VERIF-07: wildcard scope — set("*.env", ...) terbaca oleh
+    // get("tb.env", ...) dan exists("tb.env", ...) = 1.
+    let source = r#"
+module tb;
+    int val;
+    int success;
+    int e1;
+    int e2;
+    initial begin
+        uvm_resource_db::set("*.env", "baud", 115200);
+        success = uvm_resource_db::get("tb.env", "baud", val);
+        e1 = uvm_resource_db::exists("tb.env", "baud");
+        e2 = uvm_resource_db::exists("tb.env", "nope");
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).expect("wildcard resource_db sim");
+    let (_, sv) = sigs.iter().find(|(n, _)| n == "success").unwrap();
+    assert_eq!(sv.to_u64(), 1, "wildcard scope harus match get");
+    let (_, vv) = sigs.iter().find(|(n, _)| n == "val").unwrap();
+    assert_eq!(vv.to_u64(), 115200, "nilai dari set wildcard harus terbaca");
+    let (_, a) = sigs.iter().find(|(n, _)| n == "e1").unwrap();
+    assert_eq!(a.to_u64(), 1, "exists untuk resource wildcard harus 1");
+    let (_, b) = sigs.iter().find(|(n, _)| n == "e2").unwrap();
+    assert_eq!(b.to_u64(), 0, "exists untuk resource yang tidak ada harus 0");
+}
+
+#[test]
+fn test_uvm_resource_db_read_write_by_name() {
+    // VERIF-07: write_by_name = alias set, read_by_name = alias get.
     let source = r#"
 module tb;
     int val;
     int success;
     initial begin
-        uvm_resource_db::set("scope1", "key1", 99);
-        success = uvm_resource_db::get("scope1", "key1", val);
-        assert(success == 1);
-        assert(val == 99);
-        success = uvm_resource_db::get("scope1", "missing", val);
-        assert(success == 0);
+        uvm_resource_db::write_by_name("s1", "k1", 42);
+        success = uvm_resource_db::read_by_name("s1", "k1", val);
         #1 $finish;
     end
 endmodule
 "#;
-    let result = simulate_signals(source, 5);
-    assert!(
-        result.is_ok(),
-        "uvm_resource_db test failed: {:?}",
-        result.err()
-    );
+    let sigs = simulate_signals(source, 5).expect("resource_db read/write sim");
+    let (_, sv) = sigs.iter().find(|(n, _)| n == "success").unwrap();
+    assert_eq!(sv.to_u64(), 1, "read_by_name harus menemukan resource");
+    let (_, vv) = sigs.iter().find(|(n, _)| n == "val").unwrap();
+    assert_eq!(vv.to_u64(), 42, "read_by_name harus mengembalikan nilai write_by_name");
 }
 
 #[test]
@@ -11150,8 +11202,7 @@ module tb;
         #1 $finish;
     end
 endmodule
-"#;
-    let sigs = simulate_signals(source, 5).unwrap();
+"#;    let sigs = simulate_signals(source, 5).unwrap();
     let v = sigs
         .iter()
         .find(|(n, _)| n == "x")
@@ -11159,6 +11210,78 @@ endmodule
         .unwrap_or(0);
     assert_eq!(v, 99, "assert else stmt should execute on failure");
 }
+
+#[test]
+fn test_assertion_coverage_metrics() {
+    // VERIF-27: assertion coverage metrics — engine.assertion_stats mencatat
+    // pass/fail per assertion (assert immediate + expect, jalur IR).
+    let source = r#"
+module tb;
+    int x;
+    initial begin
+        x = 5;
+        assert (x > 0);
+        assert (x > 10);
+        expect (x == 5) else;
+        expect (x == 6) else;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 5);
+    let _ = engine.run();
+    assert_eq!(
+        engine.assertion_stats.len(),
+        4,
+        "4 assertion (2 assert + 2 expect) dievaluasi: {:?}",
+        engine.assertion_stats
+    );
+    let total_pass: u64 = engine.assertion_stats.values().map(|(p, _)| *p).sum();
+    let total_fail: u64 = engine.assertion_stats.values().map(|(_, f)| *f).sum();
+    assert_eq!(total_pass, 2, "2 pass: assert(x>0), expect(x==5)");
+    assert_eq!(total_fail, 2, "2 fail: assert(x>10), expect(x==6)");
+}
+
+#[test]
+fn test_assertion_coverage_concurrent_sequence() {
+    // VERIF-27: concurrent assertion (assert property @(posedge clk)) —
+    // completion sequence attempt tercatat pass/fail di assertion_stats.
+    let source = r#"
+module tb;
+    reg clk;
+    reg [3:0] cnt = 0;
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk;
+    end
+    always @(posedge clk) begin
+        cnt <= cnt + 1;
+    end
+    // 4 siklus clk → cnt 1..4; assertion `cnt <= 3` gagal di siklus ke-4.
+    // (assert property module-level tidak di-drive jadi process — pakai
+    // pola immediate assertion di dalam forever @(posedge clk).)
+    initial begin
+        forever begin
+            @(posedge clk);
+            assert (cnt <= 3) else $display("over");
+        end
+    end
+    initial begin
+        #50 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 60);
+    let _ = engine.run();
+    let total_pass: u64 = engine.assertion_stats.values().map(|(p, _)| *p).sum();
+    let total_fail: u64 = engine.assertion_stats.values().map(|(_, f)| *f).sum();
+    assert!(total_pass >= 3, "cnt<=3 lulus siklus 1..3: pass={}", total_pass);
+    assert!(total_fail >= 1, "cnt<=3 gagal siklus ke-4: fail={}", total_fail);
+}
+
+
 
 #[test]
 fn test_cover_pass() {
@@ -11182,6 +11305,190 @@ endmodule
 }
 
 #[test]
+fn test_module_level_assert_property_pass_fail() {
+    // LANG-04: module-level `assert property (@(posedge clk) expr)` —
+    // assertion concurrent BOOLEAN kini di-drive jadi always block ber-clock:
+    // pass saat cond true, fail (assertion_stats) saat cond false.
+    let source = r#"
+module tb;
+    reg clk;
+    reg [3:0] cnt = 0;
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk;
+    end
+    always @(posedge clk) begin
+        cnt <= cnt + 1;
+    end
+    assert property (@(posedge clk) cnt <= 3);
+    initial begin
+        #50 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 60);
+    let _ = engine.run();
+    let total_pass: u64 = engine.assertion_stats.values().map(|(p, _)| *p).sum();
+    let total_fail: u64 = engine.assertion_stats.values().map(|(_, f)| *f).sum();
+    assert!(total_pass >= 3, "module-level assert property: pass={}", total_pass);
+    assert!(total_fail >= 1, "module-level assert property: fail={}", total_fail);
+}
+
+#[test]
+fn test_module_level_cover_restrict_property() {
+    // LANG-11/13: module-level `cover property` (hit saat true) + `restrict
+    // property` (diperlakukan seperti assume — violation = fail metric).
+    let source = r#"
+module tb;
+    reg clk;
+    reg [3:0] cnt = 0;
+    reg [3:0] cnt_odd;
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk;
+    end
+    always @(posedge clk) begin
+        cnt <= cnt + 1;
+    end
+    cover property (@(posedge clk) cnt >= 2);
+    // restrict cnt <= 3 → committed cnt = 4 di t=45 (siklus ke-5) = violation.
+    restrict property (@(posedge clk) cnt <= 3);
+    initial begin
+        #50 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 60);
+    let _ = engine.run();
+    // cover property → hit tercatat di cover_hits (key cover@line:col).
+    let cover_total: u64 = engine.cover_hits.values().sum();
+    assert!(cover_total >= 1, "cover property harus tercatat hit: {}", cover_total);
+    // restrict property (asumsi) → violation saat committed cnt=4 (>3).
+    let total_fail: u64 = engine.assertion_stats.values().map(|(_, f)| *f).sum();
+    assert!(total_fail >= 1, "restrict property violation harus tercatat fail: {}", total_fail);
+}
+
+#[test]
+fn test_module_level_assume_property() {
+    // LANG-12: module-level `assume property` — violation = fail metric
+    // (asumsi constraint; jika dilanggar → error).
+    let source = r#"
+module tb;
+    reg clk;
+    reg [3:0] cnt = 0;
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk;
+    end
+    always @(posedge clk) begin
+        cnt <= cnt + 1;
+    end
+    assume property (@(posedge clk) cnt != 2);
+    initial begin
+        #30 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 40);
+    let _ = engine.run();
+    let total_fail: u64 = engine.assertion_stats.values().map(|(_, f)| *f).sum();
+    assert!(total_fail >= 1, "assume property violation harus fail: {}", total_fail);
+}
+
+#[test]
+fn test_module_level_property_temporal_skipped() {
+    // LANG-04: property dgn operator temporal (`##1`, `|->`) tidak di-parse
+    // (limitation) — modul tetap ter-parse utuh (tidak ada error E1002,
+    // assertion kompleks di-skip).
+    let source = r#"
+module tb;
+    reg clk;
+    reg a, b;
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk;
+    end
+    always @(posedge clk) begin
+        a <= b;
+    end
+    assert property (@(posedge clk) a ##1 b);
+    initial begin
+        #20 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 25).expect("temporal property skipped, modul tetap parse");
+    let v = sigs.iter().find(|(n, _)| n == "clk").unwrap();
+    assert!(v.1.width > 0, "clk harus tetap ada — modul ter-parse");
+}#[test]
+fn test_checker_construct_instance() {
+    // LANG-10: checker construct (IEEE 1800-2017 §17.8) — `checker name
+    // (ports); assert property... endchecker` dideklarasikan, diinstansiasi
+    // di module, assertion body di-drive dengan port binding (posisi).
+    let source = r#"
+module tb;
+    reg clk;
+    reg [3:0] cnt = 0;
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk;
+    end
+    always @(posedge clk) begin
+        cnt <= cnt + 1;
+    end
+    checker my_checker(input clk, input [3:0] v);
+        assert property (@(posedge clk) v <= 3);
+    endchecker
+    my_checker u_chk(clk, cnt);
+    initial begin
+        #50 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 60);
+    let _ = engine.run();
+    let total_pass: u64 = engine.assertion_stats.values().map(|(p, _)| *p).sum();
+    let total_fail: u64 = engine.assertion_stats.values().map(|(_, f)| *f).sum();
+    assert!(total_pass >= 3, "checker assertion: pass={}", total_pass);
+    assert!(total_fail >= 1, "checker assertion: fail saat cnt>3: {}", total_fail);
+}
+
+#[test]
+fn test_checker_construct_named_ports() {
+    // LANG-10: checker instance dengan koneksi named — port binding ke
+    // signal modul; assertion body dievaluasi tiap edge.
+    let source = r#"
+module tb;
+    reg clk;
+    reg [3:0] cnt = 0;
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk;
+    end
+    always @(posedge clk) begin
+        cnt <= cnt + 1;
+    end
+    checker my_checker(input clk, input [3:0] v);
+        cover property (@(posedge clk) v >= 2);
+    endchecker
+    my_checker u_chk(.clk(clk), .v(cnt));
+    initial begin
+        #40 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 50);
+    let _ = engine.run();
+    let cover_total: u64 = engine.cover_hits.values().sum();
+    assert!(cover_total >= 1, "checker cover property: hit={}", cover_total);
+}
+
+#[test]
 fn test_assert_property_parse() {
     let source = r#"
 module tb;
@@ -11195,6 +11502,8 @@ module tb;
     end
 endmodule
 "#;
+
+
     let sigs = simulate_signals(source, 5).unwrap();
     let v = sigs
         .iter()
@@ -11245,6 +11554,156 @@ endmodule
         "covergroup should parse without error: {:?}",
         result.err()
     );
+}
+
+#[test]
+fn test_covergroup_integration_coverage_db() {
+    // VERIF-21: functional coverage (covergroup) ter-integrasi ke
+    // CoverageDatabase — merge_from_engine membawa total/hits/bins
+    // coverpoint ke database (persisten/merge multi-run).
+    let source = r#"
+module tb;
+    reg [31:0] a;
+    covergroup cg;
+        cp_a: coverpoint a;
+    endgroup
+    cg cg_inst = new();
+    initial begin
+        a = 1;
+        cg_inst.sample();
+        a = 2;
+        cg_inst.sample();
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 5);
+    engine.run().unwrap();
+    let mut db = crate::simulator::coverage_db::CoverageDatabase::new();
+    db.merge_from_engine(&engine);
+    let cg = db
+        .covergroups
+        .get("cg")
+        .expect("covergroup 'cg' harus masuk CoverageDatabase");
+    assert_eq!(cg.coverpoints.len(), 1);
+    let cp = &cg.coverpoints[0];
+    assert_eq!(cp.total, 2, "2 sample ter-integrasi ke db");
+    assert_eq!(cp.hits, 2);
+    assert_eq!(cp.bins.len(), 2, "2 bin unik (a=1, a=2)");
+}
+
+#[test]
+fn test_covergroup_type_option_weight() {
+    // VERIF-28: `type_option.weight = N` — bobot covergroup utk functional
+    // coverage keseluruhan (weighted average). cg_heavy (weight 2, di-sample
+    // penuh) + cg_light (weight 1, TIDAK pernah di-sample = coverage hole 0%)
+    // → (2*100 + 1*0)/3 = 66.67%. Tanpa weight: (100+0)/2 = 50%.
+    let source = r#"
+module tb;
+    reg [31:0] a;
+    covergroup cg_heavy;
+        type_option.weight = 2;
+        cp_a: coverpoint a;
+    endgroup
+    covergroup cg_light;
+        type_option.weight = 1;
+        cp_b: coverpoint a;
+    endgroup
+    cg_heavy h = new();
+    cg_light l = new();
+    initial begin
+        a = 1;
+        h.sample();
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    // IR membawa weight ter-parse.
+    let heavy = design
+        .covergroups
+        .iter()
+        .find(|c| c.name == "cg_heavy")
+        .expect("cg_heavy");
+    let light = design
+        .covergroups
+        .iter()
+        .find(|c| c.name == "cg_light")
+        .expect("cg_light");
+    assert_eq!(heavy.weight, 2, "type_option.weight = 2 ter-parse");
+    assert_eq!(light.weight, 1, "default weight 1");
+
+    let mut engine = crate::simulator::SimulationEngine::new(design, 10);
+    engine.run().unwrap();
+    // cg_heavy di-sample (100%); cg_light tidak pernah di-sample (0% hole).
+    let pct = engine.functional_coverage_percent();
+    assert!(
+        (pct - 66.6667).abs() < 0.01,
+        "weighted functional coverage harus 66.67% (weight 2:1), got {}",
+        pct
+    );
+}
+
+#[test]
+fn test_covergroup_per_instance() {
+    // VERIF-28: `type_option.per_instance = 1` — coverage dilacak per-instance
+    // (`cg.i<id>.cp`), bukan di-merge. Dua instance dengan sample berbeda →
+    // key terpisah; merge_from_engine tetap menjumlahkan ke agregat.
+    let source = r#"
+module tb;
+    reg [31:0] a;
+    covergroup cg;
+        type_option.per_instance = 1;
+        cp_a: coverpoint a;
+    endgroup
+    cg i1 = new();
+    cg i2 = new();
+    initial begin
+        a = 1;
+        i1.sample();
+        i1.sample();
+        a = 2;
+        i2.sample();
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    let cg = design.covergroups.iter().find(|c| c.name == "cg").unwrap();
+    assert!(cg.per_instance, "type_option.per_instance = 1 ter-parse");
+
+    let mut engine = crate::simulator::SimulationEngine::new(design, 10);
+    engine.run().unwrap();
+    // Per-instance keys: cg.i<id>.cp_a — total 2 utk instance pertama (2
+    // sample) dan 1 utk instance kedua, ATAU 1 utk instance1 + 1 auto-sample
+    // tiap new(). Verifikasi: tiap key instance punya total sendiri > 0 dan
+    // tidak ada agregat tunggal yang menampung semua.
+    let mut per_inst_totals: Vec<u64> = Vec::new();
+    let mut agg_total = 0u64;
+    for (k, v) in &engine.cover_total {
+        let s = k.as_str();
+        if let Some(rest) = s.strip_prefix("cg.i") {
+            if let Some(_cp) = rest.strip_suffix(".cp_a") {
+                per_inst_totals.push(*v);
+            }
+        } else if s == "cg.cp_a" {
+            agg_total += v;
+        }
+    }
+    assert_eq!(agg_total, 0, "per_instance=1 tidak boleh memakai key agregat");
+    assert_eq!(per_inst_totals.len(), 2, "dua instance → dua key terpisah");
+    assert!(per_inst_totals.contains(&2), "instance1 2 sample: {:?}", per_inst_totals);
+    assert!(per_inst_totals.contains(&1), "instance2 1 sample: {:?}", per_inst_totals);
+    assert_eq!(per_inst_totals.iter().sum::<u64>(), 3, "total 3 sample (2+1)");
+
+    // merge_from_engine menjumlahkan semua key instance ke agregat.
+    let mut db = crate::simulator::coverage_db::CoverageDatabase::new();
+    db.merge_from_engine(&engine);
+    let entry = db.covergroups.get("cg").expect("cg in db");
+    assert_eq!(entry.coverpoints.len(), 1);
+    assert_eq!(entry.coverpoints[0].total, 3, "merge agregat = 3 sample");
+    assert_eq!(entry.coverpoints[0].hits, 3);
 }
 
 #[test]
@@ -11501,6 +11960,59 @@ endmodule
         "sampel pertama (prev=None) → auto-bin default"
     );
     assert_eq!(engine.cover_total.get(&key).copied().unwrap_or(0), 4);
+}
+
+#[test]
+fn test_coverage_gap_analysis() {
+    // VERIF-26: coverage gap analysis — bin eksplisit yang tidak pernah kena
+    // dan coverpoint/cross yang tidak pernah di-sample terdaftar di
+    // engine.coverage_gaps().
+    let source = r#"
+module tb;
+    reg [31:0] a;
+    covergroup cg;
+        cp_a: coverpoint a {
+            bins low  = {0};
+            bins high = {100};
+        }
+        cp_b: coverpoint a;
+    endgroup
+    covergroup never_sampled;
+        cp_x: coverpoint a;
+    endgroup
+    cg cg_inst = new();
+    never_sampled ns_inst = new();
+    initial begin
+        a = 0;
+        cg_inst.sample();   // bin low kena; bin high TIDAK
+        a = 5;
+        cg_inst.sample();   // auto-bin 5
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 5);
+    engine.run().unwrap();
+    let gaps = engine.coverage_gaps();
+    // Bin high tidak pernah kena.
+    assert!(
+        gaps.iter().any(|g| g.contains("bin 'high'")),
+        "gap harus menyebut bin 'high' tak pernah kena: {:?}",
+        gaps
+    );
+    // Covergroup never_sampled tidak pernah di-sample → cp_x gap.
+    assert!(
+        gaps.iter().any(|g| g.contains("never_sampled.cp_x") && g.contains("tidak pernah di-sample")),
+        "gap harus menyebut coverpoint never_sampled.cp_x tak pernah di-sample: {:?}",
+        gaps
+    );
+    // Tidak ada false-positive: cp_a LOW bin (kena) tidak boleh jadi gap.
+    assert!(
+        !gaps.iter().any(|g| g.contains("bin 'low'")),
+        "bin low pernah kena — tidak boleh jadi gap: {:?}",
+        gaps
+    );
 }
 
 #[test]
@@ -15342,6 +15854,359 @@ endmodule
 }
 
 #[test]
+fn test_uvm_root_get_singleton() {
+    // VERIF-04: uvm_root::get() — singleton: semua panggilan mengembalikan
+    // obj id yang SAMA dan non-null.
+    let source = r#"
+module tb;
+    uvm_root r1;
+    uvm_root r2;
+    longint h1;
+    longint h2;
+    int is_same;
+    int nonnull;
+    initial begin
+        r1 = uvm_root::get();
+        r2 = uvm_root::get();
+        h1 = r1;
+        h2 = r2;
+        is_same = (h1 == h2);
+        nonnull = (h1 != 0);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).expect("uvm_root get sim");
+    let (_, sv) = sigs.iter().find(|(n, _)| n == "is_same").unwrap();
+    assert_eq!(sv.to_u64(), 1, "uvm_root::get() dua kali harus obj id sama");
+    let (_, nv) = sigs.iter().find(|(n, _)| n == "nonnull").unwrap();
+    assert_eq!(nv.to_u64(), 1, "uvm_root::get() harus non-null handle");
+}
+
+#[test]
+fn test_uvm_root_get_top_after_run_test() {
+    // VERIF-04: uvm_root::run_test("name") varian class-method (statement)
+    // + get_top() mengembalikan komponen top (uvm_test_top) non-null.
+    let source = r#"
+class my_test extends uvm_test;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+    endfunction
+endclass
+
+module tb;
+    uvm_root root;
+    uvm_component top;
+    longint top_id;
+    int has_top;
+    initial begin
+        root = uvm_root::get();
+        uvm_root::run_test("my_test");
+        top = uvm_root::get_top();
+        top_id = top;
+        has_top = (top_id != 0);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).expect("uvm_root get_top sim");
+    let (_, tv) = sigs.iter().find(|(n, _)| n == "has_top").unwrap();
+    assert_eq!(tv.to_u64(), 1, "get_top() setelah run_test harus non-null");
+}
+
+#[test]
+fn test_uvm_root_method_dispatch() {
+    // VERIF-04: method dispatch pada handle uvm_root — root.run_test("name")
+    // + root.get_top() (jalur execute_uvm_root_method).
+    let source = r#"
+class my_test extends uvm_test;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase();
+    endfunction
+endclass
+
+module tb;
+    uvm_root root;
+    uvm_component top;
+    longint top_id;
+    int has_top;
+    initial begin
+        root = uvm_root::get();
+        root.run_test("my_test");
+        top = root.get_top();
+        top_id = top;
+        has_top = (top_id != 0);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).expect("uvm_root method sim");
+    let (_, tv) = sigs.iter().find(|(n, _)| n == "has_top").unwrap();
+    assert_eq!(tv.to_u64(), 1, "root.run_test + root.get_top harus non-null top");
+}
+
+#[test]
+fn test_uvm_report_verbosity_filtering() {
+    // VERIF-11: uvm_report_handler — verbosity filtering. uvm_report_info
+    // (id, msg, verbosity) dicetak HANYA bila verbosity <= level komponen
+    // (set_report_verbosity). Pesan yang ditekan tidak increment counter
+    // sev_info_count.
+    let source = r#"
+class my_comp extends uvm_component;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void do_report();
+        uvm_report_info("id1", "low_msg", 100);   // verb 100 <= level 100 → cetak
+        uvm_report_info("id2", "high_msg", 300);  // verb 300 >  level 100 → ditekan
+    endfunction
+endclass
+
+module tb;
+    my_comp c;
+    int lvl;
+    initial begin
+        c = my_comp::new("c", 0);
+        c.set_report_verbosity(100);
+        c.do_report();
+        lvl = c.get_report_verbosity();
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 5);
+    engine.run().unwrap();
+    assert_eq!(
+        engine.sev_info_count, 1,
+        "hanya low_msg (verb 100) yang dicetak; high_msg (verb 300) ditekan"
+    );
+    let sigs = simulate_signals(source, 5).unwrap();
+    let (_, lv) = sigs.iter().find(|(n, _)| n == "lvl").unwrap();
+    assert_eq!(lv.to_u64(), 100, "get_report_verbosity harus 100");
+}
+
+#[test]
+fn test_uvm_report_verbosity_default_medium() {
+    // VERIF-11: default report_verbosity = UVM_MEDIUM (200) — uvm_report_info
+    // dengan verbosity 300 (UVM_HIGH) ditekan tanpa set_report_verbosity.
+    let source = r#"
+class my_comp extends uvm_component;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void do_report();
+        uvm_report_info("id1", "medium_msg", 200);  // 200 <= 200 → cetak
+        uvm_report_info("id2", "full_msg", 400);    // 400 >  200 → ditekan
+    endfunction
+endclass
+
+module tb;
+    my_comp c;
+    initial begin
+        c = my_comp::new("c", 0);
+        c.do_report();
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 5);
+    engine.run().unwrap();
+    assert_eq!(
+        engine.sev_info_count, 1,
+        "default UVM_MEDIUM: verb 200 cetak, verb 400 ditekan"
+    );
+}
+
+#[test]
+fn test_uvm_objection_per_object_propagation() {
+    // VERIF-05: objection per-objek + propagasi hierarki — raise pada child
+    // menaikkan count child DAN ancestor; get_objection_count membacanya.
+    let source = r#"
+class comp_a extends uvm_component;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+endclass
+class comp_b extends uvm_component;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+endclass
+
+module tb;
+    comp_a a;
+    comp_b b;
+    int cnt_b;
+    int cnt_a;
+    int cnt_after_drop;
+    initial begin
+        a = comp_a::new("a", 0);
+        b = comp_b::new("b", a);   // b child dari a
+        b.raise_objection();
+        b.raise_objection();
+        cnt_b = b.get_objection_count();       // 2 (langsung)
+        cnt_a = a.get_objection_count();       // 2 (propagasi dari b)
+        b.drop_objection();
+        cnt_after_drop = a.get_objection_count();  // 1
+        b.drop_objection();                    // global 0 → end-of-test
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).expect("objection per-object sim");
+    let (_, bv) = sigs.iter().find(|(n, _)| n == "cnt_b").unwrap();
+    assert_eq!(bv.to_u64(), 2, "get_objection_count(b) = 2 raise langsung");
+    let (_, av) = sigs.iter().find(|(n, _)| n == "cnt_a").unwrap();
+    assert_eq!(av.to_u64(), 2, "get_objection_count(a) = 2 propagasi dari b");
+    let (_, dv) = sigs.iter().find(|(n, _)| n == "cnt_after_drop").unwrap();
+    assert_eq!(dv.to_u64(), 1, "setelah 1 drop, count a turun ke 1");
+}
+
+#[test]
+fn test_uvm_tr_database_stream_singleton() {
+    // VERIF-17/18/19: uvm_tr_database get_db singleton + get_stream create/reuse
+    // + begin_tr/end_tr + get_tr_count + stream get_tr_count.
+    let source = r#"
+class my_tx extends uvm_sequence_item;
+    function new(string name);
+        super.new(name);
+    endfunction
+endclass
+
+module tb;
+    my_tx tx;
+    uvm_tr_database db;
+    uvm_tr_stream st;
+    longint d1, d2;
+    longint s1a, s1b, s3;
+    int same_db;
+    int same_stream;
+    int cnt_before;
+    int cnt_after;
+    int stream_cnt;
+    int s3_same;
+    initial begin
+        tx = my_tx::new("tx");
+        d1 = uvm_tr_database::get_db();
+        d2 = uvm_tr_database::get_db();
+        same_db = (d1 == d2);
+        s1a = uvm_tr_database::get_stream("s1");
+        s1b = uvm_tr_database::get_stream("s1");
+        same_stream = (s1a == s1b);
+        uvm_tr_database::set_stream("s2");
+        tx.begin_tr("read");
+        cnt_before = uvm_tr_database::get_tr_count();
+        #3;
+        tx.end_tr();
+        cnt_after = uvm_tr_database::get_tr_count();
+        st = uvm_tr_database::get_stream("s2");
+        stream_cnt = st.get_tr_count();
+        db = uvm_tr_database::get_db();
+        s3 = db.get_stream("s3");
+        s3_same = (s3 != 0);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).expect("uvm_tr sim");
+    let (_, v) = sigs.iter().find(|(n, _)| n == "same_db").unwrap();
+    assert_eq!(v.to_u64(), 1, "get_db() harus singleton (2x → id sama)");
+    let (_, v) = sigs.iter().find(|(n, _)| n == "same_stream").unwrap();
+    assert_eq!(v.to_u64(), 1, "get_stream(s1) 2x harus id sama (reuse)");
+    let (_, v) = sigs.iter().find(|(n, _)| n == "cnt_before").unwrap();
+    assert_eq!(v.to_u64(), 1, "get_tr_count() setelah begin_tr = 1");
+    let (_, v) = sigs.iter().find(|(n, _)| n == "cnt_after").unwrap();
+    assert_eq!(v.to_u64(), 1, "get_tr_count() setelah end_tr tetap 1");
+    let (_, v) = sigs.iter().find(|(n, _)| n == "stream_cnt").unwrap();
+    assert_eq!(v.to_u64(), 1, "stream s2 get_tr_count() = 1 record");
+    let (_, v) = sigs.iter().find(|(n, _)| n == "s3_same").unwrap();
+    assert_eq!(v.to_u64(), 1, "db.get_stream(s3) via method dispatch non-null");
+}
+
+#[test]
+fn test_uvm_tr_record_fields() {
+    // VERIF-17: begin_tr/end_tr mengisi UvmTrRecord — nama, stream default db,
+    // start_time < end_time, end_time Some setelah end_tr.
+    let source = r#"
+class my_tx extends uvm_sequence_item;
+    function new(string name);
+        super.new(name);
+    endfunction
+endclass
+
+module tb;
+    my_tx tx;
+    initial begin
+        tx = my_tx::new("tx");
+        uvm_tr_database::set_stream("dbg");
+        tx.begin_tr("write");
+        #5;
+        tx.end_tr();
+        #1 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 5);
+    engine.run().unwrap();
+    assert_eq!(engine.tr_records.len(), 1, "1 record transaksi");
+    let rec = &engine.tr_records[0];
+    assert_eq!(rec.name, "write");
+    assert_eq!(rec.stream.as_deref(), Some("dbg"), "stream default db");
+    assert!(
+        rec.end_time.is_some() && rec.end_time.unwrap() >= rec.start_time,
+        "end_tr mengisi end_time >= start_time"
+    );
+}
+
+#[test]
+fn test_uvm_phase_jump_skip_phases() {
+    // VERIF-05: `phase.jump("start_of_simulation_phase")` di build_phase
+    // melompati connect_phase + end_of_elaboration_phase (di-skip), eksekusi
+    // berlanjut dari start_of_simulation_phase. `phase.get_name()` di dalam
+    // fase mengembalikan nama fase yang sedang berjalan. Canary `$error`:
+    // kalau connect/end_of_elaboration TIDAK di-skip → sim gagal.
+    let source = r#"
+class my_test extends uvm_test;
+    function new(string name, uvm_component parent);
+        super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+        if (phase.get_name() != "build_phase")
+            $error("get_name=%0s expected build_phase", phase.get_name());
+        phase.jump("start_of_simulation_phase");
+    endfunction
+    function void connect_phase(uvm_phase phase);
+        $error("connect_phase TIDAK boleh jalan setelah jump");
+    endfunction
+    function void end_of_elaboration_phase(uvm_phase phase);
+        $error("end_of_elaboration_phase TIDAK boleh jalan setelah jump");
+    endfunction
+    function void start_of_simulation_phase(uvm_phase phase);
+        if (phase.get_name() != "start_of_simulation_phase")
+            $error("get_name salah di start_of_simulation: %0s", phase.get_name());
+    endfunction
+endclass
+
+module tb;
+    initial run_test("my_test");
+endmodule
+"#;
+    let result = simulate_signals(source, 100);
+    assert!(
+        result.is_ok(),
+        "phase.jump harus skip connect/end_of_elaboration: {:?}",
+        result.err()
+    );
+}
+
+#[test]
 fn test_value_plusargs() {
     let source = r#"
 module tb;
@@ -15371,6 +16236,78 @@ endmodule
         32,
         "$value$plusargs should write 32"
     );
+}
+
+#[test]
+fn test_net_alias_short() {
+    // LANG-08: `alias a = b;` (IEEE 1800-2017 §10.9) — a dan b satu jaringan:
+    // menulis ke salah satu terlihat di keduanya (short).
+    let source = r#"
+module tb;
+    wire a, b;
+    alias a = b;
+    int av, bv, av2, bv2;
+    initial begin
+        a = 1;      // tulis a → b ikut 1
+        #1;
+        bv = b;
+        b = 0;      // tulis b → a ikut 0
+        #1;
+        av = a;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).expect("net alias sim");
+    let (_, v) = sigs.iter().find(|(n, _)| n == "bv").unwrap();
+    assert_eq!(v.to_u64(), 1, "tulis a=1 → b terbaca 1 (alias short)");
+    let (_, v) = sigs.iter().find(|(n, _)| n == "av").unwrap();
+    assert_eq!(v.to_u64(), 0, "tulis b=0 → a terbaca 0 (alias short)");
+}
+
+#[test]
+fn test_net_alias_chain() {
+    // LANG-08: `alias a = b = c;` — rantai alias menyatukan TIGA net.
+    let source = r#"
+module tb;
+    wire a, b, c;
+    alias a = b = c;
+    int av, bv, cv;
+    initial begin
+        a = 1;
+        #1;
+        bv = b;
+        cv = c;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).expect("net alias chain sim");
+    let (_, v) = sigs.iter().find(|(n, _)| n == "bv").unwrap();
+    assert_eq!(v.to_u64(), 1, "chain: tulis a → b ikut 1");
+    let (_, v) = sigs.iter().find(|(n, _)| n == "cv").unwrap();
+    assert_eq!(v.to_u64(), 1, "chain: tulis a → c ikut 1");
+}
+
+#[test]
+fn test_nettype_user_defined() {
+    // LANG-08: `nettype logic [7:0] mynet;` (IEEE 1800-2017 §6.10) — tipe net
+    // user-defined: deklarasi `mynet x;` ter-resolve lebar base (8-bit).
+    let source = r#"
+module tb;
+    nettype logic [7:0] mynet;
+    mynet x;
+    int v;
+    initial begin
+        x = 8'hAB;
+        v = x;
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).expect("nettype sim");
+    let (_, v) = sigs.iter().find(|(n, _)| n == "v").unwrap();
+    assert_eq!(v.to_u64(), 0xAB, "nettype mynet = logic[7:0] — x = 0xAB");
 }
 
 #[test]
