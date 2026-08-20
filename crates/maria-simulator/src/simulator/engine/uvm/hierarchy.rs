@@ -377,8 +377,8 @@ impl SimulationEngine {
         // Panggil constructor bila class mendefinisikan `new` (jalur user
         // eksplisit). Objek tanpa new dibiarkan kosong (perilaku legacy).
         if self
-            .find_method_in_hierarchy(class_name.as_str(), "new")
-            .is_ok()
+            .find_method_quiet(class_name.as_str(), "new")
+            .is_some()
         {
             self.current_this = Some(obj_id);
             let r = self.execute_method(
@@ -425,7 +425,7 @@ impl SimulationEngine {
             }
             self.uvm_current_phase = Some(phase.to_string());
             let phase_args = self.uvm_phase_args();
-            let has = self.find_method_in_hierarchy(&class_name, phase).is_ok();
+            let has = self.find_method_quiet(&class_name, phase).is_some();
             if has {
                 self.current_this = Some(obj_id);
                 self.execute_method(obj_id, phase, &phase_args)?;
@@ -446,7 +446,7 @@ impl SimulationEngine {
         // run_phase: root lalu anak — task boleh suspend (delay/forever),
         // kontinuasi dijadwalkan event loop setelah execute_phases/run_test
         // selesai.
-        if self.find_method_in_hierarchy(&class_name, "run_phase").is_ok() {
+        if self.find_method_quiet(&class_name, "run_phase").is_some() {
             let phase_args = self.uvm_phase_args();
             self.current_this = Some(obj_id);
             self.execute_method(obj_id, "run_phase", &phase_args)?;
@@ -479,7 +479,7 @@ impl SimulationEngine {
             // check_phase/report_phase tapi test tidak → check/report env
             // tetap harus dijalankan. Sebelumnya `call_phase_on_children`
             // berada DI DALAM if root punya phase → child terlewat diam-diam.
-            if self.find_method_in_hierarchy(&class_name, phase).is_ok() {
+            if self.find_method_quiet(&class_name, phase).is_some() {
                 let phase_args = self.uvm_phase_args();
                 self.current_this = Some(obj_id);
                 self.execute_method(obj_id, phase, &phase_args)?;
@@ -496,7 +496,7 @@ impl SimulationEngine {
             for child_id in children {
                 if let Some(obj) = self.state.get_object(child_id) {
                     let child_class = &obj.class_name;
-                    if self.find_method_in_hierarchy(child_class.as_str(), phase).is_ok() {
+                    if self.find_method_quiet(child_class.as_str(), phase).is_some() {
                         let phase_args = self.uvm_phase_args();
                         self.current_this = Some(child_id);
                         self.execute_method(child_id, phase, &phase_args)?;
@@ -1065,7 +1065,7 @@ impl SimulationEngine {
             || self.is_uvm_driver_hierarchy(class)
             || self.is_uvm_sequencer_hierarchy(class)
             || self.is_uvm_sequence_hierarchy(class)
-            || self.find_method_in_hierarchy(class, "new").is_ok()
+            || self.find_method_quiet(class, "new").is_some()
     }
 
     /// F24: apakah class_name subclass `uvm_seq_item_port` (port driver↔sequencer).

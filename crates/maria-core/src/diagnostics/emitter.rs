@@ -32,6 +32,7 @@ use super::diagnostic::{DiagLevel, DiagSink, Diagnostic};
 /// Box drawing characters
 const BOX_V: &str = "│";
 const BOX_TR: &str = "┌─";
+#[allow(dead_code)]
 const BOX_EMPTY: &str = "   ";
 
 /// ANSI color codes
@@ -41,6 +42,7 @@ const YELLOW: &str = "\x1b[33m";
 const BLUE: &str = "\x1b[34m";
 const MAGENTA: &str = "\x1b[35m";
 const CYAN: &str = "\x1b[36m";
+#[allow(dead_code)]
 const WHITE: &str = "\x1b[37m";
 const BOLD: &str = "\x1b[1m";
 const DIM: &str = "\x1b[2m";

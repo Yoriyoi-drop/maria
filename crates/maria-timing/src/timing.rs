@@ -209,7 +209,7 @@ pub fn analyze(nl: &Netlist, c: &Constraint, opts: &TimingOptions) -> TimingRepo
         let from = net
             .driver
             .as_ref()
-            .map(|d| nl.nets[id].name.as_str().to_string())
+            .map(|_d| nl.nets[id].name.as_str().to_string())
             .unwrap_or_else(|| net.name.as_str().to_string());
         let required = period - c.output_delay_ns;
         let fp = c.is_false_path(&from, net.name.as_str());

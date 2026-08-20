@@ -136,7 +136,7 @@ impl SimulationEngine {
         // compare() user di transaksi actual → hasil 1/0 (pola UVM asli).
         if let Some(obj) = self.state.get_object(actual) {
             let class = obj.class_name.as_str();
-            if self.find_method_in_hierarchy(class, "compare").is_ok() {
+            if self.find_method_quiet(class, "compare").is_some() {
                 let args = vec![LogicVec::from_u64(expected as u64, 64)];
                 let r = self.execute_method(actual, "compare", &args)?;
                 return Ok(r.to_u64() != 0);

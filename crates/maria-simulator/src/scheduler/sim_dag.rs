@@ -347,8 +347,7 @@ fn expr_signal_reads(expr: &IrExpr, access: &mut SignalAccess) {
         IrExpr::Const(_) | IrExpr::FillLit(_) | IrExpr::String(_) => {}
         IrExpr::This
         | IrExpr::HierRef(_)
-        | IrExpr::VifBinding { .. }
-        | IrExpr::VirtualIfaceAccess { .. } => {
+        | IrExpr::VifBinding { .. } => {
             access.has_unresolved = true;
         }
     }

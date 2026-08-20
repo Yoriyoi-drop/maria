@@ -301,6 +301,7 @@ enum Item {
 }
 
 impl Item {
+    #[allow(dead_code)]
     fn attr_name(&self) -> Option<&str> {
         match self {
             Item::Attr(n, _) => Some(n),

@@ -2,6 +2,7 @@
 //!
 //! Allows external C code to register custom system tasks and functions
 //! via vpi_register_systf.
+#![allow(non_upper_case_globals)]
 
 use super::types::*;
 use std::sync::Mutex;

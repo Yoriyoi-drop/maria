@@ -39,7 +39,7 @@ pub fn tf_free_instance(tfinst: u32) {
     tf_registry().lock().unwrap().remove(&tfinst);
 }
 
-/// tf_getinstance() — instance aktif (thread-local, di-set engine).
+// tf_getinstance() — instance aktif (thread-local, di-set engine).
 thread_local! {
     static CURRENT_TFINST: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
@@ -133,7 +133,7 @@ pub fn tf_sizep(tfinst: u32, n: i32) -> i32 {
     }
 }
 
-/// tf_gettime() — waktu sim saat ini (di-set engine tiap cycle).
+// tf_gettime() — waktu sim saat ini (di-set engine tiap cycle).
 thread_local! {
     static CURRENT_TIME: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }

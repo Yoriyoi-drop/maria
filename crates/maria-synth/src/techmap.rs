@@ -855,7 +855,7 @@ impl<'a> TechMapper<'a> {
     /// (compare/reduce output 1-bit).
     fn build_node_bit(&self, node: &maria_sir::SirNode, i: usize) -> BitFn {
         let sir = self.sir;
-        let w = node.width.max(1);
+        let _w = node.width.max(1);
         // Compare/reduce output 1-bit — lebar operand (bukan lebar output).
         let opw = sir
             .value_width(node.inputs[0])
@@ -1030,7 +1030,7 @@ impl<'a> TechMapper<'a> {
             }
             SirNodeKind::Mul => self.map_mul(nid),
             SirNodeKind::Div | SirNodeKind::Mod | SirNodeKind::TriState => {
-                let w = node.width.max(1);
+        let w = node.width.max(1);
                 self.skipped.push(format!(
                     "node n{} ({}) — belum di-map fase 4; nilai di-tie 0",
                     nid,

@@ -124,6 +124,7 @@ impl<'a> FastLexer<'a> {
     }
 
     /// Get remaining bytes as a slice.
+    #[allow(dead_code)]
     fn remaining(&self) -> &'a [u8] {
         &self.input[self.pos..]
     }
@@ -182,6 +183,7 @@ impl<'a> FastLexer<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn skip_whitespace_scalar(&mut self) {
         let remaining = &self.input[self.pos..];
         let ws_count = crate::frontend::simd::count_whitespace_scalar(remaining);

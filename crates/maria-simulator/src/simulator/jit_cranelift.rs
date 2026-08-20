@@ -312,7 +312,7 @@ impl CraneliftEngine {
         self.module.define_function(id, &mut ctx).ok()?;
 
         // Finalize — generate machine code
-        self.module.finalize_definitions();
+        let _ = self.module.finalize_definitions();
 
         // Get pointer to compiled code
         let code_ptr = self.module.get_finalized_function(id);

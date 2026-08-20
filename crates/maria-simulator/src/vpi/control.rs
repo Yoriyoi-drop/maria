@@ -1,6 +1,7 @@
 //! VPI Control Functions — vpi_control, vpi_get_time.
 //!
 //! Provides simulation control (stop, finish, reset) and time access.
+#![allow(non_upper_case_globals)]
 
 use super::types::*;
 

@@ -2,6 +2,7 @@
 //!
 //! Maps IR design objects (modules, signals, processes, etc.) to VPI handles.
 //! Handles are opaque pointers to internal VpiObject instances.
+#![allow(non_upper_case_globals)]
 
 use super::types::*;
 use maria_ir::*;
@@ -12,6 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Internal VPI object types
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) enum VpiObjectKind {
     Null,
     Module(usize, Symbol),          // index in design.modules
@@ -32,6 +34,7 @@ pub(crate) enum VpiObjectKind {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) enum VpiIteratorKind {
     ModuleSignals,
     ModulePorts,
@@ -57,6 +60,7 @@ impl VpiObject {
         }
     }
 
+    #[allow(dead_code)]
     pub fn null() -> Self {
         VpiObject {
             kind: VpiObjectKind::Null,

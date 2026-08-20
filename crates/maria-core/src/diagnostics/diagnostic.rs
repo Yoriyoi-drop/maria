@@ -167,6 +167,8 @@ pub enum DiagCode {
     SignalFloating,
     /// Driver contention (RT1003)
     SignalContention,
+    /// NBA write conflict — two processes write same signal via NBA in same delta (RT1006)
+    NbaWriteConflict,
     /// Signal width mismatch at runtime (RT1004)
     SignalWidthMismatch,
     /// Uninitialized signal read (RT1005)
@@ -316,6 +318,7 @@ impl DiagCode {
             DiagCode::SignalContention => "RT1003",
             DiagCode::SignalWidthMismatch => "RT1004",
             DiagCode::SignalUninitialized => "RT1005",
+            DiagCode::NbaWriteConflict => "RT1006",
             // Runtime Scheduler
             DiagCode::InfiniteDelta => "RT2001",
             DiagCode::SchedulerDeadlock => "RT2002",
@@ -407,6 +410,7 @@ impl DiagCode {
             DiagCode::SignalUnknown => "signal entered unknown state (X)",
             DiagCode::SignalFloating => "floating signal detected",
             DiagCode::SignalContention => "driver contention",
+            DiagCode::NbaWriteConflict => "NBA write conflict",
             DiagCode::SignalWidthMismatch => "signal width mismatch",
             DiagCode::SignalUninitialized => "uninitialized signal read",
             // Runtime Scheduler
@@ -523,6 +527,8 @@ impl DiagCode {
                 "A signal is not driven by any driver and has no default value.",
             DiagCode::SignalContention =>
                 "Multiple drivers are attempting to drive the same signal with different values.",
+            DiagCode::NbaWriteConflict =>
+                "Two or more processes scheduled non-blocking assignments to the same signal in the same delta cycle. The last assignment wins, which may indicate a race condition.",
             DiagCode::SignalWidthMismatch =>
                 "A signal assignment width does not match the target signal width at runtime.",
             DiagCode::SignalUninitialized =>
@@ -669,6 +675,8 @@ impl DiagCode {
                 "Assign a default value or drive the signal from a valid driver.",
             DiagCode::SignalContention =>
                 "Check for multiple drivers on the same signal and resolve the conflict.",
+            DiagCode::NbaWriteConflict =>
+                "Review the scheduling of non-blocking assignments. If intentional, use a single NBA per signal per delta cycle.",
             DiagCode::SignalWidthMismatch =>
                 "Adjust the width of the assignment to match the target signal.",
             DiagCode::SignalUninitialized =>
@@ -787,6 +795,7 @@ impl DiagCode {
             DiagCode::SignalUnknown
             | DiagCode::SignalFloating
             | DiagCode::SignalContention
+            | DiagCode::NbaWriteConflict
             | DiagCode::SignalWidthMismatch
             | DiagCode::SignalUninitialized => "Signal",
             DiagCode::InfiniteDelta

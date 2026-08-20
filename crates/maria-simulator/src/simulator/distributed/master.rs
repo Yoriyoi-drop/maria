@@ -18,6 +18,7 @@ use crate::simulator::distributed::protocol::*;
 
 /// Status of a connected slave node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum SlaveStatus {
     Connecting,
     Ready,
@@ -28,6 +29,7 @@ pub enum SlaveStatus {
 
 /// Information about a connected slave node.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct SlaveInfo {
     pub partition_id: usize,
     pub stream: Arc<Mutex<TcpStream>>,

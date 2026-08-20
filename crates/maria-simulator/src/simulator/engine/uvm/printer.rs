@@ -6,9 +6,7 @@
 //! https://verificationacademy.com/verification-methodology-reference/uvm-methodology-reference/uvm_printer/
 
 use super::super::SimulationEngine;
-use maria_core::diagnostics::DiagCode;
 use maria_core::error::SimError;
-use maria_core::Symbol;
 use maria_ir::*;
 use crate::simulator::util::*;
 

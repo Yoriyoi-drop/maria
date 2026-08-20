@@ -17,6 +17,7 @@ const MMAP_THRESHOLD: u64 = 4096;
 #[derive(Debug)]
 pub struct MmapFile {
     /// Memory-mapped region (or empty for small files)
+    #[allow(dead_code)]
     mmap: Option<Mmap>,
     /// Bytes content (owned for small files, mmap for large)
     bytes: Box<[u8]>,

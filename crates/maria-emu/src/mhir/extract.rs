@@ -9,8 +9,6 @@
 //! - Back-pointer: instance punya `line/col` asli; signal/register di-resolve
 //!   via `SourceLocator` dari `IrDesign.source_lines`.
 
-use std::collections::HashMap;
-
 use maria_core::intern::Symbol;
 use maria_ir::{ClockEdge, IrDesign, IrLValue, IrModule, IrStmt, Process, SignalId};
 

@@ -3,7 +3,6 @@
 use maria_core::diagnostics::DiagCode;
 use maria_core::error::SimError;
 use maria_ir::*;
-use crate::simulator::util::*;
 use std::io::Write;
 
 use super::SimulationEngine;

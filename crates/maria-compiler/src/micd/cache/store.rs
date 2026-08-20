@@ -28,10 +28,10 @@ use std::path::{Path, PathBuf};
 
 use super::category::CacheCategory;
 use super::index::{CacheIndex, CacheIndexEntry};
-use super::manifest::{CacheManifest, CACHE_SCHEMA_VERSION};
+use super::manifest::CacheManifest;
 use super::stats::CategoryStats;
-use super::super::format::{MdbReader, MdbWriter, Compression, KIND_MANIFEST, KIND_STATS};
-use super::super::lock::{acquire_write_lock, WriteLock};
+use super::super::format::{MdbReader, MdbWriter, KIND_MANIFEST, KIND_STATS};
+use super::super::lock::acquire_write_lock;
 use super::super::txn;
 use super::super::verify::now_ns;
 use crate::cache::compute_checksum;
@@ -501,6 +501,7 @@ impl CategoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::manifest::CACHE_SCHEMA_VERSION;
 
     fn test_root(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

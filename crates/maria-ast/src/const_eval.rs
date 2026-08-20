@@ -604,6 +604,7 @@ pub fn const_eval_with_params(
         // konstanta di localparam/param (mis. `{32 - $bits(...) - 1{1'b0}}` di
         // ibex_cs_registers, `{BeWidth{1'b1}}` di dm_mem). Nilai = pola diulang
         // N kali; lebar pola dari literal eksplisit atau bit-length nilai.
+        #[allow(unreachable_patterns)]
         Expr::Replicate { count, expr } => {
             let n = const_eval_with_params(count, param_vals)?;
             let v = const_eval_with_params(expr, param_vals)?;

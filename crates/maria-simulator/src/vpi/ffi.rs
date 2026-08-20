@@ -209,6 +209,7 @@ pub unsafe extern "C" fn vpi_chk_error() -> i32 {
 ///
 /// `ptr` harus menunjuk ke C string null-terminated yang valid, atau null
 /// (yang mengembalikan "").
+#[allow(dead_code)]
 pub(crate) unsafe fn cstr_to_str<'a>(ptr: *const c_char) -> &'a str {
     if ptr.is_null() {
         return "";

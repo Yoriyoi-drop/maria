@@ -11,7 +11,6 @@ use maria_core::error::SimError;
 use maria_compiler::hir::{LogicVec, ObjId};
 use crate::simulator::types::*;
 use crate::simulator::util::*;
-use maria_core::Symbol;
 
 impl SimulationEngine {
     /// Method builtin `uvm_heartbeat`.

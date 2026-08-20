@@ -26,6 +26,7 @@ impl AccHandle {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) enum AccObject {
     Signal(SignalId, usize),
     Port(SignalId, usize),

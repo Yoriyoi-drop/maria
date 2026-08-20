@@ -1,11 +1,8 @@
 use maria_ast::*;
 use maria_core::diagnostics::DiagCode;
 use maria_core::error::SimError;
-use maria_core::intern::Symbol;
 use maria_ir::*;
 use crate::simulator::engine::SimulationEngine;
-use crate::simulator::state::SimulationState;
-use std::collections::HashMap;
 use std::fmt::Write as _;
 
 pub fn map_ast_binary_op(op: &BinaryOp) -> Result<BinaryIrOp, String> {

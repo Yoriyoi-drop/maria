@@ -39,7 +39,7 @@ fn to_bitmasks(lv: &LogicVec) -> (u64, u64) {
 
 /// Convert u64 bitmasks back to LogicVec.
 fn from_bitmasks(known: u64, value: u64, width: usize) -> LogicVec {
-    let w = width.min(64);
+    let _w = width.min(64);
     let mut bits = Vec::with_capacity(width);
     for i in 0..width {
         if i < 64 {
@@ -67,6 +67,7 @@ fn has_xz(val: &LogicVec) -> bool {
 }
 
 /// Optimized check for any X/Z in a (known, value) pair.
+#[allow(dead_code)]
 fn has_xz_u64(known: u64, width: usize) -> bool {
     let mask = if width == 64 { !0u64 } else { (1u64 << width) - 1 };
     known != mask
@@ -126,7 +127,7 @@ pub fn eval_unary(op: UnaryIrOp, val: &LogicVec) -> LogicVec {
             if val.width <= 64 {
                 // Fast path: u64 bitmasks
                 let (known, value) = to_bitmasks(val);
-                let mask = if val.width == 64 { !0u64 } else { (1u64 << val.width) - 1 };
+                let _mask = if val.width == 64 { !0u64 } else { (1u64 << val.width) - 1 };
                 // Known bits stay known, value is inverted
                 // X/Z bits remain unknown
                 from_bitmasks(known, !value, val.width)

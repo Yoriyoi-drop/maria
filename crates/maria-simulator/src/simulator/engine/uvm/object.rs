@@ -143,14 +143,14 @@ impl SimulationEngine {
                     // Invoke callback_method on each registered callback object
                     let cbs = data.callbacks.clone();
                     for (cb_id, _) in &cbs {
-                        if self.find_method_in_hierarchy(
+                        if self.find_method_quiet(
                             &{
                                 self.state.get_object(*cb_id)
                                     .map(|o| o.class_name.to_string())
                                     .unwrap_or_default()
                             },
                             callback_method,
-                        ).is_ok() {
+                        ).is_some() {
                             self.execute_method(*cb_id, callback_method, args)?;
                         }
                     }

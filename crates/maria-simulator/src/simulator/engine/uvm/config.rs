@@ -10,7 +10,6 @@ use maria_core::Symbol;
 use maria_core::error::SimError;
 use maria_compiler::hir::{LogicVec, ObjId};
 use maria_ir::IrExpr;
-use crate::simulator::types::*;
 use crate::simulator::util::*;
 
 /// Wildcard match — `*` match zero-or-more karakter (termasuk `.`), `?`

@@ -598,8 +598,8 @@ impl SimulationEngine {
                     if let Some(obj) = self.state.get_object(obj_id) {
                         if !obj.class_name.is_empty() {
                             if self
-                                .find_method_in_hierarchy(obj.class_name.as_str(), name.as_str())
-                                .is_ok()
+                                .find_method_quiet(obj.class_name.as_str(), name.as_str())
+                                .is_some()
                             {
                                 return self.execute_method(obj_id, name.as_str(), &arg_vals);
                             }

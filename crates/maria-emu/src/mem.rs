@@ -7,8 +7,6 @@
 
 use maria_core::intern::Symbol;
 
-use crate::mhir::types::AddressRegion;
-
 /// Jenis region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegionKind {

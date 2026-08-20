@@ -860,7 +860,6 @@ pub fn eval_package_constants(
                                                 )),
                                                 *v,
                                             );
-                                            changed = true;
                                         }
                                     }
                                 }
@@ -891,7 +890,6 @@ pub fn eval_package_constants(
                                         )),
                                         *v,
                                     );
-                                    changed = true;
                                 }
                             }
                         }
@@ -907,7 +905,7 @@ pub fn eval_package_constants(
             // Enum member constants package → scalar (qualified + plain-by-context).
             // Ini membuat `import pkg::*` bisa memakai nama member enum (mis.
             // `NumTotalCmdInfo`) sebagai konstanta integer dalam ekspresi parameter.
-            for (name, item) in items {
+            for (_name, item) in items {
                 let PackageItem::Typedef(td) = item else { continue };
                 let crate::types::DataType::EnumType { members, .. } = &td.dtype else { continue };
                 let mut last = 0i64;

@@ -8,7 +8,6 @@
 
 use maria_ir::{LogicVal, LogicVec};
 use std::os::raw::c_char;
-use std::os::raw::c_void;
 
 // ─── Value Formats (IEEE 1076-2008) ───
 

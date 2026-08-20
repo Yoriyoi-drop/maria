@@ -381,12 +381,12 @@ fn unary_op_str(op: &maria_ast::expr::UnaryOp) -> &'static str {
         Minus => "-",
         BitNot => "~",
         Not => "!",
-        And => "&",
-        Nand => "~&",
-        Or => "|",
-        Nor => "~|",
-        Xor => "^",
-        Xnor => "~^",
+        ReductionAnd => "&",
+        ReductionNand => "~&",
+        ReductionOr => "|",
+        ReductionNor => "~|",
+        ReductionXor => "^",
+        ReductionXnor => "~^",
     }
 }
 

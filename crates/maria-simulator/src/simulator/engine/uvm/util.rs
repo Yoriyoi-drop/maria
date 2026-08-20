@@ -158,17 +158,22 @@ impl SimulationEngine {
         }
     }
 
-    pub(crate) fn find_method_in_hierarchy(
+    /// Probe method di class hierarchy TANPA mencatat diagnostic (murni
+    /// kueri — aman dipanggil oleh `.is_ok()`/`.is_some()`). Mengembalikan
+    /// method dari walk, atau synthetic no-op untuk phase callback yang
+    /// diwarisi dari library class, atau None bila method tidak ada.
+    ///
+    /// PENTING: tidak push ke diag_sink — pemanggil yang butuh error nyata
+    /// (execute_method normal dispatch) harus mencatat sendiri via diag_error.
+    pub(crate) fn find_method_quiet(
         &self,
         class_name: &str,
         method: &str,
-    ) -> Result<IrClassMethod, SimError> {
+    ) -> Option<IrClassMethod> {
         let mut current = class_name;
-        let mut found_class = false;
         while let Some(cls) = self.design.classes.get(&Symbol::intern(current)) {
-            found_class = true;
             if let Some(m) = cls.methods.iter().find(|m| m.name == method) {
-                return Ok(m.clone());
+                return Some(m.clone());
             }
             if let Some(parent) = &cls.extends {
                 current = parent.as_str();
@@ -176,21 +181,36 @@ impl SimulationEngine {
                 break;
             }
         }
-        // Jika hierarchy walk berhenti karena PARENT class tidak ada di design
-        // tapi nama parent diawali `uvm_`, method diwarisi dari UVM library
-        // (build_phase/connect_phase/dll adalah no-op di base class).
-        // Return synthetic method supaya callers (.is_ok()) tidak gagal.
+        // Hierarchy walk berhenti karena class/parent tidak ada di design
+        // (library class yang tidak di-compile — UVM, CIP, DV environment).
+        // Jika method adalah PHASE CALLBACK (no-op di base class library),
+        // return synthetic method supaya callers tidak gagal RT8001.
         //
-        // PENTING: hanya synthesize bila class asli DITEMUKAN di design
-        // (walk masuk loop). Class builtin UVM yang TIDAK terdaftar di
-        // design.classes (mis. `uvm_table_printer`/`uvm_event`/`uvm_barrier` —
-        // object dibuat dengan class_name polos, bukan `__uvm_*`) method-nya
-        // ditangani execute_uvm_*_method di layer dispatch → harus Err agar
-        // user_override=false dan dispatch builtin berjalan. Tanpa guard ini
-        // synthetic method membuat user_override=true untuk SEMUA method
-        // class builtin → dispatch UVM di-skip → error "X not implemented".
-        if found_class && current.starts_with("uvm_") {
-            return Ok(IrClassMethod {
+        // Contoh: i2c_scoreboard → cip_base_scoreboard → uvm_scoreboard.
+        // cip_base_scoreboard tidak di-compile tapi phase callback-nya no-op.
+        //
+        // HANYA method PHASE CALLBACK yang di-synthesize — method builtin
+        // NON-phase (get_next_item/item_done/set_sequencer/dll) tetap None
+        // supaya dispatch ke execute_uvm_*_method builtin berjalan.
+        const PHASE_CALLBACKS: &[&str] = &[
+            "build_phase",
+            "connect_phase",
+            "end_of_elaboration_phase",
+            "start_of_simulation_phase",
+            "run_phase",
+            "extract_phase",
+            "check_phase",
+            "report_phase",
+            "final_phase",
+            "reset_phase",
+            "configure_phase",
+            "main_phase",
+            "shutdown_phase",
+        ];
+        if PHASE_CALLBACKS.contains(&method)
+            && !self.design.classes.contains_key(&Symbol::intern(current))
+        {
+            return Some(IrClassMethod {
                 name: Symbol::intern(method),
                 is_task: method == "run_phase",
                 virtual_flag: true,
@@ -200,10 +220,23 @@ impl SimulationEngine {
                 stmts: vec![],
             });
         }
-        Err(self.diag_error(
-            DiagCode::DpiError,
-            format!("method '{}' not found in class '{}' or its parents", method, class_name),
-        ))
+        None
+    }
+
+    /// Cari method di class hierarchy; bila tidak ada, catat error ke
+    /// diag_sink dan return Err. HANYA untuk pemanggil yang menginginkan
+    /// error fatal (normal dispatch method yang benar-benar harus ada).
+    pub(crate) fn find_method_in_hierarchy(
+        &self,
+        class_name: &str,
+        method: &str,
+    ) -> Result<IrClassMethod, SimError> {
+        self.find_method_quiet(class_name, method).ok_or_else(|| {
+            self.diag_error(
+                DiagCode::DpiError,
+                format!("method '{}' not found in class '{}' or its parents", method, class_name),
+            )
+        })
     }
 }
 impl SimulationEngine {

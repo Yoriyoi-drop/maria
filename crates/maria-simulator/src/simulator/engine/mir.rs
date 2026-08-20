@@ -798,7 +798,7 @@ impl SimulationEngine {
                 if *current != new_lv {
                     if nba_targets.contains(&i) {
                         // Non-blocking assign: queue to nba_pending for NBA region commit
-                        self.nba_pending.push((IrLValue::Signal(i, current.width), new_lv));
+                        self.push_nba_pending(IrLValue::Signal(i, current.width), new_lv);
                     } else {
                         // Blocking assign: apply directly
                         self.state.write_signal(i, new_lv);

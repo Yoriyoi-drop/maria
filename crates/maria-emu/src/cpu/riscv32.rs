@@ -574,7 +574,7 @@ impl Rv32Cpu {
             }
             Instr::Csr { op, rd, rs1, csr, zimm } => {
                 let old = self.csr_read(csr).ok_or(ExecErr::Illegal(0))?;
-                let (new, wval) = match op {
+                let (new, _wval) = match op {
                     // BUG FIX: CSRRW (op=1) menulis nilai REGISTER rs1 —
                     // sebelumnya menulis `zimm` (= field rs1 sebagai angka),
                     // sehingga `csrrw x0, mtvec, a0` (a0=0x800) menyetel mtvec=10

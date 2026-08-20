@@ -107,7 +107,7 @@ fn parse_vcd(path: &str) -> Result<VcdData, SimError> {
                 if parts.len() >= 2 {
                     scope.push(parts[1].to_string());
                 }
-            } else if let Some(rest) = line.strip_prefix("$upscope") {
+            } else if let Some(_rest) = line.strip_prefix("$upscope") {
                 scope.pop();
             } else if let Some(rest) = line.strip_prefix("$var") {
                 let parts: Vec<&str> = rest.split_whitespace().collect();

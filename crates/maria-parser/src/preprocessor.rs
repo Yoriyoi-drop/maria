@@ -399,6 +399,7 @@ impl Preprocessor {
         Ok(output)
     }
 
+    #[allow(dead_code)]
     fn is_emitting(&self, stack: &[CondFrame]) -> bool {
         stack.iter().all(|f| f.taking_branch)
     }

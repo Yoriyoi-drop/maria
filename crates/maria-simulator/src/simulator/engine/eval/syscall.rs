@@ -2,7 +2,6 @@ use super::super::SimulationEngine;
 use maria_core::error::SimError;
 use maria_ir::*;
 use maria_ast::*;
-use crate::simulator::util::*;
 use rand::Rng;
 
 impl SimulationEngine {
@@ -472,7 +471,7 @@ impl SimulationEngine {
                     ) else {
                         continue;
                     };
-                    let (Some(&data_chg), Some(&ref_chg)) = (
+                    let (Some(&_data_chg), Some(&_ref_chg)) = (
                         self.signal_last_change.get(&dsid),
                         self.signal_last_change.get(&rsid),
                     ) else {

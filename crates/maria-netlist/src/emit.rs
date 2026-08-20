@@ -123,14 +123,14 @@ fn cell_module(kind: &CellKind) -> String {
             "module DFFE #(parameter W = 1)(input c, input ce, input [W-1:0] d, output reg [W-1:0] q);\n  always_ff @(posedge c) if (ce) q <= d;\nendmodule"
                 .into()
         }
-        CellKind::DffR { reset_value, polarity, r#async } => {
+        CellKind::DffR { reset_value: _, polarity, r#async } => {
             let (edge, cond) = reset_cond(*polarity, *r#async);
             format!(
                 "module {name} #(parameter W = 1, parameter RST = 0)(input c, input r, input [W-1:0] d, output reg [W-1:0] q);\n  always_ff @(posedge c{edge}) if ({cond}) q <= RST; else q <= d;\nendmodule",
                 edge = edge, cond = cond
             )
         }
-        CellKind::DffRE { reset_value, polarity, r#async } => {
+        CellKind::DffRE { reset_value: _, polarity, r#async } => {
             let (edge, cond) = reset_cond(*polarity, *r#async);
             format!(
                 "module {name} #(parameter W = 1, parameter RST = 0)(input c, input r, input ce, input [W-1:0] d, output reg [W-1:0] q);\n  always_ff @(posedge c{edge}) if ({cond}) q <= RST; else if (ce) q <= d;\nendmodule",
@@ -267,7 +267,6 @@ fn emit_instance(s: &mut String, c: &CellInstance, nl: &Netlist) {
     line.push(' ');
     let mut conns = Vec::new();
     for pin in &c.inputs {
-        let net = &nl.nets[pin.net];
         // Selalu referensi net (konstanta sudah jadi wire + assign di top).
         // Bit-select `.i0(a[3])` dipakai LUT/carry saat koneksi ke bit tertentu.
         conns.push(format!(".{}({})", pin.pin, net_ref(&nl, pin)));

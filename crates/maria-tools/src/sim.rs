@@ -25,7 +25,7 @@ pub struct SimArgs<'a> {
 /// Jalankan msim.
 pub fn run(args: &SimArgs) -> Result<(), SimError> {
     // Use StrictSimulation mode for simulation tools (Rule 10)
-    let (session, _design, ir) = open_elaborated(args.files, args.incdirs, args.defines, args.top, ElaborateMode::StrictSimulation)?;
+    let (_session, _design, ir) = open_elaborated(args.files, args.incdirs, args.defines, args.top, ElaborateMode::StrictSimulation)?;
     let top_name = ir.top.name.as_str();
 
     let mut engine = SimulationEngine::new(ir, args.max_time);

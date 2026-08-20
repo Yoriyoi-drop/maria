@@ -51,6 +51,7 @@ fn write_str<W: Write>(w: &mut W, s: &str) -> io::Result<()> {
     w.write_all(bytes)
 }
 
+#[allow(dead_code)]
 fn read_str<R: Read>(r: &mut R) -> io::Result<String> {
     let len = read_usize(r)?;
     let mut buf = vec![0u8; len];
@@ -103,6 +104,7 @@ fn read_logic_vec<R: Read>(r: &mut R) -> io::Result<LogicVec> {
 
 /// A single history entry stored on disk.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct SpillEntry {
     pub name: Symbol,
     pub time: u64,

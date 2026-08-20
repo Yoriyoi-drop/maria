@@ -4,7 +4,7 @@
 //! `vpi_startup`) → ABI validation → registrasi system task/function.
 //! Murni adapter: library C ABI tidak diterjemahkan ke Rust (poin 3).
 
-use crate::foreign::loader::{current_abi, find_library, AbiInfo};
+use crate::foreign::loader::AbiInfo;
 use std::path::PathBuf;
 
 /// Deskripsi library PLI yang sudah dimuat.
@@ -24,7 +24,7 @@ impl std::fmt::Debug for LoadedPli {
 /// Cari + muat library PLI.
 #[cfg(feature = "dpi")]
 pub fn load_pli_library(name: &str) -> Result<LoadedPli, String> {
-    use crate::foreign::loader::load_library;
+    use crate::foreign::loader::{load_library, find_library, current_abi};
     let search = crate::foreign::loader::default_search_paths();
     let path = find_library(name, &search)
         .ok_or_else(|| format!("PLI library '{}' not found in search paths", name))?;
@@ -80,6 +80,7 @@ pub fn pli_cleanup() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::foreign::loader::current_abi;
 
     #[test]
     fn test_load_missing_pli_library_errors() {

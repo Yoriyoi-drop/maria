@@ -21,6 +21,7 @@ pub struct BenchArgs<'a> {
 struct RunResult {
     total_ms: u64,
     parse_ms: u64,
+    #[allow(dead_code)]
     elab_ms: u64,
     processed: usize,
     cached: usize,
@@ -57,7 +58,7 @@ pub fn run(args: &BenchArgs) -> Result<(), SimError> {
 
     let mut results: Vec<RunResult> = Vec::new();
     for i in 0..runs {
-        let mut cfg = cfg_template.clone();
+        let cfg = cfg_template.clone();
         let mut session = CompileSession::new(cfg);
 
         let start = Instant::now();

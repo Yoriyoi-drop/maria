@@ -144,6 +144,7 @@ impl<T> Default for TypedArena<T> {
 #[allow(dead_code)]
 pub struct ArenaIdx(pub u32);
 
+#[allow(dead_code)]
 impl ArenaIdx {
     pub fn as_usize(self) -> usize {
         self.0 as usize
@@ -155,10 +156,12 @@ impl ArenaIdx {
 }
 
 /// Wrapper for arena-backed slices.
+#[allow(dead_code)]
 pub struct ArenaSlice<'a, T> {
     data: &'a [T],
 }
 
+#[allow(dead_code)]
 impl<'a, T> ArenaSlice<'a, T> {
     pub fn new(data: &'a [T]) -> Self {
         ArenaSlice { data }

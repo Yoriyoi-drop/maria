@@ -3,7 +3,7 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 

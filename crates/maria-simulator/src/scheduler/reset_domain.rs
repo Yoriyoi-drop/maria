@@ -22,7 +22,7 @@
 use std::collections::{HashMap, HashSet};
 use maria_ir::*;
 use crate::scheduler::cdc::{
-    collect_stmt_signal_reads, collect_writes_from_stmts, lvalue_collect_signal_ids,
+    collect_stmt_signal_reads, collect_writes_from_stmts,
 };
 
 /// Severity crossing reset-domain.

@@ -6,7 +6,6 @@
 
 use super::handle::{VhpiHandle, VhpiObjectKind};
 use super::object::*;
-use super::value::*;
 use maria_ir::SignalKind;
 
 /// vhpi_iterate(kind, ref_handle) — iterator object terkait ref_handle.

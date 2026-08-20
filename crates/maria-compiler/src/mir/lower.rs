@@ -416,7 +416,7 @@ fn lower_expr(
             });
         }
 
-        HirExpr::Ternary { cond, then, else_, width } => {
+        HirExpr::Ternary { cond, then, else_, width: _width } => {
             // a ? b : c → if a { result = b } else { result = c }
             let cond_reg = alloc_temp(mir);
             lower_expr(cond, instrs, mir, cond_reg);

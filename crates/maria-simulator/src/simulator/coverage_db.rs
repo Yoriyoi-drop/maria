@@ -246,7 +246,7 @@ impl CoverageDatabase {
             // (`cg.i<id>.cp`). Jumlahkan SEMUA key ber-prefix `cg.` agar db
             // tetap menerima total agregat.
             let prefix = format!("{}.", cg.name);
-            let mut sum_key = |item: &str,
+            let sum_key = |item: &str,
                                total_map: &HashMap<Symbol, u64>,
                                hits_map: &HashMap<Symbol, u64>,
                                bins_map: &HashMap<Symbol, HashMap<Symbol, u64>>|

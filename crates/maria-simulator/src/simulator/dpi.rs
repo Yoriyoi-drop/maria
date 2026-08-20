@@ -104,6 +104,7 @@ pub fn current_scope_from_path(path: &str) -> svScope {
 
 /// A single loaded C function, ready to call.
 pub(crate) struct DpiFunction {
+    #[allow(dead_code)]
     pub name: String,
     pub return_width: usize,
     pub arg_widths: Vec<usize>,

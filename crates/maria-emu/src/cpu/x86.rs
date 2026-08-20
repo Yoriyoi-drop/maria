@@ -195,6 +195,7 @@ impl X86Cpu {
     }
 
     /// Set flag aritmatika/logika untuk hasil 16-bit.
+    #[allow(dead_code)]
     fn set_arith16(&mut self, result: u16, carry: bool, overflow: bool, input: u16, operand: u16) {
         self.r16_set(0, result); // GPR[0]=AX dipakai sementara oleh pemanggil
         let _ = (input, operand);
@@ -206,6 +207,7 @@ impl X86Cpu {
     }
 
     /// Set flag hasil logika (CF/OF di-clear) 16-bit.
+    #[allow(dead_code)]
     fn set_logic16(&mut self, result: u16) {
         self.set_flag(FLAG_CF, false);
         self.set_flag(FLAG_OF, false);
@@ -215,6 +217,7 @@ impl X86Cpu {
     }
 
     /// Set flag aritmatika 32-bit (prefix 66).
+    #[allow(dead_code)]
     fn set_arith32(&mut self, result: u32, carry: bool, overflow: bool) {
         self.set_flag(FLAG_CF, carry);
         self.set_flag(FLAG_OF, overflow);
@@ -378,6 +381,7 @@ struct ModRm {
 /// Alamat efektif 16-bit (real mode).
 struct Ea {
     /// Alamat linear 20-bit.
+    #[allow(dead_code)]
     lin: u64,
     /// Segment yang dipakai.
     seg: u16,
@@ -411,7 +415,7 @@ impl X86Cpu {
         let base_ss = modrm.rm == 2 || modrm.rm == 3 || modrm.rm == 6; // bp-based → SS
         let default_seg = if base_ss { self.ss } else { self.ds };
         let seg = seg_ov.unwrap_or(default_seg);
-        let mut off: u32 = 0;
+        let mut off: u32;
         // GPR index: 0=ax 1=cx 2=dx 3=bx 4=sp 5=bp 6=si 7=di
         match modrm.rm {
             0 => off = self.r16(3) as u32 + self.r16(6) as u32, // bx+si
@@ -446,7 +450,7 @@ impl X86Cpu {
             return Ok(Ea { lin: 0, seg: 0, off: 0, is_reg: true, reg: modrm.rm });
         }
         let rm = modrm.rm;
-        let mut off: u32 = 0;
+        let mut off: u32;
         let mut base_ss = false;
         let mut no_base = false;
         if rm == 4 {
@@ -607,7 +611,7 @@ impl X86Cpu {
         rep: bool,
         mem: &mut dyn MemoryPort,
     ) -> Result<(), CpuFault> {
-        let wide = opsz == 32 || (op & 1) == 1; // default lebar dari bit LSB opcode
+        let _wide = opsz == 32 || (op & 1) == 1; // default lebar dari bit LSB opcode
         match op {
             // ── mov r/m, r8/16/32 (88/89) ──
             0x88 | 0x89 => {
@@ -718,7 +722,7 @@ impl X86Cpu {
         rep: bool,
         mem: &mut dyn MemoryPort,
     ) -> Result<(), CpuFault> {
-        let wide = opsz == 32 || (op & 1) == 1;
+        let _wide = opsz == 32 || (op & 1) == 1;
         match op {
             // ── prefix 0f (jcc rel32, movzx/movsx) — HARUS sebelum 0x00..=0x3f ──
             0x0f => self.exec_0f_group(opsz, mem)?,
@@ -1661,7 +1665,7 @@ impl X86Cpu {
         seg_ov: Option<u16>,
         mem: &mut dyn MemoryPort,
     ) -> Result<(), CpuFault> {
-        let wide = opsz == 32;
+        let _wide = opsz == 32;
         let mr = self.fetch8(mem)?;
         let m = ModRm { m: mr >> 6, r: (mr >> 3) & 7, rm: mr & 7 };
         let ea = self.ea16(mem, m, seg_ov)?;
@@ -2105,7 +2109,7 @@ impl X86Cpu {
             }
             0x02 => {
                 // read CHS: ch=cyl, cl=sect(+cyl bit 7-6), dh=head, dl=drive; es:bx = buffer
-                let cyl = ((self.r8h(1) as u64) | (((self.r8(1) >> 6) & 3) as u64) << 8);
+                let cyl = (self.r8h(1) as u64) | (((self.r8(1) >> 6) & 3) as u64) << 8;
                 let sect = (self.r8(1) & 0x3f) as u64;
                 let dh = self.r8h(2) as u64;
                 let al = self.r8(0) as u64;

@@ -138,6 +138,7 @@ impl SimulationEngine {
     }
 
     /// Create a unique branch key for a conditional statement.
+    #[allow(dead_code)]
     fn branch_key(process_name: &str, branch_type: &str, idx: usize) -> Symbol {
         Symbol::intern(&format!("{}.{}#{}", process_name, branch_type, idx))
     }

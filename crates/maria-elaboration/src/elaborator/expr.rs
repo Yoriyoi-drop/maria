@@ -5,6 +5,7 @@ use super::super::util::*;
 use maria_ast::types::{const_eval_simple, const_eval_with_params};
 use maria_ast::*;
 use maria_core::diagnostics::diagnostic::DiagCode;
+use maria_core::diagnostics::suggest::suggest_name;
 use maria_core::error::SimError;
 
 use maria_core::intern::Symbol;
@@ -146,7 +147,15 @@ impl Elaborator {
                 }
                 let sig_id = signal_map
                     .get(name)
-                    .ok_or_else(|| self.elab_diag_at(DiagCode::UndefinedSignal, format!("signal '{}' not found", name), *line, *col))?;
+                    .ok_or_else(|| {
+                        let mut candidates: Vec<&str> = signal_map.keys().map(|s| s.as_str()).collect();
+                        for k in self.param_vals.keys() { candidates.push(k.as_str()); }
+                        for k in self.pkg_param_ctx.keys() { candidates.push(k.as_str()); }
+                        let hint = suggest_name(name.as_str(), candidates.into_iter())
+                            .map(|(s, _)| format!(" — did you mean '{}'?", s))
+                            .unwrap_or_default();
+                        self.elab_diag_at(DiagCode::UndefinedSignal, format!("signal '{}' not found{}", name, hint), *line, *col)
+                    })?;
                 Ok(IrExpr::Signal(*sig_id, 0))
             }
             Expr::ScopedIdent {
@@ -2168,7 +2177,7 @@ impl Elaborator {
     ) -> usize {
         let mut total = 1usize;
         let mut any = false;
-        let mut eval = |er: &ExprRange, total: &mut usize, any: &mut bool| {
+        let eval = |er: &ExprRange, total: &mut usize, any: &mut bool| {
             let msb = const_eval_params(&er.msb, params)
                 .or_else(|_| const_eval_simple(&er.msb));
             let lsb = const_eval_params(&er.lsb, params)

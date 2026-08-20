@@ -436,7 +436,7 @@ impl SimulationEngine {
             // Restore konteks method task sebelum resume continuation.
             let old_this = self.current_this;
             let old_method = self.current_method;
-            let old_locals = std::mem::replace(&mut self.method_locals, pe.locals.clone());
+            let _old_locals = std::mem::replace(&mut self.method_locals, pe.locals.clone());
             self.current_this = pe.this;
             self.current_method = pe.method;
             matched = true;
@@ -808,6 +808,29 @@ impl SimulationEngine {
                 let _ = self.write_lvalue(&lvalue, val);
             }
         }
+    }
+
+    /// SIM-14: Push NBA write ke pending list dengan deteksi write conflict.
+    /// Jika signal yang sama sudah punya NBA pending → warning RT1006.
+    pub(crate) fn push_nba_pending(&mut self, lvalue: IrLValue, val: LogicVec) {
+        if let Some(new_id) = self.signal_id_from_lvalue(&lvalue) {
+            for (existing_lvalue, _) in &self.nba_pending {
+                if let Some(existing_id) = self.signal_id_from_lvalue(existing_lvalue) {
+                    if existing_id == new_id {
+                        self.emit_warning(
+                            maria_core::diagnostics::DiagCode::NbaWriteConflict,
+                            format!(
+                                "NBA write conflict on signal id={} at time {}: \
+                                 multiple non-blocking assignments to the same signal in one delta cycle",
+                                new_id, self.state.time
+                            ),
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+        self.nba_pending.push((lvalue, val));
     }
 
     pub(crate) fn signal_id_from_lvalue(&self, lvalue: &IrLValue) -> Option<SignalId> {

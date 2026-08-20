@@ -167,6 +167,7 @@ pub struct CdcAnalysis {
 // ─── Helpers ───
 
 /// Get the clock signal name from a process.
+#[allow(dead_code)]
 fn get_clock_name(process: &Process, signals: &[SignalInfo]) -> String {
     match process {
         Process::Sequential { clock, .. } => {

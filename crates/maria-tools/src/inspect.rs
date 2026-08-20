@@ -634,7 +634,7 @@ fn interfaces(design: &maria_ast::types::Design) -> Result<(), maria_core::error
 /// Parameter per module.
 fn parameters(
     design: &maria_ast::types::Design,
-    top: Option<&str>,
+    _top: Option<&str>,
 ) -> Result<(), maria_core::error::SimError> {
     section("Parameters");
     let mut mods: Vec<(Symbol, Module)> = design

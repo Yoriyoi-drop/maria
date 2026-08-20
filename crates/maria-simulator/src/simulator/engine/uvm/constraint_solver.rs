@@ -1,4 +1,4 @@
-use maria_ast::expr::{BinaryOp, DistItem, DistWeight, Expr, UnaryOp, Value};
+use maria_ast::expr::{BinaryOp, DistItem, Expr, UnaryOp, Value};
 use maria_ast::types::ConstraintItem;
 use maria_ast::types::is_signed_type;
 use maria_core::diagnostics::DiagCode;
@@ -417,7 +417,7 @@ impl SimulationEngine {
             .wrapping_mul(0x9E37_79B9_7F4A_7C15)
             .wrapping_add((obj_id as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9));
 
-        for attempt_n in 0..max_attempts {
+        for _attempt_n in 0..max_attempts {
             // Generate values for rand fields in order
             for fname in &ordered_fields {
                 let domain = domains.get(fname).cloned().unwrap_or_default();

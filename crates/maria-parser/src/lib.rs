@@ -941,6 +941,20 @@ let mut _last_pos = self.pos.get();
                 self.parse_syscall()?;
                 Ok(None)
             }
+            // LANG-03 PSL: directive `default clock = posedge clk;` —
+            // deklarasi clock default untuk assertion PSL (IEEE 1850).
+            // Tidak ada efek runtime (klaim PSL kita selalu menyebut clock
+            // eksplisit `@(posedge clk)`); parse & buang agar file PSL
+            // tidak error di module body.
+            Token::Default => {
+                self.advance(); // 'default'
+                // `default clock = <event>;` — skip token sampai ';'
+                while self.peek() != &Token::Semi && self.peek() != &Token::Eof {
+                    self.advance();
+                }
+                self.skip_semi();
+                Ok(None)
+            }
             Token::Const => {
                 self.advance(); // consume 'const'
                 let mut decl = self.parse_decl()?;
@@ -1715,6 +1729,7 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                     Ok(None)
                 }
             }
+            #[allow(unreachable_patterns)]
             Token::Assert | Token::Assume | Token::Cover | Token::Expect => {
                 self.skip_until_semi_or_end()?;
                 Ok(None)

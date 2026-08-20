@@ -200,7 +200,7 @@ impl SimulationEngine {
                 }
                 // Call body()
                 if self
-                    .find_method_in_hierarchy(
+                    .find_method_quiet(
                         &{
                             self.state
                                 .get_object(obj_id)
@@ -209,7 +209,7 @@ impl SimulationEngine {
                         },
                         "body",
                     )
-                    .is_ok()
+                    .is_some()
                 {
                     self.execute_method(obj_id, "body", &[])?;
                 }
@@ -565,7 +565,7 @@ impl SimulationEngine {
                 };
                 if parent != 0
                     && !parent_name.is_empty()
-                    && self.find_method_in_hierarchy(&parent_name, "write").is_ok()
+                    && self.find_method_quiet(&parent_name, "write").is_some()
                 {
                     let write_args = vec![LogicVec::from_u64(item_id as u64, 64)];
                     self.execute_method(parent, "write", &write_args)?;

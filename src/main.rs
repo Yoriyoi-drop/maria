@@ -42,7 +42,7 @@ fn emit_diags(diags: &[maria_core::diagnostics::diagnostic::Diagnostic]) {
 /// pertama (file:line:col) agar user langsung tahu di mana memperbaiki.
 /// Prioritas: source_snippet (punya line:col) → span (byte offset) → tanpa lokasi.
 fn elab_abort_diag(
-    elab_errs: usize,
+    _elab_errs: usize,
     diags: &[maria_core::diagnostics::diagnostic::Diagnostic],
     message: impl Into<String>,
 ) -> maria_core::diagnostics::diagnostic::Diagnostic {
@@ -1351,13 +1351,13 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
             restored_legacy_ir = micd.restore_elaborate_ir(top);
         }
     }
-    let mut from_legacy_cache = false;
+    let mut _from_legacy_cache = false;
     let mut elab_diags: Vec<maria_core::diagnostics::Diagnostic> = Vec::new();
     let mut recovered = false;
     let mut elaborator_opt: Option<Elaborator> = None;
     let mut ir_design = match restored_legacy_ir {
         Some(ir) => {
-            from_legacy_cache = true;
+            _from_legacy_cache = true;
             if !cli.quiet && !anim_active(&anim) {
                 eprintln!("[MICD] IR cache hit — elaborator di-skip (top '{}')", ir.top.name);
             }
@@ -1409,11 +1409,11 @@ fn run(cli: Cli, env: &mut maria_api::env::GlobalEnv) -> Result<(), SimError> {
 
     // ── Simulation Readiness Check (Rule 6) ──
     // Check all prerequisites before starting simulation
-    let parse_ok = true; // Already passed if we got here
-    let semantic_ok = true; // Already checked during elaboration
-    let hierarchy_ok = true; // Checked during elaboration
-    let top_resolution_ok = true; // Checked during elaboration
-    let dpi_linking_ok = true; // Will be checked later
+    let _parse_ok = true; // Already passed if we got here
+    let _semantic_ok = true; // Already checked during elaboration
+    let _hierarchy_ok = true; // Checked during elaboration
+    let _top_resolution_ok = true; // Checked during elaboration
+    let _dpi_linking_ok = true; // Will be checked later
     
     // Check for elaboration errors
     let elab_errs = elab_diags.iter().filter(|d| d.is_error()).count();
@@ -2372,7 +2372,7 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
         }
     }
 
-    let (mut ir_design, mut elab_diags, mut recovered, mut from_cache);
+    let (ir_design, elab_diags, recovered, from_cache);
     let mut elab_opt: Option<Elaborator> = None;
     if let Some(ir) = restored_ir {
         ir_design = ir;

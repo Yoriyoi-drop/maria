@@ -5,7 +5,7 @@
 //! Murni adapter: library eksternal tetap C ABI, tidak diterjemahkan ke Rust.
 
 use super::object;
-use crate::foreign::loader::{current_abi, find_library, AbiInfo};
+use crate::foreign::loader::AbiInfo;
 use std::path::PathBuf;
 
 /// Deskripsi library VHPI yang sudah dimuat.
@@ -25,7 +25,7 @@ impl std::fmt::Debug for LoadedVhpi {
 /// Cari + muat library VHPI. `name` bisa path penuh atau nama (`libfoo.so`).
 #[cfg(feature = "dpi")]
 pub fn load_vhpi_library(name: &str) -> Result<LoadedVhpi, String> {
-    use crate::foreign::loader::load_library;
+    use crate::foreign::loader::{load_library, find_library, current_abi};
     let search = crate::foreign::loader::default_search_paths();
     let path = find_library(name, &search)
         .ok_or_else(|| format!("VHPI library '{}' not found in search paths", name))?;
@@ -69,6 +69,7 @@ pub fn vhpi_cleanup() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::foreign::loader::current_abi;
 
     #[test]
     fn test_abi_info_reports_current() {

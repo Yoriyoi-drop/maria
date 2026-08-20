@@ -2,6 +2,7 @@
 //!
 //! Converts between VPI value formats (IntVal, VectorVal, BinStrVal, etc.)
 //! and internal LogicVec representation.
+#![allow(non_upper_case_globals)]
 
 use super::handle::*;
 use super::types::*;
