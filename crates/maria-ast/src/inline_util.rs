@@ -665,6 +665,19 @@ pub(crate) fn rename_in_stmt(stmt: &Stmt, rename_map: &HashMap<Symbol, Symbol>) 
             clock_event: None,
             disable_iff: None,
         },
+        Stmt::PropertySeq {
+            sequence,
+            pass_stmt,
+            fail_stmt,
+            clock_event,
+            disable_iff,
+        } => Stmt::PropertySeq {
+            sequence: rename_in_sequence(sequence, rename_map),
+            pass_stmt: pass_stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
+            fail_stmt: fail_stmt.map(|s| Box::new(rename_in_stmt(&s, rename_map))),
+            clock_event,
+            disable_iff: disable_iff.map(|e| Box::new(rename_in_expr(*e, rename_map))),
+        },
         Stmt::Assume {
             cond,
             pass_stmt,
@@ -785,6 +798,38 @@ pub(crate) fn rename_func_decls_in_stmt(stmt: Stmt, rename_map: &HashMap<Symbol,
                 .collect(),
         },
         other => other,
+    }
+}
+
+pub(crate) fn rename_in_sequence(
+    sequence: super::types::Sequence,
+    rename_map: &HashMap<Symbol, Symbol>,
+) -> super::types::Sequence {
+    use super::types::Sequence;
+    match sequence {
+        Sequence::Expr(e) => Sequence::Expr(rename_in_expr(e, rename_map)),
+        Sequence::Delay(n) => Sequence::Delay(n),
+        Sequence::DelayRange(a, b) => Sequence::DelayRange(a, b),
+        Sequence::Concat(l, r) => Sequence::Concat(
+            Box::new(rename_in_sequence(*l, rename_map)),
+            Box::new(rename_in_sequence(*r, rename_map)),
+        ),
+        Sequence::Or(l, r) => Sequence::Or(
+            Box::new(rename_in_sequence(*l, rename_map)),
+            Box::new(rename_in_sequence(*r, rename_map)),
+        ),
+        Sequence::And(l, r) => Sequence::And(
+            Box::new(rename_in_sequence(*l, rename_map)),
+            Box::new(rename_in_sequence(*r, rename_map)),
+        ),
+        Sequence::Repeat(s, n) => Sequence::Repeat(
+            Box::new(rename_in_sequence(*s, rename_map)),
+            n,
+        ),
+        Sequence::Implication(ante, cons) => Sequence::Implication(
+            Box::new(rename_in_sequence(*ante, rename_map)),
+            Box::new(rename_in_sequence(*cons, rename_map)),
+        ),
     }
 }
 

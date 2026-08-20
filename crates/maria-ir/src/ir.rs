@@ -723,6 +723,9 @@ pub enum IrSequence {
     And(Box<IrSequence>, Box<IrSequence>),
     /// seq[*N] — repeat seq N times consecutively
     Repeat(Box<IrSequence>, u64),
+    /// ante |-> cons — overlap implication: when ante matches on a cycle,
+    /// cons is checked starting from the SAME cycle.
+    Implication(Box<IrSequence>, Box<IrSequence>),
 }
 
 impl IrSequence {
@@ -736,6 +739,7 @@ impl IrSequence {
             IrSequence::Or(a, b) => a.min_cycles().min(b.min_cycles()),
             IrSequence::And(a, b) => a.min_cycles().max(b.min_cycles()),
             IrSequence::Repeat(seq, n) => seq.min_cycles() * n,
+            IrSequence::Implication(ante, cons) => ante.min_cycles() + cons.min_cycles(),
         }
     }
     /// Estimate the maximum number of clock cycles before sequence is determined
@@ -754,6 +758,9 @@ impl IrSequence {
                 .max_cycles()
                 .and_then(|am| b.max_cycles().map(|bm| am.max(bm))),
             IrSequence::Repeat(seq, n) => seq.max_cycles().map(|m| m * n),
+            IrSequence::Implication(ante, cons) => ante
+                .max_cycles()
+                .and_then(|am| cons.max_cycles().map(|cm| am + cm)),
         }
     }
 }

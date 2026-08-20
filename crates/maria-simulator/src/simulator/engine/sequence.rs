@@ -3,58 +3,141 @@ use maria_core::error::SimError;
 use maria_ir::*;
 
 impl SimulationEngine {
-    pub(crate) fn eval_sequence_at_cycle(&mut self, seq: &IrSequence, cycles: u64) -> Result<bool, SimError> {
+    /// Evaluator sequence dengan depth-aware: mengevaluasi expression pada
+    /// state sinyal yang tepat (historical atau current) berdasarkan posisi
+    /// dalam sequence temporal (##N).
+    ///
+    /// Parameter:
+    /// - `seq`: sequence yang akan dievaluasi
+    /// - `elapsed`: jumlah posedge yang telah berlalu sejak sub-sequence dimulai
+    /// - `depth`: kedalaman historical (0 = current posedge, 1 = 1 posedge lalu)
+    ///
+    /// Semantics:
+    /// - `Expr(expr)`: true jika expr true pada posedge (now - depth), hanya
+    ///   saat elapsed == 0 (expr menempati 0 cycle)
+    /// - `Delay(n)`: true jika elapsed == n
+    /// - `Concat(A, B)`: split pada k, A di (k, depth), B di (elapsed-k, depth-k)
+    pub(crate) fn eval_sequence_depth(&mut self, seq: &IrSequence, elapsed: u64, depth: u64) -> Result<bool, SimError> {
         match seq {
             IrSequence::Expr(expr) => {
-                if cycles == 0 {
-                    let val = self.evaluate_expr(expr)?;
+                if elapsed == 0 {
+                    let val = self.evaluate_expr_at_depth(expr, depth)?;
                     Ok(val.to_bool() == Some(true))
                 } else {
                     Ok(false)
                 }
             }
-            IrSequence::Delay(n) => Ok(cycles == *n),
-            IrSequence::DelayRange(min, max) => Ok(cycles >= *min && cycles <= *max),
+            IrSequence::Delay(n) => Ok(elapsed == *n),
+            IrSequence::DelayRange(min, max) => Ok(elapsed >= *min && elapsed <= *max),
             IrSequence::Concat(a, b) => {
-                for k in 0..cycles {
-                    if self.eval_sequence_at_cycle(a, k)?
-                        && self.eval_sequence_at_cycle(b, cycles - k - 1)?
+                // A occupies k cycles (from sequence start), B occupies (elapsed-k) cycles
+                // A evaluated at depth (same as concat start)
+                // B evaluated at depth-k (k cycles into the concat = k posedges later)
+                for k in 0..=elapsed {
+                    let b_depth = depth.saturating_sub(k);
+                    if self.eval_sequence_depth(a, k, depth)?
+                        && self.eval_sequence_depth(b, elapsed - k, b_depth)?
                     {
                         return Ok(true);
                     }
                 }
                 Ok(false)
             }
-            IrSequence::Or(a, b) => Ok(self.eval_sequence_at_cycle(a, cycles)?
-                || self.eval_sequence_at_cycle(b, cycles)?),
-            IrSequence::And(a, b) => Ok(self.eval_sequence_at_cycle(a, cycles)?
-                && self.eval_sequence_at_cycle(b, cycles)?),
+            IrSequence::Or(a, b) => Ok(self.eval_sequence_depth(a, elapsed, depth)?
+                || self.eval_sequence_depth(b, elapsed, depth)?),
+            IrSequence::And(a, b) => Ok(self.eval_sequence_depth(a, elapsed, depth)?
+                && self.eval_sequence_depth(b, elapsed, depth)?),
             IrSequence::Repeat(seq, n) => {
                 if *n == 0 {
                     return Ok(true);
                 }
                 if *n == 1 {
-                    return self.eval_sequence_at_cycle(seq, cycles);
+                    return self.eval_sequence_depth(seq, elapsed, depth);
                 }
-                for k in 0..=cycles {
-                    if self.eval_sequence_at_cycle(seq, k)? {
+                for k in 0..=elapsed {
+                    if self.eval_sequence_depth(seq, k, depth)? {
                         let remaining = IrSequence::Repeat(Box::new((**seq).clone()), n - 1);
-                        if self.eval_sequence_at_cycle(&remaining, cycles - k)? {
+                        if self.eval_sequence_depth(&remaining, elapsed - k, depth.saturating_sub(k))? {
                             return Ok(true);
                         }
                     }
                 }
                 Ok(false)
             }
+            IrSequence::Implication(ante, cons) => {
+                // overlap implication (IEEE 1800-2017 §16.9.2):
+                // At elapsed=0: check ante at depth=0 (current posedge).
+                // If ante true → check cons starting from same cycle.
+                // If ante false → vacuously true.
+                // At elapsed>0: ante already matched (caller set ante_matched).
+                if elapsed == 0 {
+                    if self.eval_sequence_depth(ante, 0, 0)? {
+                        self.eval_sequence_depth(cons, 0, 0)
+                    } else {
+                        Ok(true) // vacuous
+                    }
+                } else {
+                    // ante already matched at elapsed=0; check cons
+                    self.eval_sequence_depth(cons, elapsed, depth)
+                }
+            }
+        }
+    }
+
+    /// Evaluator lama — wrapper untuk backward compatibility.
+    #[allow(dead_code)]
+    pub(crate) fn eval_sequence_at_cycle(&mut self, seq: &IrSequence, cycles: u64) -> Result<bool, SimError> {
+        self.eval_sequence_depth(seq, cycles, cycles)
+    }
+
+    /// Evaluate expression pada kedalaman historical tertentu.
+    /// depth=0: current state, depth>0: signal_seq_history[depth].
+    fn evaluate_expr_at_depth(&mut self, expr: &IrExpr, depth: u64) -> Result<LogicVec, SimError> {
+        if depth == 0 {
+            return self.evaluate_expr(expr);
+        }
+        // Ambil snapshot historis (depth posedges lalu)
+        if let Some(snapshot) = self.signal_seq_history.get(depth as usize) {
+            // Simpan current signal values, replace dengan historical, evaluate, restore
+            let num_sigs = self.state.signals.len();
+            let mut saved: Vec<(usize, LogicVec)> = Vec::new();
+            for i in 0..num_sigs {
+                if let Some(hv) = snapshot.get(i) {
+                    let cur = self.state.read_signal(i).clone();
+                    if cur != *hv {
+                        self.state.write_signal(i, hv.clone());
+                        saved.push((i, cur));
+                    }
+                }
+            }
+            let result = self.evaluate_expr(expr);
+            // Restore
+            for (i, old) in saved {
+                self.state.write_signal(i, old);
+            }
+            result
+        } else {
+            // Tidak cukup history — fallback ke current state
+            self.evaluate_expr(expr)
         }
     }
 
     pub(crate) fn evaluate_sequence_attempts(&mut self) -> Result<(), SimError> {
+        if self.sequence_attempts.is_empty() {
+            return Ok(());
+        }
+        // PENTING: posedge detection untuk sequence harus pakai snapshot
+        // pre-NBA (preponed_snapshot), bukan signal_snapshot yang sudah
+        // ter-refresh ke post-NBA. Tanpa ini, `old==current` → posedge tidak
+        // terdeteksi → attempt timeout palsu (selalu pass).
+        std::mem::swap(&mut self.signal_snapshot, &mut self.preponed_snapshot);
         let firing_events: Vec<bool> = self
             .sequence_attempts
             .iter()
             .map(|a| self.check_concurrent_clock_event(&a.clock_event))
             .collect();
+        std::mem::swap(&mut self.signal_snapshot, &mut self.preponed_snapshot);
+
 
         let seqs: Vec<(Box<IrSequence>, u64)> = self
             .sequence_attempts
@@ -66,7 +149,9 @@ impl SimulationEngine {
 
         let mut results: Vec<bool> = Vec::new();
         for (seq, cycles) in &seqs {
-            results.push(self.eval_sequence_at_cycle(seq, *cycles)?);
+            // depth = cycles: sequence dimulai cycles posedge lalu
+            let r = self.eval_sequence_depth(seq, *cycles, *cycles)?;
+            results.push(r);
         }
 
         let mut completed = Vec::new();

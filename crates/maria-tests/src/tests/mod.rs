@@ -11424,6 +11424,221 @@ endmodule
     let v = sigs.iter().find(|(n, _)| n == "clk").unwrap();
     assert!(v.1.width > 0, "clk harus tetap ada — modul ter-parse");
 }#[test]
+fn test_psl_boolean_assert_always_never() {
+    // LANG-03: PSL (IEEE 1850) boolean — `assert always (expr) @(posedge
+    // clk);` / `assert never (expr) @(posedge clk);` + directive
+    // `default clock = posedge clk;`. always = properti true tiap cycle;
+    // never = properti tidak boleh true (cond dibalik !). Dievaluasi tiap
+    // posedge via jalur assertion module-level (ROUND 71).
+    let source = r#"
+default clock = posedge clk;
+module tb;
+    reg clk = 0;
+    reg [7:0] cnt = 0;
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk;
+    end
+    always @(posedge clk) begin
+        cnt <= cnt + 1;
+    end
+    assert always (cnt <= 8) @(posedge clk);
+    assert never (cnt > 8) @(posedge clk);
+    initial begin
+        #50 $finish;
+    end
+endmodule
+"#;
+    let design = compile_str(source).unwrap();
+    let mut engine = crate::simulator::SimulationEngine::new(design, 60);
+    let _ = engine.run();
+    let total_pass: u64 = engine.assertion_stats.values().map(|(p, _)| *p).sum();
+    let total_fail: u64 = engine.assertion_stats.values().map(|(_, f)| *f).sum();
+    assert!(total_pass >= 8, "PSL always+never: pass={}", total_pass);
+    assert_eq!(total_fail, 0, "PSL never (cnt>8 dibalik) tidak boleh fail: {}", total_fail);
+}
+
+#[test]
+fn test_psl_temporal_skipped_safe() {
+    // LANG-03: PSL operator temporal (`|->`, `until`) tidak didukung lexer
+    // → parse gagal → rollback + skip assertion (modul tetap utuh, perilaku
+    // sama dengan temporal SVA LANG-04). Directive `default clock` juga
+    // di-skip tanpa error.
+    let source = r#"
+default clock = posedge clk;
+module tb;
+    reg clk;
+    reg a, b;
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk;
+    end
+    always @(posedge clk) begin
+        a <= b;
+    end
+    assert always (a |-> b) @(posedge clk);
+    assert always (a until b) @(posedge clk);
+    initial begin
+        #20 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 25).expect("PSL temporal skipped, modul tetap parse");
+    let v = sigs.iter().find(|(n, _)| n == "clk").unwrap();
+    assert!(v.1.width > 0, "clk harus tetap ada — modul ter-parse");
+}
+
+#[test]
+fn test_sva_temporal_sequence() {
+    // LANG-04: `assert property (@(posedge clk) a ##1 b)` — sequence
+    // temporal SVA. Engine mengevaluasi via `SequenceAttempt`: setiap
+    // posedge, attempt baru dimulai; evaluator `eval_sequence_depth`
+    // memeriksa `a` pada depth=1 (1 posedge lalu) dan `b` pada depth=0
+    // (current posedge). Pass jika match, fail jika timeout max_cycles.
+    //
+    // Test PASS: a=1 diikuti b=1 → 1 match
+    // Test FAIL: a pulse tapi b selalu 0 → 0 match, semua fail
+    let pass_src = r#"
+module tb_pass;
+  reg clk = 0;
+  reg a = 0;
+  reg b = 0;
+  always #5 clk = ~clk;
+  assert property (@(posedge clk) a ##1 b);
+  initial begin
+    @(posedge clk); a = 1;
+    @(posedge clk); b = 1;
+    @(posedge clk); a = 0; b = 0;
+    #100; $finish;
+  end
+endmodule
+"#;
+    let sigs = simulate_signals(pass_src, 150).expect("compile pass case");
+    let clk = sigs.iter().find(|(n, _)| n == "clk").unwrap();
+    assert!(clk.1.width > 0, "clk exists");
+
+    let fail_src = r#"
+module tb_fail;
+  reg clk = 0;
+  reg a = 0;
+  reg b = 0;
+  always #5 clk = ~clk;
+  assert property (@(posedge clk) a ##1 b);
+  initial begin
+    @(posedge clk); a = 1;
+    @(posedge clk); a = 0;
+    #100; $finish;
+  end
+endmodule
+"#;
+    let sigs = simulate_signals(fail_src, 150).expect("compile fail case");
+    let clk = sigs.iter().find(|(n, _)| n == "clk").unwrap();
+    assert!(clk.1.width > 0, "clk exists");
+}
+
+#[test]
+fn test_sva_temporal_range_delay() {
+    // LANG-04 extension: `##[min:max]` range delay (IEEE 1800-2017 §16.9.2.2).
+    // a ##[1:2] b → b harus true 1 atau 2 cycle SETELAH a true.
+    //
+    // Case 1: b true di cycle+1 (min match) → pass
+    let pass_min = r#"
+module tb_range_pass;
+  reg clk = 0;
+  reg a = 0;
+  reg b = 0;
+  always #5 clk = ~clk;
+  assert property (@(posedge clk) a ##[1:2] b);
+  initial begin
+    @(posedge clk); a = 1;
+    @(posedge clk); b = 1;  // cycle+1 → min match
+    @(posedge clk); a = 0; b = 0;
+    #100; $finish;
+  end
+endmodule
+"#;
+    let design = compile_str(pass_min).expect("compile range pass");
+    let mut engine = crate::simulator::SimulationEngine::new(design, 60);
+    let _ = engine.run();
+    let total_pass: u64 = engine.assertion_stats.values().map(|(p, _)| *p).sum();
+    assert!(total_pass >= 1, "##[1:2] min match: pass={}", total_pass);
+
+    // Case 2: b true di cycle+2 (max match) → pass
+    let pass_max = r#"
+module tb_range_pass2;
+  reg clk = 0;
+  reg a = 0;
+  reg b = 0;
+  always #5 clk = ~clk;
+  assert property (@(posedge clk) a ##[1:2] b);
+  initial begin
+    @(posedge clk); a = 1;
+    @(posedge clk); b = 0;  // cycle+1 miss
+    @(posedge clk); b = 1;  // cycle+2 → max match
+    @(posedge clk); a = 0; b = 0;
+    #100; $finish;
+  end
+endmodule
+"#;
+    let design = compile_str(pass_max).expect("compile range pass2");
+    let mut engine = crate::simulator::SimulationEngine::new(design, 60);
+    let _ = engine.run();
+    let total_pass: u64 = engine.assertion_stats.values().map(|(p, _)| *p).sum();
+    assert!(total_pass >= 1, "##[1:2] max match: pass={}", total_pass);
+
+    // Case 3: b never true → fail
+    let fail_src = r#"
+module tb_range_fail;
+  reg clk = 0;
+  reg a = 0;
+  reg b = 0;
+  always #5 clk = ~clk;
+  assert property (@(posedge clk) a ##[1:2] b);
+  initial begin
+    @(posedge clk); a = 1;
+    @(posedge clk); b = 0;
+    @(posedge clk); b = 0;
+    @(posedge clk); a = 0; b = 0;
+    #100; $finish;
+  end
+endmodule
+"#;
+    let design = compile_str(fail_src).expect("compile range fail");
+    let mut engine = crate::simulator::SimulationEngine::new(design, 60);
+    let _ = engine.run();
+    let total_fail: u64 = engine.assertion_stats.values().map(|(_, f)| *f).sum();
+    assert!(total_fail >= 1, "##[1:2] no match: fail={}", total_fail);
+}
+
+#[test]
+fn test_sva_overlap_implication() {
+    // LANG-04 extension: `|->` overlap implication (IEEE 1800-2017 §16.9.2).
+    // Antecedent match di posedge k → consequent mulai dari posedge yang sama k.
+    // Jika antecedent tidak pernah match → vacuously true (pass).
+    //
+    // Case vacuous: req=0 selalu → pass (vacuously true)
+    let vacuous_src = r#"
+module tb_vacuous;
+  reg clk = 0;
+  reg req = 0;
+  reg ack = 0;
+  always #5 clk = ~clk;
+  assert property (@(posedge clk) req |-> ack);
+  initial begin
+    #100; $finish;
+  end
+endmodule
+"#;
+    let design = compile_str(vacuous_src).expect("compile vacuous case");
+    let mut engine = crate::simulator::SimulationEngine::new(design, 60);
+    let _ = engine.run();
+    let total_pass: u64 = engine.assertion_stats.values().map(|(p, _)| *p).sum();
+    let total_fail: u64 = engine.assertion_stats.values().map(|(_, f)| *f).sum();
+    assert!(total_pass >= 1, "vacuous implication: pass={}", total_pass);
+    assert_eq!(total_fail, 0, "vacuous implication: fail={}", total_fail);
+}
+
+#[test]
 fn test_checker_construct_instance() {
     // LANG-10: checker construct (IEEE 1800-2017 §17.8) — `checker name
     // (ports); assert property... endchecker` dideklarasikan, diinstansiasi
@@ -18490,4 +18705,136 @@ endmodule
     let sigs = simulate_signals(source, 20).unwrap();
     let (_, val) = sigs.iter().find(|(n, _)| n == "n").unwrap();
     assert_eq!(val.to_u64(), 3, "repeat 3 iterasi harus jalan meski body ber-delay");
+}
+
+#[test]
+fn test_error_suggestion_did_you_mean_signal() {
+    // PARSER-03: Saat signal tidak ditemukan, elaborator beri saran "did you mean?"
+    // berdasarkan edit distance Levenshtein.
+    let source = r#"
+module tb;
+    reg clk;
+    reg [7:0] data_in;
+    reg [7:0] data_out;
+    initial begin
+        clk = 0;
+        data_in = 8'hAB;
+        data_out = data_oun;
+    end
+endmodule
+"#;
+    let result = compile_str(source);
+    assert!(result.is_err(), "compile harus gagal karena 'data_oun' typo");
+    let err_msg = format!("{:?}", result.err());
+    // Error harus mengandung saran "did you mean 'data_out'?"
+    assert!(
+        err_msg.contains("data_out"),
+        "error harus saran 'data_out', got: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_error_suggestion_no_match_long_name() {
+    // PARSER-03: Nama sangat panjang tanpa match → tidak ada saran "did you mean?"
+    let source = r#"
+module tb;
+    reg clk;
+    initial begin
+        clk = this_is_a_very_long_name_with_no_similar_match;
+    end
+endmodule
+"#;
+    let result = compile_str(source);
+    assert!(result.is_err(), "compile harus gagal");
+    let err_msg = format!("{:?}", result.err());
+    // Tidak ada saran untuk nama sangat berbeda
+    assert!(
+        !err_msg.contains("did you mean"),
+        "tidak ada saran untuk nama tanpa kemiripan, got: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_error_suggestion_did_you_mean_in_context() {
+    // PARSER-03: Typo di context procedural statement juga dapat saran
+    let source = r#"
+module tb;
+    reg clk;
+    reg rst_n;
+    reg [7:0] data_in;
+    reg [7:0] data_out;
+    initial begin
+        data_out = dat_in;  // typo: 'dat_in' → saran 'data_in'
+    end
+endmodule
+"#;
+    let result = compile_str(source);
+    assert!(result.is_err(), "compile harus gagal karena 'dat_in' typo");
+    let err_msg = format!("{:?}", result.err());
+    assert!(
+        err_msg.contains("data_in"),
+        "error harus saran 'data_in', got: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_nba_write_conflict_detected() {
+    // SIM-14: Dua always_ff menulis signal yang sama via NBA di delta cycle
+    // yang sama → warning RT1006 harus muncul.
+    let source = r#"
+module tb;
+    reg [7:0] a;
+    reg clk;
+    always_ff @(posedge clk) begin
+        a <= 8'h11;
+    end
+    always_ff @(posedge clk) begin
+        a <= 8'h22;
+    end
+    initial begin
+        clk = 0;
+        #1 clk = 1; #1 clk = 0;
+        #1 clk = 1; #1 clk = 0;
+        $finish;
+    end
+endmodule
+"#;
+    let result = simulate_signals(source, 10);
+    assert!(result.is_ok(), "sim harus jalan: {:?}", result.err());
+    // Sim harus berhasil meski ada NBA conflict (warning, bukan error)
+    let sigs = result.unwrap();
+    let (_, val) = sigs.iter().find(|(n, _)| n == "a").unwrap();
+    // a harus 8'h22 (last writer wins) — bukan X atau 0
+    assert_eq!(val.to_u64(), 0x22, "a harus 8'h22 (last NBA writer wins)");
+}
+
+#[test]
+fn test_nba_single_writer_no_conflict() {
+    // SIM-14: Hanya 1 always_ff menulis signal → TIDAK ada conflict
+    let source = r#"
+module tb;
+    reg [7:0] a;
+    reg clk;
+    always_ff @(posedge clk) begin
+        a <= a + 1;
+    end
+    initial begin
+        a = 0;
+        clk = 0;
+        #1 clk = 1; #1 clk = 0;
+        #1 clk = 1; #1 clk = 0;
+        #1 clk = 1; #1 clk = 0;
+        $finish;
+    end
+endmodule
+"#;
+    let result = simulate_signals(source, 10);
+    assert!(result.is_ok(), "sim harus jalan: {:?}", result.err());
+    let sigs = result.unwrap();
+    let (_, val) = sigs.iter().find(|(n, _)| n == "a").unwrap();
+    // a = 0 + 1 + 1 + 1 = 3
+    assert_eq!(val.to_u64(), 3, "a harus 3 (3 clock上升沿, 1 writer saja)");
 }

@@ -373,7 +373,7 @@ fn expr_width(e: &Expr, declared: &HashMap<Symbol, usize>) -> Option<usize> {
             }
             Some(total)
         }
-        Expr::BitSelect { expr, .. } => Some(1),
+        Expr::BitSelect { expr: _, .. } => Some(1),
         Expr::RangeSelect { expr, msb, lsb, .. } => {
             // width = |msb - lsb| + 1 jika keduanya konstanta
             if let (Expr::Value(maria_ast::expr::Value::Decimal(m)), Expr::Value(maria_ast::expr::Value::Decimal(l))) =
@@ -449,6 +449,23 @@ fn lvalue_root(e: &Expr) -> Option<Symbol> {
         Expr::MemberAccess { obj, .. } => lvalue_root(obj),
         Expr::Concat(parts) => parts.iter().find_map(lvalue_root),
         _ => None,
+    }
+}
+
+fn scan_sequence_reads(seq: &maria_ast::types::Sequence, reads: &mut HashSet<Symbol>, writes: &mut HashSet<Symbol>) {
+    use maria_ast::types::Sequence;
+    match seq {
+        Sequence::Expr(e) => scan_expr_reads(e, reads, writes),
+        Sequence::Delay(_) | Sequence::DelayRange(_, _) => {}
+        Sequence::Concat(l, r) | Sequence::Or(l, r) | Sequence::And(l, r) => {
+            scan_sequence_reads(l, reads, writes);
+            scan_sequence_reads(r, reads, writes);
+        }
+        Sequence::Repeat(s, _) => scan_sequence_reads(s, reads, writes),
+        Sequence::Implication(ante, cons) => {
+            scan_sequence_reads(ante, reads, writes);
+            scan_sequence_reads(cons, reads, writes);
+        }
     }
 }
 
@@ -677,6 +694,30 @@ fn scan_stmt_reads(stmts: &[Stmt], reads: &mut HashSet<Symbol>, writes: &mut Has
                     scan_stmt_reads(std::slice::from_ref(s), reads, writes);
                 }
             }
+            Stmt::PropertySeq {
+                sequence,
+                pass_stmt,
+                fail_stmt,
+                clock_event,
+                disable_iff,
+            } => {
+                scan_sequence_reads(sequence, reads, writes);
+                if let Some(ce) = clock_event {
+                    let s = match ce {
+                        maria_ast::types::ClockEvent::Posedge(s) | maria_ast::types::ClockEvent::Negedge(s) | maria_ast::types::ClockEvent::Edge(s) => s,
+                    };
+                    reads.insert(*s);
+                }
+                if let Some(di) = disable_iff {
+                    scan_expr_reads(di, reads, writes);
+                }
+                if let Some(ps) = pass_stmt {
+                    scan_stmt_reads(std::slice::from_ref(ps), reads, writes);
+                }
+                if let Some(fs) = fail_stmt {
+                    scan_stmt_reads(std::slice::from_ref(fs), reads, writes);
+                }
+            }
             Stmt::Assert {
                 cond,
                 pass_stmt,
@@ -693,9 +734,10 @@ fn scan_stmt_reads(stmts: &[Stmt], reads: &mut HashSet<Symbol>, writes: &mut Has
             } => {
                 scan_expr_reads(cond, reads, writes);
                 if let Some(ce) = clock_event {
-                    if let maria_ast::types::ClockEvent::Posedge(s) | maria_ast::types::ClockEvent::Negedge(s) | maria_ast::types::ClockEvent::Edge(s) = ce {
-                        reads.insert(*s);
-                    }
+                    let s = match ce {
+                        maria_ast::types::ClockEvent::Posedge(s) | maria_ast::types::ClockEvent::Negedge(s) | maria_ast::types::ClockEvent::Edge(s) => s,
+                    };
+                    reads.insert(*s);
                 }
                 if let Some(d) = disable_iff {
                     scan_expr_reads(d, reads, writes);
@@ -715,9 +757,10 @@ fn scan_stmt_reads(stmts: &[Stmt], reads: &mut HashSet<Symbol>, writes: &mut Has
             } => {
                 scan_expr_reads(cond, reads, writes);
                 if let Some(ce) = clock_event {
-                    if let maria_ast::types::ClockEvent::Posedge(s) | maria_ast::types::ClockEvent::Negedge(s) | maria_ast::types::ClockEvent::Edge(s) = ce {
-                        reads.insert(*s);
-                    }
+                    let s = match ce {
+                        maria_ast::types::ClockEvent::Posedge(s) | maria_ast::types::ClockEvent::Negedge(s) | maria_ast::types::ClockEvent::Edge(s) => s,
+                    };
+                    reads.insert(*s);
                 }
                 if let Some(d) = disable_iff {
                     scan_expr_reads(d, reads, writes);

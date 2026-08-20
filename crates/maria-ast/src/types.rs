@@ -792,6 +792,32 @@ pub enum ClockEvent {
     Edge(Symbol),
 }
 
+/// SVA temporal sequence (IEEE 1800-2017 §16) — representasi AST dari
+/// properti ber-urutan. Dievaluasi ber-clock oleh engine via
+/// `IrSequence` (elaborator menerjemahkan enum ini). Bentuk yang didukung:
+/// boolean `Expr`, delay `##N`/`##[min:max]`, `Concat` (seq1 ##1 seq2),
+/// `Or`/`And`, dan `Repeat` (`[*N]`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum Sequence {
+    /// Immediate Boolean expression (dievaluasi tiap cycle)
+    Expr(Expr),
+    /// ##N — tunggu N clock cycles
+    Delay(u64),
+    /// ##[min:max] — tunggu antara min..max clock cycles
+    DelayRange(u64, u64),
+    /// seq1 ##1 seq2 — concatenation (dulu, lalu kedua)
+    Concat(Box<Sequence>, Box<Sequence>),
+    /// seq1 or seq2 — salah satu cocok
+    Or(Box<Sequence>, Box<Sequence>),
+    /// seq1 and seq2 — keduanya harus cocok
+    And(Box<Sequence>, Box<Sequence>),
+    /// seq[*N] — ulangi seq N kali berturut-turut
+    Repeat(Box<Sequence>, u64),
+    /// ante |-> cons — overlap implication (IEEE 1800-2017 §16.9.2):
+    /// saat antecedent match, consequent dievaluasi mulai cycle YANG SAMA.
+    Implication(Box<Sequence>, Box<Sequence>),
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ClockingItem {
     Input {

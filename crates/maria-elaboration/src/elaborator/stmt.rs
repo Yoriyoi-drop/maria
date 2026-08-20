@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use super::Elaborator;
 use super::super::util::*;
-use maria_ast::types::{const_eval_simple, const_eval_with_params};
+use maria_ast::types::{const_eval_with_params};
 use maria_ast::*;
 use maria_core::diagnostics::diagnostic::DiagCode;
+use maria_core::diagnostics::suggest::suggest_name;
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
 use maria_ir::*;
@@ -1441,6 +1442,44 @@ impl Elaborator {
                 known_modules,
                 signals,
             ),
+            Stmt::PropertySeq {
+                sequence,
+                pass_stmt,
+                fail_stmt,
+                clock_event,
+                disable_iff,
+            } => {
+                // LANG-06: concurrent assertion dengan sequence temporal —
+                // terjemahkan AST Sequence → IrSequence, kondisikan dummy true
+                // (sequence dievaluasi engine via SequenceAttempt per clock).
+                // line/col diambil dari ekspresi pertama sequence (untuk
+                // record_assertion / assertion_stats).
+                let (a_line, a_col) = sequence_first_loc(sequence);
+                let ir_seq = self.elaborate_sequence(sequence, signal_map, signals)?;
+                let pass = match pass_stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                let fail = match fail_stmt {
+                    Some(s) => vec![self.elaborate_stmt(s, signal_map, known_modules, signals)?],
+                    None => vec![],
+                };
+                let ir_disable = match disable_iff {
+                    Some(e) => Some(Box::new(self.elaborate_expr(e, signal_map, signals)?)),
+                    None => None,
+                };
+                let ir_cond = IrExpr::Const(maria_ir::LogicVec::from_u64(1, 1));
+                Ok(IrStmt::Assert {
+                    cond: ir_cond,
+                    pass_stmt: pass,
+                    fail_stmt: fail,
+                    clock_event: clock_event.clone(),
+                    disable_iff: ir_disable,
+                    sequence: Some(Box::new(ir_seq)),
+                    line: a_line,
+                    col: a_col,
+                })
+            }
             Stmt::Assert {
                 cond,
                 pass_stmt,
@@ -1661,7 +1700,7 @@ impl Elaborator {
         };
         // ── Akhir instrumentasi DBG_STMT: catat waktu per konstruk. ──
         if let Some(t0) = stmt_t0 {
-            use std::sync::atomic::{AtomicU64, Ordering};
+            // AtomicU64/Ordering removed: unused
             thread_local! {
                 static DBG_STMT_TIME: std::cell::RefCell<std::collections::HashMap<&'static str, (u64, u64)>> =
                     std::cell::RefCell::new(std::collections::HashMap::new());
@@ -1687,7 +1726,13 @@ impl Elaborator {
             Expr::Ident { name, line, col } => {
                 let sig_id = signal_map
                     .get(name)
-                    .ok_or_else(|| self.elab_diag_at(DiagCode::UndefinedSignal, format!("signal '{}' not found", name), *line, *col))?;
+                    .ok_or_else(|| {
+                        let candidates: Vec<&str> = signal_map.keys().map(|s| s.as_str()).collect();
+                        let hint = suggest_name(name.as_str(), candidates.into_iter())
+                            .map(|(s, _)| format!(" — did you mean '{}'?", s))
+                            .unwrap_or_default();
+                        self.elab_diag_at(DiagCode::UndefinedSignal, format!("signal '{}' not found{}", name, hint), *line, *col)
+                    })?;
                 Ok(IrLValue::Signal(*sig_id, 0))
             }
             Expr::RangeSelect {
@@ -2466,6 +2511,58 @@ impl Elaborator {
             None
         }
     }
+
+    /// LANG-06: terjemahkan AST `Sequence` (SVA temporal) → `IrSequence`
+    /// untuk evaluasi ber-clock oleh engine. Struktur 1:1 — Expr dievaluasi
+    /// tiap cycle, Delay/DelayRange tunggu N cycle, Concat/Or/And/Repeat
+    /// sesuai semantik sequence.
+    fn elaborate_sequence(
+        &self,
+        seq: &maria_ast::types::Sequence,
+        signal_map: &HashMap<Symbol, SignalId>,
+        signals: &[SignalInfo],
+    ) -> Result<maria_ir::IrSequence, SimError> {
+        use maria_ast::types::Sequence;
+        use maria_ir::IrSequence;
+        Ok(match seq {
+            Sequence::Expr(e) => IrSequence::Expr(self.elaborate_expr(e, signal_map, signals)?),
+            Sequence::Delay(n) => IrSequence::Delay(*n),
+            Sequence::DelayRange(a, b) => IrSequence::DelayRange(*a, *b),
+            Sequence::Concat(l, r) => IrSequence::Concat(
+                Box::new(self.elaborate_sequence(l, signal_map, signals)?),
+                Box::new(self.elaborate_sequence(r, signal_map, signals)?),
+            ),
+            Sequence::Or(l, r) => IrSequence::Or(
+                Box::new(self.elaborate_sequence(l, signal_map, signals)?),
+                Box::new(self.elaborate_sequence(r, signal_map, signals)?),
+            ),
+            Sequence::And(l, r) => IrSequence::And(
+                Box::new(self.elaborate_sequence(l, signal_map, signals)?),
+                Box::new(self.elaborate_sequence(r, signal_map, signals)?),
+            ),
+            Sequence::Repeat(s, n) => IrSequence::Repeat(
+                Box::new(self.elaborate_sequence(s, signal_map, signals)?),
+                *n,
+            ),
+            Sequence::Implication(ante, cons) => IrSequence::Implication(
+                Box::new(self.elaborate_sequence(ante, signal_map, signals)?),
+                Box::new(self.elaborate_sequence(cons, signal_map, signals)?),
+            ),
+        })
+    }
+}
+
+/// LANG-06: posisi source (line, col) ekspresi pertama dalam sequence
+/// temporal — untuk record_assertion (key line:col di assertion_stats).
+fn sequence_first_loc(seq: &maria_ast::types::Sequence) -> (usize, usize) {
+    use maria_ast::types::Sequence;
+    match seq {
+        Sequence::Expr(e) => crate::util::generate::expr_location(e),
+        Sequence::Delay(_) | Sequence::DelayRange(_, _) => (0, 0),
+        Sequence::Concat(l, _) | Sequence::Or(l, _) | Sequence::And(l, _) => sequence_first_loc(l),
+        Sequence::Repeat(s, _) => sequence_first_loc(s),
+        Sequence::Implication(ante, _) => sequence_first_loc(ante),
+    }
 }
 
 /// Langkah dalam chain member access — field struct atau index array konstanta.
@@ -2566,6 +2663,7 @@ fn stmt_kind_name(s: &Stmt) -> &'static str {
         Stmt::PriorityCase { .. } => "priority_case",
         Stmt::Unique0Case { .. } => "unique0_case",
         Stmt::CaseInside { .. } => "case_inside",
+        Stmt::PropertySeq { .. } => "property_seq",
         Stmt::Assert { .. } => "assert",
         Stmt::Assume { .. } => "assume",
         Stmt::Cover { .. } => "cover",

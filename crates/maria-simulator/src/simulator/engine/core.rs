@@ -12,7 +12,7 @@ use crate::simulator::types::*;
 use maria_core::Symbol;
 use crate::waveform::{CsvWaveWriter, FstWaveWriter, SignalStats, VcdWriter};
 use rand::SeedableRng;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 impl SimulationEngine {
@@ -63,6 +63,8 @@ impl SimulationEngine {
             expr_recursion_depth: 0,
             forced_signals: HashSet::new(),
             signal_snapshot: None,
+            preponed_snapshot: None,
+            signal_seq_history: VecDeque::new(),
             coverage_snapshot: None,
             pending_waits: Vec::new(),
             pending_events: Vec::new(),
@@ -650,7 +652,7 @@ impl SimulationEngine {
                 // Jalur AST (task/method): restore konteks sebelum resume.
                 let old_this = self.current_this;
                 let old_method = self.current_method;
-                let old_locals = std::mem::replace(&mut self.method_locals, wf.locals.clone());
+                let _old_locals = std::mem::replace(&mut self.method_locals, wf.locals.clone());
                 self.current_this = wf.this;
                 self.current_method = wf.method;
                 let completed = self.evaluate_ast_block_with_delay_fork(&wf.ast_continuation, None)?;
@@ -845,7 +847,14 @@ impl SimulationEngine {
             for i in 0..num_sigs {
                 snapshot.push(self.state.read_signal(i).clone());
             }
-            self.signal_snapshot = Some(snapshot);
+            self.preponed_snapshot = Some(snapshot.clone());
+            self.signal_snapshot = Some(snapshot.clone());
+            // Simpan ke history untuk evaluator sequence temporal (##N)
+            self.signal_seq_history.push_front(snapshot);
+            const MAX_SEQ_DEPTH: usize = 8;
+            while self.signal_seq_history.len() > MAX_SEQ_DEPTH {
+                self.signal_seq_history.pop_back();
+            }
             // SIM-30: coverage snapshot hanya di-capture di awal time step (tidak
             // di-refresh per delta). Diff-nya vs state akhir dipakai untuk toggle/FSM
             // coverage — kalau ikut signal_snapshot (refresh per delta), diff selalu kosong.
@@ -1128,13 +1137,32 @@ impl SimulationEngine {
                 }
 
                 if delta_count > self.delta_limit {
-                    return Err(SimError::with_diag(
+                    let changed_names: Vec<String> = deltas.iter().take(16).map(|id| {
+                        self.design.top.signals.get(*id)
+                            .map(|s| s.name.as_str().to_string())
+                            .unwrap_or_else(|| format!("#{}", id))
+                    }).collect();
+                    let mut diag = Diagnostic::new(
+                        DiagLevel::Error,
                         DiagCode::InfiniteDelta,
                         format!(
                             "simulation exceeded max delta cycles per time step ({}) at time {} — kemungkinan kombinational loop / osilasi (signal tidak stabil dalam satu timestep). Periksa `always_comb`/`assign` yang membentuk loop, atau naikkan limit via set_delta_limit()",
                             self.delta_limit, self.state.time
                         ),
-                    ));
+                    );
+                    if !changed_names.is_empty() {
+                        diag = diag.with_note(format!(
+                            "sinyal terakhir berubah: {}",
+                            changed_names.join(", ")
+                        ));
+                    }
+                    diag = diag.with_runtime_context(
+                        RuntimeContext::new()
+                            .with_time(format!("{} ns", self.state.time))
+                            .with_delta(delta_count)
+                            .with_module(self.current_instance_path.as_deref().unwrap_or("top"))
+                    );
+                    return Err(SimError::Diagnostic(diag));
                 }
                 let report_interval = if self.delta_limit >= 100_000 { 100_000 } else { self.delta_limit / 10 }.max(1);
                 if delta_count > 0 && delta_count.is_multiple_of(report_interval) {
@@ -1163,13 +1191,55 @@ impl SimulationEngine {
                     let hv = h.finish();
                     if self.osc_last_state_hash != Some(hv) {
                         if !self.osc_state_hashes.insert(hv) {
-                            return Err(SimError::with_diag(
+                            // Kumpulkan nama sinyal yang berubah di delta ini
+                            // untuk diagnostic — membantu user melacak loop.
+                            let changed_names: Vec<String> = deltas.iter().take(16).map(|id| {
+                                self.design.top.signals.get(*id)
+                                    .map(|s| s.name.as_str().to_string())
+                                    .unwrap_or_else(|| format!("#{}", id))
+                            }).collect();
+                            // Kumpulkan process writer untuk sinyal berubah —
+                            // petunjuk ke always_comb/assign yang membentuk loop.
+                            let mut writers: Vec<String> = Vec::new();
+                            for id in deltas.iter().take(16) {
+                                if let Some(&Some(writer_id)) = self.signal_writers.get(id) {
+                                    let pname = if let Some(obj) = self.state.get_object(writer_id) {
+                                        obj.class_name.as_str().to_string()
+                                    } else {
+                                        format!("process#{}", writer_id)
+                                    };
+                                    if !writers.contains(&pname) {
+                                        writers.push(pname);
+                                    }
+                                }
+                            }
+                            let mut diag = Diagnostic::new(
+                                DiagLevel::Error,
                                 DiagCode::InfiniteDelta,
                                 format!(
                                     "kombinational loop / osilasi terdeteksi: state sinyal berulang pada delta {} di time {} (cycle). Periksa always_comb/assign yang membentuk feedback tanpa state.",
                                     delta_count, self.state.time
                                 ),
-                            ));
+                            );
+                            if !changed_names.is_empty() {
+                                diag = diag.with_note(format!(
+                                    "sinyal berubah: {}",
+                                    changed_names.join(", ")
+                                ));
+                            }
+                            if !writers.is_empty() {
+                                diag = diag.with_note(format!(
+                                    "process penulis: {}",
+                                    writers.join(", ")
+                                ));
+                            }
+                            diag = diag.with_runtime_context(
+                                RuntimeContext::new()
+                                    .with_time(format!("{} ns", self.state.time))
+                                    .with_delta(delta_count)
+                                    .with_module(self.current_instance_path.as_deref().unwrap_or("top"))
+                            );
+                            return Err(SimError::Diagnostic(diag));
                         }
                         self.osc_last_state_hash = Some(hv);
                     }

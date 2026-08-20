@@ -427,6 +427,69 @@ fn inline_funcs_in_stmt(
     result
 }
 
+/// Inline function calls dalam sequence expression (SVA temporal).
+fn inline_funcs_in_sequence(
+    sequence: super::types::Sequence,
+    funcs: &HashMap<Symbol, FunctionDecl>,
+    prefix: Symbol,
+    counter: &mut usize,
+    temp_signals: &mut Vec<TempSignal>,
+    recursive_funcs: &HashSet<Symbol>,
+) -> super::types::Sequence {
+    use super::types::Sequence;
+    match sequence {
+        Sequence::Expr(e) => Sequence::Expr(replace_func_calls_in_expr(
+            e,
+            funcs,
+            prefix,
+            counter,
+            &mut vec![],
+            temp_signals,
+            recursive_funcs,
+        )),
+        Sequence::Delay(n) => Sequence::Delay(n),
+        Sequence::DelayRange(a, b) => Sequence::DelayRange(a, b),
+        Sequence::Concat(l, r) => Sequence::Concat(
+            Box::new(inline_funcs_in_sequence(
+                *l, funcs, prefix, counter, temp_signals, recursive_funcs,
+            )),
+            Box::new(inline_funcs_in_sequence(
+                *r, funcs, prefix, counter, temp_signals, recursive_funcs,
+            )),
+        ),
+        Sequence::Or(l, r) => Sequence::Or(
+            Box::new(inline_funcs_in_sequence(
+                *l, funcs, prefix, counter, temp_signals, recursive_funcs,
+            )),
+            Box::new(inline_funcs_in_sequence(
+                *r, funcs, prefix, counter, temp_signals, recursive_funcs,
+            )),
+        ),
+        Sequence::And(l, r) => Sequence::And(
+            Box::new(inline_funcs_in_sequence(
+                *l, funcs, prefix, counter, temp_signals, recursive_funcs,
+            )),
+            Box::new(inline_funcs_in_sequence(
+                *r, funcs, prefix, counter, temp_signals, recursive_funcs,
+            )),
+        ),
+        Sequence::Repeat(s, n) => Sequence::Repeat(
+            Box::new(inline_funcs_in_sequence(
+                *s, funcs, prefix, counter, temp_signals, recursive_funcs,
+            )),
+            n,
+        ),
+        Sequence::Implication(ante, cons) => Sequence::Implication(
+            Box::new(inline_funcs_in_sequence(
+                *ante, funcs, prefix, counter, temp_signals, recursive_funcs,
+            )),
+            Box::new(inline_funcs_in_sequence(
+                *cons, funcs, prefix, counter, temp_signals, recursive_funcs,
+            )),
+        ),
+    }
+}
+
 fn inline_funcs_in_stmt_inner(
     stmt: Stmt,
     funcs: &HashMap<Symbol, FunctionDecl>,
@@ -1441,7 +1504,7 @@ fn inline_funcs_in_stmt_inner(
         } => {
             let mut preamble = Vec::new();
             let is_unique0 = matches!(&stmt, Stmt::Unique0Case { .. });
-            let is_unique = matches!(&stmt, Stmt::UniqueCase { .. });
+            let _is_unique = matches!(&stmt, Stmt::UniqueCase { .. });
             let new_expr = replace_func_calls_in_expr(
                 expr.clone(),
                 funcs,
@@ -1587,6 +1650,57 @@ fn inline_funcs_in_stmt_inner(
             } else {
                 preamble.push(main);
                 Stmt::Block { stmts: preamble }
+            }
+        }
+        Stmt::PropertySeq {
+            sequence,
+            pass_stmt,
+            fail_stmt,
+            clock_event: _ce,
+            disable_iff: _di,
+        } => {
+            let new_seq = inline_funcs_in_sequence(
+                sequence,
+                funcs,
+                prefix,
+                counter,
+                temp_signals,
+                recursive_funcs,
+            );
+            Stmt::PropertySeq {
+                sequence: new_seq,
+                pass_stmt: pass_stmt.map(|s| {
+                    Box::new(inline_funcs_in_stmt(
+                        *s,
+                        funcs,
+                        prefix,
+                        counter,
+                        temp_signals,
+                        recursive_funcs,
+                    ))
+                }),
+                fail_stmt: fail_stmt.map(|s| {
+                    Box::new(inline_funcs_in_stmt(
+                        *s,
+                        funcs,
+                        prefix,
+                        counter,
+                        temp_signals,
+                        recursive_funcs,
+                    ))
+                }),
+                clock_event: _ce,
+                disable_iff: _di.map(|e| {
+                    Box::new(replace_func_calls_in_expr(
+                        *e,
+                        funcs,
+                        prefix,
+                        counter,
+                        &mut vec![],
+                        temp_signals,
+                        recursive_funcs,
+                    ))
+                }),
             }
         }
         Stmt::Assert {
@@ -1999,7 +2113,7 @@ fn replace_func_calls_in_expr_inner(
                 // formal `bit randomness = 1'b1`) — rename formal ke temp signal
                 // (nilai default bila tersedia, selain itu 0). Tanpa ini body
                 // meninggalkan nama formal → E2001 'randomness' not found.
-                for (i, port) in func.ports.iter().enumerate().skip(new_args_len) {
+                for (_i, port) in func.ports.iter().enumerate().skip(new_args_len) {
                     if rename_map.contains_key(&port.name) {
                         continue;
                     }

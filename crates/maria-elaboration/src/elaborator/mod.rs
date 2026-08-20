@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::util::*;
 use maria_ast::types::const_eval_with_params;
-use maria_ast::const_eval_ext::{eval_cval_full, eval_param_default_full, CVal, SField, Scalars};
+use maria_ast::const_eval_ext::{eval_cval_full, eval_param_default_full, CVal, SField};
 use maria_ast::*;
 use maria_core::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, DiagSink, RuntimeContext, SourceSnippet};
 use maria_core::error::SimError;
@@ -584,7 +584,7 @@ impl Elaborator {
         // simulasi); tie → definisi terakhir (deterministik, urutan filelist).
         {
             use std::collections::{HashMap as HMap, HashSet as HSet};
-            let before = self.design.modules.len();
+            let _before = self.design.modules.len();
             let all_names: HSet<Symbol> = self
                 .design
                 .modules
@@ -1319,8 +1319,8 @@ let mut top = match self.modules.remove(&top_name) {
 
                 // Fallback only for AnalysisRecovery (Rule 2)
                 self.recovered = true;
-                let total_modules = self.design.modules.len();
-                let success_modules = self.modules.len();
+                let _total_modules = self.design.modules.len();
+                let _success_modules = self.modules.len();
                 
                 // Explicit Recovery Mode warning (Rule 4)
                 eprintln!(
@@ -2232,7 +2232,7 @@ let mut top = match self.modules.remove(&top_name) {
             let mut pctx = base.clone();
             for _ in 0..64 {
                 let mut changed = false;
-                for (name, item) in items {
+                 for (_name, item) in items {
                     let PackageItem::Param(p) = item else { continue };
                     if pctx.contains_key(&p.name) {
                         continue;
@@ -2249,8 +2249,8 @@ let mut top = match self.modules.remove(&top_name) {
                 }
             }
             let mut plain: HashMap<Symbol, i64> = HashMap::new();
-            for (name, item) in items {
-                let PackageItem::Param(p) = item else { continue };
+                 for (name, item) in items {
+                    let PackageItem::Param(p) = item else { continue };
                 if let Some(&v) = pctx.get(&p.name) {
                     plain.insert(*name, v);
                 }
@@ -2506,6 +2506,7 @@ let mut top = match self.modules.remove(&top_name) {
     }
 
     /// Emit warning diagnostic ke DiagSink (elaboration-time warnings).
+    #[allow(dead_code)]
     fn elab_warn(&self, code: DiagCode, message: impl Into<String>) {
         self.elab_warn_at(code, message, 0, 0)
     }
@@ -4737,7 +4738,8 @@ impl Elaborator {
                     let clock_event = match stmt.as_ref() {
                         Stmt::Assert { clock_event, .. }
                         | Stmt::Assume { clock_event, .. }
-                        | Stmt::Cover { clock_event, .. } => clock_event.clone(),
+                        | Stmt::Cover { clock_event, .. }
+                        | Stmt::PropertySeq { clock_event, .. } => clock_event.clone(),
                         _ => None,
                     };
                     if let Some(ce) = clock_event {

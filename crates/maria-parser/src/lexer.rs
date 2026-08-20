@@ -156,6 +156,7 @@ pub enum Token {
     CaretTilde, // ^~ or ~^
     AmpAmp,
     PipePipe,
+    PipeArrow, // |-> (overlap implication SVA)
     Shl,
     Shr,
     Sshl,
@@ -197,6 +198,8 @@ pub enum Token {
     Scope, // ::
     Dot,
     Hash,
+    /// SVA temporal sequence delay: `##N` / `##[min:max]`.
+    HashHash,
     At,
     Dollar,
     Question, // ?
@@ -409,6 +412,8 @@ impl fmt::Display for Token {
             Token::Type => write!(f, "type"),
             Token::Program => write!(f, "program"),
             Token::EndProgram => write!(f, "endprogram"),
+            Token::HashHash => write!(f, "##"),
+            Token::PipeArrow => write!(f, "|->"),
             Token::Ident(s) => write!(f, "'{}'", s.as_str()),
             Token::Eof => write!(f, "<eof>"),
             Token::Error(s) => write!(f, "<error: {}>", s),
@@ -1221,6 +1226,14 @@ impl Lexer {
                 } else if self.peek() == Some('=') {
                     self.advance();
                     Token::OrAssign
+                } else if self.peek() == Some('-') {
+                    self.advance();
+                    if self.peek() == Some('>') {
+                        self.advance();
+                        Token::PipeArrow
+                    } else {
+                        Token::Pipe
+                    }
                 } else {
                     Token::Pipe
                 }
@@ -1261,7 +1274,17 @@ impl Lexer {
             ';' => Token::Semi,
             ',' => Token::Comma,
             '.' => Token::Dot,
-            '#' => Token::Hash,
+            '#' => {
+                // LANG-06 (SVA temporal): `##N` / `##[min:max]` sequence
+                // delay operator. `##` di-lex sebagai HashHash; `#(...)`
+                // parameter tetap Hash.
+                if self.peek() == Some('#') {
+                    self.advance();
+                    Token::HashHash
+                } else {
+                    Token::Hash
+                }
+            }
             '@' => Token::At,
             '$' => Token::Dollar,
             '\'' => {

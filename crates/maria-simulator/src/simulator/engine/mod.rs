@@ -45,6 +45,9 @@ pub struct SequenceAttempt {
     /// VERIF-27: posisi source assertion (utk assertion coverage stats).
     pub line: usize,
     pub col: usize,
+    /// LANG-04: track whether antecedent matched at cycles=0 for Implication.
+    /// None = not yet checked (first cycle), Some(true/false) = checked.
+    pub ante_matched: Option<bool>,
 }
 
 /// Batas simulasi.
@@ -153,6 +156,15 @@ pub struct SimulationEngine {
     pub expr_recursion_depth: usize,
     pub forced_signals: HashSet<SignalId>,
     pub signal_snapshot: Option<Vec<LogicVec>>,
+    /// Snapshot Preponed (pre-NBA) di awal time step. TIDAK di-refresh per
+    /// delta — dipakai oleh evaluate_sequence_attempts untuk posedge detection.
+    /// Tanpa ini, signal_snapshot (di-refresh ke post-NBA) menyebabkan posedge
+    /// tidak terdeteksi oleh sequence evaluator → attempt timeout palsu.
+    pub preponed_snapshot: Option<Vec<LogicVec>>,
+    /// Riwayat snapshot sinyal (pre-NBA) untuk evaluator sequence temporal.
+    /// Index 0 = current posedge, index 1 = 1 posedge lalu, dst.
+    /// Max kedalaman 8 (cukup untuk ##8). Dipopulate di setiap posedge.
+    pub signal_seq_history: VecDeque<Vec<LogicVec>>,
     /// Snapshot coverage di awal time step (SEBELUM loop delta). Tidak di-refresh
     /// per delta — dipakai record_coverage_after_commit untuk diff toggle/FSM
     /// (fix SIM-30: signal_snapshot di-refresh tiap delta untuk edge detection,

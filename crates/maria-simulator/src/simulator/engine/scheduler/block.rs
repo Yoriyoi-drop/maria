@@ -209,7 +209,7 @@ impl SimulationEngine {
                                 return Ok(false);
                             }
                         }
-                        self.nba_pending.push((lhs.clone(), val));
+                        self.push_nba_pending(lhs.clone(), val);
                     }
                 }
                 IrStmt::Force { lvalue, rhs } => {
@@ -534,6 +534,7 @@ impl SimulationEngine {
                                     // VERIF-27: posisi utk assertion stats.
                                     line: *line,
                                     col: *col,
+                                    ante_matched: None,
                                 });
                             } else {
                                 // Immediate assertion: evaluate condition now
@@ -1000,7 +1001,7 @@ impl SimulationEngine {
                     let val = self.eval_ast_assign_rhs(rhs, lhs)?;
                     // Convert AST lvalue to IrLValue for nba tracking
                     if let Some(ir_lv) = self.ast_lvalue_to_ir(lhs) {
-                        self.nba_pending.push((ir_lv, val));
+                        self.push_nba_pending(ir_lv, val);
                     } else {
                         self.write_ast_lvalue(lhs, val)?;
                     }
@@ -2240,7 +2241,7 @@ impl SimulationEngine {
                     if !self.is_forced(lhs) {
                         let _ = delay;
                         let val = self.eval_assign_rhs(rhs, lhs)?;
-                        self.nba_pending.push((lhs.clone(), val));
+                        self.push_nba_pending(lhs.clone(), val);
                     }
                 }
                 IrStmt::Force { lvalue, rhs } => {
@@ -2308,7 +2309,7 @@ impl SimulationEngine {
                     fail_stmt,
                     clock_event,
                     disable_iff,
-                    sequence: _,
+                    sequence,
                     line,
                     col,
                 } => {
@@ -2323,24 +2324,39 @@ impl SimulationEngine {
                             Some(ref di) => self.evaluate_expr(di)?.to_bool().unwrap_or(false),
                             None => false,
                         };
-                        if !disabled {
-                            let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
-                            // VERIF-27: assertion coverage metrics.
-                            self.record_assertion(*line, *col, ok);
-                            if ok {
-                                if !pass_stmt.is_empty() {
-                                    self.evaluate_stmt_block(pass_stmt)?;
-                                }
+                        if !disabled && !self.assert_kill_all {
+                            if let Some(seq) = &sequence {
+                                // Concurrent assertion with temporal sequence:
+                                // start a new attempt (same as evaluate_block_with_delay_fork).
+                                self.sequence_attempts.push(SequenceAttempt {
+                                    sequence: seq.clone(),
+                                    cycles: 0,
+                                    pass_stmt: pass_stmt.clone(),
+                                    fail_stmt: fail_stmt.clone(),
+                                    clock_event: clock_event.clone().unwrap(),
+                                    line: *line,
+                                    col: *col,
+                                    ante_matched: None,
+                                });
                             } else {
-                                // F20: via DiagSink agar punya file:line:col.
-                                let (a_l, a_c) = self.cur_src_pos();
-                                let _ = self.diag_error_at(
-                                    maria_core::diagnostics::DiagCode::AssertionFailed,
-                                    "assertion failed",
-                                    a_l,
-                                    a_c,
-                                );                                if !fail_stmt.is_empty() {
-                                    self.evaluate_stmt_block(fail_stmt)?;
+                                let ok = self.evaluate_expr(cond)?.to_bool().unwrap_or(false);
+                                // VERIF-27: assertion coverage metrics.
+                                self.record_assertion(*line, *col, ok);
+                                if ok {
+                                    if !pass_stmt.is_empty() {
+                                        self.evaluate_stmt_block(pass_stmt)?;
+                                    }
+                                } else {
+                                    // F20: via DiagSink agar punya file:line:col.
+                                    let (a_l, a_c) = self.cur_src_pos();
+                                    let _ = self.diag_error_at(
+                                        maria_core::diagnostics::DiagCode::AssertionFailed,
+                                        "assertion failed",
+                                        a_l,
+                                        a_c,
+                                    );                                    if !fail_stmt.is_empty() {
+                                        self.evaluate_stmt_block(fail_stmt)?;
+                                    }
                                 }
                             }
                         }

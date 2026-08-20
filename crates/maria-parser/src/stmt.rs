@@ -130,13 +130,85 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 Some(Box::new(expr))
             } else { None };
-            let expr = self.parse_expr(0)?;
+            // LANG-06 (SVA temporal): properti ber-urutan `a ##1 b` /
+            // `a ##[2:5] b` / `##1 a` — parse sequence bila token berikutnya
+            // adalah `##` (delay operator). Kalau tidak ada `##`, fallback ke
+            // boolean biasa (perilaku ROUND 71).
+            let mut sequence: Option<super::types::Sequence> = None;
+            let mut expr_opt: Option<Expr> = None;
+            if self.peek() == &Token::HashHash {
+                // bentuk `##N expr` / `##[min:max] expr` — sequence dimulai
+                // dengan delay.
+                self.advance();
+                let delay = self.parse_sequence_delay()?;
+                let first = self.parse_expr(0)?;
+                let mut seq = super::types::Sequence::Concat(
+                    Box::new(delay),
+                    Box::new(super::types::Sequence::Expr(first)),
+                );
+                while self.peek() == &Token::HashHash {
+                    self.advance();
+                    let delay = self.parse_sequence_delay()?;
+                    let next = self.parse_expr(0)?;
+                    seq = super::types::Sequence::Concat(
+                        Box::new(seq),
+                        Box::new(super::types::Sequence::Concat(
+                            Box::new(delay),
+                            Box::new(super::types::Sequence::Expr(next)),
+                        )),
+                    );
+                }
+                sequence = Some(seq);
+            } else {
+                let expr = self.parse_expr(0)?;
+                if self.peek() == &Token::PipeArrow {
+                    // `expr |-> consequent` — overlap implication (SVA §16.9.2)
+                    self.advance(); // consume |->
+                    let cons = self.parse_sequence_after_consequent()?;
+                    let ante = super::types::Sequence::Expr(expr);
+                    let seq = super::types::Sequence::Implication(
+                        Box::new(ante),
+                        Box::new(cons),
+                    );
+                    sequence = Some(seq);
+                } else if self.peek() == &Token::HashHash {
+                    // bentuk `expr ##N expr ...`
+                    let mut seq = super::types::Sequence::Expr(expr);
+                    while self.peek() == &Token::HashHash {
+                        self.advance();
+                        let delay = self.parse_sequence_delay()?;
+                        let next = self.parse_expr(0)?;
+                        seq = super::types::Sequence::Concat(
+                            Box::new(seq),
+                            Box::new(super::types::Sequence::Concat(
+                                Box::new(delay),
+                                Box::new(super::types::Sequence::Expr(next)),
+                            )),
+                        );
+                    }
+                    sequence = Some(seq);
+                } else {
+                    expr_opt = Some(expr);
+                }
+            }
             self.expect(Token::RParen)?;
             let fail_stmt = if self.peek() == &Token::Else {
                 self.advance();
                 Some(Box::new(self.parse_stmt()?))
             } else { None };
             self.skip_semi();
+            if let Some(seq) = sequence {
+                // assert/assume/cover temporal semuanya memakai PropertySeq
+                // (engine mencatat pass/fail sama via SequenceAttempt).
+                return Ok(Stmt::PropertySeq {
+                    sequence: seq,
+                    pass_stmt: None,
+                    fail_stmt,
+                    clock_event,
+                    disable_iff,
+                });
+            }
+            let expr = expr_opt.expect("expr or sequence harus ter-set");
             let cond = Expr::TernaryOp {
                 cond: Box::new(expr),
                 true_expr: Box::new(Expr::Value(Value::Decimal(1))),
@@ -148,6 +220,58 @@ impl Parser {
                 "cover" => Ok(Stmt::Cover { cond, pass_stmt: None, clock_event, disable_iff }),
                 _ => unreachable!(),
             };
+        }
+        // LANG-03 PSL (IEEE 1850): `assert always (expr) @(posedge clk);` /
+        // `assert never (expr) @(posedge clk);` — bentuk boolean PSL
+        // (tanpa operator temporal). `always` = properti harus true tiap
+        // cycle; `never` = properti tidak boleh true (cond dibalik dengan
+        // !). Operator temporal PSL (`|->`, `until`, `before`, `next` dll)
+        // membuat parse_expr gagal → caller module-level rollback + skip.
+        if self.peek() == &Token::Always
+            || matches!(self.peek(), Token::Ident(s) if s.as_str() == "never")
+        {
+            let is_never = matches!(self.peek(), Token::Ident(s) if s.as_str() == "never");
+            self.advance(); // always / never
+            self.expect(Token::LParen)?;
+            let expr = self.parse_expr(0)?;
+            self.expect(Token::RParen)?;
+            let clock_event = if self.peek() == &Token::At {
+                self.advance();
+                self.expect(Token::LParen)?;
+                let ce = if self.peek() == &Token::PosEdge {
+                    self.advance(); let sig = self.expect_ident()?;
+                    Some(ClockEvent::Posedge(sig))
+                } else if self.peek() == &Token::NegEdge {
+                    self.advance(); let sig = self.expect_ident()?;
+                    Some(ClockEvent::Negedge(sig))
+                } else {
+                    let sig = self.expect_ident()?;
+                    Some(ClockEvent::Edge(sig))
+                };
+                self.expect(Token::RParen)?;
+                ce
+            } else { None };
+            self.skip_semi();
+            let body = if is_never {
+                Expr::UnaryOp {
+                    op: UnaryOp::Not,
+                    expr: Box::new(expr),
+                }
+            } else {
+                expr
+            };
+            let cond = Expr::TernaryOp {
+                cond: Box::new(body),
+                true_expr: Box::new(Expr::Value(Value::Decimal(1))),
+                false_expr: Box::new(Expr::Value(Value::Decimal(0))),
+            };
+            return Ok(Stmt::Assert {
+                cond,
+                pass_stmt: None,
+                fail_stmt: None,
+                clock_event,
+                disable_iff: None,
+            });
         }
         self.expect(Token::LParen)?;
         let cond = self.parse_expr(0)?;
@@ -168,6 +292,59 @@ impl Parser {
             "cover" => Ok(Stmt::Cover { cond, pass_stmt, clock_event: None, disable_iff: None }),
             "expect" => Ok(Stmt::Expect { cond, pass_stmt, fail_stmt }),
             _ => unreachable!(),
+        }
+    }
+
+    /// LANG-06 (SVA temporal): parse delay sequence setelah `##` — bentuk
+    /// `##N` (Delay konstan) atau `##[min:max]` (DelayRange). Caller sudah
+    /// meng-consume `##`.
+    fn parse_sequence_delay(&mut self) -> Result<super::types::Sequence, SimError> {
+        if self.peek() == &Token::LBrack {
+            // ##[min:max]
+            self.advance();
+            let min = self.parse_sequence_number()?;
+            self.expect(Token::Colon)?;
+            let max = self.parse_sequence_number()?;
+            self.expect(Token::RBrack)?;
+            Ok(super::types::Sequence::DelayRange(min, max))
+        } else {
+            let n = self.parse_sequence_number()?;
+            Ok(super::types::Sequence::Delay(n))
+        }
+    }
+
+    /// Parse bilangan bulat untuk delay sequence (`##3` → 3).
+    fn parse_sequence_number(&mut self) -> Result<u64, SimError> {
+        match self.peek().clone() {
+            Token::Number { value, base, .. } => {
+                let s = value.as_str().to_string();
+                self.advance();
+                match base {
+                    None | Some(10) => s
+                        .parse::<u64>()
+                        .map_err(|_| self.err("invalid sequence delay number")),
+                    Some(b) => u64::from_str_radix(&s, b as u32)
+                        .map_err(|_| self.err("invalid sequence delay number")),
+                }
+            }
+            _ => Err(self.err("expected number after '##'")),
+        }
+    }
+
+    /// Parse consequent sequence setelah `|->`. Bisa `##N expr`,
+    /// `##[min:max] expr`, atau `expr` (tanpa delay = same-cycle).
+    fn parse_sequence_after_consequent(&mut self) -> Result<super::types::Sequence, SimError> {
+        if self.peek() == &Token::HashHash {
+            self.advance(); // consume ##
+            let delay = self.parse_sequence_delay()?;
+            let expr = self.parse_expr(0)?;
+            Ok(super::types::Sequence::Concat(
+                Box::new(delay),
+                Box::new(super::types::Sequence::Expr(expr)),
+            ))
+        } else {
+            let expr = self.parse_expr(0)?;
+            Ok(super::types::Sequence::Expr(expr))
         }
     }
 

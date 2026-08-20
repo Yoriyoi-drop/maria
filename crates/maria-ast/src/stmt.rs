@@ -212,6 +212,18 @@ pub enum Stmt {
         pass_stmt: Option<Box<Stmt>>,
         fail_stmt: Option<Box<Stmt>>,
     },
+    /// SVA concurrent assertion dengan sequence temporal (LANG-06):
+    /// `assert property (@(posedge clk) a ##1 b);` — properti diwakili
+    /// sequence (`##N`, concat, or/and, repeat), bukan ekspresi boolean
+    /// tunggal. Engine memulai SequenceAttempt tiap clock edge dan
+    /// menyelesaikannya saat sequence cocok / melebihi max cycles.
+    PropertySeq {
+        sequence: super::types::Sequence,
+        pass_stmt: Option<Box<Stmt>>,
+        fail_stmt: Option<Box<Stmt>>,
+        clock_event: Option<super::types::ClockEvent>,
+        disable_iff: Option<Box<Expr>>,
+    },
     WaitOrder {
         events: Vec<Symbol>,
         fail_stmt: Option<Box<Stmt>>,
