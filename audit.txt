@@ -187,15 +187,19 @@ Arsitektur-05: ✅ Hierarchical timing wheel — FIXED
   Complexity: Phase 4-5
   STATUS: ✅ FIXED — 12 unit tests, 1160 total pass, 0 regression
 
-Arsitektur-06: ⚠️ Elaborator monolithic — masih open (partial: refactor ke submodule)
-  Root Cause: Semua logika elaborasi (signal resolution, type
-  checking, instance flattening, parameter override, generate
-  unrolling) dalam satu file.
-  Impact: Tidak bisa parallel elaborate. Testability rendah.
-  Memori tinggi — elaborator hold full AST + IR concurrently.
+Arsitektur-06: ⚠️ Elaborator monolithic — PARTIAL (ROUND 80)
+  mod.rs turun dari 6012 → 5769 baris (-243). Ekstrak ke submodul:
+  - classes.rs (270 baris): resolve_class_field_width, elaborate_classes,
+    struct_override_fields
+  - always.rs (310): always block elaboration
+  - expr.rs (2328): expression elaboration
+  - stmt.rs (2733): statement elaboration
+  - flatten.rs (1108): hierarchy flattening
+  - ext.rs (211): extensions
+  Masih perlu: type resolution, param resolution, topo order, diagnostic
+  helpers bisa dipisah lebih lanjut.
   Severity: High
-  Fix: Modular elaborator dengan pass architecture (like
-  LLVM PassManager).
+  Fix: Lanjut ekstrak ke submodul (pass architecture).
   Complexity: Phase 3-4
 
 Arsitektur-07: ✅ Persistent design database — MICD (ROUND 77)
@@ -6028,6 +6032,19 @@ temp + revert; tidak ada file lain yang berubah.)
    - state.signals Vec<LogicVec> tetap in-memory by design
      (simulation requires random-access per cycle).
    - Sisa 14 item open: semua arsitektur-scale (Phase 3-6).
+
+═══════════════════════════════════════════════════════════════════════════════
+📊 VERIFIKASI ROUND 80 — Arsitektur-06 elaborator refactor:
+   - cargo build --workspace: 0 error
+   - cargo test --workspace: 2065 passed, 0 failed
+     — baseline ROUND 79: 2065; 0 test baru (refactor);
+       0 regresi.
+   - Arsitektur-06: ⚠️→⚠️ (PARTIAL): mod.rs 6012 → 5769 baris.
+     classes.rs baru (270 baris): elaborate_classes + resolve_class_field_width
+     + struct_override_fields. Elaborator sekarang 6 submodul:
+     classes/always/expr/stmt/flatten/ext. Sisa: type resolution,
+     param resolution, topo order, diagnostic helpers.
+   - Sisa 13 item open: semua arsitektur-scale (Phase 3-6).
 
 //=======================================================================\\
 ATURAN
