@@ -33,6 +33,7 @@ fn format_sym(prefix: &[u8], n: usize) -> Symbol {
     Symbol::intern(unsafe { std::str::from_utf8_unchecked(&buf[..total]) })
 }
 pub mod always;
+pub mod classes;
 pub mod stmt;
 pub mod expr;
 use maria_ir::*;
@@ -2980,17 +2981,6 @@ let mut top = match self.modules.remove(&top_name) {
 }
 
 impl Elaborator {
-    fn resolve_class_field_width(&self, dtype: &DataType, type_params: &[TypeParam]) -> usize {
-        if let DataType::UserDefined(name) = dtype {
-            if let Some(tp) = type_params.iter().find(|tp| tp.name == *name) {
-                if let Some(ref default_dt) = tp.default_type {
-                    return default_dt.width();
-                }
-            }
-        }
-        dtype.width()
-    }
-
     fn elaborate_module(
         &mut self,
         module: &Module,
@@ -5595,208 +5585,7 @@ impl Elaborator {
             processes,
             sub_instances,
         })
-    }
-
-    fn elaborate_classes(&self) -> Result<HashMap<Symbol, IrClassDef>, SimError> {
-        let mut classes = HashMap::new();
-        for cd in &self.design.classes {
-            let mut fields = Vec::new();
-            for member in &cd.members {
-                if let ClassMember::Decl(decl) = member {
-                    for dv in &decl.names {
-                        let decl_width =
-                            self.resolve_class_field_width(&decl.dtype, &cd.type_params);
-                        let var_width = dv.resolved_width(&HashMap::new()).unwrap_or(1);
-                        let elem_width = decl_width.max(var_width).max(1);
-                        let (array_depth, actual_elem_width) = if let Some(ar) = &dv.array_range {
-                            let depth = if ar.msb >= ar.lsb {
-                                ar.msb - ar.lsb + 1
-                            } else {
-                                ar.lsb - ar.msb + 1
-                            };
-                            (depth, elem_width)
-                        } else {
-                            (1, elem_width)
-                        };
-                        let total_width = array_depth * actual_elem_width;
-                        fields.push(IrClassField {
-                            name: dv.name,
-                            width: total_width,
-                            array_depth,
-                            elem_width: actual_elem_width,
-                            // F18: simpan tipe deklarasi untuk resolve_new_class_hint
-                            dtype: Some(decl.dtype.clone()),
-                        });
-                    }
-                }
-            }
-            let mut methods: Vec<IrClassMethod> = cd
-                .members
-                .iter()
-                .filter_map(|m| match m {
-                    ClassMember::Function(fd) => Some(IrClassMethod {
-                        name: fd.name,
-                        is_task: false,
-                        virtual_flag: fd.virtual_flag,
-                        is_static: fd.is_static,
-                        ports: fd.ports.clone(),
-                        decls: fd.decls.clone(),
-                        stmts: fd.stmts.clone(),
-                    }),
-                    ClassMember::Task(td) => Some(IrClassMethod {
-                        name: td.name,
-                        is_task: true,
-                        virtual_flag: td.virtual_flag,
-                        is_static: td.is_static,
-                        ports: td.ports.clone(),
-                        decls: td.decls.clone(),
-                        stmts: td.stmts.clone(),
-                    }),
-                    _ => None,
-                })
-                .collect();
-            // Merge parent class methods (recursively) — parent methods come before child methods
-            if let Some(ref parent_name) = cd.extends {
-                let parent_key = parent_name
-                    .split("::")
-                    .last()
-                    .unwrap_or_else(|| parent_name.as_str());
-                let mut merged_methods = Vec::new();
-                let mut seen_methods: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
-                if let Some(parent_cd) = classes.get(&Symbol::intern(parent_key)) {
-                    let mut ancestors: Vec<&IrClassDef> = vec![parent_cd];
-                    loop {
-                        let current = ancestors.last().unwrap();
-                        if let Some(ref gp) = current.extends {
-                            let gp_key = gp.split("::").last().unwrap_or_else(|| gp.as_str());
-                            if let Some(gp_cd) = classes.get(&Symbol::intern(gp_key)) {
-                                ancestors.push(gp_cd);
-                            } else {
-                                break;
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-                    for anc in ancestors.iter().rev() {
-                        for m in &anc.methods {
-                            if seen_methods.insert(m.name) {
-                                merged_methods.push(m.clone());
-                            }
-                        }
-                    }
-                }
-                for m in &methods {
-                    let method_name: Symbol = m.name;
-                    if seen_methods.insert(method_name) {
-                        merged_methods.push(m.clone());
-                    } else if let Some(pos) = merged_methods.iter().position(|pm| pm.name == m.name) {
-                        merged_methods[pos] = m.clone();
-                    }
-                }
-                methods = merged_methods;
-            }
-            let constraints: Vec<(Symbol, bool, Vec<maria_ast::types::ConstraintItem>)> = cd
-                .members
-                .iter()
-                .filter_map(|m| {
-                    if let ClassMember::Constraint { name, body, is_static } = m {
-                        Some((*name, *is_static, body.clone()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            let rand_fields: Vec<Symbol> = cd
-                .members
-                .iter()
-                .flat_map(|m| {
-                    if let ClassMember::Decl(decl) = m {
-                        decl.names
-                            .iter()
-                            .filter(|dv| dv.is_rand)
-                            .map(|dv| dv.name)
-                            .collect::<Vec<_>>()
-                    } else {
-                        vec![]
-                    }
-                })
-                .collect();
-            let lets: Vec<maria_ast::types::LetDecl> = cd
-                .members
-                .iter()
-                .filter_map(|m| match m {
-                    ClassMember::Let(ld) => Some(ld.clone()),
-                    _ => None,
-                })
-                .collect();
-            // Merge parent class fields (recursively) — parent fields come before child fields
-            let all_fields = if let Some(ref parent_name) = cd.extends {
-        let parent_key = parent_name
-            .split("::")
-            .last()
-            .unwrap_or_else(|| parent_name.as_str());
-        let mut merged = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        if let Some(parent_cd) = classes.get(&Symbol::intern(parent_key)) {
-                    let mut ancestors: Vec<&IrClassDef> = vec![parent_cd];
-                    loop {
-                        let current = ancestors.last().unwrap();
-                        if let Some(ref gp) = current.extends {            let gp_key = gp.split("::").last().unwrap_or_else(|| gp.as_str());
-            if let Some(gp_cd) = classes.get(&Symbol::intern(gp_key)) {
-                                ancestors.push(gp_cd);
-                            } else {
-                                break;
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-                    for anc in ancestors.iter().rev() {
-                        for f in &anc.fields {
-                            if seen.insert(f.name) {
-                                merged.push(f.clone());
-                            }
-                        }
-                    }
-                }
-                for f in &fields {
-                    if seen.insert(f.name) {
-                        merged.push(f.clone());
-                    } else if let Some(pos) = merged.iter().position(|pf| pf.name == f.name) {
-                        merged[pos] = f.clone();
-                    }
-                }
-                merged
-            } else {
-                fields
-            };
-
-            classes.insert(
-                cd.name,
-                IrClassDef {
-                    name: cd.name,
-                    extends: cd.extends,
-                    type_params: cd
-                        .type_params
-                        .iter()
-                        .map(|tp| IrTypeParam {
-                            name: tp.name,
-                            default_type: tp.default_type.clone(),
-                        })
-                        .collect(),
-                    fields: all_fields,
-                    methods,
-                    constraints,
-                    rand_fields,
-                    lets,
-                },
-            );
-        }
-        Ok(classes)
-    }
-
-}
+    }}
 
 /// Traverse statements secara rekursif dan kumpulkan deklarasi procedural lokal
 /// (`int index_x1;` di dalam always/initial block). Parser menyimpannya sebagai
@@ -5977,36 +5766,4 @@ fn pkg_struct_fields_for_ref(
         _ => return None,
     };
     index.get(&Symbol::intern(base)).cloned()
-}
-
-impl Elaborator {
-    /// Ekstrak fields struct package untuk ekspresi override param instance:
-    /// ident (`Info = PartInfoDefault`), scoped ident (`pkg::PartInfoDefault`),
-    /// atau array-element (`Info = PartInfo[k]` — BitSelect dengan index
-    /// konstanta, mis. `.Info(PartInfo[0])` di generate for otp_ctrl.sv).
-    /// Mencari base key (`PartInfoDefault` / `PartInfo[0]`) di
-    /// `pkg_struct_ref_index` (dibangun sekali dari `pkg::name.<field>` keys).
-    fn struct_override_fields(
-        &self,
-        expr: &Expr,
-        effective_params: &HashMap<Symbol, i64>,
-    ) -> Option<Vec<SField>> {
-        let base: Option<Symbol> = match expr {
-            Expr::Ident { name, .. } => Some(*name),
-            Expr::ScopedIdent { item, .. } => Some(*item),
-            Expr::BitSelect { expr: inner, index } => {
-                if let Expr::Ident { name, .. } = inner.as_ref() {
-                    match const_eval_with_params(index, effective_params) {
-                        Ok(idx) => Some(Symbol::intern(&format!("{}[{}]", name.as_str(), idx))),
-                        Err(_) => None,
-                    }
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        };
-        let base = base?;
-        self.pkg_struct_ref_index.get(&base).cloned()
-    }
 }
