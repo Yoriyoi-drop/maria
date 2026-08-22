@@ -285,6 +285,7 @@ impl SimulationEngine {
                 Ok(eval_unary(op.clone(), &val))
             }
             IrExpr::BinaryOp(op, lhs, rhs) => {
+                eprintln!("[DEBUG evaluate_expr BinaryOp] op={:?} lhs={:?} rhs={:?}", op, lhs, rhs);
                 let lval = self.evaluate_expr(lhs)?;
                 let rval = self.evaluate_expr(rhs)?;
                 let lhs_is_real = matches!(lhs.as_ref(), IrExpr::Signal(id, _) if self.design.top.signals.get(*id).map(|s| s.is_real).unwrap_or(false));
@@ -331,6 +332,7 @@ impl SimulationEngine {
                 ) && (is_signed_expr(lhs.as_ref(), &self.design.top.signals)
                     && is_signed_expr(rhs.as_ref(), &self.design.top.signals))
                 {
+                    eprintln!("[DEBUG expr.rs] Using eval_binary_signed for {:?}", op);
                     Ok(eval_binary_signed(op.clone(), &lval, &rval))
                 } else if matches!(op, BinaryIrOp::Sshr) {
                     // `>>>` (IEEE 1800 §11.4.10): ARITHMETIC bila lhs signed,
@@ -353,10 +355,14 @@ impl SimulationEngine {
                             return Ok(result);
                         }
                     }
-                    // Try JIT for non-real binary operations
-                    if let Some(ref mut jit) = self.jit_evaluator {
-                        if let Some(result) = jit.eval_binary(op, &lval, &rval) {
-                            return Ok(result);
+                    // Try JIT for non-real binary operations (but not shifts/comparisons - JIT uses max width which is wrong for shifts, and signed comparison for all comparisons)
+                    let is_shift = matches!(op, BinaryIrOp::Shl | BinaryIrOp::Shr | BinaryIrOp::Sshl | BinaryIrOp::Sshr);
+                    let is_comparison = matches!(op, BinaryIrOp::Lt | BinaryIrOp::Le | BinaryIrOp::Gt | BinaryIrOp::Ge);
+                    if !is_shift && !is_comparison {
+                        if let Some(ref mut jit) = self.jit_evaluator {
+                            if let Some(result) = jit.eval_binary(op, &lval, &rval) {
+                                return Ok(result);
+                            }
                         }
                     }
                     Ok(eval_binary(op.clone(), &lval, &rval))
@@ -522,6 +528,122 @@ impl SimulationEngine {
                             Ok(LogicVec::from_u64(if has_x_or_z { 1 } else { 0 }, 1))
                         } else {
                             Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$isunknown expects 1 argument"))
+                        }
+                    }
+                    "$countbits" => {
+                        if let Some(arg) = args.first() {
+                            let val = self.evaluate_expr(arg)?;
+                            // $countbits counts non-zero bits (1, X, Z)
+                            let count = val.bits.iter().filter(|b| **b != LogicVal::Zero).count() as u64;
+                            Ok(LogicVec::from_u64(count, 32))
+                        } else {
+                            Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$countbits expects 1 argument"))
+                        }
+                    }
+                    "$dimensions" => {
+                        if let Some(arg) = args.first() {
+                            // $dimensions - for runtime, try to get array dimensions from signal info
+                            // If it's a signal reference, we can check the signal info from design
+                            if let IrExpr::Signal(sig_id, _) = arg {
+                                if *sig_id < self.design.top.signals.len() {
+                                    let sig_info = &self.design.top.signals[*sig_id];
+                                    let packed_dims = sig_info.packed_dims.len();
+                                    let unpacked_dims = sig_info.array_dims.len();
+                                    let dims = packed_dims + unpacked_dims;
+                                    Ok(LogicVec::from_u64(dims as u64, 32))
+                                } else {
+                                    Ok(LogicVec::from_u64(0, 32))
+                                }
+                            } else {
+                                // For non-signal expressions, evaluate and return 0 as fallback
+                                let _val = self.evaluate_expr(arg)?;
+                                Ok(LogicVec::from_u64(0, 32))
+                            }
+                        } else {
+                            Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$dimensions expects 1 argument"))
+                        }
+                    }
+                    "$onehot0" => {
+                        if let Some(arg) = args.first() {
+                            let val = self.evaluate_expr(arg)?;
+                            let ones = val.bits.iter().filter(|b| **b == LogicVal::One).count();
+                            Ok(LogicVec::from_u64(if ones <= 1 { 1 } else { 0 }, 1))
+                        } else {
+                            Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$onehot0 expects 1 argument"))
+                        }
+                    }
+"$cast" => {
+                        if args.len() >= 2 {
+                            // $cast(dest, src) - dynamic cast for class handles or type cast
+                            // First argument is destination (lvalue), second is source
+                            // For class handles: check if src object class is same or subclass of dest class
+                            // For type cast: just assign and return success
+                            
+                            // Evaluate source first (returns object ID for class handles)
+                            let src_val = self.evaluate_expr(&args[1])?;
+                            
+                            // Check if destination is a class handle signal
+                            let dest_arg = &args[0];
+                            let mut success = 1u64;
+                            
+                            // If dest is a signal, check its SignalInfo for class_name
+                            if let IrExpr::Signal(sig_id, _) = dest_arg {
+                                if *sig_id < self.design.top.signals.len() {
+                                    let sig_info = &self.design.top.signals[*sig_id];
+                                    if let Some(dest_class_name) = sig_info.class_name {
+                                        // Destination signal is a class handle - check class hierarchy
+                                        // Get the object ID currently stored in the destination signal
+                                        let dest_obj_id = self.state.read_signal(*sig_id).to_u64();
+                                        
+                                        // Source value is the object ID to cast from
+                                        let src_obj_id = src_val.to_u64();
+                                        
+                                        if src_obj_id == 0 {
+                                            // Casting null to class handle - always succeeds, sets to null
+                                            self.state.write_signal(*sig_id, LogicVec::from_u64(0, sig_info.width));
+                                        } else if src_obj_id < self.state.objects.len() as u64 {
+                                            let src_obj = &self.state.objects[src_obj_id as usize];
+                                            if !src_obj.class_name.is_empty() {
+                                                // Check if src_obj.class_name is same as or subclass of dest_class_name
+                                                let src_class = src_obj.class_name;
+                                                success = if self.is_subclass_or_same(src_class, dest_class_name) { 1 } else { 0 };
+                                                if success == 1 {
+                                                    // Perform the cast - write source object ID to destination
+                                                    self.state.write_signal(*sig_id, LogicVec::from_u64(src_obj_id, sig_info.width));
+                                                } else {
+                                                    // Cast failed - write null (0)
+                                                    self.state.write_signal(*sig_id, LogicVec::from_u64(0, sig_info.width));
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        // Destination is not a class handle - simple type cast, always succeeds
+                                        // Just assign the value (truncate/extend as needed)
+                                        let dest_width = sig_info.width;
+                                        let mut assigned = src_val.resize(dest_width);
+                                        self.state.write_signal(*sig_id, assigned);
+                                    }
+                                }
+                            } else {
+                                // Other destination types (e.g., HierRef, etc.) - simple assignment
+                                // For now, just evaluate and return success
+                                success = 1;
+                            }
+                            
+                            Ok(LogicVec::from_u64(success, 1))
+                        } else {
+                            Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$cast requires two arguments"))
+                        }
+                    }
+                    "$typename" => {
+                        if let Some(arg) = args.first() {
+                            // $typename returns type name as string in 8-bit per char format
+                            // For now, we evaluate the argument to get its type info
+                            // The type name was already resolved during elaboration and stored as Const string
+                            let val = self.evaluate_expr(arg)?;
+                            Ok(val)
+                        } else {
+                            Err(self.diag_error(maria_core::diagnostics::DiagCode::DpiError, "$typename expects 1 argument"))
                         }
                     }
                     "$fopen" => {

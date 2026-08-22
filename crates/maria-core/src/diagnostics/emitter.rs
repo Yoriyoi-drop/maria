@@ -234,6 +234,24 @@ impl TerminalEmitter {
             )?;
         }
 
+        // Fix-it hints
+        if !diag.fix_its.is_empty() {
+            writeln!(self.writer)?;
+            writeln!(self.writer, "{}Fix-it suggestions:{}", BOLD, RESET)?;
+            for fix_it in &diag.fix_its {
+                writeln!(
+                    self.writer,
+                    "   {}fix-it:{} {} ({}:{}:{}-{}:{})",
+                    MAGENTA, RESET, fix_it.description, fix_it.file, fix_it.start_line, fix_it.start_col, fix_it.end_line, fix_it.end_col
+                )?;
+                if !fix_it.replacement.is_empty() {
+                    writeln!(self.writer, "       {}-> '{}'{}", CYAN, fix_it.replacement.escape_debug(), RESET)?;
+                } else {
+                    writeln!(self.writer, "       {}delete{}", CYAN, RESET)?;
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -317,6 +335,20 @@ impl TerminalEmitter {
         // Hints
         for hint in &diag.hints {
             writeln!(self.writer, "   = help: {}", hint)?;
+        }
+
+        // Fix-it hints
+        if !diag.fix_its.is_empty() {
+            writeln!(self.writer)?;
+            writeln!(self.writer, "Fix-it suggestions:")?;
+            for fix_it in &diag.fix_its {
+                writeln!(self.writer, "   = fix-it: {} ({}:{}:{}-{}:{})", fix_it.description, fix_it.file, fix_it.start_line, fix_it.start_col, fix_it.end_line, fix_it.end_col)?;
+                if !fix_it.replacement.is_empty() {
+                    writeln!(self.writer, "       -> '{}'", fix_it.replacement.escape_debug())?;
+                } else {
+                    writeln!(self.writer, "       (delete)")?;
+                }
+            }
         }
 
         Ok(())
@@ -406,6 +438,24 @@ impl TerminalEmitter {
                 )?;
             } else {
                 writeln!(self.writer, "  = help: {}", hint)?;
+            }
+        }
+
+        // Fix-it hints
+        if !diag.fix_its.is_empty() {
+            writeln!(self.writer)?;
+            if self.use_color {
+                writeln!(self.writer, "{}Fix-it suggestions:{}", BOLD, RESET)?;
+            } else {
+                writeln!(self.writer, "Fix-it suggestions:")?;
+            }
+            for fix_it in &diag.fix_its {
+                writeln!(self.writer, "   = fix-it: {} ({}:{}:{}-{}:{})", fix_it.description, fix_it.file, fix_it.start_line, fix_it.start_col, fix_it.end_line, fix_it.end_col)?;
+                if !fix_it.replacement.is_empty() {
+                    writeln!(self.writer, "       -> '{}'", fix_it.replacement.escape_debug())?;
+                } else {
+                    writeln!(self.writer, "       (delete)")?;
+                }
             }
         }
 

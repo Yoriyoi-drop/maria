@@ -365,6 +365,8 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     BinaryIrOp::Sub => l.wrapping_sub(r),
                     _ => unreachable!(),
                 };
+                eprintln!("[DEBUG eval_binary Add/Sub] lhs={:?} ({}) rhs={:?} ({}) max_width={} l={} r={} result={} width={}", 
+                    lhs.bits, lhs.width, rhs.bits, rhs.width, max_width, l, r, result, max_width);
                 LogicVec::from_u64(result, max_width)
             }
         }
@@ -476,6 +478,8 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
             } else {
                 lhs_ext.bits == rhs_ext.bits
             };
+            eprintln!("[DEBUG eval_binary Eq] lhs={:?} ({}) rhs={:?} ({}) max_width={} eq={} result={}", 
+                lhs.bits, lhs.width, rhs.bits, rhs.width, max_width, eq, if eq { 1 } else { 0 });
             LogicVec::from_u64(if eq { 1 } else { 0 }, 1)
         }
         BinaryIrOp::Neq | BinaryIrOp::CaseNeq => {
@@ -512,6 +516,8 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
             }
             let l = lhs_ext.to_u64();
             let r = rhs_ext.to_u64();
+            eprintln!("[DEBUG eval_binary Lt] lhs={:?} ({}) rhs={:?} ({}) max_width={} l={} r={} result={}", 
+                lhs.bits, lhs.width, rhs.bits, rhs.width, max_width, l, r, if l < r { 1 } else { 0 });
             LogicVec::from_u64(if l < r { 1 } else { 0 }, 1)
         }
         BinaryIrOp::Le => {
@@ -534,6 +540,8 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
             }
             let l = lhs_ext.to_u64();
             let r = rhs_ext.to_u64();
+            eprintln!("[DEBUG eval_binary Gt] lhs={:?} ({}) rhs={:?} ({}) max_width={} l={} r={} result={}", 
+                lhs.bits, lhs.width, rhs.bits, rhs.width, max_width, l, r, if l > r { 1 } else { 0 });
             LogicVec::from_u64(if l > r { 1 } else { 0 }, 1)
         }
         BinaryIrOp::Ge => {
@@ -606,20 +614,26 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         }
         BinaryIrOp::Shl => {
             let shift = rhs_ext.to_u64() as usize;
-            if max_width <= 64 && !has_xz(&lhs_ext) {
+            let result_width = lhs.width; // SV: shift result width = left operand width
+            if result_width <= 64 && !has_xz(&lhs) {
                 // Fast path: u64 shift
-                let val = lhs_ext.to_u64();
-                let shifted = if shift >= 64 { 0 } else { val << shift };
-                LogicVec::from_u64(shifted, max_width)
+                let val = lhs.to_u64();
+                let shifted = if shift >= result_width { 0 } else { val << shift };
+                LogicVec::from_u64(shifted, result_width)
             } else {
                 // Slow path: per-bit
-                let mut result = lhs_ext.clone();
-                if shift > 0 {
-                    for i in (shift..max_width).rev() {
-                        result.bits[i] = lhs_ext.bits[i - shift];
+                let mut result = lhs.clone();
+                if shift > 0 && shift < result_width {
+                    for i in (shift..result_width).rev() {
+                        result.bits[i] = lhs.bits[i - shift];
                     }
-                    for i in 0..shift.min(max_width) {
+                    for i in 0..shift {
                         result.bits[i] = LogicVal::Zero;
+                    }
+                } else if shift >= result_width {
+                    // Shift by >= width -> all zeros
+                    for bit in result.bits.iter_mut() {
+                        *bit = LogicVal::Zero;
                     }
                 }
                 result
@@ -627,20 +641,30 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         }
         BinaryIrOp::Shr => {
             let shift = rhs_ext.to_u64() as usize;
-            if max_width <= 64 && !has_xz(&lhs_ext) {
+            let result_width = lhs.width; // SV: shift result width = left operand width
+            eprintln!("[SHR DEBUG eval_binary] lhs={:?} rhs={:?} shift={} result_width={} lhs_width={} rhs_width={} lhs_bits_len={} rhs_bits_len={} has_xz={}", 
+                lhs.to_u64(), rhs_ext.to_u64(), shift, result_width, lhs.width, rhs_ext.width, lhs.bits.len(), rhs_ext.bits.len(), has_xz(&lhs));
+            if result_width <= 64 && !has_xz(&lhs) {
                 // Fast path: u64 shift
-                let val = lhs_ext.to_u64();
-                let shifted = if shift >= 64 { 0 } else { val >> shift };
-                LogicVec::from_u64(shifted, max_width)
+                let val = lhs.to_u64();
+                let shifted = if shift >= result_width { 0 } else { val >> shift };
+                eprintln!("[SHR DEBUG eval_binary] fast path: val={} shifted={}", val, shifted);
+                LogicVec::from_u64(shifted, result_width)
             } else {
+                eprintln!("[SHR DEBUG eval_binary] slow path");
                 // Slow path: per-bit
-                let mut result = lhs_ext.clone();
-                if shift > 0 {
-                    for i in 0..(max_width - shift) {
-                        result.bits[i] = lhs_ext.bits[i + shift];
+                let mut result = lhs.clone();
+                if shift > 0 && shift < result_width {
+                    for i in 0..(result_width - shift) {
+                        result.bits[i] = lhs.bits[i + shift];
                     }
-                    for i in (max_width - shift)..max_width {
+                    for i in (result_width - shift)..result_width {
                         result.bits[i] = LogicVal::Zero;
+                    }
+                } else if shift >= result_width {
+                    // Shift by >= width -> all zeros
+                    for bit in result.bits.iter_mut() {
+                        *bit = LogicVal::Zero;
                     }
                 }
                 result
@@ -648,51 +672,67 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         }
         BinaryIrOp::Sshl => {
             let shift = rhs_ext.to_u64() as usize;
-            if max_width <= 64 && !has_xz(&lhs_ext) {
+            let result_width = lhs.width; // SV: shift result width = left operand width
+            if result_width <= 64 && !has_xz(&lhs) {
                 // Arithmetic shift left is same as logical shift left
-                let val = lhs_ext.to_u64();
-                let shifted = if shift >= 64 { 0 } else { val << shift };
-                LogicVec::from_u64(shifted, max_width)
+                let val = lhs.to_u64();
+                let shifted = if shift >= result_width { 0 } else { val << shift };
+                LogicVec::from_u64(shifted, result_width)
             } else {
                 // Slow path: per-bit
-                let _msb = lhs_ext.bits.last().copied().unwrap_or(LogicVal::Zero);
-                let mut result = lhs_ext;
-                for _ in 0..shift {
-                    for i in (1..result.width).rev() {
-                        result.bits[i] = result.bits[i - 1];
+                let _msb = lhs.bits.last().copied().unwrap_or(LogicVal::Zero);
+                let mut result = lhs.clone();
+                if shift > 0 && shift < result_width {
+                    for _ in 0..shift {
+                        for i in (1..result_width).rev() {
+                            result.bits[i] = result.bits[i - 1];
+                        }
+                        result.bits[0] = LogicVal::Zero;
                     }
-                    result.bits[0] = LogicVal::Zero;
+                } else if shift >= result_width {
+                    // Shift by >= width -> all zeros
+                    for bit in result.bits.iter_mut() {
+                        *bit = LogicVal::Zero;
+                    }
                 }
                 result
             }
         }
         BinaryIrOp::Sshr => {
             let shift = rhs_ext.to_u64() as usize;
-            if max_width <= 64 && !has_xz(&lhs_ext) {
+            let result_width = lhs.width; // SV: shift result width = left operand width
+            if result_width <= 64 && !has_xz(&lhs) {
                 // Arithmetic shift right: extend sign bit
-                let val = lhs_ext.to_u64();
-                let sign_bit = (val >> (max_width - 1)) & 1;
-                let shifted = if shift >= 64 {
+                let val = lhs.to_u64();
+                let sign_bit = (val >> (result_width - 1)) & 1;
+                let shifted = if shift >= result_width {
                     if sign_bit == 1 { !0u64 } else { 0 }
                 } else {
                     let shifted_val = val >> shift;
                     if sign_bit == 1 {
                         // Fill high bits with 1s for arithmetic shift
-                        shifted_val | (!0u64 << (max_width - shift))
+                        shifted_val | (!0u64 << (result_width - shift))
                     } else {
                         shifted_val
                     }
                 };
-                LogicVec::from_u64(shifted, max_width)
+                LogicVec::from_u64(shifted, result_width)
             } else {
                 // Slow path: per-bit
-                let msb = lhs_ext.bits.last().copied().unwrap_or(LogicVal::Zero);
-                let mut result = lhs_ext;
-                for _ in 0..shift {
-                    for i in 0..(result.width - 1) {
-                        result.bits[i] = result.bits[i + 1];
+                let msb = lhs.bits.last().copied().unwrap_or(LogicVal::Zero);
+                let mut result = lhs.clone();
+                if shift > 0 && shift < result_width {
+                    for _ in 0..shift {
+                        for i in 0..(result_width - 1) {
+                            result.bits[i] = result.bits[i + 1];
+                        }
+                        *result.bits.last_mut().unwrap() = msb;
                     }
-                    *result.bits.last_mut().unwrap() = msb;
+                } else if shift >= result_width {
+                    // Shift by >= width -> fill with sign bit
+                    for bit in result.bits.iter_mut() {
+                        *bit = msb;
+                    }
                 }
                 result
             }

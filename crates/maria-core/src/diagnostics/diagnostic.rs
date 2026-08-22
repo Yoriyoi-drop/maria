@@ -37,6 +37,73 @@ use std::sync::Mutex;
 
 use crate::intern::Symbol;
 
+/// Fix-it hint — representasi edit kode konkret yang bisa diterapkan otomatis.
+#[derive(Debug, Clone)]
+pub struct FixItHint {
+    /// File yang perlu diedit
+    pub file: String,
+    /// Baris awal (1-based)
+    pub start_line: usize,
+    /// Kolom awal (1-based)
+    pub start_col: usize,
+    /// Baris akhir (1-based)
+    pub end_line: usize,
+    /// Kolom akhir (1-based)
+    pub end_col: usize,
+    /// Teks pengganti (kosong = hapus)
+    pub replacement: String,
+    /// Deskripsi singkat fix-it
+    pub description: String,
+}
+
+impl FixItHint {
+    /// Buat fix-it untuk insert teks di posisi tertentu
+    pub fn insert(file: impl Into<String>, line: usize, col: usize, text: impl Into<String>, description: impl Into<String>) -> Self {
+        FixItHint {
+            file: file.into(),
+            start_line: line,
+            start_col: col,
+            end_line: line,
+            end_col: col,
+            replacement: text.into(),
+            description: description.into(),
+        }
+    }
+
+    /// Buat fix-it untuk replace rentang teks
+    pub fn replace(
+        file: impl Into<String>,
+        start_line: usize,
+        start_col: usize,
+        end_line: usize,
+        end_col: usize,
+        replacement: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        FixItHint {
+            file: file.into(),
+            start_line,
+            start_col,
+            end_line,
+            end_col,
+            replacement: replacement.into(),
+            description: description.into(),
+        }
+    }
+
+    /// Buat fix-it untuk hapus rentang teks
+    pub fn delete(
+        file: impl Into<String>,
+        start_line: usize,
+        start_col: usize,
+        end_line: usize,
+        end_col: usize,
+        description: impl Into<String>,
+    ) -> Self {
+        FixItHint::replace(file, start_line, start_col, end_line, end_col, "", description)
+    }
+}
+
 // ─── Severity ───
 
 /// Severity level untuk diagnostic HDL — fatal, error, warning, note, dll.
@@ -1075,6 +1142,7 @@ impl SourceSnippet {
 /// - Help/suggestion
 /// - Notes tambahan
 /// - Example code
+/// - Fix-it hints (concrete code edits)
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub level: DiagLevel,
@@ -1093,6 +1161,8 @@ pub struct Diagnostic {
     pub source_snippet: Option<SourceSnippet>,
     /// Contoh kode perbaikan (ditampilkan setelah Help).
     pub example: Option<Cow<'static, str>>,
+    /// Fix-it hints — edit kode konkret yang bisa diterapkan otomatis.
+    pub fix_its: Vec<FixItHint>,
 }
 
 impl Diagnostic {
@@ -1109,6 +1179,7 @@ impl Diagnostic {
             runtime_context: None,
             source_snippet: None,
             example: None,
+            fix_its: Vec::new(),
         }
     }
 
@@ -1199,6 +1270,12 @@ impl Diagnostic {
         self
     }
 
+    /// Tambahkan fix-it hint (edit kode konkret).
+    pub fn with_fix_it(mut self, fix_it: FixItHint) -> Self {
+        self.fix_its.push(fix_it);
+        self
+    }
+
     pub fn is_error(&self) -> bool {
         self.level.is_error()
     }
@@ -1248,6 +1325,18 @@ impl fmt::Display for Diagnostic {
 
         for hint in &self.hints {
             write!(f, "\n  = help: {}", hint)?;
+        }
+
+        if !self.fix_its.is_empty() {
+            write!(f, "\n\nFix-it suggestions:")?;
+            for fix_it in &self.fix_its {
+                write!(f, "\n  = fix-it: {} ({}:{}:{}-{}:{})", fix_it.description, fix_it.file, fix_it.start_line, fix_it.start_col, fix_it.end_line, fix_it.end_col)?;
+                if !fix_it.replacement.is_empty() {
+                    write!(f, " -> '{}'", fix_it.replacement.escape_debug())?;
+                } else {
+                    write!(f, " (delete)")?;
+                }
+            }
         }
 
         Ok(())

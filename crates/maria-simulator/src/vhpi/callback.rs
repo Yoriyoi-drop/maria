@@ -95,21 +95,34 @@ pub fn dispatch_callback(reason: i32) {
 
 pub fn dispatch_start_of_simulation() {
     dispatch_callback(vhpiCbStartOfSimulation);
+    crate::vhpi::object::with_vhpi_engine(|engine| {
+        engine.queue_foreign_event(crate::foreign::ForeignEvent::EndOfSimulation);
+    });
 }
 
 pub fn dispatch_end_of_simulation() {
     dispatch_callback(vhpiCbEndOfSimulation);
     dispatch_callback(vhpiCbTerminate);
+    crate::vhpi::object::with_vhpi_engine(|engine| {
+        engine.queue_foreign_event(crate::foreign::ForeignEvent::EndOfSimulation);
+    });
 }
 
 pub fn dispatch_time_step() {
     dispatch_callback(vhpiCbTimeStep);
     dispatch_callback(vhpiCbNextTimeStep);
+    crate::vhpi::object::with_vhpi_engine(|engine| {
+        engine.queue_foreign_event(crate::foreign::ForeignEvent::NextTimeStep);
+    });
 }
 
 pub fn dispatch_synch() {
     dispatch_callback(vhpiCbReadWriteSynch);
     dispatch_callback(vhpiCbReadOnlySynch);
+    crate::vhpi::object::with_vhpi_engine(|engine| {
+        engine.queue_foreign_event(crate::foreign::ForeignEvent::ReadWriteSync);
+        engine.queue_foreign_event(crate::foreign::ForeignEvent::ReadOnlySync);
+    });
 }
 
 /// Fire semua callback value-change (vhpiCbValueChange) untuk signal dengan

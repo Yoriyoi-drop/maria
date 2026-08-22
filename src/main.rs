@@ -2314,6 +2314,12 @@ fn run_fast(cli: Cli, _timescale: Option<(String, String)>, env: &mut maria_api:
         if !cli.quiet && !anim_active(&anim) { session.print_timing(); }
         (design, index_len)
     };
+
+    // Emit parse errors collected during compilation
+    if !session.parse_errors.is_empty() {
+        emit_diags(&session.parse_errors);
+    }
+
     if anim_active(&anim) {
         anim_phase_done(&anim, Phase::Lex);
         anim_phase_done(&anim, Phase::Par);

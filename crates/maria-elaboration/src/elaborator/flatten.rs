@@ -64,7 +64,7 @@ impl Elaborator {
         // (instance interface boleh muncul setelah child module di AST).
         // Kembalikan daftar instance asli top (lihat komentar di atas).
         top.sub_instances = saved_instances;
-        let jobs = std::mem::take(&mut self.iface_alias_jobs);
+        let jobs = std::mem::take(&mut *self.iface_alias_jobs.borrow_mut());
         for (port_name, iface_name, inst_path) in jobs {
             let Some(iface) = self
                 .design
@@ -183,7 +183,18 @@ impl Elaborator {
                 // Use pre-elaborated module (default params) — move langsung,
                 // tanpa klone AST.
                 match self.modules.get(&inst.module_name) {
-                    Some(ir) => ir.clone(),
+                    Some(ir) => {
+                        if ir.sub_instances.is_empty() {
+                            // Leaf module (no sub-instances): skip expensive full
+                            // IrModule clone. Child is only read during translation
+                            // (signals, processes) — never mutated. flatten_instances_inner
+                            // is a no-op for leaf modules (std::mem::take returns empty
+                            // vec, loop body never executes).
+                            self.translate_child_into_parent(ir, inst, top, &mut hier_signal_map)?;
+                            continue;
+                        }
+                        ir.clone()
+                    }
                     None => {
                         return Err(self.elab_diag_at(
                             DiagCode::ModuleNotFound,
@@ -205,12 +216,27 @@ impl Elaborator {
             chain.pop();
             hier_signal_map.extend(child_hier_map);
 
-            // Build signal remapping: child_signal_id -> parent_signal_id
-            let mut sig_remap: Vec<Option<SignalId>> = vec![None; child.signals.len()];
-            let mut next_parent_id = top.signals.len();
+            self.translate_child_into_parent(&child, inst, top, &mut hier_signal_map)?;
+        }
+        Ok(hier_signal_map)
+    }
 
-            // Map port connections
-            for (port_name, &parent_sig) in inst.port_map.iter() {
+    /// Translate child module's signals and processes into parent — extracted
+    /// from flatten_instances_inner. Takes `&IrModule` (reference) so leaf
+    /// modules (no sub_instances) skip the expensive full IrModule clone.
+    fn translate_child_into_parent(
+        &self,
+        child: &IrModule,
+        inst: &IrInstance,
+        top: &mut IrModule,
+        hier_signal_map: &mut HashMap<Symbol, SignalId>,
+    ) -> Result<(), SimError> {
+        // Build signal remapping: child_signal_id -> parent_signal_id
+        let mut sig_remap: Vec<Option<SignalId>> = vec![None; child.signals.len()];
+        let mut next_parent_id = top.signals.len();
+
+        // Map port connections
+        for (port_name, &parent_sig) in inst.port_map.iter() {
                 if let Some(child_sig) = child.signals.iter().position(|s| s.name == *port_name) {
                     let child_sig_info = &child.signals[child_sig];
                     let parent_sig_info = &top.signals[parent_sig];
@@ -322,7 +348,7 @@ impl Elaborator {
                             iface_name,
                             top.signals[parent_sig].class_name,
                         ) {
-                            self.iface_alias_jobs.push((
+                            self.iface_alias_jobs.borrow_mut().push((
                                 *port_name,
                                 Symbol::intern(iface_name),
                                 inst_path,
@@ -381,8 +407,7 @@ impl Elaborator {
                 let translated = self.translate_process(process, &map_sig)?;
                 top.processes.push(translated);
             }
-        }
-        Ok(hier_signal_map)
+            Ok(())
     }
 
     fn translate_process(

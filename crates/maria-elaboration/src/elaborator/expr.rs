@@ -693,6 +693,49 @@ impl Elaborator {
                         Err(self.elab_diag(DiagCode::ParamMismatch, "$countones requires one argument"))
                     }
                 }
+                "$countbits" => {
+                    if let Some(arg) = args.first() {
+                        let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
+                        if let Ok(val) = const_eval_params(arg, &self.param_vals) {
+                            // $countbits counts non-zero bits (1, X, Z)
+                            let count = (0..64).filter(|i| ((val >> i) & 1) != 0).count() as u64;
+                            Ok(IrExpr::Const(LogicVec::from_u64(count, 32)))
+                        } else {
+                            Ok(IrExpr::SysFunc {
+                                name: Symbol::intern("$countbits"),
+                                args: vec![ir_arg],
+                                line: *line,
+                                col: *col,
+                            })
+                        }
+                    } else {
+                        Err(self.elab_diag(DiagCode::ParamMismatch, "$countbits requires one argument"))
+                    }
+                }
+                "$dimensions" => {
+                    if let Some(arg) = args.first() {
+                        // $dimensions returns the number of dimensions of an array
+                        // For now, try to resolve from signal info at elaboration time
+                        let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
+                        if let Some(sig_id) = resolve_expr_signal(arg, signal_map) {
+                            let info = &signals[sig_id as usize];
+                            // Packed dimensions + unpacked dimensions
+                            let packed_dims = info.packed_dims.len();
+                            let unpacked_dims = info.array_dims.len();
+                            let dims = packed_dims + unpacked_dims;
+                            Ok(IrExpr::Const(LogicVec::from_u64(dims as u64, 32)))
+                        } else {
+                            Ok(IrExpr::SysFunc {
+                                name: Symbol::intern("$dimensions"),
+                                args: vec![ir_arg],
+                                line: *line,
+                                col: *col,
+                            })
+                        }
+                    } else {
+                        Err(self.elab_diag(DiagCode::ParamMismatch, "$dimensions requires one argument"))
+                    }
+                }
                 "$onehot" => {
                     if let Some(arg) = args.first() {
                         let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
@@ -733,6 +776,49 @@ impl Elaborator {
                         }
                     } else {
                         Err(self.elab_diag(DiagCode::ParamMismatch, "$isunknown requires one argument"))
+                    }
+                }
+                "$onehot0" => {
+                    if let Some(arg) = args.first() {
+                        let ir_arg = self.elaborate_expr(arg, signal_map, signals)?;
+                        if let Ok(val) = const_eval_params(arg, &self.param_vals) {
+                            let ones = (0..64).filter(|i| (val >> i) & 1 == 1).count();
+                            Ok(IrExpr::Const(LogicVec::from_u64(
+                                if ones <= 1 { 1 } else { 0 },
+                                1,
+                            )))
+                        } else {
+                            Ok(IrExpr::SysFunc {
+                                name: Symbol::intern("$onehot0"),
+                                args: vec![ir_arg],
+                                line: *line,
+                                col: *col,
+                            })
+                        }
+                    } else {
+                        Err(self.elab_diag(DiagCode::ParamMismatch, "$onehot0 requires one argument"))
+                    }
+                }
+                "$cast" => {
+                    if args.len() >= 2 {
+                        let ir_dest = self.elaborate_expr(&args[0], signal_map, signals)?;
+                        let ir_src = self.elaborate_expr(&args[1], signal_map, signals)?;
+                        Ok(IrExpr::SysFunc {
+                            name: Symbol::intern("$cast"),
+                            args: vec![ir_dest, ir_src],
+                            line: *line,
+                            col: *col,
+                        })
+                    } else {
+                        Err(self.elab_diag(DiagCode::ParamMismatch, "$cast requires two arguments"))
+                    }
+                }
+                "$typename" => {
+                    if let Some(arg) = args.first() {
+                        let type_name = self.resolve_typename_for_expr(arg, signal_map, signals);
+                        Ok(IrExpr::Const(LogicVec::from_string(&type_name)))
+                    } else {
+                        Err(self.elab_diag(DiagCode::ParamMismatch, "$typename requires one argument"))
                     }
                 }
                 _ => {
@@ -2282,6 +2368,62 @@ impl Elaborator {
             IrExpr::Const(LogicVec::from_u64(acc, total_w)),
             elem_w,
         ))
+    }
+
+    fn resolve_typename_for_expr(
+        &self,
+        expr: &Expr,
+        signal_map: &HashMap<Symbol, SignalId>,
+        signals: &[SignalInfo],
+    ) -> String {
+        match expr {
+            Expr::Ident { name, .. } => {
+                if let Some(sig_id) = signal_map.get(name) {
+                    let info = &signals[*sig_id as usize];
+                    let type_str = match info.kind {
+                        SignalKind::Logic => "logic",
+                        SignalKind::Reg => "reg",
+                        SignalKind::Wire => "wire",
+                        SignalKind::Input => "input",
+                        SignalKind::Output => "output",
+                        SignalKind::Inout => "inout",
+                        SignalKind::Wire => "wire",
+                    };
+                    let signed_str = if info.is_signed { " signed" } else { "" };
+                    format!("{}{} [{}:{}]", type_str, signed_str, info.msb, info.lsb)
+                } else if self.param_vals.contains_key(name) {
+                    "parameter".to_string()
+                } else {
+                    "unknown".to_string()
+                }
+            }
+            Expr::Value(v) => match v {
+                maria_ast::Value::Decimal(_) => "int".to_string(),
+                maria_ast::Value::Real(_) => "real".to_string(),
+                maria_ast::Value::Binary { .. } | maria_ast::Value::Hex { .. } | maria_ast::Value::Octal { .. } => "logic".to_string(),
+            },
+            Expr::String(_) => "string".to_string(),
+            Expr::BitSelect { expr: inner, .. } | Expr::RangeSelect { expr: inner, .. } => {
+                self.resolve_typename_for_expr(inner, signal_map, signals)
+            }
+            Expr::Paren(inner) => self.resolve_typename_for_expr(inner, signal_map, signals),
+            Expr::Cast { dtype, .. } => format!("{}", dtype),
+            Expr::ScopedIdent { package, item, .. } => {
+                format!("{}::{}", package, item)
+            }
+            Expr::Concat(items) => {
+                if items.is_empty() {
+                    "logic".to_string()
+                } else {
+                    let first = self.resolve_typename_for_expr(&items[0], signal_map, signals);
+                    format!("{} (concat)", first)
+                }
+            }
+            Expr::Replicate { expr: inner, .. } => {
+                self.resolve_typename_for_expr(inner, signal_map, signals)
+            }
+            _ => "unknown".to_string(),
+        }
     }
 }
 

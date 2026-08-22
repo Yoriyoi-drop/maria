@@ -229,8 +229,22 @@ impl CraneliftEngine {
                     let zero = builder.ins().iconst(types::I64, 0i64);
                     builder.ins().select(cond, one, zero)
                 }
-                JitOp::Shl => builder.ins().ishl(a, b),
-                JitOp::Shr => builder.ins().ushr(a, b),
+                JitOp::Shl => {
+                    // Shift left: if shift >= width, result is 0
+                    let width_val = builder.ins().iconst(types::I64, width as i64);
+                    let shift_ge_width = builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, b, width_val);
+                    let shifted = builder.ins().ishl(a, b);
+                    let zero = builder.ins().iconst(types::I64, 0);
+                    builder.ins().select(shift_ge_width, zero, shifted)
+                }
+                JitOp::Shr => {
+                    // Shift right: if shift >= width, result is 0
+                    let width_val = builder.ins().iconst(types::I64, width as i64);
+                    let shift_ge_width = builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, b, width_val);
+                    let shifted = builder.ins().ushr(a, b);
+                    let zero = builder.ins().iconst(types::I64, 0);
+                    builder.ins().select(shift_ge_width, zero, shifted)
+                }
                 _ => builder.ins().iconst(types::I64, 0i64),
             };
 

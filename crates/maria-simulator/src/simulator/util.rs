@@ -181,9 +181,17 @@ pub fn is_signed_expr(expr: &IrExpr, signals: &[SignalInfo]) -> bool {
         // elaborator sebagai IrExpr::Signed (LRM §6.8.1) agar `a < 0` /
         // `a / 2` tetap signed sedangkan `a < 8'hFF` unsigned.
         IrExpr::BinaryOp(_, lhs, rhs) => {
-            is_signed_expr(lhs, signals) || is_signed_expr(rhs, signals)
+            is_signed_expr(lhs, signals) && is_signed_expr(rhs, signals)
         }
-        IrExpr::UnaryOp(_, inner) => is_signed_expr(inner, signals),
+        IrExpr::UnaryOp(op, inner) => {
+            match op {
+                // Unary minus on unsigned stays unsigned (SV: -unsigned = unsigned)
+                // Only signed if inner is already signed
+                UnaryIrOp::Minus => is_signed_expr(inner, signals),
+                // Other unary ops propagate signedness
+                _ => is_signed_expr(inner, signals),
+            }
+        }
         IrExpr::Cond(_, t, f) => is_signed_expr(t, signals) || is_signed_expr(f, signals),
         IrExpr::ExprRangeSelect(inner, ..) | IrExpr::ExprBitSelect(inner, ..) => {
             is_signed_expr(inner, signals)

@@ -227,21 +227,37 @@ mod tests {
 // ─── Callback Dispatch Points ───
 
 /// Called at the start of simulation (time 0 initialization).
+/// Fires callbacks directly AND queues ForeignEvent::EndOfSimulation for the scheduler.
 pub fn dispatch_start_of_simulation() {
     fire_callbacks(cbStartOfSimulation);
+    crate::vpi::with_vpi_engine(|engine| {
+        engine.queue_foreign_event(crate::foreign::ForeignEvent::EndOfSimulation);
+    });
 }
 
 /// Called at the end of simulation ($finish).
+/// Fires callbacks directly AND queues ForeignEvent::EndOfSimulation for the scheduler.
 pub fn dispatch_end_of_simulation() {
     fire_callbacks(cbEndOfSimulation);
+    crate::vpi::with_vpi_engine(|engine| {
+        engine.queue_foreign_event(crate::foreign::ForeignEvent::EndOfSimulation);
+    });
 }
 
 /// Called after each time step (read-write synchronization point).
+/// Fires callbacks directly AND queues ForeignEvent::ReadWriteSync for the scheduler.
 pub fn dispatch_read_write_synch() {
     fire_callbacks(cbReadWriteSynch);
+    crate::vpi::with_vpi_engine(|engine| {
+        engine.queue_foreign_event(crate::foreign::ForeignEvent::ReadWriteSync);
+    });
 }
 
 /// Called after all events for a time step are processed.
+/// Fires callbacks directly AND queues ForeignEvent::ReadOnlySync for the scheduler.
 pub fn dispatch_read_only_synch() {
     fire_callbacks(cbReadOnlySynch);
+    crate::vpi::with_vpi_engine(|engine| {
+        engine.queue_foreign_event(crate::foreign::ForeignEvent::ReadOnlySync);
+    });
 }

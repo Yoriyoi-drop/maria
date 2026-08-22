@@ -600,7 +600,8 @@ pub fn substitute_genvar_in_module_item(item: &mut ModuleItem, var_name: &str, v
         | ModuleItem::NetAlias(_)
         | ModuleItem::Nettype(_)
         | ModuleItem::PropertyAssert(_)
-        | ModuleItem::Checker(_) => {}
+        | ModuleItem::Checker(_)
+        | ModuleItem::Class(_) => {}
     }
 }
 

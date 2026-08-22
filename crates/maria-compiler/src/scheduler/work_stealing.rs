@@ -4,8 +4,12 @@
 //! Setiap thread punya local queue, dan thread idle bisa steal dari thread lain.
 
 use crossbeam::deque::Worker;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
+use maria_parser::preprocessor::Preprocessor;
+use maria_parser::lexer::{Lexer, Token};
+use maria_parser::Parser;
 
 // ─── Task ───
 
@@ -155,22 +159,120 @@ impl Scheduler {
         }
     }
 
+    /// Execute a single task with actual compilation pipeline logic.
     fn execute_task(task: Task, completed: &AtomicUsize, pending: &AtomicUsize) {
         match task {
-            Task::PreprocessFile(_path) => {}
-            Task::TokenizeFile(_path) => {}
-            Task::ParseFile(_path) => {}
-            Task::TypeCheck(_module) => {}
-            Task::ElaborateModule(_module) => {}
-            Task::ResolvePackage(_pkg) => {}
-            Task::FlattenHierarchy => {}
-            Task::LowerToSimIr => {}
-            Task::DiagnosticFlush => {}
-            Task::CacheEviction => {}
-            Task::Custom(_) => {}
+            Task::PreprocessFile(path) => {
+                Self::preprocess_file(&PathBuf::from(path));
+            }
+            Task::TokenizeFile(path) => {
+                Self::tokenize_file(&PathBuf::from(path));
+            }
+            Task::ParseFile(path) => {
+                Self::parse_file(&PathBuf::from(path));
+            }
+            Task::TypeCheck(module) => {
+                // Type checking - placeholder for future implementation
+                eprintln!("[Task] TypeCheck: {}", module);
+            }
+            Task::ElaborateModule(module) => {
+                // Module elaboration - placeholder for future implementation
+                eprintln!("[Task] ElaborateModule: {}", module);
+            }
+            Task::ResolvePackage(pkg) => {
+                // Package resolution - placeholder for future implementation
+                eprintln!("[Task] ResolvePackage: {}", pkg);
+            }
+            Task::FlattenHierarchy => {
+                eprintln!("[Task] FlattenHierarchy");
+            }
+            Task::LowerToSimIr => {
+                eprintln!("[Task] LowerToSimIr");
+            }
+            Task::DiagnosticFlush => {
+                eprintln!("[Task] DiagnosticFlush");
+            }
+            Task::CacheEviction => {
+                eprintln!("[Task] CacheEviction");
+            }
+            Task::Custom(msg) => {
+                eprintln!("[Task] Custom: {}", msg);
+            }
         }
         completed.fetch_add(1, Ordering::Relaxed);
         pending.fetch_sub(1, Ordering::Release);
+    }
+
+    /// Preprocess a single file.
+    fn preprocess_file(path: &PathBuf) {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            let mut pp = Preprocessor::new();
+            match pp.preprocess(&content, None) {
+                Ok(preprocessed) => {
+                    eprintln!("[Preprocess] {} -> {} chars", path.display(), preprocessed.len());
+                }
+                Err(e) => {
+                    eprintln!("[Preprocess] {} ERROR: {}", path.display(), e);
+                }
+            }
+        } else {
+            eprintln!("[Preprocess] {} ERROR: file not found", path.display());
+        }
+    }
+
+    /// Tokenize a single file.
+    fn tokenize_file(path: &PathBuf) {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            let mut pp = Preprocessor::new();
+            if let Ok(preprocessed) = pp.preprocess(&content, None) {
+                let mut lexer = Lexer::new(&preprocessed);
+                let mut count = 0;
+                loop {
+                    let (tok, _, _) = lexer.next_token();
+                    if tok == Token::Eof {
+                        break;
+                    }
+                    count += 1;
+                }
+                eprintln!("[Tokenize] {} -> {} tokens", path.display(), count);
+            } else {
+                eprintln!("[Tokenize] {} ERROR: preprocess failed", path.display());
+            }
+        } else {
+            eprintln!("[Tokenize] {} ERROR: file not found", path.display());
+        }
+    }
+
+    /// Parse a single file.
+    fn parse_file(path: &PathBuf) {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            let mut pp = Preprocessor::new();
+            if let Ok(preprocessed) = pp.preprocess(&content, None) {
+                let mut lexer = Lexer::new(&preprocessed);
+                let mut tokens = Vec::new();
+                loop {
+                    let (tok, line, col) = lexer.next_token();
+                    if tok == Token::Eof {
+                        break;
+                    }
+                    tokens.push((tok, line, col));
+                }
+                let mut parser = Parser::new(tokens, &path.to_string_lossy());
+                match parser.parse_design() {
+                    Ok(design) => {
+                        eprintln!("[Parse] {} -> {} modules, {} packages", 
+                            path.display(), design.modules.len(), design.packages.len());
+                    }
+                    Err(e) => {
+                        eprintln!("[Parse] {} ERROR: {}", path.display(), e);
+                    }
+                }
+            } else {
+                eprintln!("[Parse] {} ERROR: preprocess failed", path.display());
+            }
+        } else {
+            eprintln!("[Parse] {} ERROR: file not found", path.display());
+        }
     }
 }
 

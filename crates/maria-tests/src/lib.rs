@@ -10,6 +10,9 @@
 
 pub use maria_api::*;
 
+// MDME module - available for both tests and example binary
+
+
 // Private use mirror dari lib.rs lama — dibawa ke submodule test via glob
 // `use super::*` (tests/mod.rs, edge_tests.rs) sehingga `fs::…`, `Lexer`,
 // `Parser`, `Preprocessor` tetap valid tanpa edit di 15K LOC test.
@@ -35,5 +38,11 @@ mod debug_lexer;
 
 #[cfg(test)]
 mod synth_phase4;
+
 #[cfg(test)]
 mod synth_phase5;
+
+// Guided structure-aware fuzzer (metode test fuzzing "tidak buta"):
+// grammar-aware generation + coverage feedback + differential oracle.
+#[cfg(test)]
+mod fuzz;

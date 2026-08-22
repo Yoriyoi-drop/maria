@@ -203,6 +203,39 @@ impl LogicVec {
         Ok(LogicVec::from_u64(val, num_bits.max(1)))
     }
 
+    pub fn from_string(s: &str) -> Self {
+        let bytes = s.as_bytes();
+        let width = bytes.len() * 8;
+        // Try arena-backed allocation first
+        if let Some(ctor) = get_logicvec_ctor() {
+            if let Some(mut lv) = ctor(width, LogicVal::Zero) {
+                for (i, &byte) in bytes.iter().enumerate() {
+                    for bit in 0..8 {
+                        let bit_idx = i * 8 + bit;
+                        if bit_idx < lv.width {
+                            if (byte >> bit) & 1 == 1 {
+                                lv.bits[bit_idx] = LogicVal::One;
+                            }
+                        }
+                    }
+                }
+                return lv;
+            }
+        }
+        // Fallback
+        let mut bits = Vec::with_capacity(width);
+        for &byte in bytes {
+            for bit in 0..8 {
+                if (byte >> bit) & 1 == 1 {
+                    bits.push(LogicVal::One);
+                } else {
+                    bits.push(LogicVal::Zero);
+                }
+            }
+        }
+        LogicVec { bits, width }
+    }
+
     pub fn all_x(&self) -> bool {
         self.bits.iter().all(|b| *b == LogicVal::X)
     }

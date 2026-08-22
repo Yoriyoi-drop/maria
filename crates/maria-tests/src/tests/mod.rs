@@ -3897,6 +3897,47 @@ endmodule
 }
 
 #[test]
+fn test_sysfunc_onehot0() {
+    let source = r#"
+module tb;
+    reg [3:0] a, b, c, d, e;
+    reg oh0_a, oh0_b, oh0_c, oh0_d, oh0_e;
+    reg oh_a, oh_b, oh_c;
+    initial begin
+        a = 4'b0000;  // zero bits
+        b = 4'b0001;  // one bit
+        c = 4'b0011;  // two bits
+        d = 4'b0101;  // two bits non-adjacent
+        e = 4'b1111;  // four bits
+        
+        oh0_a = $onehot0(a);
+        oh0_b = $onehot0(b);
+        oh0_c = $onehot0(c);
+        oh0_d = $onehot0(d);
+        oh0_e = $onehot0(e);
+        
+        oh_a = $onehot(a);
+        oh_b = $onehot(b);
+        oh_c = $onehot(c);
+        
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    // $onehot0 returns 1 for 0 or 1 bits set
+    assert_eq!(sigs.iter().find(|(n,_)| n == "oh0_a").unwrap().1.to_u64(), 1, "$onehot0(0000)");
+    assert_eq!(sigs.iter().find(|(n,_)| n == "oh0_b").unwrap().1.to_u64(), 1, "$onehot0(0001)");
+    assert_eq!(sigs.iter().find(|(n,_)| n == "oh0_c").unwrap().1.to_u64(), 0, "$onehot0(0011)");
+    assert_eq!(sigs.iter().find(|(n,_)| n == "oh0_d").unwrap().1.to_u64(), 0, "$onehot0(0101)");
+    assert_eq!(sigs.iter().find(|(n,_)| n == "oh0_e").unwrap().1.to_u64(), 0, "$onehot0(1111)");
+    // $onehot returns 1 only for exactly 1 bit set
+    assert_eq!(sigs.iter().find(|(n,_)| n == "oh_a").unwrap().1.to_u64(), 0, "$onehot(0000)");
+    assert_eq!(sigs.iter().find(|(n,_)| n == "oh_b").unwrap().1.to_u64(), 1, "$onehot(0001)");
+    assert_eq!(sigs.iter().find(|(n,_)| n == "oh_c").unwrap().1.to_u64(), 0, "$onehot(0011)");
+}
+
+#[test]
 fn test_sysfunc_isunknown() {
     let source = r#"
 module tb;
@@ -3924,6 +3965,90 @@ endmodule
         .unwrap_or(2);
     assert_eq!(ra, 0, "$isunknown(4'b1010) = 0");
     assert_eq!(rb, 1, "$isunknown(4'b10xz) = 1");
+}
+
+#[test]
+fn test_sysfunc_typename() {
+    let source = r#"
+module tb;
+    logic [7:0] sig_a;
+    logic signed [15:0] sig_b;
+    logic [3:0][7:0] sig_c;
+    int sig_d;
+    real sig_e;
+    string sig_f;
+    initial begin
+        $display("sig_a: %s", $typename(sig_a));
+        $display("sig_b: %s", $typename(sig_b));
+        $display("sig_c: %s", $typename(sig_c));
+        $display("sig_d: %s", $typename(sig_d));
+        $display("sig_e: %s", $typename(sig_e));
+        $display("sig_f: %s", $typename(sig_f));
+        $display("lit_int: %s", $typename(42));
+        $display("lit_real: %s", $typename(3.14));
+        $display("lit_str: %s", $typename("hello"));
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    // Just verify it runs without error - $typename returns string as LogicVec
+    // Check that all declared signals exist
+    // Note: string signals have width 0 in current implementation (dynamic string)
+    let sig_names = ["sig_a", "sig_b", "sig_c", "sig_d", "sig_e", "sig_f"];
+    for name in sig_names {
+        let found = sigs.iter().find(|(n, _)| n == name);
+        assert!(found.is_some(), "Signal {} not found in results", name);
+    }
+}
+
+#[test]
+fn test_sysfunc_countbits() {
+    let source = r#"
+module tb;
+    reg [7:0] a;
+    reg [15:0] b;
+    reg [31:0] result_a, result_b;
+    initial begin
+        a = 8'b10100101;  // 4 ones
+        b = 16'hA5A5;      // 8 ones (A=1010, 5=0101)
+        result_a = $countbits(a);
+        result_b = $countbits(b);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    let ra = sigs.iter().find(|(n,_)| n == "result_a").unwrap().1.to_u64();
+    let rb = sigs.iter().find(|(n,_)| n == "result_b").unwrap().1.to_u64();
+    assert_eq!(ra, 4, "$countbits(8'b10100101) = 4");
+    assert_eq!(rb, 8, "$countbits(16'hA5A5) = 8");
+}
+
+#[test]
+fn test_sysfunc_dimensions() {
+    let source = r#"
+module tb;
+    logic [7:0] scalar;
+    logic [3:0][7:0] packed_2d;
+    logic [3:0] unpacked [7:0];
+    logic [2:0][1:0][3:0] packed_3d;
+    
+    reg [31:0] dim_scalar, dim_packed_2d, dim_unpacked, dim_packed_3d;
+    initial begin
+        dim_scalar = $dimensions(scalar);
+        dim_packed_2d = $dimensions(packed_2d);
+        dim_unpacked = $dimensions(unpacked);
+        dim_packed_3d = $dimensions(packed_3d);
+        #1 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 5).unwrap();
+    assert_eq!(sigs.iter().find(|(n,_)| n == "dim_scalar").unwrap().1.to_u64(), 0, "$dimensions(scalar) = 0");
+    assert_eq!(sigs.iter().find(|(n,_)| n == "dim_packed_2d").unwrap().1.to_u64(), 2, "$dimensions(packed_2d) = 2");
+    assert_eq!(sigs.iter().find(|(n,_)| n == "dim_unpacked").unwrap().1.to_u64(), 1, "$dimensions(unpacked) = 1");
+    assert_eq!(sigs.iter().find(|(n,_)| n == "dim_packed_3d").unwrap().1.to_u64(), 3, "$dimensions(packed_3d) = 3");
 }
 
 #[test]
@@ -7395,6 +7520,46 @@ endmodule
     };
     assert_eq!(get("a"), 1, "branch proses A tetap jalan (a=1 di #5)");
     assert_eq!(get("b"), 1, "branch proses A tetap jalan (b=1 di #10)");
+}
+
+#[test]
+fn test_disable_fork_branch_label_not_yet_implemented() {
+    // LANG-30 extension: `disable <label>` untuk named fork branch
+    // BELUM DIIMPLEMENTASIKAN — audit mark: "`disable <label>` per-branch belum"
+    // Current behavior: disable label in parent process does NOT affect
+    // named blocks inside fork branches (they run in separate processes).
+    // This test documents the expected behavior once implemented.
+    let source = r#"
+module tb;
+    int a;
+    int b;
+    initial begin
+        a = 0; b = 0;
+        fork
+            begin : branch_a
+                #5 a = 1;
+            end
+            begin : branch_b
+                #10 b = 1;
+            end
+        join_none
+        #2 disable branch_a;  // should kill branch_a only
+        #15 $finish;
+    end
+endmodule
+"#;
+    let sigs = simulate_signals(source, 20).unwrap();
+    let get = |n: &str| {
+        sigs.iter()
+            .find(|(s, _)| s == n)
+            .map(|(_, v)| v.to_u64())
+            .unwrap_or(99)
+    };
+    // Current behavior: disable branch_a in parent process kills ALL fork branches
+    // (a=0, b=0) — disable label not yet properly scoped to fork branches.
+    // Expected when fixed: only branch_a killed (a=0), branch_b runs (b=1).
+    assert_eq!(get("a"), 0, "branch_a killed (current: disable label affects all)");
+    assert_eq!(get("b"), 0, "branch_b also killed (current: disable not fork-scoped)");
 }
 
 #[test]

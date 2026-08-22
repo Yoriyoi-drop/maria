@@ -111,6 +111,8 @@ pub struct CompileSession {
     /// Payload lexer per file yang di-lex sesi ini: summary + token stream
     /// (db.md "2. lexer/") untuk cache lexer/.
     lexer_payloads: std::sync::Mutex<Vec<(PathBuf, crate::micd::cache::pipeline::LexerPayload)>>,
+    /// Parse errors collected during compilation
+    pub parse_errors: Vec<maria_core::diagnostics::Diagnostic>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -195,6 +197,7 @@ impl CompileSession {
             micd_restored_paths: HashSet::new(),
             micd_include_deps: HashMap::new(),
             lexer_payloads: std::sync::Mutex::new(Vec::new()),
+            parse_errors: Vec::new(),
         }
     }
 
@@ -336,14 +339,14 @@ impl CompileSession {
 
         // ── Phase 5: Parallel lexing + parsing dengan posisi global ──
         let lexer_payloads = &self.lexer_payloads;
-        let results: Vec<Result<(PathBuf, Design, u64), SimError>> = prepared
+        let results: Vec<Result<(PathBuf, Design, u64, Vec<maria_core::diagnostics::Diagnostic>), SimError>> = prepared
             .into_par_iter()
             .enumerate()
             .map(|(file_idx, r)| {
                 let (path, cached, cksum, combined_opt) = r?;
                 // Reuse cached design as-is (sudah diparse dengan posisi global)
                 if let Some(design) = cached {
-                    return Ok((path, design, cksum));
+                    return Ok((path, design, cksum, Vec::new()));
                 }
                 let combined = combined_opt.unwrap_or_default();
                 let base = base_offsets[file_idx];
@@ -411,17 +414,19 @@ impl CompileSession {
                 ));
 
                 let mut parser = Parser::new(tokens, &path_str)
-                    .with_global_type_names(&global_classes, &global_typedefs);
+                    .with_global_type_names(&global_classes, &global_typedefs)
+                    .with_source_lines(&combined);
                 let design = parser.parse_design()?;
-                if std::env::var("MARIA_DEBUG_PARSE").is_ok() && !parser.errors.is_empty() {
-                    eprintln!("[DBG-PARSE] {} errors={}", path_str, parser.errors.len());
-                    for e in &parser.errors {
+                let parse_errors = parser.errors;
+                if std::env::var("MARIA_DEBUG_PARSE").is_ok() && !parse_errors.is_empty() {
+                    eprintln!("[DBG-PARSE] {} errors={}", path_str, parse_errors.len());
+                    for e in &parse_errors {
                         eprintln!("  [DBG-PARSE] {:?}", e.message);
                     }
                     eprintln!("[DBG-PARSE] n_packages={} n_modules={}", design.packages.len(), design.modules.len());
                 }
 
-                Ok((path, design, cksum))
+                Ok((path, design, cksum, parse_errors))
             })
             .collect();
 
@@ -441,8 +446,10 @@ impl CompileSession {
 
         let mut file_designs: Vec<(PathBuf, Design)> = Vec::new();
         let mut file_checksums: HashMap<PathBuf, u64> = HashMap::new();
+        let mut all_parse_errors: Vec<maria_core::diagnostics::Diagnostic> = Vec::new();
         for r in results {
-            let (path, design, cksum) = r?;
+            let (path, design, cksum, parse_errors) = r?;
+            all_parse_errors.extend(parse_errors);
             file_designs.push((path.clone(), design));
             file_checksums.insert(path.clone(), cksum);
             // File yang AST-nya di-restore dari MICD (parse di-skip) TIDAK
@@ -454,6 +461,9 @@ impl CompileSession {
             }
         }
         self.timing.cached_files = files.len().saturating_sub(self.timing.processed_files);
+
+        // Store parse errors for later emission
+        self.parse_errors = all_parse_errors;
 
         // ── Phase 6: Build Index + Merge ──
         let index_start = Instant::now();

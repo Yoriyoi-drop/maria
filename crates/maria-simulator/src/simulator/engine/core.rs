@@ -10,6 +10,7 @@ use crate::simulator::sdf::SdfData;
 use crate::simulator::state::SimulationState;
 use crate::simulator::types::*;
 use maria_core::Symbol;
+use crate::foreign::{ForeignEvent, ForeignKind};
 use crate::waveform::{CsvWaveWriter, FstWaveWriter, SignalStats, VcdWriter};
 use rand::SeedableRng;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -217,6 +218,7 @@ impl SimulationEngine {
 
             cosim_state: None,
             cosim_signals: Vec::new(),
+            foreign_events: Vec::new(),
             signal_delays: std::collections::HashMap::new(),
             power_intent: None,
             process_body_cache: HashMap::new(),
@@ -710,6 +712,38 @@ impl SimulationEngine {
         self.cancel_flag
             .as_ref()
             .is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// Check if src_class is same as or subclass of dest_class.
+    /// Used by $cast for dynamic class handle casting.
+    pub(crate) fn is_subclass_or_same(&self, src_class: Symbol, dest_class: Symbol) -> bool {
+        if src_class == dest_class {
+            return true;
+        }
+        // Walk up the inheritance chain
+        let mut current = src_class;
+        while let Some(class_def) = self.design.classes.get(&current) {
+            if let Some(parent) = class_def.extends {
+                if parent == dest_class {
+                    return true;
+                }
+                current = parent;
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
+    /// Queue a foreign event (VPI/VHPI/PLI/DPI) for processing in the scheduler.
+    /// Events are processed in the appropriate IEEE 1800 region.
+    pub fn queue_foreign_event(&mut self, event: ForeignEvent) {
+        self.foreign_events.push(event);
+    }
+
+    /// Queue multiple foreign events at once.
+    pub fn queue_foreign_events(&mut self, events: Vec<ForeignEvent>) {
+        self.foreign_events.extend(events);
     }
 
     pub fn run(&mut self) -> Result<(), SimError> {
@@ -1381,6 +1415,11 @@ impl SimulationEngine {
             crate::vhpi::api::dispatch_time_step();
             crate::vhpi::api::dispatch_synch();
 
+            // ── Process ForeignEvent queue (VPI/VHPI/PLI/DPI) ——
+            // Events queued by dispatch_* functions are now processed in the
+            // appropriate IEEE 1800 region.
+            self.process_foreign_events()?;
+
             // ── Debug check at start of cycle ──
             if self.debug_mode != DebugMode::Normal {
                 self.debug_check()?;
@@ -2011,4 +2050,75 @@ impl SimulationEngine {
         Ok(())
     }
 
+    /// Process queued foreign events (VPI/VHPI/PLI/DPI) in the appropriate
+    /// IEEE 1800 region. Events are dispatched by the adapter layer and
+    /// queued via `queue_foreign_event`. This method processes them all.
+    /// Note: ValueChange events are fired directly from signal update path
+    /// (see signal update loop) — this processes the other event types.
+    fn process_foreign_events(&mut self) -> Result<(), SimError> {
+        use crate::foreign::ForeignEvent;
+
+        while let Some(event) = self.foreign_events.pop() {
+            match event {
+                ForeignEvent::ValueChange { object: _ } => {
+                    // Value-change callbacks are fired directly from signal update
+                    // path (lines 1101-1124). This event is a no-op here.
+                }
+                ForeignEvent::ReadWriteSync => {
+                    // Read-Write Synch: VPI cbReadWriteSynch + VHPI vhpiCbReadWriteSynch
+                    crate::vpi::with_vpi_engine(|engine| {
+                        crate::vpi::callback::fire_value_change_callbacks(
+                            "", &crate::vpi::types::t_vpi_value::default(),
+                            &crate::vpi::types::t_vpi_value::default()
+                        );
+                    });
+                    crate::vhpi::object::with_vhpi_engine(|engine| {
+                        crate::vhpi::callback::dispatch_callback(
+                            crate::vhpi::callback::vhpiCbReadWriteSynch
+                        );
+                    });
+                }
+                ForeignEvent::ReadOnlySync => {
+                    // Read-Only Synch: VPI cbReadOnlySynch + VHPI vhpiCbReadOnlySynch
+                    crate::vpi::with_vpi_engine(|engine| {
+                        crate::vpi::callback::fire_value_change_callbacks(
+                            "", &crate::vpi::types::t_vpi_value::default(),
+                            &crate::vpi::types::t_vpi_value::default()
+                        );
+                    });
+                    crate::vhpi::object::with_vhpi_engine(|engine| {
+                        crate::vhpi::callback::dispatch_callback(
+                            crate::vhpi::callback::vhpiCbReadOnlySynch
+                        );
+                    });
+                }
+                ForeignEvent::NextTimeStep => {
+                    // Next Time Step: VHPI vhpiCbNextTimeStep
+                    crate::vhpi::object::with_vhpi_engine(|engine| {
+                        crate::vhpi::callback::dispatch_callback(
+                            crate::vhpi::callback::vhpiCbNextTimeStep
+                        );
+                    });
+                }
+                ForeignEvent::Callback { callback_id: _ } => {
+                    // Registered callback (after-delay). Not yet implemented.
+                }
+                ForeignEvent::EndOfSimulation => {
+                    // End of simulation: VPI cbEndOfSimulation + VHPI vhpiCbEndOfSimulation
+                    crate::vpi::with_vpi_engine(|engine| {
+                        crate::vpi::callback::fire_value_change_callbacks(
+                            "", &crate::vpi::types::t_vpi_value::default(),
+                            &crate::vpi::types::t_vpi_value::default()
+                        );
+                    });
+                    crate::vhpi::object::with_vhpi_engine(|engine| {
+                        crate::vhpi::callback::dispatch_callback(
+                            crate::vhpi::callback::vhpiCbEndOfSimulation
+                        );
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
 }

@@ -13,7 +13,7 @@ pub mod decl;
 pub mod instance;
 pub mod proc;
 use maria_ast::*;
-use maria_core::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, SourceSnippet};
+use maria_core::diagnostics::diagnostic::{DiagCode, DiagLevel, Diagnostic, SourceSnippet, FixItHint};
 use maria_core::error::SimError;
 use maria_core::intern::Symbol;
 use crate::lexer::*;
@@ -226,6 +226,160 @@ impl Parser {
         let msg_for_diag = msg_str.clone();
         let mut diag = Diagnostic::error(code, msg_for_diag);
 
+        // Generate fix-it hints untuk error umum
+        if let Some(sl) = &source_line {
+            match code {
+                DiagCode::ExpectedSemi => {
+                    // Fix-it: tambahkan semicolon di akhir baris
+                    let trimmed = sl.trim_end();
+                    if !trimmed.ends_with(';') {
+                        let fix_it = FixItHint::insert(
+                            display_file.clone(),
+                            display_line,
+                            trimmed.len() + 1,
+                            ";",
+                            "Add missing semicolon",
+                        );
+                        diag = diag.with_fix_it(fix_it);
+                    }
+                }
+                DiagCode::UnclosedBlock => {
+                    // Fix-it: tambahkan closing keyword di akhir file
+                    // Gunakan resolve_source_file untuk konversi combined line ke file line
+                    let last_combined_line = self.source_lines.len();
+                    let (fix_file, fix_line) = self.resolve_source_file(last_combined_line);
+                    let fix_it = FixItHint::insert(
+                        fix_file,
+                        fix_line + 1, // Insert after last line of original file
+                        1,
+                        "\nend",
+                        "Add missing 'end' to close block",
+                    );
+                    diag = diag.with_fix_it(fix_it);
+                }
+                DiagCode::UnexpectedToken => {
+                    // Fix-it: hapus token yang tidak diharapkan
+                    if let Some(tok) = self.tokens.get(self.pos.get()) {
+                        let token_col = tok.2;
+                        let token_len = format!("{}", tok.0).len();
+                        let fix_it = FixItHint::delete(
+                            display_file.clone(),
+                            display_line,
+                            token_col,
+                            display_line,
+                            token_col + token_len,
+                            "Remove unexpected token",
+                        );
+                        diag = diag.with_fix_it(fix_it);
+                    }
+                }
+                DiagCode::ExpectedToken => {
+                    // Fix-it: untuk expected keyword seperti endmodule, end, endfunction, dll.
+                    let msg_lower = msg_str.to_lowercase();
+                    if msg_lower.contains("endmodule") || msg_lower.contains("endfunction") ||
+                       msg_lower.contains("endtask") || msg_lower.contains("endclass") ||
+                       msg_lower.contains("endinterface") || msg_lower.contains("endpackage") ||
+                       msg_lower.contains("end") {
+                        let last_combined_line = self.source_lines.len();
+                        let (fix_file, fix_line) = self.resolve_source_file(last_combined_line);
+                        let fix_it = FixItHint::insert(
+                            fix_file,
+                            fix_line + 1,
+                            1,
+                            "\nend",
+                            "Add missing 'end' keyword",
+                        );
+                        diag = diag.with_fix_it(fix_it);
+                    }
+                }
+                _ => {}
+            }
+        } else if display_line > 0 && display_line <= self.source_lines.len() {
+            // Fallback: gunakan display_line jika cumulative_line tidak valid
+            let sl = &self.source_lines[display_line - 1];
+            match code {
+                DiagCode::ExpectedSemi => {
+                    let trimmed = sl.trim_end();
+                    if !trimmed.ends_with(';') {
+                        let fix_it = FixItHint::insert(
+                            display_file.clone(),
+                            display_line,
+                            trimmed.len() + 1,
+                            ";",
+                            "Add missing semicolon",
+                        );
+                        diag = diag.with_fix_it(fix_it);
+                    }
+                }
+                DiagCode::UnclosedBlock => {
+                    let last_combined_line = self.source_lines.len();
+                    let (fix_file, fix_line) = self.resolve_source_file(last_combined_line);
+                    let fix_it = FixItHint::insert(
+                        fix_file,
+                        fix_line + 1,
+                        1,
+                        "\nend",
+                        "Add missing 'end' to close block",
+                    );
+                    diag = diag.with_fix_it(fix_it);
+                }
+                DiagCode::ExpectedToken => {
+                    let msg_lower = msg_str.to_lowercase();
+                    if msg_lower.contains("endmodule") || msg_lower.contains("endfunction") ||
+                       msg_lower.contains("endtask") || msg_lower.contains("endclass") ||
+                       msg_lower.contains("endinterface") || msg_lower.contains("endpackage") ||
+                       msg_lower.contains("end") {
+                        let last_combined_line = self.source_lines.len();
+                        let (fix_file, fix_line) = self.resolve_source_file(last_combined_line);
+                        let fix_it = FixItHint::insert(
+                            fix_file,
+                            fix_line + 1,
+                            1,
+                            "\nend",
+                            "Add missing 'end' keyword",
+                        );
+                        diag = diag.with_fix_it(fix_it);
+                    }
+                }
+                _ => {}
+            }
+        } else if !self.source_lines.is_empty() {
+            // Fallback 2: error at EOF (display_line=0) - insert at end of file
+            match code {
+                DiagCode::ExpectedToken => {
+                    let msg_lower = msg_str.to_lowercase();
+                    if msg_lower.contains("endmodule") || msg_lower.contains("endfunction") ||
+                       msg_lower.contains("endtask") || msg_lower.contains("endclass") ||
+                       msg_lower.contains("endinterface") || msg_lower.contains("endpackage") ||
+                       msg_lower.contains("end") {
+                        let last_combined_line = self.source_lines.len();
+                        let (fix_file, fix_line) = self.resolve_source_file(last_combined_line);
+                        let fix_it = FixItHint::insert(
+                            fix_file,
+                            fix_line + 1,
+                            1,
+                            "\nend",
+                            "Add missing 'end' keyword",
+                        );
+                        diag = diag.with_fix_it(fix_it);
+                    }
+                }
+                DiagCode::UnclosedBlock => {
+                    let last_combined_line = self.source_lines.len();
+                    let (fix_file, fix_line) = self.resolve_source_file(last_combined_line);
+                    let fix_it = FixItHint::insert(
+                        fix_file,
+                        fix_line + 1,
+                        1,
+                        "\nend",
+                        "Add missing 'end' to close block",
+                    );
+                    diag = diag.with_fix_it(fix_it);
+                }
+                _ => {}
+            }
+        }
+
         if let Some(sl) = source_line {
             let snippet = SourceSnippet::new(&display_file, display_line, col, sl.trim_end());
             diag = diag.with_source_snippet(snippet);
@@ -245,12 +399,28 @@ impl Parser {
 
     fn push_warning_at(&mut self, msg: impl Into<String>, line: usize, col: usize) {
         let msg: String = msg.into();
-        let mut diag = Diagnostic::new(DiagLevel::Warning, DiagCode::InvalidSyntax, msg)
+        let msg_for_diag = msg.clone();
+        let mut diag = Diagnostic::new(DiagLevel::Warning, DiagCode::InvalidSyntax, msg_for_diag)
             .with_code_context();
         if line > 0 && line <= self.source_lines.len() {
             let source_line = &self.source_lines[line - 1];
             let snippet = SourceSnippet::new(&self.source_file, line, col, source_line.trim_end());
             diag = diag.with_source_snippet(snippet);
+
+            // Generate fix-it for common warnings
+            let trimmed = source_line.trim_end();
+            if msg.contains("missing semicolon") || msg.contains("expected ';'") {
+                if !trimmed.ends_with(';') {
+                    let fix_it = FixItHint::insert(
+                        self.source_file.clone(),
+                        line,
+                        trimmed.len() + 1,
+                        ";",
+                        "Add missing semicolon",
+                    );
+                    diag = diag.with_fix_it(fix_it);
+                }
+            }
         }
         self.errors.push(diag);
     }
@@ -1763,9 +1933,9 @@ self.push_warning_at(format!("skipping unknown construct: {}", summary), line, c
                 }
             }
             Token::Class => {
-                // Class inside module — skip entire class body to endclass
-                self.skip_class_body();
-                Ok(None)
+                // Class inside module — parse class declaration
+                let class_decl = self.parse_class()?;
+                Ok(Some(ModuleItem::Class(class_decl)))
             }
             Token::EndClass => {
                 Ok(None)

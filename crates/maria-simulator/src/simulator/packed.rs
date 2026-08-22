@@ -259,18 +259,55 @@ impl PackedLogicVec {
             return self.clone();
         }
         let w = new_width.max(1);
-        let new_chunks = w.div_ceil(CELLS_PER_CHUNK);
-        let mut chunks = self.chunks.clone();
-        chunks.resize(new_chunks, (0u64, 0u64));
-        // Truncate the last chunk if needed
-        let last_bit = w % CELLS_PER_CHUNK;
-        if last_bit > 0 {
-            let last_idx = chunks.len() - 1;
-            let mask = (1u64 << last_bit) - 1;
-            chunks[last_idx].0 &= mask;
-            chunks[last_idx].1 &= mask;
+        if w <= self.width {
+            // Truncate: just mask the excess bits
+            let mut chunks = self.chunks.clone();
+            let last_bit = w % CELLS_PER_CHUNK;
+            if last_bit > 0 {
+                let last_idx = chunks.len() - 1;
+                let mask = (1u64 << last_bit) - 1;
+                chunks[last_idx].0 &= mask;
+                chunks[last_idx].1 &= mask;
+            }
+            // Remove any chunks beyond the new width
+            let new_chunks = w.div_ceil(CELLS_PER_CHUNK);
+            chunks.truncate(new_chunks);
+            PackedLogicVec { chunks, width: w }
+        } else {
+            // Extend: zero-extend (fill new bits with known=1, value=0)
+            let old_width = self.width;
+            let new_chunks = w.div_ceil(CELLS_PER_CHUNK);
+            let mut chunks = self.chunks.clone();
+            chunks.resize(new_chunks, (0u64, 0u64));
+            // Fill the new bits in the last old chunk with zeros
+            let old_last_bit = old_width % CELLS_PER_CHUNK;
+            if old_last_bit > 0 {
+                let last_idx = old_width / CELLS_PER_CHUNK;
+                if last_idx < chunks.len() {
+                    let old_mask = (1u64 << old_last_bit) - 1;
+                    let new_mask = if CELLS_PER_CHUNK >= 64 { !0u64 } else { (1u64 << CELLS_PER_CHUNK) - 1 };
+                    let extend_mask = new_mask & !old_mask;
+                    // Set known=1, value=0 for new bits
+                    chunks[last_idx].0 |= extend_mask;
+                    // value bits already 0
+                }
+            }
+            // New chunks are already (0, 0) = X, need to make them zero
+            for i in (old_width / CELLS_PER_CHUNK + 1)..new_chunks {
+                let chunk_width = (w - i * CELLS_PER_CHUNK).min(CELLS_PER_CHUNK);
+                let mask = if chunk_width >= 64 { !0u64 } else { (1u64 << chunk_width) - 1 };
+                chunks[i] = (mask, 0u64); // known=1, value=0 for all bits
+            }
+            // Mask the last chunk
+            let last_bit = w % CELLS_PER_CHUNK;
+            if last_bit > 0 {
+                let last_idx = chunks.len() - 1;
+                let mask = (1u64 << last_bit) - 1;
+                chunks[last_idx].0 &= mask;
+                chunks[last_idx].1 &= mask;
+            }
+            PackedLogicVec { chunks, width: w }
         }
-        PackedLogicVec { chunks, width: w }
     }
 
     /// Concatenate two packed vectors.
@@ -295,7 +332,9 @@ impl PackedLogicVec {
     /// - result = X otherwise
     pub fn bitwise_and(&self, other: &PackedLogicVec) -> PackedLogicVec {
         let max_width = self.width.max(other.width);
-        let chunks = crate::simulator::simd_packed::simd_and(&self.chunks, &other.chunks);
+        let self_ext = self.resize(max_width);
+        let other_ext = other.resize(max_width);
+        let chunks = crate::simulator::simd_packed::simd_and(&self_ext.chunks, &other_ext.chunks);
         PackedLogicVec { chunks, width: max_width }
     }
 
@@ -308,7 +347,9 @@ impl PackedLogicVec {
     /// - result = X otherwise
     pub fn bitwise_or(&self, other: &PackedLogicVec) -> PackedLogicVec {
         let max_width = self.width.max(other.width);
-        let chunks = crate::simulator::simd_packed::simd_or(&self.chunks, &other.chunks);
+        let self_ext = self.resize(max_width);
+        let other_ext = other.resize(max_width);
+        let chunks = crate::simulator::simd_packed::simd_or(&self_ext.chunks, &other_ext.chunks);
         PackedLogicVec { chunks, width: max_width }
     }
 
@@ -320,13 +361,18 @@ impl PackedLogicVec {
     /// - value = (a.value ^ b.value) & known
     pub fn bitwise_xor(&self, other: &PackedLogicVec) -> PackedLogicVec {
         let max_width = self.width.max(other.width);
-        let chunks = crate::simulator::simd_packed::simd_xor(&self.chunks, &other.chunks);
+        let self_ext = self.resize(max_width);
+        let other_ext = other.resize(max_width);
+        let chunks = crate::simulator::simd_packed::simd_xor(&self_ext.chunks, &other_ext.chunks);
         PackedLogicVec { chunks, width: max_width }
     }
 
     /// Bitwise XNOR = NOT(XOR).
     pub fn bitwise_xnor(&self, other: &PackedLogicVec) -> PackedLogicVec {
-        let xor = self.bitwise_xor(other);
+        let max_width = self.width.max(other.width);
+        let self_ext = self.resize(max_width);
+        let other_ext = other.resize(max_width);
+        let xor = self_ext.bitwise_xor(&other_ext);
         xor.bitwise_not()
     }
 

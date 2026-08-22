@@ -161,7 +161,15 @@ pub fn const_expr_is_signed(expr: &Expr) -> bool {
         | Expr::Value(Value::Hex { is_signed, .. })
         | Expr::Value(Value::Octal { is_signed, .. }) => *is_signed,
         Expr::Paren(inner) => const_expr_is_signed(inner),
-        Expr::UnaryOp { expr: inner, .. } => const_expr_is_signed(inner),
+        Expr::UnaryOp { op, expr: inner } => {
+            match op {
+                // Unary minus on unsigned stays unsigned (SV: -unsigned = unsigned)
+                // Only signed if inner is a signed decimal literal
+                UnaryOp::Minus => matches!(inner.as_ref(), Expr::Value(Value::Decimal(_))),
+                // Other unary ops propagate signedness
+                _ => const_expr_is_signed(inner),
+            }
+        }
         Expr::BinaryOp { lhs, rhs, .. } => {
             const_expr_is_signed(lhs) && const_expr_is_signed(rhs)
         }

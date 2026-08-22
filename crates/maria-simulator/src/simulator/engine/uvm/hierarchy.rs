@@ -415,11 +415,19 @@ impl SimulationEngine {
             "end_of_elaboration_phase",
             "start_of_simulation_phase",
         ] {
-            // VERIF-05: phase.jump("phase_name") — jika jump sudah di-set,
-            // lewati fase sampai target (fase yang belum dijalankan di
-            // antaranya di-skip; eksekusi berlanjut dari fase target).
+            // VERIF-05: phase.jump("phase_name") / phase.skip() — handle jump target
             if let Some(ref target) = self.uvm_phase_jump {
-                if *target != phase {
+                if target.starts_with("skip:") {
+                    // skip:<phase_name> — skip only the named phase
+                    let skip_phase = target.strip_prefix("skip:").unwrap();
+                    if phase == skip_phase {
+                        // Skip this phase, but clear the skip for next phases
+                        self.uvm_phase_jump = None;
+                        continue;
+                    }
+                    // Not the phase to skip — execute normally
+                } else if *target != phase {
+                    // jump:<target_phase> — skip all phases until target
                     continue;
                 }
             }
@@ -437,7 +445,7 @@ impl SimulationEngine {
             // Jump berlaku SEKALI untuk fase ini — reset agar fase berikutnya
             // dijalankan normal (jump = lompat KE fase target, lalu lanjut).
             if let Some(ref target) = self.uvm_phase_jump {
-                if *target == phase {
+                if !target.starts_with("skip:") && *target == phase {
                     self.uvm_phase_jump = None;
                 }
             }

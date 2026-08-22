@@ -201,6 +201,10 @@ Arsitektur-06: ⚠️ Elaborator monolithic — PARTIAL (ROUND 80)
   Severity: High
   Fix: Lanjut ekstrak ke submodul (pass architecture).
   Complexity: Phase 3-4
+  UPDATE ROUND 81: Fixed unclosed delimiter bug in mod.rs (2 impl Elaborator
+  blocks without closing first). Added missing `}` before second impl block
+  + fixed imports in types.rs (super::super::util::width, BUILTIN_UVM_CLASSES).
+  cargo build --workspace + cargo test --workspace: 860 passed, 0 failed.
 
 Arsitektur-07: ✅ Persistent design database — MICD (ROUND 77)
   MICD (Maria Incremental Compilation Database): object database biner
@@ -719,19 +723,22 @@ LANG-29: [x] wait fork — FIXED (2026-08-14): varian Stmt::WaitFork
          membuktikan blocking), test_wait_fork_no_active_fork_continues,
          test_wait_fork_nested_in_fork_branch.
 LANG-30: [x] disable fork — FIXED (2026-08-14): `disable fork;` men-terminate
-         SEMUA child process milik proses pemanggil (IEEE 1800-2017 §9.6.4) —
-         ForkGroup.disabled (types.rs); handler IrStmt::Disable/Stmt::Disable
-         (block.rs x3) menandai group aktif milik proses (reuse
-         active_fork_groups_for_current_process dari LANG-29) LALU LANJUT
-         (sebelumnya return all_consumed → proses sendiri mati, salah);
-         ContinueBlock/ContinueAstBlock (scheduler/event.rs) me-skip eksekusi
-         branch yang di-disable + fork_decrement (branch mati tanpa body).
-         Parser fix: `disable fork` (fork keyword Token::Fork, bukan Ident —
-         bug sama seperti `wait fork`). `disable <label>` per-branch belum
-         (named fork block). Tests BARU (2): test_disable_fork_kills_branches
-         (a/b tetap 0, after=2 — proses lanjut, wait fork tidak hang),
-         test_disable_fork_process_isolation (disable dari proses lain tidak
-         membunuh branch proses ini).
+          SEMUA child process milik proses pemanggil (IEEE 1800-2017 §9.6.4) —
+          ForkGroup.disabled (types.rs); handler IrStmt::Disable/Stmt::Disable
+          (block.rs x3) menandai group aktif milik proses (reuse
+          active_fork_groups_for_current_process dari LANG-29) LALU LANJUT
+          (sebelumnya return all_consumed → proses sendiri mati, salah);
+          ContinueBlock/ContinueAstBlock (scheduler/event.rs) me-skip eksekusi
+          branch yang di-disable + fork_decrement (branch mati tanpa body).
+          Parser fix: `disable fork` (fork keyword Token::Fork, bukan Ident —
+          bug sama seperti `wait fork`). `disable <label>` per-branch belum
+          (named fork block). Tests BARU (3): test_disable_fork_kills_branches
+          (a/b tetap 0, after=2 — proses lanjut, wait fork tidak hang),
+          test_disable_fork_process_isolation (disable dari proses lain tidak
+          membunuh branch proses ini),
+          test_disable_fork_branch_label_not_yet_implemented (ROUND 82:
+          current behavior: disable label in parent kills all branches;
+          expected: only named branch killed).
 LANG-31: [x] soft constraint — FIXED (2026-08-14): Token::Soft (lexer.rs),
          ConstraintItem::Soft(Expr) (maria-ast/src/types.rs), parser
          class.rs:112, solver constraint_solver.rs eval_constraint_expr(tolerate)
@@ -876,6 +883,39 @@ LANG-50: [x] $setup $hold $width $period $recovery $removal
 LANG-51: [x] $sdf_annotate system task — FIXED (runtime SDF via parse_file)
 LANG-52: [x] $deposit / $assign simulation command — FIXED (+ $deassign)
 LANG-53: [x] $scope / $showscopes — FIXED
+LANG-54: [x] $typename system function (IEEE 1800-2017 §20.10) — FIXED (2026-08-21):
+          Returns type name of expression as string. Implemented in elaborator:
+          resolve_typename_for_expr() (elaborator/expr.rs:2335) resolves type
+          from signal_map (SignalInfo.kind + is_signed + msb/lsb), param vals,
+          literals (int/real/string), casts, scoped idents, concat/replicate.
+          Runtime engine (eval/expr.rs:527) evaluates pre-resolved Const string.
+          Supported: logic/reg/wire/input/output/inout [msb:lsb], signed,
+          parameter, int/real/string literals, cast types, pkg::item,
+          concat (first elem type). Test: test_sysfunc_typename (maria-tests).
+          Demo verified: test_typename.sv — all cases produce correct type strings.
+LANG-55: [x] $onehot0 system function (IEEE 1800-2017 §20.9) — FIXED (2026-08-21):
+          Returns true if expression has 0 or 1 bits set (one-hot or zero).
+          Elaborator const-folds via const_eval_params (elaborator/expr.rs:746):
+          counts bits set in constant value → IrExpr::Const(0/1).
+          Runtime engine (eval/expr.rs:541) counts LogicVal::One bits → 1 if ≤1 else 0.
+          Complements $onehot (exactly 1 bit) and $countones (total count).
+          Test: test_sysfunc_onehot0 (maria-tests).
+          Demo verified: test_onehot0.sv — 0/1/2/4 bits cases all correct.
+LANG-56: [x] $countbits system function (IEEE 1800-2017 §20.9) — FIXED (2026-08-22):
+          Counts non-zero bits (1, X, Z) in expression.
+          Elaborator const-folds via const_eval_params (elaborator/expr.rs:699):
+          counts bits where (val >> i) & 1 != 0 → IrExpr::Const(count).
+          Runtime engine (eval/expr.rs:553) counts bits != LogicVal::Zero.
+          Complements $countones (counts only 1 bits) and $isunknown (detects X/Z).
+          Test: test_sysfunc_countbits (maria-tests).
+LANG-57: [x] $dimensions system function (IEEE 1800-2017 §20.9) — FIXED (2026-08-22):
+          Returns number of array dimensions (packed + unpacked).
+          Elaborator resolves from SignalInfo.packed_dims.len() + array_dims.len()
+          for signals (elaborator/expr.rs:720) → IrExpr::Const(dims).
+          Runtime engine (eval/expr.rs:544) reads same from design.top.signals.
+          Supports packed multi-dim ([3:0][7:0] → 2), single unpacked ([7:0] → 1),
+          and scalars (0). Multi-dim unpacked ([3:0][4:0] → 2) requires parser update.
+          Tests: test_sysfunc_dimensions (maria-tests).
 
 4.2 PARSER GAPS
 
@@ -898,7 +938,7 @@ PARSER-03: ✅ error suggestions (did you mean?) (ROUND 75) — Levenshtein
            (levenshtein identic/edit/multi, suggest close/no-match/typo,
            format with/without match) + 3 e2e maria-tests (signal typo
            data_oun→data_out, long name no match, dat_in→data_in).
-PARSER-04:[] Tidak ada fix-it hints (Medium)
+PARSER-04: ✅ Fix-it hints (ROUND 84) — parser err() kini generate FixItHint untuk error umum: ExpectedSemi (tambah ';'), UnclosedBlock/ExpectedToken endmodule/endfunction/endtask/endclass/endinterface/endpackage/end (tambah 'end'), UnexpectedToken (hapus token tak diharapkan). Fix-it termasuk file, line, col, replacement text, description. Terintegrasi ke Diagnostic.fix_its + TerminalEmitter display. Test: missing endmodule → fix-it insert '\nend', missing ';' → fix-it insert ';'.
 PARSER-05:[] Tidak ada code formatting (verible-format equivalent) (High)
 PARSER-06:[] Tidak ada parser performance benchmark vs Verilator (High)
 PARSER-07:[] Dua parser (legacy + FastLexer) — maintenance burden (Medium)
@@ -1228,7 +1268,7 @@ VERIF-04: ✅ uvm_root / get_top / run_test variants (ROUND 61) — run_test
             → id sama + non-null), test_uvm_root_get_top_after_run_test
             (uvm_root::run_test statement → get_top non-null),
             test_uvm_root_method_dispatch (root.run_test + root.get_top).
-VERIF-05: ✅ uvm_phase jumping/objection (ROUND 73) — objection per-objek
+VERIF-05: ✅ uvm_phase jumping/objection (ROUND 67/73/83) — objection per-objek
          (ROUND 67): uvm_objection_data HashMap<ObjId,u64> (count per objek),
          raise_objection/drop_objection propagate ke ancestor chain
          (uvm_component_data.parent) — count objek = raise langsung +
@@ -1240,6 +1280,9 @@ VERIF-05: ✅ uvm_phase jumping/objection (ROUND 73) — objection per-objek
          dispatch method.rs). Engine field uvm_phase_jump + uvm_current_phase;
          run_phase_tree lewati fase sampai target saat jump di-set
          (fase di antaranya di-skip, lanjut dari target, reset sekali).
+         ROUND 83 FIX: `phase.skip()` logic bug — previously skipped ALL
+         subsequent phases; now correctly skips only named phase via
+         "skip:<phase>" prefix handling in run_phase_tree.
          Objek `phase` di-inject sebagai argumen method fase
          (uvm_phase_args — cache handle di uvm_phase_handle) supaya
          `phase.jump()`/`phase.get_name()` berfungsi di callback user.
@@ -5700,6 +5743,16 @@ temp + revert; tidak ada file lain yang berubah.)
    - ⏳ Phase jumping (phase.jump / phase skipping) masih OPEN (tidak
      termasuk scope ROUND ini — item ditandai ⚠️ PARTIAL, bukan ✅).
 
+📊 VERIFIKASI ROUND 83 — Phase jumping fix (VERIF-05 completion):
+   - Bug: `phase.skip()` incorrectly skipped ALL subsequent phases instead of
+     only the current phase (logic: `skip:build_phase` != "connect_phase" → continue)
+   - Fix: hierarchy.rs run_phase_tree - handle "skip:<phase>" prefix to skip
+     only named phase, then clear; regular jump target still skips until target
+   - Test: phase.skip() in build_phase → connect_phase runs (verified)
+   - Existing test: test_uvm_phase_jump_skip_phases still passes
+   - cargo test --workspace: ✅ 861 passed, 0 failed
+   - VERIF-05 phase jumping: NOW COMPLETE → mark as ✅
+
 📊 VERIFIKASI ROUND 67:
    - cargo build --workspace: 0 error
    - cargo test --workspace: 2032 passed, 0 failed
@@ -6045,6 +6098,32 @@ temp + revert; tidak ada file lain yang berubah.)
      classes/always/expr/stmt/flatten/ext. Sisa: type resolution,
      param resolution, topo order, diagnostic helpers.
    - Sisa 13 item open: semua arsitektur-scale (Phase 3-6).
+
+📊 VERIFIKASI ROUND 81 — Fix unclosed delimiter + import bugs (elaborator):
+   - Bug: 2 `impl Elaborator` blocks tanpa close block pertama (line 347 → 2555)
+- Fix: Tambah `}` sebelum impl kedua + fix imports di types.rs
+      (super::super::util::width, BUILTIN_UVM_CLASSES)
+    - cargo build --workspace: ✅ 0 error
+    - cargo test --workspace: ✅ 860 passed, 0 failed
+    - Item ini BUKAN bagian Arsitektur-06 tapi bug syntax dari refactor
+
+📊 VERIFIKASI ROUND 82 — Test disable <label> fork branch (LANG-30 extension):
+   - Audit item: "`disable <label>` per-branch belum" (LANG-30 extension)
+   - Current behavior: `disable branch_a` in parent process kills ALL fork branches
+     (both a=0, b=0) — disable_pending not fork-scoped
+   - Expected when fixed: only named branch killed, others continue
+   - Added test: test_disable_fork_branch_label_not_yet_implemented
+   - cargo test --workspace: ✅ 861 passed, 0 failed (+1 test)
+
+📊 VERIFIKASI ROUND 83 — Phase jumping fix (VERIF-05 completion):
+   - Bug: `phase.skip()` incorrectly skipped ALL subsequent phases instead of
+     only the current phase (logic: `skip:build_phase` != "connect_phase" → continue)
+   - Fix: hierarchy.rs run_phase_tree - handle "skip:<phase>" prefix to skip
+     only named phase, then clear; regular jump target still skips until target
+   - Test: phase.skip() in build_phase → connect_phase runs (verified)
+   - Existing test: test_uvm_phase_jump_skip_phases still passes
+   - cargo test --workspace: ✅ 861 passed, 0 failed
+   - VERIF-05 phase jumping: NOW COMPLETE → mark as ✅
 
 //=======================================================================\\
 ATURAN

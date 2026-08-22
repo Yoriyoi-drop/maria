@@ -109,7 +109,11 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 | `$signed`/`$unsigned` | ✅ | ✅ | |
 | `$countones` | ✅ | ✅ | |
 | `$onehot` | ✅ | ✅ | |
+| `$onehot0` | ✅ | ✅ | |
 | `$isunknown` | ✅ | ✅ | |
+| `$typename` | ✅ | ✅ | |
+| `$countbits` | ✅ | ✅ | |
+| `$dimensions` | ✅ | ✅ | |
 | `$clog2` (elaboration) | ✅ | ✅ | Compile-time |
 
 ### 1.8 Assertions (Immediate)
@@ -193,7 +197,11 @@ Panduan ini membantu transisi kode antara Maria dan Verilator.
 | `// verilator ...` | ✅ | ❌ | Verilator directives |
 | `$countones` | ✅ | ✅ | Population count |
 | `$onehot` | ✅ | ✅ | One-hot detection |
+| `$onehot0` | ✅ | ✅ | One-hot or zero detection |
 | `$isunknown` | ✅ | ✅ | X/Z detection (4-state) |
+| `$typename` | ✅ | ✅ | Type name as string |
+| `$countbits` | ✅ | ✅ | Count non-zero bits |
+| `$dimensions` | ✅ | ✅ | Array dimensions count |
 | `$clog2` (runtime) | ✅ | ✅ | Compile-time fold + runtime eval |
 | Export DPI-C | ✅ | ❌ | C→SV calling |
 | SystemC export | ✅ | ❌ | |

@@ -657,6 +657,8 @@ pub enum ModuleItem {
     /// 1800-2017 §6.10): mendaftarkan tipe net baru yang mengikat ke tipe
     /// data dasar; deklarasi variabel dgn tipe ini di-resolve ke base type.
     Nettype(NettypeDecl),
+    /// Class declaration (IEEE 1800-2017 §8)
+    Class(ClassDecl),
     /// LANG-04/11/12/13: concurrent assertion property module-level —
     /// `assert/assume/cover/restrict property (@(posedge clk) expr)` bentuk
     /// BOOLEAN (tanpa operator temporal `##`/`|->`/`[*]`). Disimpan sebagai

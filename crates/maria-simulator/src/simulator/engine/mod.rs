@@ -15,6 +15,7 @@ use crate::scheduler::clock_domain::ClockDomainAnalysis;
 use crate::scheduler::SimulationDag;
 use crate::simulator::arena::SimulationArena;
 use crate::simulator::parallel::ParallelConfig;
+use crate::foreign::{ForeignEvent, ForeignKind};
 
 use crate::simulator::sdf::TimingCheck;
 use crate::simulator::state::SimulationState;
@@ -456,6 +457,12 @@ pub struct SimulationEngine {
 
     /// Co-simulation signal mapping: (signal_id, signal_name, direction)
     pub cosim_signals: Vec<(usize, String, bool)>,
+
+    /// Foreign event queue (VPI/VHPI/PLI/DPI) — unified event queue for foreign
+    /// callbacks (value-change, read-write sync, read-only sync, next time step,
+    /// registered callbacks, end of simulation). Processed by scheduler in
+    /// appropriate IEEE 1800 region.
+    pub foreign_events: Vec<ForeignEvent>,
 
     /// Per-path signal delays from SDF annotation: "cell_name:from->to" → SignalDelay
     pub signal_delays: std::collections::HashMap<String, crate::simulator::state::SignalDelay>,

@@ -139,17 +139,11 @@ fn expr_approx_width(expr: &IrExpr, signals: &[SignalInfo]) -> usize {
                 | BinaryIrOp::Ge
                 | BinaryIrOp::LogicalAnd
                 | BinaryIrOp::LogicalOr => 1,
-                // Shift: runtime `eval_binary` menghasilkan lebar max operan
-                // (`max_width = lhs.width.max(rhs.width)`) — mis. `1'b1 << x`
-                // (x 6-bit) → hasil 6-bit. Pakai aturan yang sama agar cek
-                // width konsisten dengan runtime dan tidak memicu false-positive
-                // untuk idiom RTL `thresh = 1'b1 << level`.
+                // Shift: SV result width = left operand width (LRM §11.4.10)
                 BinaryIrOp::Shl
                 | BinaryIrOp::Shr
                 | BinaryIrOp::Sshl
-                | BinaryIrOp::Sshr => {
-                    context_width(a, wa, wb).max(context_width(b, wb, wa))
-                }
+                | BinaryIrOp::Sshr => wa,
                 _ => context_width(a, wa, wb).max(context_width(b, wb, wa)),
             }
         }
