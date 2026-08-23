@@ -8,7 +8,6 @@
 
 use std::collections::HashSet;
 
-use super::expr::Expr;
 use super::gen::GenInput;
 
 #[derive(Debug, Clone)]
@@ -73,6 +72,10 @@ impl CoverageGuide {
 
     pub fn corpus_len(&self) -> usize {
         self.corpus.len()
+    }
+
+    pub fn corpus_get(&self, idx: usize) -> Option<GenInput> {
+        self.corpus.get(idx).map(|c| c.input.clone())
     }
 
     /// Pilih input berikutnya: dari corpus (mutasi) bila ada & beruntung,

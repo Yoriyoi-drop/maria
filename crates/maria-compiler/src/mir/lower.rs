@@ -623,7 +623,8 @@ fn hir_binop_to_mir(op: HirBinOp) -> MirBinOp {
         HirBinOp::Ge => MirBinOp::Ge,
         HirBinOp::Shl => MirBinOp::Shl,
         HirBinOp::Shr => MirBinOp::Shr,
-        HirBinOp::LogicAnd | HirBinOp::LogicOr => MirBinOp::Eq,
+        HirBinOp::LogicAnd => MirBinOp::LogicalAnd,
+        HirBinOp::LogicOr => MirBinOp::LogicalOr,
         HirBinOp::Sar => MirBinOp::Shr,
         HirBinOp::Power => MirBinOp::Mul,
     }

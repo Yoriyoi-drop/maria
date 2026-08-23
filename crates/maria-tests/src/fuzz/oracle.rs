@@ -6,10 +6,6 @@
 //! (3) bandingkan nilai `y` hasil simulasi maria dengan model emas
 //! `Expr::eval` (differential testing). Ketidakcocokan = bug semantik.
 
-use std::panic;
-
-use maria_ir::LogicVec;
-
 use super::gen::GenInput;
 
 pub enum Verdict {

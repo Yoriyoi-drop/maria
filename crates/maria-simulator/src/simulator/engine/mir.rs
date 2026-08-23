@@ -47,6 +47,8 @@ impl SimulationEngine {
             maria_ir::BinaryIrOp::Ge => MirBinOp::Ge,
             maria_ir::BinaryIrOp::Shl => MirBinOp::Shl,
             maria_ir::BinaryIrOp::Shr => MirBinOp::Shr,
+            maria_ir::BinaryIrOp::LogicalAnd => MirBinOp::LogicalAnd,
+            maria_ir::BinaryIrOp::LogicalOr => MirBinOp::LogicalOr,
             _ => MirBinOp::Add, // fallback
         }
     }

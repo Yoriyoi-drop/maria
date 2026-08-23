@@ -88,32 +88,43 @@ pub fn const_eval_with_params(
             lhs,
             rhs,
         } => {
-            Ok(const_eval_with_params(lhs, param_vals)? + const_eval_with_params(rhs, param_vals)?)
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(l.wrapping_add(r))
         }
         Expr::BinaryOp {
             op: BinaryOp::Sub,
             lhs,
             rhs,
         } => {
-            Ok(const_eval_with_params(lhs, param_vals)? - const_eval_with_params(rhs, param_vals)?)
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(l.wrapping_sub(r))
         }
         Expr::BinaryOp {
             op: BinaryOp::Mul,
             lhs,
             rhs,
         } => {
-            Ok(const_eval_with_params(lhs, param_vals)? * const_eval_with_params(rhs, param_vals)?)
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            Ok(l.wrapping_mul(r))
         }
         Expr::BinaryOp {
             op: BinaryOp::Div,
             lhs,
             rhs,
         } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
             if r == 0 {
                 return Err("division by zero in constant expression".to_string());
             }
-            Ok(const_eval_with_params(lhs, param_vals)? / r)
+            // i64::MIN / -1 overflows
+            if l == i64::MIN && r == -1 {
+                return Ok(0);
+            }
+            Ok(l / r)
         }
         Expr::BinaryOp {
             op: BinaryOp::Power,
@@ -122,14 +133,34 @@ pub fn const_eval_with_params(
         } => {
             let base = const_eval_with_params(lhs, param_vals)?;
             let exp = const_eval_with_params(rhs, param_vals)? as u32;
-            Ok(base.pow(exp))
+            // Manual wrapping power to avoid overflow panic
+            let mut result: i64 = 1;
+            let mut b = base;
+            let mut e = exp;
+            while e > 0 {
+                if e & 1 == 1 {
+                    result = result.wrapping_mul(b);
+                }
+                b = b.wrapping_mul(b);
+                e >>= 1;
+            }
+            Ok(result)
         }
         Expr::BinaryOp {
             op: BinaryOp::Mod,
             lhs,
             rhs,
         } => {
-            Ok(const_eval_with_params(lhs, param_vals)? % const_eval_with_params(rhs, param_vals)?)
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            if r == 0 {
+                return Err("modulo by zero in constant expression".to_string());
+            }
+            // i64::MIN % -1 overflows
+            if l == i64::MIN && r == -1 {
+                return Ok(0);
+            }
+            Ok(l % r)
         }
         Expr::BinaryOp {
             op: BinaryOp::Eq,
@@ -236,23 +267,42 @@ pub fn const_eval_with_params(
             op: BinaryOp::Shl,
             lhs,
             rhs,
-        } => Ok(
-            const_eval_with_params(lhs, param_vals)? << const_eval_with_params(rhs, param_vals)?
-        ),
+        } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            // Protect against overflow - if shift amount >= 64, result is 0
+            if r >= 64 {
+                Ok(0)
+            } else {
+                Ok(l << r)
+            }
+        },
         Expr::BinaryOp {
             op: BinaryOp::Shr,
             lhs,
             rhs,
-        } => Ok(
-            const_eval_with_params(lhs, param_vals)? >> const_eval_with_params(rhs, param_vals)?
-        ),
+        } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            if r >= 64 {
+                Ok(0)
+            } else {
+                Ok(l >> r)
+            }
+        },
         Expr::BinaryOp {
             op: BinaryOp::Sshl,
             lhs,
             rhs,
-        } => Ok(
-            const_eval_with_params(lhs, param_vals)? << const_eval_with_params(rhs, param_vals)?
-        ),
+        } => {
+            let l = const_eval_with_params(lhs, param_vals)?;
+            let r = const_eval_with_params(rhs, param_vals)?;
+            if r >= 64 {
+                Ok(0)
+            } else {
+                Ok(l << r)
+            }
+        },
         Expr::BinaryOp {
             op: BinaryOp::Sshr,
             lhs,
@@ -260,7 +310,11 @@ pub fn const_eval_with_params(
         } => {
             let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
-            Ok(l >> r)
+            if r >= 64 {
+                Ok(0)
+            } else {
+                Ok(l >> r)
+            }
         }
         Expr::BinaryOp {
             op: BinaryOp::CaseEq,

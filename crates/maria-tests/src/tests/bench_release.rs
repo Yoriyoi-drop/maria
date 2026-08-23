@@ -251,7 +251,7 @@ endmodule
     let design = compile_str(source).unwrap();
     let mut engine = crate::simulator::SimulationEngine::new(design, 200_000);
 
-    let mem_before = peak_vmem_mb();
+    let _mem_before = peak_vmem_mb();
     let start = Instant::now();
     engine.run().unwrap();
     let elapsed = start.elapsed();
@@ -298,7 +298,7 @@ fn bench_release_elaborate_100_modules() {
     // Measure elaboration time for 100 modules
     let src = gen_elab_design(100);
 
-    let mem_before = peak_vmem_mb();
+    let _mem_before = peak_vmem_mb();
     let start = Instant::now();
     let design = compile_str(&src).unwrap();
     let elapsed = start.elapsed();
@@ -320,7 +320,7 @@ fn bench_release_elaborate_10000_modules() {
     // Stress test: elaborate 10000 modules (large design)
     let src = gen_elab_design(10_000);
 
-    let mem_before = peak_vmem_mb();
+    let _mem_before = peak_vmem_mb();
     let start = Instant::now();
     let design = compile_str(&src).unwrap();
     let elapsed = start.elapsed();

@@ -242,6 +242,22 @@ impl MirJitCompiler {
                                     let zero = builder.ins().iconst(types::I64, 0);
                                     builder.ins().select(cond, one, zero)
                                 }
+                                MirBinOp::LogicalAnd => {
+                                    let one = builder.ins().iconst(types::I64, 1);
+                                    let zero = builder.ins().iconst(types::I64, 0);
+                                    let lcond = builder.ins().icmp(IntCC::NotEqual, lv, zero);
+                                    let rcond = builder.ins().icmp(IntCC::NotEqual, rv, zero);
+                                    let both = builder.ins().band(lcond, rcond);
+                                    builder.ins().select(both, one, zero)
+                                }
+                                MirBinOp::LogicalOr => {
+                                    let one = builder.ins().iconst(types::I64, 1);
+                                    let zero = builder.ins().iconst(types::I64, 0);
+                                    let lcond = builder.ins().icmp(IntCC::NotEqual, lv, zero);
+                                    let rcond = builder.ins().icmp(IntCC::NotEqual, rv, zero);
+                                    let either = builder.ins().bor(lcond, rcond);
+                                    builder.ins().select(either, one, zero)
+                                }
                             };
                             let masked = if *width < 64 {
                                 let mask_val = ((1u64 << width) - 1) as i64;

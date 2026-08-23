@@ -5,15 +5,36 @@
 //! bahasa yang belum tereksekusi, dan oracle memverifikasi via *differential
 //! testing* terhadap model emas `Expr::eval`. Tujuannya menemukan panic,
 //! non-determinism, atau ketidakcocokan semantik di pipeline Maria.
+//!
+//! MGTE (Maria Guided Test Engine) mengintegrasikan:
+//! - Semantic Mutator (mutasi berdasarkan tipe & konteks)
+//! - Hierarchy Mutator (mutasi subtree modul)
+//! - Testcase Minimizer (mengecilkan reproducer)
+//! - Differential Executor (bandingkan dengan Verilator/Icarus)
 
+#[allow(dead_code)]
 mod expr;
+#[allow(dead_code)]
 mod gen;
+#[allow(dead_code)]
 mod guide;
+#[allow(dead_code)]
 mod oracle;
+#[allow(dead_code)]
+mod semantic_mutator;
+#[allow(dead_code)]
+mod hierarchy_mutator;
+#[allow(dead_code)]
+mod minimizer;
+#[allow(dead_code)]
+mod differential;
+#[allow(dead_code)]
+mod mgte;
 
 use gen::GenInput;
 use guide::CoverageGuide;
 use oracle::{check, Verdict};
+use mgte::{MGTE, MGTEConfig, MGTEMode};
 
 #[test]
 fn guided_fuzz() {
@@ -100,4 +121,78 @@ fn indent(s: &str) -> String {
         .map(|l| format!("    {}", l))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[test]
+fn mgte_semantic_mode() {
+    let config = MGTEConfig {
+        modes: vec![MGTEMode::Semantic],
+        iterations: 50,
+        enable_differential: false,
+        enable_minimizer: false,
+        ..Default::default()
+    };
+    let mut mgte = MGTE::new(config);
+    let stats = mgte.run();
+
+    eprintln!("[MGTE Semantic] {}", stats_summary(&stats));
+    assert!(stats.total_iterations > 0);
+}
+
+#[test]
+fn mgte_elaboration_mode() {
+    let mut config = MGTEConfig::for_elaboration();
+    config.iterations = 50;
+    config.enable_differential = false;
+    config.enable_minimizer = false;
+    let mut mgte = MGTE::new(config);
+    let stats = mgte.run();
+
+    eprintln!("[MGTE Elaboration] {}", stats_summary(&stats));
+    assert!(stats.total_iterations > 0);
+}
+
+#[test]
+fn mgte_simulator_mode() {
+    let mut config = MGTEConfig::for_simulator();
+    config.iterations = 30;
+    config.enable_differential = false;
+    config.enable_minimizer = false;
+    let mut mgte = MGTE::new(config);
+    let stats = mgte.run();
+
+    eprintln!("[MGTE Simulator] {}", stats_summary(&stats));
+    assert!(stats.total_iterations > 0);
+}
+
+#[test]
+fn mgte_deterministic_regression() {
+    let config = MGTEConfig {
+        modes: vec![MGTEMode::Semantic, MGTEMode::Elaboration],
+        iterations: 100,
+        seed: 0xDEADBEEF,
+        enable_differential: false,
+        enable_minimizer: false,
+        ..Default::default()
+    };
+    let mut mgte = MGTE::new(config);
+    let stats = mgte.run();
+
+    eprintln!("[MGTE Deterministic] {}", stats_summary(&stats));
+    assert_eq!(stats.bugs_found, 0, "regression: MGTE found bugs on deterministic seed");
+}
+
+fn stats_summary(stats: &mgte::MGTEStats) -> String {
+    format!(
+        "iter={} pass={} fail={} bugs={} diff={} min={} cov={} corpus={} time={}ms",
+        stats.total_iterations,
+        stats.passed,
+        stats.compile_failures,
+        stats.bugs_found,
+        stats.differential_mismatches,
+        stats.minimized_cases,
+        stats.coverage_features,
+        stats.corpus_size,
+        stats.elapsed_ms
+    )
 }

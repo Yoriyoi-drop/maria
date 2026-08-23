@@ -19,6 +19,8 @@ fastrand = "2"
 thiserror = "2"
 serde_json = "1"
 regex = "1"
+# Temporary directories for differential executor
+tempfile = "3"
 
 [dev-dependencies]
 # Phase 4/5 e2e: tech mapping (sim netlist = sim RTL) + timing/area STA.

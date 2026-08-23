@@ -19,11 +19,19 @@ pub struct GenInput {
 }
 
 fn lit_sv(v: u64, w: u32) -> String {
+    if w == 0 {
+        return "0".to_string();
+    }
     let m = if w >= 64 { u64::MAX } else { (1u64 << w) - 1 };
     let val = v & m;
     let mut bits = String::with_capacity(w as usize);
     for i in (0..w).rev() {
-        bits.push(if (val >> i) & 1 == 1 { '1' } else { '0' });
+        let bit = if i >= 64 {
+            0
+        } else {
+            (val >> i) & 1
+        };
+        bits.push(if bit == 1 { '1' } else { '0' });
     }
     format!("{}'b{}", w, bits)
 }

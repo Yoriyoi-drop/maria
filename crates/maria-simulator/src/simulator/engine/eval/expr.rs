@@ -285,7 +285,7 @@ impl SimulationEngine {
                 Ok(eval_unary(op.clone(), &val))
             }
             IrExpr::BinaryOp(op, lhs, rhs) => {
-                eprintln!("[DEBUG evaluate_expr BinaryOp] op={:?} lhs={:?} rhs={:?}", op, lhs, rhs);
+                
                 let lval = self.evaluate_expr(lhs)?;
                 let rval = self.evaluate_expr(rhs)?;
                 let lhs_is_real = matches!(lhs.as_ref(), IrExpr::Signal(id, _) if self.design.top.signals.get(*id).map(|s| s.is_real).unwrap_or(false));

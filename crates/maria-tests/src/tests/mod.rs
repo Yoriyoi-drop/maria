@@ -4162,7 +4162,7 @@ endmodule
 "#,
         tmp.display()
     );
-    let sigs = simulate_signals(&source, 10).unwrap();
+    let _sigs = simulate_signals(&source, 10).unwrap();
     let _ = std::fs::remove_file(&tmp);
     // Just verify no crash
     assert!(true);
@@ -4289,8 +4289,8 @@ endmodule
     let sigs = engine.design.top.signals.clone();
     let x_val = sigs
         .iter()
-        .find(|s| s.name == "x")
-        .map(|s| {
+        .find(|_s| _s.name == "x")
+        .map(|_s| {
             engine
                 .state
                 .read_signal(
@@ -8790,7 +8790,7 @@ module tb;
     end
 endmodule
 "#;
-    let sigs = simulate_signals(source, 5).unwrap();
+    let _sigs = simulate_signals(source, 5).unwrap();
     // Just verify it compiles and runs without error
     assert!(true);
 }
@@ -9030,7 +9030,7 @@ module tb;
     end
 endmodule
 "#;
-    let sigs = simulate_signals(source, 5).unwrap();
+    let _sigs = simulate_signals(source, 5).unwrap();
     // get_type_name returns a string (bits), we just verify simulation completes
     assert!(true, "get_type_name should work");
 }
@@ -11133,7 +11133,7 @@ module tb;
     end
 endmodule
 "#;
-    let sigs = simulate_signals(source, 5).unwrap();
+    let _sigs = simulate_signals(source, 5).unwrap();
     // get_type_name returns string bits, we just verify sim completes
     assert!(true, "sequence_item get_type_name should work");
 }
@@ -14120,7 +14120,7 @@ fn test_picorv32_compile() {
         tokens.push((tok, line, col));
     }
     let mut parser = Parser::new(tokens, "<string>");
-    let design = parser.parse_design().unwrap_or_else(|e| {
+    let _design = parser.parse_design().unwrap_or_else(|e| {
         panic!("parse_design failed: {}", e);
     });
 }

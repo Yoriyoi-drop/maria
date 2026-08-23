@@ -115,10 +115,37 @@ pub fn try_fold_const(
     expr: &Expr,
     params: &HashMap<Symbol, i64>,
 ) -> Result<Option<IrExpr>, String> {
+    // Jangan fold relational comparison (Lt/Le/Gt/Ge) untuk ekspresi unsigned
+    // karena const_eval_with_params memakai i64 signed arithmetic yang salah
+    // untuk unsigned semantics (mis. 187 < -111 sebagai i64 = false, tapi
+    // sebagai unsigned 16-bit = 187 < 65425 = true).
+    if is_relational_comparison(expr) && !const_expr_is_signed(expr) {
+        return Ok(None);
+    }
+
+    // Untuk operasi Div/Mod pada ekspresi unsigned, perlu unsigned semantics.
+    // const_eval_with_params selalu pakai signed i64. Kalau unsigned,
+    // hitung manual dengan u64.
+    if !const_expr_is_signed(expr) {
+        if let Some(val) = try_fold_const_unsigned(expr, params)? {
+            let width = const_fold_width(expr, params).unwrap_or_else(|| {
+                let abs = (val as u64);
+                let min_width = if val == 0 {
+                    1
+                } else {
+                    64 - (abs.leading_zeros() as usize)
+                };
+                min_width.max(32)
+            });
+            let lv = LogicVec::from_u64(val, width);
+            return Ok(Some(IrExpr::Const(lv)));
+        }
+    }
+
     match const_eval_with_params(expr, params) {
         Ok(val) => {
             let width = const_fold_width(expr, params).unwrap_or_else(|| {
-                let abs = val.unsigned_abs();
+                let abs = (val as u64);
                 let min_width = if val >= 0 {
                     if val == 0 {
                         1
@@ -147,6 +174,38 @@ pub fn try_fold_const(
         }
         Err(_) => Ok(None),
     }
+}
+
+fn try_fold_const_unsigned(
+    expr: &Expr,
+    params: &HashMap<Symbol, i64>,
+) -> Result<Option<u64>, String> {
+    match expr {
+        Expr::BinaryOp { op, lhs, rhs } => {
+            let l = const_eval_with_params(lhs, params)? as u64;
+            let r = const_eval_with_params(rhs, params)? as u64;
+            match op {
+                BinaryOp::Div => {
+                    if r == 0 {
+                        return Err("division by zero in constant expression".to_string());
+                    }
+                    Ok(Some(l / r))
+                }
+                BinaryOp::Mod => {
+                    if r == 0 {
+                        return Err("modulo by zero in constant expression".to_string());
+                    }
+                    Ok(Some(l % r))
+                }
+                _ => Ok(None),
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
+fn is_relational_comparison(expr: &Expr) -> bool {
+    matches!(expr, Expr::BinaryOp { op, .. } if matches!(op, BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge))
 }
 
 /// Signedness ekspresi KONSTAN — signed bila SEMUA literal operand signed

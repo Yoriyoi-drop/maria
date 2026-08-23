@@ -72,6 +72,7 @@ pub enum MirBinOp {
     And, Or, Xor,
     Eq, Ne, Lt, Le, Gt, Ge,
     Shl, Shr,
+    LogicalAnd, LogicalOr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
