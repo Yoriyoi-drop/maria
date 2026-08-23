@@ -30,11 +30,24 @@ mod minimizer;
 mod differential;
 #[allow(dead_code)]
 mod mgte;
+#[allow(dead_code)]
+mod parallel;
+#[cfg(test)]
+mod eof_truncation;
+#[cfg(test)]
+mod preproc;
+#[cfg(test)]
+mod resources;
+#[cfg(test)]
+mod metamorphic;
+#[cfg(test)]
+mod concurrency_diff;
 
 use gen::GenInput;
 use guide::CoverageGuide;
 use oracle::{check, Verdict};
 use mgte::{MGTE, MGTEConfig, MGTEMode};
+use parallel::{ParallelConfig, DEFAULT_WORKERS};
 
 #[test]
 fn guided_fuzz() {
@@ -42,38 +55,42 @@ fn guided_fuzz() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(300);
+    let workers: usize = std::env::var("MARIA_FUZZ_WORKERS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_WORKERS);
 
-    let mut guide = CoverageGuide::new();
-    let mut bugs: Vec<(GenInput, String)> = Vec::new();
-    let mut pass = 0u64;
-    let mut compile_fail = 0u64;
-
-    for i in 0..n {
-        let input = guide.next(i);
-        use std::io::Write;
-        let _ = std::io::stderr().flush();
-        eprintln!("[fuzz] iter {}/{} seed={}", i, n, input.seed);
-        let _ = std::io::stderr().flush();
-        let result = check(&input);
-        let compiled = result.compiled;
-
-        match &result.verdict {
-            Verdict::Bug(_) => bugs.push((input.clone(), describe(&input, &result.verdict))),
-            Verdict::Pass => pass += 1,
-            Verdict::CompileFail => compile_fail += 1,
-        }
-
-        guide.observe(&input, compiled);
-    }
+    let (stats, bugs) = parallel::run_parallel(ParallelConfig {
+        workers,
+        iterations: n,
+    });
 
     eprintln!(
-        "[guided_fuzz] iter={} pass={} compile_fail={} coverage={} corpus={}",
-        n,
-        pass,
-        compile_fail,
-        guide.coverage_len(),
-        guide.corpus_len()
+        "[guided_fuzz] workers={} iter={} pass={} compile_fail={} bugs={} coverage={} corpus={} time={}ms",
+        workers,
+        stats.iterations,
+        stats.passed,
+        stats.compile_failures,
+        stats.bugs_found,
+        stats.coverage_features,
+        stats.corpus_size,
+        stats.elapsed_ms
     );
+
+    // Temuan bottleneck (bukan kegagalan keras — info performa pipeline).
+    if !stats.bottlenecks.is_empty() {
+        eprintln!(
+            "[guided_fuzz] {} bottleneck (>{}us per testcase):{}",
+            stats.bottlenecks.len(),
+            parallel::BOTTLENECK_THRESHOLD_US,
+            stats
+                .bottlenecks
+                .iter()
+                .take(5)
+                .map(|s| format!("\n  seed={} {:.3}s", s.seed, s.micros as f64 / 1e6))
+                .collect::<String>()
+        );
+    }
 
     assert!(
         bugs.is_empty(),
@@ -81,13 +98,13 @@ fn guided_fuzz() {
         bugs.len(),
         bugs
             .iter()
-            .map(|(i, m)| format!(
+            .map(|b| format!(
                 "  seed={} w={} expr=`{}`\n    source:\n{}\n    bug: {}\n",
-                i.seed,
-                i.w,
-                i.expr.to_sv(i.w),
-                indent(&i.to_source()),
-                m
+                b.input.seed,
+                b.input.w,
+                b.input.expr.to_sv(b.input.w),
+                indent(&b.input.to_source()),
+                b.message
             ))
             .collect::<String>()
     );
@@ -106,14 +123,6 @@ fn guided_fuzz_deterministic_regression() {
         guide.observe(&input, true);
     }
     assert_eq!(bugs, 0, "regression: ada bug pada seed deterministik");
-}
-
-fn describe(input: &GenInput, v: &Verdict) -> String {
-    if let Verdict::Bug(m) = v {
-        format!("{} (expected={:#x})", m, input.expr.eval(input.w, input.a, input.b))
-    } else {
-        String::new()
-    }
 }
 
 fn indent(s: &str) -> String {
@@ -180,6 +189,24 @@ fn mgte_deterministic_regression() {
 
     eprintln!("[MGTE Deterministic] {}", stats_summary(&stats));
     assert_eq!(stats.bugs_found, 0, "regression: MGTE found bugs on deterministic seed");
+}
+
+#[test]
+fn mgte_parallel_10_workers() {
+    // Multi jalur MGTE: 10 worker paralel, iterasi dibagi rata.
+    let config = MGTEConfig {
+        modes: vec![MGTEMode::Semantic, MGTEMode::Elaboration],
+        iterations: 100,
+        seed: 0xC0FFEE,
+        enable_differential: false,
+        enable_minimizer: false,
+        ..Default::default()
+    };
+    let stats = MGTE::run_parallel(config, DEFAULT_WORKERS);
+
+    eprintln!("[MGTE Parallel] {}", stats_summary(&stats));
+    assert_eq!(stats.total_iterations, 100);
+    assert!(stats.passed + stats.compile_failures + stats.bugs_found >= 90);
 }
 
 fn stats_summary(stats: &mgte::MGTEStats) -> String {

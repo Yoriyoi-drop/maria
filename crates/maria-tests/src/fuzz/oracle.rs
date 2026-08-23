@@ -36,6 +36,9 @@ fn mask_of(w: u32) -> u64 {
 pub fn check(input: &GenInput) -> OracleResult {
     let src = input.to_source();
     let expected = input.expr.eval(input.w, input.a, input.b) & mask_of(input.w);
+    // X-state (mis. div-by-zero): hasil simulasi adalah X — tidak comparable
+    // secara numerik. Kontrak eval_w: skip comparison (lihat eval_has_x).
+    let has_x = input.expr.eval_has_x(input.w, input.a, input.b);
 
     // Jalankan di thread dengan stack besar: engine simulasi Maria rekursif
     // dalam & stack default thread test (2 MB) mudah overflow. Stack 256 MB
@@ -95,7 +98,7 @@ pub fn check(input: &GenInput) -> OracleResult {
                         };
                     }
                     let actual = a & mask_of(input.w);
-                    if actual == expected {
+                    if has_x || actual == expected {
                         OracleResult {
                             verdict: Verdict::Pass,
                             compiled: true,

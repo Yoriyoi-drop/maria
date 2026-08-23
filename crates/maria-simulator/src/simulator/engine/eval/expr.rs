@@ -332,7 +332,6 @@ impl SimulationEngine {
                 ) && (is_signed_expr(lhs.as_ref(), &self.design.top.signals)
                     && is_signed_expr(rhs.as_ref(), &self.design.top.signals))
                 {
-                    eprintln!("[DEBUG expr.rs] Using eval_binary_signed for {:?}", op);
                     Ok(eval_binary_signed(op.clone(), &lval, &rval))
                 } else if matches!(op, BinaryIrOp::Sshr) {
                     // `>>>` (IEEE 1800 §11.4.10): ARITHMETIC bila lhs signed,

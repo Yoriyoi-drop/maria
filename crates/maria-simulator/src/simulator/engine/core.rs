@@ -754,6 +754,9 @@ impl SimulationEngine {
         // membutuhkan akses object Maria selama sim (vhpi_handle_by_name dll).
         crate::vhpi::object::set_vhpi_engine(self);
         crate::vhpi::api::dispatch_start_of_simulation();
+        // Guard: pastikan VPI/VHPI engine ter-deregistrasi di semua path
+        // keluar `run()` (lihat ForeignEngineGuard).
+        let _foreign_engine_guard = crate::foreign::ForeignEngineGuard;
 
         self.initialize_time_zero()?;
         // F19: auto-detect fase UVM HANYA bila source TIDAK memanggil
@@ -836,6 +839,8 @@ impl SimulationEngine {
         // wall-clock → peringatan (bukan langsung mematikan simulasi).
         let progress_interval: u64 = 1_000_000;
         let stall_wall_limit = std::time::Duration::from_secs(10);
+        /// Interval pemeriksaan quiescence (amortisasi scan slot events).
+        const QUIESCENCE_CHECK_INTERVAL: u64 = 16;
         let mut last_report_wall = std::time::Instant::now();
         let mut last_active_wall = std::time::Instant::now();
         let mut stall_warned = false;
@@ -1512,6 +1517,31 @@ impl SimulationEngine {
                     speed
                 );
                 last_report_wall = std::time::Instant::now();
+            }
+
+            // ── Quiescence detection: tidak ada event masa depan & tidak ada
+            // pekerjaan tertunda → desain tanpa $finish/$stop berhenti
+            // gracefully (bukan spin unlimited sampai di-kill). Event selalu
+            // dijadwalkan pada waktu >= sekarang, jadi slot events kosong +
+            // antrian region kosong = tidak ada yang bisa mengubah state lagi.
+            // Gate cosim/foreign: thread eksternal bisa memasukkan event baru.
+            if self.state.time % QUIESCENCE_CHECK_INTERVAL == 0
+                && !self.use_timing_wheel
+                && self.foreign_events.is_empty()
+                && self.cosim_state.is_none()
+                && self.pending_events.is_empty()
+                && self.pending_ast_events.is_empty()
+                && self.reactive_events.is_empty()
+                && self.strobe_events.is_empty()
+                && self.fstrobe_events.is_empty()
+                && self.events.iter().all(|v| v.is_empty())
+            {
+                eprintln!(
+                    "[maria] Simulation quiesced at time {} — no pending events \
+                     (design finished without explicit $finish/$stop).",
+                    self.state.time
+                );
+                break;
             }
 
             if !self.sim_limit.allows(self.state.time) {

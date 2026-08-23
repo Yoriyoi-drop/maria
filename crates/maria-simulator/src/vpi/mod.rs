@@ -22,38 +22,32 @@ pub mod systf;
 pub mod types;
 
 use crate::simulator::engine::SimulationEngine;
-use std::sync::Mutex;
-
-/// Wrapper to make *mut SimulationEngine Send (needed for Mutex).
-/// Safety: VPI engine is set/get from the same thread.
-pub(crate) struct EnginePtr(pub *mut SimulationEngine);
-unsafe impl Send for EnginePtr {}
-unsafe impl Sync for EnginePtr {}
-
-/// Global VPI state: a pointer to the current SimulationEngine.
-/// VPI callbacks and system tasks need access to the engine.
-static VPI_ENGINE: Mutex<Option<EnginePtr>> = Mutex::new(None);
+thread_local! {
+    /// Pointer ke `SimulationEngine` aktif, per-thread.
+    /// Safety contract: engine VPI di-set/diakses dari thread simulasi yang
+    /// sama (semua caller `with_vpi_engine` berjalan di thread `run()`).
+    /// Thread-local (bukan global `Mutex`) mencegah deref pointer dangling
+    /// saat beberapa simulasi berjalan paralel — engine thread lain yang
+    /// sudah drop tidak pernah terlihat dari thread ini.
+    static VPI_ENGINE: std::cell::Cell<*mut SimulationEngine> =
+        const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
 
 /// Register the current simulation engine for VPI access.
 pub fn set_vpi_engine(engine: &mut SimulationEngine) {
-    let ptr = EnginePtr(engine as *mut SimulationEngine);
-    *VPI_ENGINE.lock().unwrap() = Some(ptr);
+    VPI_ENGINE.with(|e| e.set(engine));
 }
 
 /// Clear the VPI engine reference (called at end of simulation).
 pub fn clear_vpi_engine() {
-    *VPI_ENGINE.lock().unwrap() = None;
+    VPI_ENGINE.with(|e| e.set(std::ptr::null_mut()));
 }
 
 /// Get a mutable reference to the current VPI engine.
-/// Returns None if no engine is registered.
+/// Returns None if no engine is registered on this thread.
 pub fn with_vpi_engine<F, R>(f: F) -> Option<R>
 where
     F: FnOnce(&mut SimulationEngine) -> R,
 {
-    let guard = VPI_ENGINE.lock().unwrap();
-    guard.as_ref().and_then(|engine_ptr| {
-        let engine = unsafe { engine_ptr.0.as_mut()? };
-        Some(f(engine))
-    })
+    VPI_ENGINE.with(|e| unsafe { e.get().as_mut() }.map(f))
 }

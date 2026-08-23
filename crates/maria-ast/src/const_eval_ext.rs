@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use crate::const_eval::string_to_i64;
+use crate::const_eval::{sized_width, string_to_i64};
 use crate::expr::{BinaryOp, Expr, StructLitMember, UnaryOp, Value};
 use crate::stmt::Stmt;
 use crate::types::{FunctionDecl, PackageItem};
@@ -203,7 +203,14 @@ pub fn eval_expr(
             Ok(CVal::Scalar(match op {
                 UnaryOp::Minus => v.wrapping_neg(),
                 UnaryOp::Plus => v,
-                UnaryOp::BitNot => !v,
+                UnaryOp::BitNot => {
+                    // SV §11.4.9: mask ke lebar literal sized (sama dengan
+                    // const_eval_with_params) — `~(2'b11)` = 0, bukan -4.
+                    match sized_width(expr) {
+                        Some(w) if w > 0 && w < 64 => !v & ((1i64 << w) - 1),
+                        _ => !v,
+                    }
+                }
                 UnaryOp::Not => (v == 0) as i64,
                 UnaryOp::ReductionAnd => (v == -1) as i64,
                 UnaryOp::ReductionNand => (v != -1) as i64,

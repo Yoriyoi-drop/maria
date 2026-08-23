@@ -8,6 +8,10 @@ const MAX_INCLUDE_DEPTH: usize = 64;
 
 /// Maximum macro expansion depth to prevent infinite recursion.
 const MAX_MACRO_EXPANSION_DEPTH: usize = 64;
+/// Batas panjang baris hasil ekspansi. Ekspansi eksponensial (`define A `A `A`)
+/// menggandakan ukuran tiap level — depth cap saja tidak cukup karena pohon
+/// pemanggilan tetap 2^depth sebelum tersentuh. Tanpa batas ini: hang/OOM.
+const MAX_MACRO_EXPANSION_LEN: usize = 1 << 20;
 
 struct CondFrame {
     taking_branch: bool,
@@ -544,7 +548,7 @@ impl Preprocessor {
     /// Expand inline macros with recursive depth tracking.
     /// to prevent infinite recursion from circular macro definitions.
     fn expand_inline_macros_depth(&self, line: &str, depth: usize) -> String {
-        if depth >= MAX_MACRO_EXPANSION_DEPTH {
+        if depth >= MAX_MACRO_EXPANSION_DEPTH || line.len() > MAX_MACRO_EXPANSION_LEN {
             return line.to_string();
         }
 
@@ -567,9 +571,18 @@ impl Preprocessor {
                 }
                 let name = &line[start..i];
                 if let Some(mdef) = self.defines.get(name) {
+                    // Batas ukuran hasil: ekspansi eksponensial (`define A `A `A`)
+                    // menggandakan output tiap level — input kecil selalu, jadi
+                    // guard di awal fungsi tidak pernah kena. Cek akumulasi result.
+                    if result.len() > MAX_MACRO_EXPANSION_LEN {
+                        return result;
+                    }
                     if mdef.params.is_empty() {
                         let expanded = self.expand_inline_macros_depth(&mdef.value, depth + 1);
                         result.push_str(&expanded);
+                        if result.len() > MAX_MACRO_EXPANSION_LEN {
+                            return result;
+                        }
                     } else {
                         let args = if i < bytes.len() && bytes[i] == b'(' {
                             let args_start = i + 1;
@@ -583,7 +596,13 @@ impl Preprocessor {
                                 }
                                 args_end += 1;
                             }
-                            let args_str = &line[args_start..args_end - 1];
+                            let args_str = if args_end > args_start {
+                                // Baris bisa berakhir tepat setelah '(' (input
+                                // truncated) — args_end-1 < args_start = panic.
+                                &line[args_start..args_end - 1]
+                            } else {
+                                ""
+                            };
                             i = args_end;
                             self.split_macro_args(args_str, mdef.params.len())
                         } else {

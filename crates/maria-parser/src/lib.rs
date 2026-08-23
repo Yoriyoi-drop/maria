@@ -157,7 +157,11 @@ impl Parser {
 
     fn push_depth(&mut self) -> Result<(), SimError> {
         self.recursion_depth += 1;
-        if self.recursion_depth > 4096 {
+        // Limit 1024 (bukan lebih tinggi): build debug, satu level nested
+        // begin/end menghabiskan puluhan-KB stack (frame besar Stmt by-value),
+        // 2000 level sudah overflow 256MB SEBELUM limit lama (4096) tersentuh.
+        // Nesting statement/ekspresi >1024 tidak ada di HDL nyata.
+        if self.recursion_depth > 1024 {
             self.recursion_depth = 0;
             return Err(self.err("parser recursion depth exceeded (possible infinite recursion)"));
         }

@@ -29,6 +29,7 @@ pub use maria_formal as formal;
 // ── Enterprise Context Architecture (doc/env.md) — GlobalEnv + Context ──
 // pindah ke maria-env (crates/) — `maria::env::*` di main.rs tetap valid.
 pub use maria_env::env;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // ── Legacy Modules ──
 // ast → maria-ast, ir → maria-ir, parser → maria-parser, elaboration →
@@ -77,6 +78,8 @@ use maria_parser::preprocessor::Preprocessor;
 use maria_parser::Parser;
 use std::fs;
 use std::path::Path;
+
+
 
 /// Compare two ASTs for regression testing. Returns list of structural differences.
 pub fn compare_asts(design_a: &maria_ir::IrDesign, design_b: &maria_ir::IrDesign) -> Vec<String> {
@@ -392,13 +395,18 @@ pub fn run_simulation(ir_design: maria_ir::IrDesign, max_time: u64) -> Result<()
     let mut engine = simulator::SimulationEngine::new(ir_design, max_time);
 
     let design_name = &engine.design.top.name.clone();
-    let vcd_path = format!("{}.vcd", design_name);
+    // Use a unique prefix to avoid file name collisions when running tests in parallel
+    // Many tests use "top" as the module name, which would cause file conflicts
+    static SIMULATION_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let unique_id = SIMULATION_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let unique_prefix = format!("{}_{}", design_name, unique_id);
+    let vcd_path = format!("{}.vcd", unique_prefix);
     let vcd = waveform::VcdWriter::new(&vcd_path, &engine.design)
         .map_err(|e| SimError::with_diag(DiagCode::WaveformError, format!("VCD creation failed: {}", e)))?;
     engine.set_vcd(vcd);
 
     // Also create FST waveform
-    let fst_path = format!("{}.fst", design_name);
+    let fst_path = format!("{}.fst", unique_prefix);
     match waveform::FstWaveWriter::new(&fst_path, &engine.design) {
         Ok(fst) => engine.set_fst(fst),
         Err(e) => {

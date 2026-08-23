@@ -35,6 +35,15 @@
 *.lib
 *.iso
 *.fst 
+*.data
+*.data.old
+*.cpp
+*.h
+*.d
+*.mk
+*.dat
+
+
 # Artifact laporan coverage (mcov/msim) — dihasilkan saat testing
 /covtest.coverage.html
 /covtest.ucis.xml

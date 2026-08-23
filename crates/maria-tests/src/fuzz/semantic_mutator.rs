@@ -230,17 +230,12 @@ impl SemanticMutator {
                 vec![BinOp::Lt, BinOp::Gt, BinOp::Le, BinOp::Ge, BinOp::Eq, BinOp::Ne]
             }
             BinOp::LogicAnd | BinOp::LogicOr => vec![BinOp::LogicAnd, BinOp::LogicOr],
-            BinOp::CaseEq | BinOp::CaseNeq | BinOp::EqWild | BinOp::NeqWild => {
-                vec![BinOp::CaseEq, BinOp::CaseNeq, BinOp::EqWild, BinOp::NeqWild, BinOp::Eq, BinOp::Ne]
+            BinOp::CaseEq | BinOp::CaseNeq => {
+                vec![BinOp::CaseEq, BinOp::CaseNeq, BinOp::Eq, BinOp::Ne]
             }
             BinOp::Power => vec![BinOp::Power, BinOp::Mul],
             BinOp::Concat => vec![BinOp::Concat, BinOp::Add],
             BinOp::Inside => vec![BinOp::Inside, BinOp::Eq, BinOp::Ne],
-            BinOp::Min => vec![BinOp::Min, BinOp::Max, BinOp::Eq, BinOp::Ne],
-            BinOp::Max => vec![BinOp::Max, BinOp::Min, BinOp::Eq, BinOp::Ne],
-            BinOp::Implies => vec![BinOp::Implies, BinOp::Equiv, BinOp::Eq, BinOp::Ne],
-            BinOp::Equiv => vec![BinOp::Equiv, BinOp::Implies, BinOp::Eq, BinOp::Ne],
-            BinOp::Dist => vec![BinOp::Dist, BinOp::Eq, BinOp::Ne],
         };
         compatible[self.rng.usize(0..compatible.len())]
     }

@@ -454,10 +454,18 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                     width: max_width,
                 }
             } else {
-                LogicVec::from_u64(
-                    lhs_ext.to_u64().wrapping_pow(rhs_ext.to_u64() as u32),
-                    max_width,
-                )
+                let exp = rhs_ext.to_u64();
+                // Eksponen >= 64 → hasil tak mungkin terwakili di u64 untuk
+                // basis >= 2; wrapping_pow(u32) juga salah via truncation
+                // eksponen. Definisikan sebagai 0 (selaras oracle fuzz).
+                if exp >= 64 {
+                    LogicVec::from_u64(0, max_width)
+                } else {
+                    LogicVec::from_u64(
+                        lhs_ext.to_u64().wrapping_pow(exp as u32),
+                        max_width,
+                    )
+                }
             }
         }
         BinaryIrOp::Eq | BinaryIrOp::CaseEq => {
@@ -607,6 +615,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         BinaryIrOp::Shl => {
             let shift = rhs_ext.to_u64() as usize;
             let result_width = lhs.width; // SV: shift result width = left operand width
+            // If shift amount has X/Z, result is unknown
+            if has_xz(&rhs_ext) {
+                return LogicVec { bits: vec![LogicVal::X; result_width], width: result_width };
+            }
             if result_width <= 64 && !has_xz(&lhs) {
                 // Fast path: u64 shift
                 let val = lhs.to_u64();
@@ -614,6 +626,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                 LogicVec::from_u64(shifted, result_width)
             } else {
                 // Slow path: per-bit
+                // If lhs has X/Z, shift result is X (unknown shifted by any amount = unknown)
+                if has_xz(lhs) {
+                    return LogicVec { bits: vec![LogicVal::X; result_width], width: result_width };
+                }
                 let mut result = lhs.clone();
                 if shift > 0 && shift < result_width {
                     for i in (shift..result_width).rev() {
@@ -634,6 +650,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         BinaryIrOp::Shr => {
             let shift = rhs_ext.to_u64() as usize;
             let result_width = lhs.width; // SV: shift result width = left operand width
+            // If shift amount has X/Z, result is unknown
+            if has_xz(&rhs_ext) {
+                return LogicVec { bits: vec![LogicVal::X; result_width], width: result_width };
+            }
             if result_width <= 64 && !has_xz(&lhs) {
                 // Fast path: u64 shift
                 let val = lhs.to_u64();
@@ -641,6 +661,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                 LogicVec::from_u64(shifted, result_width)
             } else {
                 // Slow path: per-bit
+                // If lhs has X/Z, shift result is X
+                if has_xz(lhs) {
+                    return LogicVec { bits: vec![LogicVal::X; result_width], width: result_width };
+                }
                 let mut result = lhs.clone();
                 if shift > 0 && shift < result_width {
                     for i in 0..(result_width - shift) {
@@ -661,6 +685,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         BinaryIrOp::Sshl => {
             let shift = rhs_ext.to_u64() as usize;
             let result_width = lhs.width; // SV: shift result width = left operand width
+            // If shift amount has X/Z, result is unknown
+            if has_xz(&rhs_ext) {
+                return LogicVec { bits: vec![LogicVal::X; result_width], width: result_width };
+            }
             if result_width <= 64 && !has_xz(&lhs) {
                 // Arithmetic shift left is same as logical shift left
                 let val = lhs.to_u64();
@@ -668,6 +696,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                 LogicVec::from_u64(shifted, result_width)
             } else {
                 // Slow path: per-bit
+                // If lhs has X/Z, shift result is X
+                if has_xz(lhs) {
+                    return LogicVec { bits: vec![LogicVal::X; result_width], width: result_width };
+                }
                 let _msb = lhs.bits.last().copied().unwrap_or(LogicVal::Zero);
                 let mut result = lhs.clone();
                 if shift > 0 && shift < result_width {
@@ -689,6 +721,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
         BinaryIrOp::Sshr => {
             let shift = rhs_ext.to_u64() as usize;
             let result_width = lhs.width; // SV: shift result width = left operand width
+            // If shift amount has X/Z, result is unknown
+            if has_xz(&rhs_ext) {
+                return LogicVec { bits: vec![LogicVal::X; result_width], width: result_width };
+            }
             if result_width <= 64 && !has_xz(&lhs) {
                 // Arithmetic shift right: extend sign bit
                 let val = lhs.to_u64();
@@ -707,6 +743,10 @@ pub fn eval_binary(op: BinaryIrOp, lhs: &LogicVec, rhs: &LogicVec) -> LogicVec {
                 LogicVec::from_u64(shifted, result_width)
             } else {
                 // Slow path: per-bit
+                // If lhs has X/Z, shift result is X
+                if has_xz(lhs) {
+                    return LogicVec { bits: vec![LogicVal::X; result_width], width: result_width };
+                }
                 let msb = lhs.bits.last().copied().unwrap_or(LogicVal::Zero);
                 let mut result = lhs.clone();
                 if shift > 0 && shift < result_width {

@@ -67,29 +67,27 @@ pub const vhpiNoDirection: i32 = 6;
 
 use crate::simulator::engine::SimulationEngine;
 
-pub(crate) struct VhpiEnginePtr(pub *mut SimulationEngine);
-unsafe impl Send for VhpiEnginePtr {}
-unsafe impl Sync for VhpiEnginePtr {}
-
-static VHPI_ENGINE: Mutex<Option<VhpiEnginePtr>> = Mutex::new(None);
+thread_local! {
+    /// Pointer ke `SimulationEngine` aktif, per-thread (lihat VPI_ENGINE di
+    /// `crate::vpi` — alasan thread-local sama: cegah deref dangling pointer
+    /// engine dari thread lain saat simulasi paralel).
+    static VHPI_ENGINE: std::cell::Cell<*mut SimulationEngine> =
+        const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
 
 pub fn set_vhpi_engine(engine: &mut SimulationEngine) {
-    *VHPI_ENGINE.lock().unwrap() = Some(VhpiEnginePtr(engine as *mut SimulationEngine));
+    VHPI_ENGINE.with(|e| e.set(engine));
 }
 
 pub fn clear_vhpi_engine() {
-    *VHPI_ENGINE.lock().unwrap() = None;
+    VHPI_ENGINE.with(|e| e.set(std::ptr::null_mut()));
 }
 
 pub fn with_vhpi_engine<F, R>(f: F) -> Option<R>
 where
     F: FnOnce(&mut SimulationEngine) -> R,
 {
-    let guard = VHPI_ENGINE.lock().unwrap();
-    guard.as_ref().and_then(|p| {
-        let engine = unsafe { p.0.as_mut()? };
-        Some(f(engine))
-    })
+    VHPI_ENGINE.with(|e| unsafe { e.get().as_mut() }.map(f))
 }
 
 // ─── vhpi_handle_by_name ───
@@ -255,7 +253,7 @@ mod tests {
     #[test]
     fn test_handle_by_name_without_engine_returns_null() {
         let _g = TEST_LOCK.lock().unwrap();
-        *VHPI_ENGINE.lock().unwrap() = None;
+        clear_vhpi_engine();
         assert!(vhpi_handle_by_name("top.clk", VhpiHandle::NULL).is_null());
     }
 }

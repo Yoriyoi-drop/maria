@@ -47,6 +47,25 @@ pub fn const_eval_simple(expr: &Expr) -> Result<i64, String> {
     }
 }
 
+/// Lebar self-determined literal sized (`2'b11` → 2, `8'hFF` → 8, Paren
+/// tembus). `None` untuk unsized/ekspresi lain — pemakai mempertahankan
+/// semantik i64 lama.
+pub fn sized_width(e: &Expr) -> Option<u64> {
+    match e {
+        Expr::Paren(inner) => sized_width(inner),
+        Expr::Value(Value::Binary { bits, width, .. }) => {
+            Some(width.map(|w| w as u64).unwrap_or(bits.len() as u64))
+        }
+        Expr::Value(Value::Hex { bits, width, .. }) => {
+            Some(width.map(|w| w as u64).unwrap_or(bits.len() as u64 * 4))
+        }
+        Expr::Value(Value::Octal { bits, width, .. }) => {
+            Some(width.map(|w| w as u64).unwrap_or(bits.len() as u64 * 3))
+        }
+        _ => None,
+    }
+}
+
 pub fn const_eval_with_params(
     expr: &Expr,
     param_vals: &HashMap<Symbol, i64>,
@@ -82,7 +101,17 @@ pub fn const_eval_with_params(
         Expr::UnaryOp {
             op: UnaryOp::BitNot,
             expr: inner,
-        } => Ok(!const_eval_with_params(inner, param_vals)?),
+        } => {
+            let v = const_eval_with_params(inner, param_vals)?;
+            // SV §11.4.9: lebar hasil `~` = lebar operand self-determined.
+            // Literal sized menentukan lebar → mask hasil ke lebar itu agar
+            // `~(2'b11)` = 2'b00 (=0), bukan -4 i64 (bug: `!(~(2'b11))` = 0
+            // padahal harusnya 1). Operand tanpa lebar statis tetap i64.
+            match sized_width(inner) {
+                Some(w) if w > 0 && w < 64 => Ok(!v & ((1i64 << w) - 1)),
+                _ => Ok(!v),
+            }
+        }
         Expr::BinaryOp {
             op: BinaryOp::Add,
             lhs,
@@ -270,8 +299,9 @@ pub fn const_eval_with_params(
         } => {
             let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
-            // Protect against overflow - if shift amount >= 64, result is 0
-            if r >= 64 {
+            // Guard overflow: shift >= 64 → 0; shift negatif (SV: undefined)
+            // → tanpa shift (hindari panic debug).
+            if r >= 64 || r < 0 {
                 Ok(0)
             } else {
                 Ok(l << r)
@@ -284,7 +314,7 @@ pub fn const_eval_with_params(
         } => {
             let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
-            if r >= 64 {
+            if r >= 64 || r < 0 {
                 Ok(0)
             } else {
                 Ok(l >> r)
@@ -297,7 +327,7 @@ pub fn const_eval_with_params(
         } => {
             let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
-            if r >= 64 {
+            if r >= 64 || r < 0 {
                 Ok(0)
             } else {
                 Ok(l << r)
@@ -310,7 +340,7 @@ pub fn const_eval_with_params(
         } => {
             let l = const_eval_with_params(lhs, param_vals)?;
             let r = const_eval_with_params(rhs, param_vals)?;
-            if r >= 64 {
+            if r >= 64 || r < 0 {
                 Ok(0)
             } else {
                 Ok(l >> r)

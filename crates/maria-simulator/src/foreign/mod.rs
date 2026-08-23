@@ -35,6 +35,20 @@ pub mod loader;
 
 pub use handle::{ForeignHandle, HandleKind, HandleRegistry};
 
+/// RAII guard: deregistrasi engine VPI/VHPI saat drop.
+/// Dipasang di awal `SimulationEngine::run()` agar SEMUA path keluar
+/// (normal, early-return error, panic unwind) meninggalkan registry bersih —
+/// tanpa ini, pointer ke engine yang sudah drop bisa tertinggal dan
+/// diderefsimulasi berikutnya (SIGSEGV saat test paralel).
+pub struct ForeignEngineGuard;
+
+impl Drop for ForeignEngineGuard {
+    fn drop(&mut self) {
+        crate::vpi::clear_vpi_engine();
+        crate::vhpi::object::clear_vhpi_engine();
+    }
+}
+
 /// Event foreign yang masuk ke antrian scheduler utama (bukan dijalankan
 /// langsung dari thread library). Setiap varian dipetakan ke region
 /// scheduler IEEE 1800 yang sesuai.

@@ -182,8 +182,14 @@ fn try_fold_const_unsigned(
 ) -> Result<Option<u64>, String> {
     match expr {
         Expr::BinaryOp { op, lhs, rhs } => {
-            let l = const_eval_with_params(lhs, params)? as u64;
-            let r = const_eval_with_params(rhs, params)? as u64;
+            let l = match const_eval_with_params(lhs, params) {
+                Ok(v) => v as u64,
+                Err(_) => return Ok(None),
+            };
+            let r = match const_eval_with_params(rhs, params) {
+                Ok(v) => v as u64,
+                Err(_) => return Ok(None),
+            };
             match op {
                 BinaryOp::Div => {
                     if r == 0 {

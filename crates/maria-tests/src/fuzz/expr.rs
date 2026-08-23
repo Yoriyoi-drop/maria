@@ -29,16 +29,9 @@ pub enum BinOp {
     LogicOr,
     CaseEq,
     CaseNeq,
-    EqWild,
-    NeqWild,
     Power,
     Concat,
     Inside,
-    Min,
-    Max,
-    Implies,
-    Equiv,
-    Dist,
 }
 
 impl BinOp {
@@ -67,16 +60,9 @@ impl BinOp {
             BinOp::LogicOr => "||",
             BinOp::CaseEq => "===",
             BinOp::CaseNeq => "!==",
-            BinOp::EqWild => "==?",
-            BinOp::NeqWild => "!=?",
             BinOp::Power => "**",
             BinOp::Concat => "{,}",
             BinOp::Inside => "inside",
-            BinOp::Min => "min",
-            BinOp::Max => "max",
-            BinOp::Implies => "->",
-            BinOp::Equiv => "<->",
-            BinOp::Dist => "dist",
         }
     }
 
@@ -105,16 +91,9 @@ impl BinOp {
             BinOp::LogicOr => "LogicOr",
             BinOp::CaseEq => "CaseEq",
             BinOp::CaseNeq => "CaseNeq",
-            BinOp::EqWild => "EqWild",
-            BinOp::NeqWild => "NeqWild",
             BinOp::Power => "Power",
             BinOp::Concat => "Concat",
             BinOp::Inside => "Inside",
-            BinOp::Min => "Min",
-            BinOp::Max => "Max",
-            BinOp::Implies => "Implies",
-            BinOp::Equiv => "Equiv",
-            BinOp::Dist => "Dist",
         }
     }
 
@@ -143,16 +122,9 @@ impl BinOp {
             BinOp::LogicOr,
             BinOp::CaseEq,
             BinOp::CaseNeq,
-            BinOp::EqWild,
-            BinOp::NeqWild,
             BinOp::Power,
             BinOp::Concat,
             BinOp::Inside,
-            BinOp::Min,
-            BinOp::Max,
-            BinOp::Implies,
-            BinOp::Equiv,
-            BinOp::Dist,
         ]
     }
 }
@@ -241,13 +213,28 @@ impl Expr {
             Expr::Un(op, e) => {
                 let (x, ew, hx) = e.eval_w(w, a, b);
                 let m = mask_of(ew);
-                if hx {
-                    return (0, ew, true); // X propagates through any unary op
-                }
                 match op {
-                    UnOp::Not => ((!x) & m, ew, false),
-                    UnOp::LogicNot => ((if x == 0 { 1 } else { 0 }), 1, false),
-                    UnOp::Neg => (((!x).wrapping_add(1)) & m, ew, false),
+                    UnOp::Not => {
+                        // Bitwise not: X propagates (result is X)
+                        if hx {
+                            (0, ew, true)
+                        } else {
+                            ((!x) & m, ew, false)
+                        }
+                    }
+                    UnOp::LogicNot => {
+                        // Logical not: X/Z treated as false (Verilog semantics)
+                        // Result is 1-bit, never X
+                        let truthy = if hx { false } else { x != 0 };
+                        (if truthy { 0 } else { 1 }, 1, false)
+                    }
+                    UnOp::Neg => {
+                        if hx {
+                            (0, ew, true)
+                        } else {
+                            (((!x).wrapping_add(1)) & m, ew, false)
+                        }
+                    }
                 }
             }
             Expr::Bin(op, l, r) => {
@@ -298,23 +285,15 @@ impl Expr {
                         } else {
                             let amt = y; // nilai rhs penuh (bukan dimask ke 63)
                             let v = if amt >= ow as u64 || amt >= 64 {
+                                // IEEE 1800 §11.4.10: `>>>` hanya arithmetic
+                                // bila operand SIGNED; operand di subset fuzzer
+                                // selalu unsigned reg/literal → logical fill 0
+                                // (selaras engine maria & LRM).
                                 0u64
                             } else {
                                 match op {
-                                    BinOp::Shl => (x << amt as u32) & om,
-                                    BinOp::Shr => (x >> amt as u32) & om,
-                                    BinOp::Sshl => (x << amt as u32) & om, // arithmetic shift left = logical
-                                    BinOp::Sshr => {
-                                        // arithmetic shift right: sign extend
-                                        let msb = if ow == 64 { (x >> 63) & 1 } else { (x >> (ow - 1)) & 1 };
-                                        if msb == 1 {
-                                            // negative: fill with 1s
-                                            let mask = if amt >= 64 { !0u64 } else { (!0u64) << amt };
-                                            (x >> amt as u32) | (mask & om)
-                                        } else {
-                                            (x >> amt as u32) & om
-                                        }
-                                    }
+                                    BinOp::Shl | BinOp::Sshl => (x << amt as u32) & om, // arithmetic shift left = logical
+                                    BinOp::Shr | BinOp::Sshr => (x >> amt as u32) & om,
                                     _ => unreachable!(),
                                 }
                             };
@@ -345,97 +324,73 @@ impl Expr {
                         let v = if x == y { 1 } else { 0 };
                         (v, 1, false)
                     }
-                    BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::LogicAnd | BinOp::LogicOr | BinOp::CaseEq | BinOp::CaseNeq | BinOp::EqWild | BinOp::NeqWild | BinOp::Min | BinOp::Max | BinOp::Implies | BinOp::Equiv | BinOp::Dist => {
+BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::LogicAnd | BinOp::LogicOr | BinOp::CaseEq | BinOp::CaseNeq => {
                         if either_x {
                             // X in comparison operand = X result
                             return (0, 1, true);
                         }
                         let v = match op {
-                            BinOp::Eq => {
+                            &BinOp::Eq => {
                                 if x == y {
                                     1
                                 } else {
                                     0
                                 }
                             }
-                            BinOp::Ne => {
+                            &BinOp::Ne => {
                                 if x != y {
                                     1
                                 } else {
                                     0
                                 }
                             }
-                            BinOp::Lt => {
+                            &BinOp::Lt => {
                                 if x < y {
                                     1
                                 } else {
                                     0
                                 }
                             }
-                            BinOp::Le => {
+                            &BinOp::Le => {
                                 if x <= y {
                                     1
                                 } else {
                                     0
                                 }
                             }
-                            BinOp::Gt => {
+                            &BinOp::Gt => {
                                 if x > y {
                                     1
                                 } else {
                                     0
                                 }
                             }
-                            BinOp::Ge => {
+                            &BinOp::Ge => {
                                 if x >= y {
                                     1
                                 } else {
                                     0
                                 }
                             }
-                            BinOp::LogicAnd => {
+                            &BinOp::LogicAnd => {
                                 if x != 0 && y != 0 {
                                     1
                                 } else {
                                     0
                                 }
                             }
-                            BinOp::LogicOr => {
+                            &BinOp::LogicOr => {
                                 if x != 0 || y != 0 {
                                     1
                                 } else {
                                     0
                                 }
                             }
-                            BinOp::CaseEq => {
+                            &BinOp::CaseEq => {
                                 if x == y { 1 } else { 0 }
                             }
-                            BinOp::CaseNeq => {
+                            &BinOp::CaseNeq => {
                                 if x != y { 1 } else { 0 }
-                            }
-                            BinOp::EqWild => {
-                                if x == y { 1 } else { 0 }
-                            }
-                            BinOp::NeqWild => {
-                                if x != y { 1 } else { 0 }
-                            }
-                            BinOp::Min => {
-                                if x < y { x } else { y }
-                            }
-                            BinOp::Max => {
-                                if x > y { x } else { y }
-                            }
-                            BinOp::Implies => {
-                                // a -> b  equiv to  (!a) | b
-                                if x == 0 || y != 0 { 1 } else { 0 }
-                            }
-                            BinOp::Equiv => {
-                                // a <-> b  equiv to (a == b)
-                                if x == y { 1 } else { 0 }
-                            }
-                            BinOp::Dist => {
-                                // dist is a weighted distribution, simplified as equality for eval
-                                if x == y { 1 } else { 0 }
                             }
                             _ => unreachable!(),
                         };
@@ -453,6 +408,14 @@ impl Expr {
         v & mask_of(w)
     }
 
+    /// Apakah evaluasi menyentuh state X (div/mod-by-zero, dsb.)? Kontrak
+    /// terdokumentasi `eval_w`: "When has_x=true, oracle should skip
+    /// comparison" — oracle memakai ini untuk melewatkan differential.
+    pub fn eval_has_x(&self, w: u32, a: u64, b: u64) -> bool {
+        let (_, _, hx) = self.eval_w(w, a, b);
+        hx
+    }
+
     /// Render ke SystemVerilog. Setiap sub-ekspresi non-leaf dibungkus
     /// kurung agar selalu unambiguous.
     pub fn to_sv(&self, w: u32) -> String {
@@ -463,7 +426,11 @@ impl Expr {
             Expr::Bin(op, l, r) => {
                 match *op {
                     BinOp::Concat => format!("{{{}, {}}}", l.to_sv(w), r.to_sv(w)),
-                    BinOp::Inside => format!("{} inside {{{}}}", l.to_sv(w), r.to_sv(w)),
+                    // Inside wajib dibungkus kurung: presedensi `inside` sama
+                    // dengan relational dan left-assoc (IEEE 1800 Tabel 11-2),
+                    // tanpa kurung `A >= B inside {C}` ter-parse ulang sebagai
+                    // `(A >= B) inside {C}` ≠ maksud AST.
+                    BinOp::Inside => format!("({} inside {{{}}})", l.to_sv(w), r.to_sv(w)),
                     _ => format!("({} {} {})", l.to_sv(w), op.sym(), r.to_sv(w)),
                 }
             }

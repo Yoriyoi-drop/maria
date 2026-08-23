@@ -55,7 +55,7 @@ impl Default for MGTEConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MGTEStats {
     pub total_iterations: u64,
     pub passed: u64,
@@ -107,6 +107,54 @@ impl MGTE {
             },
             bug_corpus: Vec::new(),
         }
+    }
+
+    /// Jalankan beberapa instance MGTE paralel (satu thread per worker,
+    /// default 10). Iterasi dibagi rata; tiap worker diberi seed berbeda
+    /// agar eksplorasi tidak tumpang tindih. Statistik digabung setelah
+    /// semua worker selesai.
+    pub fn run_parallel(config: MGTEConfig, workers: usize) -> MGTEStats {
+        let start = Instant::now();
+        let workers = workers.max(1);
+        let total = config.iterations;
+        let base_seed = config.seed;
+
+        let handles: Vec<_> = (0..workers)
+            .map(|w| {
+                let mut cfg = config.clone();
+                // Bagi iterasi rata (worker terakhir menampung sisa).
+                cfg.iterations = if w == workers - 1 {
+                    total.saturating_sub(total / workers as u64 * (workers as u64 - 1))
+                } else {
+                    total / workers as u64
+                };
+                cfg.seed = base_seed ^ (w as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                std::thread::Builder::new()
+                    .name(format!("mgte-worker-{}", w))
+                    .spawn(move || MGTE::new(cfg).run())
+                    .expect("spawn mgte worker")
+            })
+            .collect();
+
+        // `config` sudah dikloning ke tiap worker; gabungkan stats.
+        let mut merged = MGTEStats {
+            total_iterations: total,
+            elapsed_ms: 0,
+            coverage_features: 0,
+            ..Default::default()
+        };
+        for h in handles {
+            let s = h.join().expect("mgte worker panic");
+            merged.passed += s.passed;
+            merged.compile_failures += s.compile_failures;
+            merged.bugs_found += s.bugs_found;
+            merged.differential_mismatches += s.differential_mismatches;
+            merged.minimized_cases += s.minimized_cases;
+            merged.coverage_features = merged.coverage_features.max(s.coverage_features);
+            merged.corpus_size += s.corpus_size;
+        }
+        merged.elapsed_ms = start.elapsed().as_millis() as u64;
+        merged
     }
 
     pub fn run(&mut self) -> MGTEStats {

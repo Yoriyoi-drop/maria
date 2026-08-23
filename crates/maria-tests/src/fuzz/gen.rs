@@ -36,6 +36,10 @@ fn lit_sv(v: u64, w: u32) -> String {
     format!("{}'b{}", w, bits)
 }
 
+/// Pilihan lebar bit — termasuk boundary (31/32/33, 15/16/17) untuk
+/// menyentuh jalur kode width-handling di lexer/parser/elaborator/engine.
+pub const WIDTH_CHOICES: [u32; 12] = [1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33];
+
 impl GenInput {
     /// Render ke source SystemVerilog lengkap.
     pub fn to_source(&self) -> String {
@@ -51,6 +55,7 @@ impl GenInput {
              \x20       a = {aval};\n\
              \x20       b = {bval};\n\
              \x20       #10;\n\
+             \x20       $finish;\n\
              \x20   end\n\
              endmodule\n",
             hi = w - 1,
@@ -64,8 +69,7 @@ impl GenInput {
 /// Hasilkan input fuzz baru dari seed RNG.
 pub fn generate(seed: u64) -> GenInput {
     let mut rng = Rng::with_seed(seed);
-    let w_choices = [1u32, 2, 4, 8, 16];
-    let w = w_choices[rng.usize(0..w_choices.len())];
+    let w = WIDTH_CHOICES[rng.usize(0..WIDTH_CHOICES.len())];
     let m = if w >= 64 { u64::MAX } else { (1u64 << w) - 1 };
     let a = rng.u64(0..) & m;
     let b = rng.u64(0..) & m;
@@ -93,6 +97,5 @@ pub fn mutate_from(src: &GenInput, seed: u64) -> GenInput {
 }
 
 fn w_choices_pick(rng: &mut Rng) -> u32 {
-    let w_choices = [1u32, 2, 4, 8, 16];
-    w_choices[rng.usize(0..w_choices.len())]
+    WIDTH_CHOICES[rng.usize(0..WIDTH_CHOICES.len())]
 }

@@ -203,28 +203,13 @@ impl TestcaseMinimizer {
                         (Expr::Lit(v), r) | (r, Expr::Lit(v)) if *v != 0 => Expr::Lit(1),
                         _ => Expr::Bin(*op, Box::new(simplified_lhs), Box::new(simplified_rhs)),
                     },
-                    BinOp::Min => match (&simplified_lhs, &simplified_rhs) {
-                        (Expr::Lit(v), r) | (r, Expr::Lit(v)) => r.clone(),
-                        _ => Expr::Bin(*op, Box::new(simplified_lhs), Box::new(simplified_rhs)),
-                    },
-                    BinOp::Max => match (&simplified_lhs, &simplified_rhs) {
-                        (Expr::Lit(v), r) | (r, Expr::Lit(v)) => r.clone(),
-                        _ => Expr::Bin(*op, Box::new(simplified_lhs), Box::new(simplified_rhs)),
-                    },
-                    BinOp::Equiv => match (&simplified_lhs, &simplified_rhs) {
-                        (l, r) if l == r => Expr::Lit(1),
-                        _ => Expr::Bin(*op, Box::new(simplified_lhs), Box::new(simplified_rhs)),
-                    },
-                    BinOp::Implies => match (&simplified_lhs, &simplified_rhs) {
-                        (Expr::Lit(0), r) | (r, Expr::Lit(0)) => Expr::Lit(1),
-                        (Expr::Lit(v), r) | (r, Expr::Lit(v)) if *v != 0 => r.clone(),
-                        _ => Expr::Bin(*op, Box::new(simplified_lhs), Box::new(simplified_rhs)),
-                    },
-                    BinOp::Concat => match (&simplified_lhs, &simplified_rhs) {
+                    BinOp::Div | BinOp::Mod | BinOp::Shl | BinOp::Shr | BinOp::Sshl | BinOp::Sshr
+                    | BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+                    | BinOp::CaseEq | BinOp::CaseNeq | BinOp::Power | BinOp::Inside
+                    | BinOp::Concat => match (&simplified_lhs, &simplified_rhs) {
                         (Expr::Lit(_), Expr::Lit(_)) => expr.clone(),
                         _ => Expr::Bin(*op, Box::new(simplified_lhs), Box::new(simplified_rhs)),
                     },
-                    _ => Expr::Bin(*op, Box::new(simplified_lhs), Box::new(simplified_rhs)),
                 }
             }
             Expr::Un(op, inner) => {
